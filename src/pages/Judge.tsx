@@ -40,7 +40,7 @@ export function Judge() {
   const active = regs.find((r) => r.id === activeReg);
   const activeAthlete = active && db.people.find((p) => p.id === active.athleteId);
   const activeLevel = active && db.levels.find((l) => l.id === active.levelId);
-  const calcCfg = activeLevel ? calcForLevel(activeLevel.id) : null;
+  const calcCfg = activeLevel ? calcForLevel(activeLevel.id, event) : null;
   const svMax = activeLevel?.svMax;
   const svNum = parseFloat(sv);
   const dedNum = parseFloat(ded);

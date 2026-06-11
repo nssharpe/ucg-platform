@@ -30,6 +30,11 @@
       },
     },
     {
+      calc: 'wag-vault',
+      test: function () { return document.getElementById('naigc-wagv-final-score'); },
+      d: 'naigc-wagv-d-score', e: 'naigc-wagv-e-score', final: 'naigc-wagv-final-score',
+    },
+    {
       calc: 'masters',
       test: function () { return document.getElementById('nm-final-score'); },
       // Read whichever block (non-vault or vault) is visible.

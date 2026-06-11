@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WAG Open Vault Calculator</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <style>
+    #naigc-wagv-app {
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      color: #1d2a38;
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 18px;
+    }
+    #naigc-wagv-app h1 { font-weight: 800; letter-spacing: -0.01em; font-size: 1.9rem; text-align: center; }
+    #naigc-wagv-app .subtitle { text-align: center; color: #5a6a78; margin-bottom: 18px; font-style: italic; }
+    #naigc-wagv-app .card { border: 1px solid #c8d8db; border-radius: 10px; margin-bottom: 16px; }
+    #naigc-wagv-app .card-title { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.12em; color: #5a6a78; font-weight: 700; }
+    #naigc-wagv-app .vault-info { font-size: 0.95rem; }
+    #naigc-wagv-app .vault-info strong { color: #1d2a38; }
+    #naigc-wagv-app .score-card { background: #1d2a38; color: #fff; border: none; }
+    #naigc-wagv-app .score-block { text-align: center; padding: 8px; }
+    #naigc-wagv-app .score-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.12em; color: #c3dade; }
+    #naigc-wagv-app .score-value { font-size: 2.1rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+    #naigc-wagv-app .score-final { color: #f46949; }
+    #naigc-wagv-app .score-sub { font-size: 0.72rem; color: #9fb3bb; }
+    #naigc-wagv-app .form-select, #naigc-wagv-app .form-control { border-color: #c8d8db; }
+    #naigc-wagv-app .form-select:focus, #naigc-wagv-app .form-control:focus { border-color: #f46949; box-shadow: 0 0 0 0.2rem rgba(244,105,73,0.18); }
+    #naigc-wagv-app .footnote { font-size: 0.78rem; color: #8a99a4; text-align: center; margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <div id="naigc-wagv-app">
+    <h1>WAG Open Vault</h1>
+    <div class="subtitle">Select the vault performed, then enter total deductions.</div>
+
+    <div class="card">
+      <div class="card-body">
+        <h2 class="card-title mb-2">Select Vault</h2>
+        <select id="naigc-wagv-select" class="form-select"></select>
+        <div class="vault-info mt-3">
+          FIG D-Value: <strong id="naigc-wagv-base">0.0</strong>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-body">
+        <h2 class="card-title mb-2">Deductions</h2>
+        <div class="row align-items-center g-2">
+          <label for="naigc-wagv-deductions" class="col-auto col-form-label">Total execution + neutral deductions:</label>
+          <div class="col-auto" style="max-width: 140px;">
+            <input type="number" class="form-control" id="naigc-wagv-deductions" min="0" max="10" step="0.05" value="0.00" />
+          </div>
+          <div class="col-auto">
+            <button type="button" id="naigc-wagv-reset" class="btn btn-danger">Reset</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card score-card">
+      <div class="card-body">
+        <div class="row">
+          <div class="col-4 score-block">
+            <div class="score-label">D-Score</div>
+            <div id="naigc-wagv-d-score" class="score-value">0.0</div>
+          </div>
+          <div class="col-4 score-block">
+            <div class="score-label">E-Score</div>
+            <div id="naigc-wagv-e-score" class="score-value">10.00</div>
+            <div class="score-sub">10.00 − <span id="naigc-wagv-e-deductions">0.00</span></div>
+          </div>
+          <div class="col-4 score-block">
+            <div class="score-label">Final</div>
+            <div id="naigc-wagv-final-score" class="score-value score-final">10.00</div>
+            <div class="score-sub">D + E</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="footnote">
+      NAIGC WAG Open vault — D-value is the FIG difficulty of the vault performed. Final = D-value + (10 − deductions).
+      Vault table sourced from the NAIGC vault values sheet; expand as needed in League Controls.
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      // WAG vault FIG values (from NAIGC vault values sheet). null entries are group separators.
+      var VAULT_DATA = [
+        { name: 'Squat onto table - straight jump down', fig: 0.0 },
+        { name: 'Roll onto and over the table', fig: 0.0 },
+        { name: 'Straddle hecht over table', fig: 0.6 },
+        { name: 'Tuck hecht over table', fig: 0.6 },
+        { name: 'Pike hecht over table', fig: 1.1 },
+        { name: 'Straight hecht over table', fig: 1.6 },
+        null,
+        { name: 'Front handspring', fig: 1.6 },
+        { name: 'Front handspring with 1/2 twist', fig: 2.0 },
+        { name: 'Front handspring with 1/1 twist', fig: 2.6 },
+        { name: 'Front handspring with 3/2 twist', fig: 3.2 },
+        { name: 'Front handspring with 1/2 twist 1st phase', fig: 1.6 },
+        { name: 'Front handspring with 1/2 twist 1st & 2nd phase', fig: 2.4 },
+        { name: 'Yamashita', fig: 2.0 },
+        { name: 'Yamashita 1/2 twist', fig: 2.4 },
+        { name: 'Yamashita 1/1 twist', fig: 2.8 },
+        { name: 'Front handspring and salto fwd. tucked', fig: 3.6 },
+        { name: 'Front handspring and salto fwd. tucked with 1/2 twist', fig: 3.8 },
+        { name: 'Front handspring and salto fwd. piked', fig: 3.8 },
+        { name: 'Front handspring and salto fwd. piked with 1/2 twist', fig: 4.0 },
+        null,
+        { name: 'Front handspring sw with 1/4 twist', fig: 1.6 },
+        { name: 'Front handspring sw with 3/4 twist', fig: 2.0 },
+        { name: 'Front handspring sw with 5/4 twist', fig: 2.6 },
+        { name: 'Yurchenko tucked', fig: 3.0 },
+        { name: 'Yurchenko piked', fig: 3.2 },
+        { name: 'Yurchenko tucked with 1/2 twist', fig: 3.2 },
+        { name: 'Yurchenko tucked with 1/1 twist', fig: 3.6 },
+        { name: 'Yurchenko stretched', fig: 3.6 },
+        { name: 'Yurchenko stretched with 1/2 twist', fig: 3.8 },
+        { name: 'Yurchenko stretched with 1/1 twist', fig: 4.2 },
+        { name: 'Tsukahara tucked', fig: 3.2 },
+        { name: 'Tsukahara piked', fig: 3.4 },
+        { name: 'Tsukahara tucked with 1/2 twist', fig: 3.4 },
+        { name: 'Tsukahara tucked with 1/1 twist', fig: 3.8 },
+        { name: 'Tsukahara stretched', fig: 3.8 },
+        { name: 'Tsukahara stretched with 1/2 twist', fig: 4.0 },
+        { name: 'Tsukahara stretched with 1/1 twist', fig: 4.4 }
+      ];
+
+      var sel = document.getElementById('naigc-wagv-select');
+      var dedInput = document.getElementById('naigc-wagv-deductions');
+
+      VAULT_DATA.forEach(function (v, i) {
+        if (v === null) {
+          var divider = document.createElement('option');
+          divider.disabled = true;
+          divider.textContent = '──────────';
+          sel.appendChild(divider);
+          return;
+        }
+        var opt = document.createElement('option');
+        opt.value = String(i);
+        opt.dataset.fig = String(v.fig);
+        opt.textContent = v.name + '  (' + v.fig.toFixed(1) + ')';
+        sel.appendChild(opt);
+      });
+      // Default to first real vault.
+      sel.value = '0';
+
+      function calc() {
+        var opt = sel.options[sel.selectedIndex];
+        var d = opt && opt.dataset.fig != null ? parseFloat(opt.dataset.fig) : 0;
+        var ded = parseFloat(dedInput.value);
+        if (isNaN(ded)) ded = 0;
+        ded = Math.min(10, Math.max(0, ded));
+        var e = Math.round((10 - ded) * 1000) / 1000;
+        var final = Math.round((d + e) * 1000) / 1000;
+        // Match precision of the deductions input (2 dp unless 3 typed).
+        var dp = /\.\d{3}/.test(dedInput.value) ? 3 : 2;
+        document.getElementById('naigc-wagv-base').textContent = d.toFixed(1);
+        document.getElementById('naigc-wagv-d-score').textContent = d.toFixed(1);
+        document.getElementById('naigc-wagv-e-score').textContent = e.toFixed(dp);
+        document.getElementById('naigc-wagv-e-deductions').textContent = ded.toFixed(dp);
+        document.getElementById('naigc-wagv-final-score').textContent = final.toFixed(dp);
+      }
+
+      sel.addEventListener('change', calc);
+      dedInput.addEventListener('input', calc);
+      document.getElementById('naigc-wagv-reset').addEventListener('click', function () {
+        sel.value = '0'; dedInput.value = '0.00'; calc();
+      });
+      calc();
+    })();
+  </script>
+  <!-- UCG embed bridge -->
+  <script src="bridge.js"></script>
+</body>
+</html>

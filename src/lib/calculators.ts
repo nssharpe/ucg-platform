@@ -1,7 +1,7 @@
 // Maps UCG levels to the embedded NAIGC scoring calculators and bridges their output.
 import type { Score } from './types';
 
-export type CalcKind = 'mag' | 'wag-open' | 'masters';
+export type CalcKind = 'mag' | 'wag-open' | 'wag-vault' | 'masters';
 
 export interface CalcConfig {
   kind: CalcKind;
@@ -24,8 +24,10 @@ export interface CalcMessage {
 
 const BASE = import.meta.env.BASE_URL; // e.g. "/ucg-platform/"
 
-/** Returns the calculator config for a given level id, or null if none exists yet. */
-export function calcForLevel(levelId: string): CalcConfig | null {
+/** Returns the calculator config for a given level + event, or null if none exists yet.
+ *  Vault is scored differently from other apparatus, so the event matters. */
+export function calcForLevel(levelId: string, eventCode?: string): CalcConfig | null {
+  const isVault = eventCode === 'VT';
   switch (levelId) {
     case 'mag-dev':
       return { kind: 'mag', path: `${BASE}calculators/mag/index.html`, ruleset: 'NAIGC Developmental', produces: 'd', label: 'NAIGC MAG SV Calculator — Developmental' };
@@ -34,9 +36,13 @@ export function calcForLevel(levelId: string): CalcConfig | null {
     case 'mag-adv':
       return { kind: 'mag', path: `${BASE}calculators/mag/index.html`, ruleset: 'NAIGC Advanced', produces: 'd', label: 'NAIGC MAG SV Calculator — Advanced (GymACT)' };
     case 'mag-masters':
+      // The Masters calculator handles every apparatus (incl. vault) internally.
       return { kind: 'masters', path: `${BASE}calculators/masters.html`, produces: 'full', label: 'NAIGC Masters Scoring Calculator' };
     case 'wag-open':
-      return { kind: 'wag-open', path: `${BASE}calculators/wag-open.html`, produces: 'full', label: 'NAIGC WAG Open Scoring Calculator' };
+      // WAG Open vault uses the vault-value table; bars/beam/floor use the routine builder.
+      return isVault
+        ? { kind: 'wag-vault', path: `${BASE}calculators/wag-vault.html`, produces: 'full', label: 'NAIGC WAG Open Vault Calculator' }
+        : { kind: 'wag-open', path: `${BASE}calculators/wag-open.html`, produces: 'full', label: 'NAIGC WAG Open Scoring Calculator' };
     default:
       return null; // other WAG levels & T&T: calculators not built yet
   }
@@ -63,7 +69,7 @@ export function scoreFromCalc(cfg: CalcConfig, msg: CalcMessage): Partial<Score>
       eScore: e,
       deductions: e != null ? Math.round((10 - e) * 1000) / 1000 : null,
       final,
-      source: cfg.kind === 'masters' ? 'masters-calc' : 'wag-open-calc',
+      source: cfg.kind === 'masters' ? 'masters-calc' : 'wag-open-calc', // wag-vault records as wag-open-calc
     };
   }
   // MAG: the calculator's start value already bakes in the 10.0 execution base.
