@@ -233,6 +233,7 @@ function Waivers() {
 
 function DemoTools() {
   const toast = useToast();
+  const [busy, setBusy] = useState(false);
   return (
     <div className="card card-pad" style={{ maxWidth: 560 }}>
       <h3 className="card-title">Prototype demo tools</h3>
@@ -240,7 +241,25 @@ function DemoTools() {
         All data in this prototype lives in your browser (localStorage), seeded deterministically.
         Production replaces this layer with a real API + database with periodic backups.
       </p>
-      <button className="btn danger" onClick={() => { resetDemo(); toast('Demo data reset to the original seed.'); }}>Reset demo data</button>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <button
+          className="btn primary"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              const { loadNationals } = await import('../lib/nationals');
+              const r = await loadNationals();
+              toast(`Loaded NAIGC Nationals 2026 — ${r.athletes.toLocaleString()} athletes, ${r.scores.toLocaleString()} scores. See Live Results.`);
+            } catch (e) {
+              toast(`Import failed: ${e}`);
+            } finally { setBusy(false); }
+          }}
+        >
+          {busy ? 'Loading…' : 'Load Nationals 2026 results (real data)'}
+        </button>
+        <button className="btn danger" onClick={() => { resetDemo(); toast('Demo data reset to the original seed.'); }}>Reset demo data</button>
+      </div>
     </div>
   );
 }

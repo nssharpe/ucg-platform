@@ -1,12 +1,13 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useDB, useRole, PERSONA } from '../lib/store';
-import { Tabs, useFmtDate } from '../components/ui';
+import { Tabs, useFmtDate, Badge } from '../components/ui';
 import { MeetStatusBadge } from './Home';
 import { sessionResults, fmtScore } from '../lib/scoring';
 import { scoreDetailPath } from '../lib/calculators';
 import { EVENTS } from '../lib/types';
-import type { Score } from '../lib/types';
+import type { Registration, Score } from '../lib/types';
+import type { AthleteResult } from '../lib/scoring';
 
 export function ResultsIndex() {
   const db = useDB();
@@ -32,33 +33,99 @@ export function ResultsIndex() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Meet results — presentation ported from the Nationals 2026 results viewer:
+// collapsible level groups, per-group column sorting, search/category/level
+// filters, tie-aware places (1,2,2,4), medal colors, qualifier highlighting.
+// ---------------------------------------------------------------------------
+
+type SortSpec = { key: string; dir: 1 | -1 };
+
 export function MeetResults() {
   const { slug } = useParams();
   const db = useDB();
   const role = useRole();
   const meet = db.meets.find((m) => m.slug === slug);
-  const scoredSessions = meet?.sessions.filter((s) => s.squads.length > 0) ?? [];
-  const [sessionId, setSessionId] = useState(scoredSessions[0]?.id ?? meet?.sessions[0]?.id ?? '');
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [view, setView] = useState<'aa' | 'events' | 'team'>('aa');
-  if (!meet) return <p>Meet not found.</p>;
-  const session = meet.sessions.find((s) => s.id === sessionId) ?? meet.sessions[0];
-  if (!session) return <p>No sessions yet.</p>;
-  const { byLevel, eventRankings, teamScores } = sessionResults(db, meet, session.id);
+  const [search, setSearch] = useState('');
+  const [catFilter, setCatFilter] = useState('');
+  const [levelFilter, setLevelFilter] = useState('');
+  const [sort, setSort] = useState<SortSpec>({ key: '_aa', dir: -1 });
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+
+  const session = meet?.sessions.find((s) => s.id === sessionId) ?? meet?.sessions[0];
+  const computed = useMemo(
+    () => (meet && session ? sessionResults(db, meet, session.id) : null),
+    [db, meet, session],
+  );
+
+  if (!meet || !session || !computed) return <p>Meet not found.</p>;
+  const { byLevel, eventRankings, teamScores } = computed;
   const events = EVENTS[session.discipline];
   const clubName = (id: string) => db.clubs.find((c) => c.id === id)?.shortName ?? id;
   const athleteName = (athleteId: string) => {
     const a = db.people.find((p) => p.id === athleteId);
     return a ? `${a.firstName} ${a.lastName}` : athleteId;
   };
-  // Score values link to detail pages: admins/judges/hosts see all, athletes their own.
-  const scoreCell = (sc: Score | undefined, athleteId: string) => {
-    if (!sc) return fmtScore(null);
-    const canOpen = role === 'admin' || role === 'judge' || role === 'meet-host'
-      || (role === 'athlete' && athleteId === PERSONA.athleteId);
-    return canOpen
-      ? <Link to={scoreDetailPath(sc.id)} data-tip="Score details" style={{ textDecoration: 'none', borderBottom: '1px dotted var(--ink-soft)' }}>{fmtScore(sc.final)}</Link>
-      : fmtScore(sc.final);
+
+  // Categories present in this session (drives badge column + filter).
+  const categories = [...new Set([...byLevel.values()].flat().map((r) => r.reg.category).filter(Boolean))] as string[];
+
+  // Tie-aware places (1,2,2,4) per (level, category) group — the viewer's
+  // recomputePlaces. Returns rank maps for AA and each event.
+  const places = useMemo(() => {
+    const aa = new Map<string, number>();
+    const ev = new Map<string, number>(); // key `${regId}|${event}`
+    for (const [levelId, rows] of byLevel.entries()) {
+      const cats = [...new Set(rows.map((r) => r.reg.category ?? ''))];
+      for (const cat of cats) {
+        const group = rows.filter((r) => (r.reg.category ?? '') === cat);
+        rank(group.filter((r) => r.aa > 0), (r) => r.aa).forEach((p, r) => aa.set(r.reg.id, p));
+        for (const e of events) {
+          const scored = group.filter((r) => r.events[e.code]?.final != null);
+          rank(scored, (r) => r.events[e.code]!.final!).forEach((p, r) => ev.set(`${r.reg.id}|${e.code}`, p));
+        }
+      }
+      void levelId;
+    }
+    return { aa, ev };
+  }, [byLevel, events]);
+
+  const canOpenScore = (athleteId: string) =>
+    role === 'admin' || role === 'judge' || role === 'meet-host' || (role === 'athlete' && athleteId === PERSONA.athleteId);
+
+  const matchesFilters = (r: AthleteResult) => {
+    if (catFilter && (r.reg.category ?? '') !== catFilter) return false;
+    if (search) {
+      const a = db.people.find((p) => p.id === r.reg.athleteId);
+      const hay = `${a?.firstName} ${a?.lastName} ${clubName(r.reg.clubId)}`.toLowerCase();
+      if (!hay.includes(search.toLowerCase())) return false;
+    }
+    return true;
   };
+
+  const sortRows = (rows: AthleteResult[]): AthleteResult[] => {
+    const val = (r: AthleteResult): string | number => {
+      if (sort.key === '_name') { const a = db.people.find((p) => p.id === r.reg.athleteId); return `${a?.lastName} ${a?.firstName}`.toLowerCase(); }
+      if (sort.key === '_club') return clubName(r.reg.clubId).toLowerCase();
+      if (sort.key === '_cat') return r.reg.category ?? '';
+      if (sort.key === '_aa') return r.aa;
+      return r.events[sort.key]?.final ?? -1;
+    };
+    return [...rows].sort((a, b) => {
+      const va = val(a), vb = val(b);
+      if (typeof va === 'string' || typeof vb === 'string') return String(va).localeCompare(String(vb)) * sort.dir * -1;
+      return (va - vb) * sort.dir;
+    });
+  };
+
+  const clickSort = (key: string, isText = false) =>
+    setSort((s) => (s.key === key ? { key, dir: (s.dir * -1) as 1 | -1 } : { key, dir: isText ? 1 : -1 }));
+  const arrow = (key: string) => (sort.key === key ? (sort.dir === -1 ? ' ↓' : ' ↑') : '');
+
+  const levelEntries = [...byLevel.entries()].filter(([lid, rows]) =>
+    rows.length > 0 && (!levelFilter || lid === levelFilter));
 
   return (
     <div>
@@ -74,7 +141,7 @@ export function MeetResults() {
       </div>
 
       <div className="grid cols-2" style={{ marginBottom: 14 }}>
-        <select className="input" value={sessionId} onChange={(e) => setSessionId(e.target.value)}>
+        <select className="input" value={session.id} onChange={(e) => { setSessionId(e.target.value); setLevelFilter(''); setCatFilter(''); }}>
           {meet.sessions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
         <Tabs
@@ -84,39 +151,76 @@ export function MeetResults() {
         />
       </div>
 
-      {view === 'aa' && [...byLevel.entries()].map(([levelId, rows]) => rows.length > 0 && (
-        <div key={levelId} style={{ marginBottom: 22 }}>
-          <h2 className="display" style={{ fontSize: 20, marginBottom: 8 }}>{db.levels.find((l) => l.id === levelId)?.name ?? levelId}</h2>
-          <div className="card" style={{ overflowX: 'auto' }}>
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th style={{ width: 40 }}>#</th><th>Athlete</th><th>Club</th>
-                  {events.map((ev) => <th key={ev.code} className="num" data-tip={ev.name}>{ev.code}</th>)}
-                  <th className="num">AA</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r, i) => (
-                  <tr key={r.reg.id}>
-                    <td><span className={`rank-chip r${i + 1}`}>{i + 1}</span></td>
-                    <td><strong>{athleteName(r.reg.athleteId)}</strong></td>
-                    <td>{clubName(r.reg.clubId)}</td>
-                    {events.map((ev) => (
-                      <td key={ev.code} className="num score" style={{ color: r.events[ev.code] ? undefined : 'var(--ink-soft)' }}>
-                        {r.reg.events.includes(ev.code) ? scoreCell(r.events[ev.code], r.reg.athleteId) : ''}
-                      </td>
-                    ))}
-                    <td className="num score" style={{ fontSize: 15 }}>
-                      {fmtScore(r.aa)}{!r.aaComplete && <span style={{ color: 'var(--coral-600)' }} title="Events still to come">*</span>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {view === 'aa' && (
+        <>
+          <div className="res-filters">
+            <input className="input" style={{ maxWidth: 260 }} placeholder="Search athlete or club…" value={search} onChange={(e) => setSearch(e.target.value)} />
+            {categories.length > 0 && (
+              <select className="input" style={{ maxWidth: 220 }} value={catFilter} onChange={(e) => setCatFilter(e.target.value)}>
+                <option value="">All categories</option>
+                {categories.map((c) => <option key={c}>{c}</option>)}
+              </select>
+            )}
+            <select className="input" style={{ maxWidth: 220 }} value={levelFilter} onChange={(e) => setLevelFilter(e.target.value)}>
+              <option value="">All levels</option>
+              {[...byLevel.keys()].map((lid) => <option key={lid} value={lid}>{db.levels.find((l) => l.id === lid)?.name ?? lid}</option>)}
+            </select>
+            <span className="res-legend">
+              <span className="res-medal res-medal-1">●</span> 1st <span className="res-medal res-medal-2">●</span> 2nd <span className="res-medal res-medal-3">●</span> 3rd
+              <span className="res-qual-dot" /> qualifier
+            </span>
           </div>
-        </div>
-      ))}
+
+          {levelEntries.map(([levelId, rows]) => {
+            const shown = sortRows(rows.filter(matchesFilters));
+            if (shown.length === 0) return null;
+            const isCollapsed = collapsed.has(levelId);
+            return (
+              <div key={levelId} style={{ marginBottom: 18 }}>
+                <button
+                  className="res-group-header display"
+                  onClick={() => setCollapsed((c) => { const n = new Set(c); if (n.has(levelId)) n.delete(levelId); else n.add(levelId); return n; })}
+                >
+                  <span>{db.levels.find((l) => l.id === levelId)?.name ?? levelId}</span>
+                  <span style={{ fontSize: 12, fontFamily: 'var(--font-body)', fontWeight: 600 }}>{shown.length} athletes {isCollapsed ? '▸' : '▾'}</span>
+                </button>
+                {!isCollapsed && (
+                  <div className="card" style={{ overflowX: 'auto', borderTopLeftRadius: 0, borderTopRightRadius: 0 }}>
+                    <table className="tbl res-tbl">
+                      <thead>
+                        <tr>
+                          <th onClick={() => clickSort('_name', true)} className="res-sortable">Athlete{arrow('_name')}</th>
+                          <th onClick={() => clickSort('_club', true)} className="res-sortable">Club{arrow('_club')}</th>
+                          {categories.length > 0 && <th onClick={() => clickSort('_cat', true)} className="res-sortable">Category{arrow('_cat')}</th>}
+                          {events.map((ev) => (
+                            <th key={ev.code} className="num res-sortable" data-tip={ev.name} onClick={() => clickSort(ev.code)}>{ev.code}{arrow(ev.code)}</th>
+                          ))}
+                          <th className="num res-sortable" onClick={() => clickSort('_aa')}>AA{arrow('_aa')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {shown.map((r) => (
+                          <ResultRow
+                            key={r.reg.id}
+                            r={r}
+                            events={events.map((e) => e.code)}
+                            name={athleteName(r.reg.athleteId)}
+                            club={clubName(r.reg.clubId)}
+                            showCat={categories.length > 0}
+                            aaPlace={places.aa.get(r.reg.id)}
+                            evPlace={(ev) => places.ev.get(`${r.reg.id}|${ev}`)}
+                            linkScores={canOpenScore(r.reg.athleteId)}
+                          />
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </>
+      )}
 
       {view === 'events' && (
         <div className="grid cols-2">
@@ -129,7 +233,7 @@ export function MeetResults() {
                     <tr key={row.reg.id}>
                       <td style={{ width: 36 }}><span className={`rank-chip r${row.rank}`}>{row.rank}</span></td>
                       <td><strong>{athleteName(row.reg.athleteId)}</strong> <span style={{ color: 'var(--ink-soft)', fontSize: 12.5 }}>{clubName(row.reg.clubId)}</span></td>
-                      <td className="num score">{scoreCell(row.score, row.reg.athleteId)}</td>
+                      <td className="num score">{scoreLink(row.score, canOpenScore(row.reg.athleteId))}</td>
                     </tr>
                   ))}
                   {er.rows.length === 0 && <tr><td style={{ color: 'var(--ink-soft)' }}>No scores yet.</td></tr>}
@@ -165,5 +269,60 @@ export function MeetResults() {
         </div>
       )}
     </div>
+  );
+}
+
+/** Standard competition ranking (1, 2, 2, 4) descending by score. */
+function rank<T>(rows: T[], score: (r: T) => number): Map<T, number> {
+  const sorted = [...rows].sort((a, b) => score(b) - score(a));
+  const out = new Map<T, number>();
+  sorted.forEach((r, i) => {
+    out.set(r, i > 0 && score(sorted[i - 1]) === score(r) ? out.get(sorted[i - 1])! : i + 1);
+  });
+  return out;
+}
+
+function medalClass(place?: number): string {
+  return place === 1 ? ' res-medal-1' : place === 2 ? ' res-medal-2' : place === 3 ? ' res-medal-3' : '';
+}
+
+function scoreLink(sc: Score | undefined, canOpen: boolean) {
+  if (!sc || sc.final == null) return '—';
+  const text = sc.final.toFixed(3);
+  return canOpen
+    ? <Link to={scoreDetailPath(sc.id)} data-tip="Score details" style={{ textDecoration: 'none', borderBottom: '1px dotted var(--ink-soft)' }}>{text}</Link>
+    : text;
+}
+
+function ResultRow({ r, events, name, club, showCat, aaPlace, evPlace, linkScores }: {
+  r: AthleteResult;
+  events: string[];
+  name: string;
+  club: string;
+  showCat: boolean;
+  aaPlace?: number;
+  evPlace: (ev: string) => number | undefined;
+  linkScores: boolean;
+}) {
+  const reg: Registration = r.reg;
+  return (
+    <tr>
+      <td className={reg.quals?.AA ? 'res-qual' : ''}><strong>{name}</strong></td>
+      <td style={{ fontSize: 13 }}>{club}</td>
+      {showCat && <td>{reg.category ? <Badge tone="info">{reg.category}</Badge> : ''}</td>}
+      {events.map((ev) => {
+        const sc = r.events[ev];
+        const p = evPlace(ev);
+        return (
+          <td key={ev} className={`num score${medalClass(p)}${reg.quals?.[ev] ? ' res-qual' : ''}`}>
+            {reg.events.includes(ev) ? <>{scoreLink(sc, linkScores)}{p != null && p <= 3 && <span className="res-place"> {p}</span>}</> : ''}
+          </td>
+        );
+      })}
+      <td className={`num score${medalClass(aaPlace)}${reg.quals?.AA ? ' res-qual' : ''}`} style={{ fontSize: 15 }}>
+        {r.aa > 0 ? r.aa.toFixed(3) : '—'}{!r.aaComplete && r.aa > 0 && <span style={{ color: 'var(--coral-600)' }} title="Events still to come">*</span>}
+        {aaPlace != null && aaPlace <= 3 && <span className="res-place"> {aaPlace}</span>}
+      </td>
+    </tr>
   );
 }

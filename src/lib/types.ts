@@ -154,6 +154,12 @@ export interface Registration {
   levelId: string;
   events: string[]; // event codes
   sessionId: string | null;
+  /** Placement category (e.g. "Collegiate Women", "Community Men+") — drives
+   *  results grouping badges & filters, mirroring the Nationals results viewer. */
+  category?: string;
+  /** Qualifier flags per event code (+ "AA"/"Team") — drives green/gold
+   *  highlighting on results, mirroring the Nationals results viewer. */
+  quals?: Record<string, boolean>;
   refunded?: boolean;
   keepListed?: boolean; // refunded but keep for shirt/gift
 }

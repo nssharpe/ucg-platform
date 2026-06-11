@@ -1,5 +1,5 @@
-@import url('https://fonts.googleapis.com/css2?family=Archivo+Black&family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap');
-
+/* Fonts are self-hosted via @fontsource (imported in main.tsx) — no third-party
+   font requests, woff2 preloaded at build time, cached by the service worker. */
 :root {
   /* UCG brand */
   --navy-900: #14202c;
@@ -29,7 +29,7 @@
   --shadow-lg: 0 2px 4px rgba(20, 32, 44, 0.08), 0 24px 48px -16px rgba(20, 32, 44, 0.3);
 
   --font-display: 'Archivo Black', 'Arial Black', sans-serif;
-  --font-body: 'Instrument Sans', 'Helvetica Neue', sans-serif;
+  --font-body: 'Instrument Sans Variable', 'Instrument Sans', 'Helvetica Neue', sans-serif;
 }
 
 * { box-sizing: border-box; }
@@ -487,6 +487,52 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 .reg-grid-wrap { overflow-x: auto; }
 .reg-grid td.evt { text-align: center; }
 .reg-grid input[type='checkbox'] { accent-color: var(--coral-500); width: 17px; height: 17px; cursor: pointer; }
+
+/* ---------- results presentation (ported from Nationals results viewer) ---------- */
+.res-filters {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  position: sticky;
+  top: 54px;
+  z-index: 30;
+  background: var(--bg);
+  padding: 8px 0;
+}
+.res-legend { font-size: 12px; color: var(--ink-soft); display: inline-flex; align-items: center; gap: 5px; margin-left: auto; }
+.res-legend .res-medal { font-size: 11px; }
+.res-qual-dot {
+  display: inline-block; width: 11px; height: 11px; border-radius: 3px;
+  background: var(--green-100); border: 1px solid var(--green-600); margin-left: 8px;
+}
+.res-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  border: none;
+  cursor: pointer;
+  background: var(--navy-800);
+  color: var(--white);
+  padding: 9px 14px;
+  font-size: 15px;
+  border-radius: var(--radius) var(--radius) 0 0;
+  text-transform: uppercase;
+}
+.res-group-header:hover { background: var(--navy-700); }
+.res-tbl th.res-sortable { cursor: pointer; user-select: none; }
+.res-tbl th.res-sortable:hover { color: var(--ink); }
+.res-tbl .score { font-variant-numeric: tabular-nums; }
+/* Medal colors per the Nationals viewer */
+.res-medal-1, .res-tbl td.res-medal-1 { color: #b8912e; font-weight: 800; }
+.res-medal-2, .res-tbl td.res-medal-2 { color: #7a8a9c; font-weight: 800; }
+.res-medal-3, .res-tbl td.res-medal-3 { color: #b06e3a; font-weight: 800; }
+.res-place { font-size: 10px; vertical-align: super; font-weight: 800; }
+/* Qualifier highlighting (green tint, as in prelims/qualifier tabs) */
+.res-tbl td.res-qual { background: var(--green-100); }
+.res-tbl td.res-qual a { color: var(--green-600); }
 
 /* mobile */
 @media (max-width: 860px) {
