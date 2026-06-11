@@ -96,7 +96,9 @@ export function MeetDetail() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <Link to={`/results/${meet.slug}`}>→ Live results</Link>
             {canManage && <Link to={`/meets/${meet.slug}/manage`}>→ Manage sessions & squads</Link>}
-            {canManage && <a href="#" onClick={(e) => { e.preventDefault(); exportCsv(db, meet); }}>→ Export everything (CSV)</a>}
+            {canManage && <Link to={`/judge?meet=${meet.id}`}>→ Score entry</Link>}
+            {canManage && <a href="#" onClick={(e) => { e.preventDefault(); exportCsv(db, meet); }}>→ Export registrations (CSV)</a>}
+            {canManage && <a href="#" onClick={(e) => { e.preventDefault(); exportScoresCsv(db, meet); }}>→ Export scores incl. calculator detail (CSV)</a>}
           </div>
         </div>
       </div>
@@ -136,9 +138,35 @@ function exportCsv(db: ReturnType<typeof useDB>, meet: Meet) {
     ]);
   }
   const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+  downloadCsv(csv, `${meet.slug}-export.csv`);
+}
+
+/** Scores export — includes the captured calculator state so verification has
+ *  the full breakdown of how every score was built. */
+function exportScoresCsv(db: ReturnType<typeof useDB>, meet: Meet) {
+  const rows = [['Athlete', 'Club', 'Session', 'Event', 'Level', 'D/SV', 'Deductions', 'E-score', 'Final', 'Source', 'Calculator', 'Entered by', 'Entered at', 'Adjusted at', 'Adjust note', 'Calculator state (JSON)']];
+  for (const s of db.scores.filter((x) => x.meetId === meet.id)) {
+    const reg = db.registrations.find((r) => r.id === s.regId);
+    const a = reg && db.people.find((p) => p.id === reg.athleteId);
+    const club = reg && db.clubs.find((c) => c.id === reg.clubId);
+    const session = meet.sessions.find((x) => x.id === s.sessionId);
+    rows.push([
+      a ? `${a.firstName} ${a.lastName}` : s.regId, club?.name ?? '', session?.name ?? '', s.event,
+      db.levels.find((l) => l.id === reg?.levelId)?.name ?? '',
+      s.sv ?? '', s.deductions ?? '', s.eScore ?? '', s.final ?? '',
+      s.source ?? 'manual', s.calc ?? '', s.enteredBy, s.enteredAt,
+      s.adjustedAt ?? '', s.adjustNote ?? '',
+      s.calcState ? JSON.stringify(s.calcState) : '',
+    ].map(String));
+  }
+  const csv = rows.map((r) => r.map((c) => `"${c.replace(/"/g, '""')}"`).join(',')).join('\n');
+  downloadCsv(csv, `${meet.slug}-scores.csv`);
+}
+
+function downloadCsv(csv: string, filename: string) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-  a.download = `${meet.slug}-export.csv`;
+  a.download = filename;
   a.click();
 }
 
@@ -146,15 +174,23 @@ function exportCsv(db: ReturnType<typeof useDB>, meet: Meet) {
 export function MeetManage() {
   const { slug } = useParams();
   const db = useDB();
+  const role = useRole();
   const meet = db.meets.find((m) => m.slug === slug);
   const [sessionId, setSessionId] = useState(meet?.sessions[0]?.id ?? '');
   if (!meet) return <p>Meet not found.</p>;
   const session = meet.sessions.find((s) => s.id === sessionId) ?? meet.sessions[0];
+  const canScore = role === 'admin' || role === 'meet-host' || role === 'judge';
 
   return (
     <div>
       <h1 className="page-title display">Manage — {meet.name}</h1>
       <p className="page-sub">Build squads per session, copy a squad setup to other sessions, and save everything at once. New athletes land in the Holding squad until placed.</p>
+      {canScore && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+          <Link className="btn primary" to={`/judge?meet=${meet.id}`}>Score entry →</Link>
+          <Link className="btn ghost" to={`/results/${meet.slug}`}>Live results</Link>
+        </div>
+      )}
       <Tabs
         tabs={meet.sessions.map((s) => ({ id: s.id, label: s.name.split('—')[0].trim() }))}
         active={session.id}

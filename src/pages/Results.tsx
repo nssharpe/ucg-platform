@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { useDB } from '../lib/store';
+import { useDB, useRole, PERSONA } from '../lib/store';
 import { Tabs, useFmtDate } from '../components/ui';
 import { MeetStatusBadge } from './Home';
 import { sessionResults, fmtScore } from '../lib/scoring';
+import { scoreDetailPath } from '../lib/calculators';
 import { EVENTS } from '../lib/types';
+import type { Score } from '../lib/types';
 
 export function ResultsIndex() {
   const db = useDB();
@@ -33,6 +35,7 @@ export function ResultsIndex() {
 export function MeetResults() {
   const { slug } = useParams();
   const db = useDB();
+  const role = useRole();
   const meet = db.meets.find((m) => m.slug === slug);
   const scoredSessions = meet?.sessions.filter((s) => s.squads.length > 0) ?? [];
   const [sessionId, setSessionId] = useState(scoredSessions[0]?.id ?? meet?.sessions[0]?.id ?? '');
@@ -46,6 +49,15 @@ export function MeetResults() {
   const athleteName = (athleteId: string) => {
     const a = db.people.find((p) => p.id === athleteId);
     return a ? `${a.firstName} ${a.lastName}` : athleteId;
+  };
+  // Score values link to detail pages: admins/judges/hosts see all, athletes their own.
+  const scoreCell = (sc: Score | undefined, athleteId: string) => {
+    if (!sc) return fmtScore(null);
+    const canOpen = role === 'admin' || role === 'judge' || role === 'meet-host'
+      || (role === 'athlete' && athleteId === PERSONA.athleteId);
+    return canOpen
+      ? <Link to={scoreDetailPath(sc.id)} data-tip="Score details" style={{ textDecoration: 'none', borderBottom: '1px dotted var(--ink-soft)' }}>{fmtScore(sc.final)}</Link>
+      : fmtScore(sc.final);
   };
 
   return (
@@ -92,7 +104,7 @@ export function MeetResults() {
                     <td>{clubName(r.reg.clubId)}</td>
                     {events.map((ev) => (
                       <td key={ev.code} className="num score" style={{ color: r.events[ev.code] ? undefined : 'var(--ink-soft)' }}>
-                        {r.reg.events.includes(ev.code) ? fmtScore(r.events[ev.code]?.final) : ''}
+                        {r.reg.events.includes(ev.code) ? scoreCell(r.events[ev.code], r.reg.athleteId) : ''}
                       </td>
                     ))}
                     <td className="num score" style={{ fontSize: 15 }}>
@@ -117,7 +129,7 @@ export function MeetResults() {
                     <tr key={row.reg.id}>
                       <td style={{ width: 36 }}><span className={`rank-chip r${row.rank}`}>{row.rank}</span></td>
                       <td><strong>{athleteName(row.reg.athleteId)}</strong> <span style={{ color: 'var(--ink-soft)', fontSize: 12.5 }}>{clubName(row.reg.clubId)}</span></td>
-                      <td className="num score">{fmtScore(row.score.final)}</td>
+                      <td className="num score">{scoreCell(row.score, row.reg.athleteId)}</td>
                     </tr>
                   ))}
                   {er.rows.length === 0 && <tr><td style={{ color: 'var(--ink-soft)' }}>No scores yet.</td></tr>}

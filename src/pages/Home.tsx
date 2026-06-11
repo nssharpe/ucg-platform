@@ -223,17 +223,27 @@ function AthleteHome() {
         </div>
       </div>
       <div className="card card-pad">
-        <h3 className="card-title">My meets</h3>
+        <h3 className="card-title">My meets & scores</h3>
         {myRegs.length === 0 && <p style={{ color: 'var(--ink-soft)' }}>Not registered for any meets yet.</p>}
         {[...new Set(myRegs.map((r) => r.meetId))].map((mid) => {
           const meet = db.meets.find((m) => m.id === mid)!;
           const regs = myRegs.filter((r) => r.meetId === mid);
+          const myScores = db.scores.filter((s) => regs.some((r) => r.id === s.regId));
           return (
             <div key={mid} style={{ padding: '8px 0', borderBottom: '1px solid var(--line)' }}>
               <Link to={`/meets/${meet.slug}`} style={{ fontWeight: 600 }}>{meet.name}</Link>
               <div style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
                 {fmtDate(meet.startDate)} · {regs.map((r) => `${r.discipline} (${r.events.join(', ')})`).join(' + ')}
               </div>
+              {myScores.length > 0 && (
+                <div style={{ fontSize: 13, marginTop: 4, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  {myScores.map((s) => (
+                    <Link key={s.id} to={`/scores/${encodeURIComponent(s.id)}`} data-tip="See how this score was built">
+                      {s.event}: <strong>{s.final?.toFixed(3)}</strong>
+                    </Link>
+                  ))}
+                </div>
+              )}
             </div>
           );
         })}

@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NAIGC T&T Scoring Calculator</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <style>
+    #naigc-tnt-app { font-family: 'Helvetica Neue', Arial, sans-serif; color: #1d2a38; max-width: 860px; margin: 0 auto; padding: 16px; }
+    #naigc-tnt-app h1 { font-weight: 800; font-size: 1.6rem; text-align: center; }
+    #naigc-tnt-app .subtitle { text-align: center; color: #5a6a78; margin-bottom: 14px; font-style: italic; font-size: 0.92rem; }
+    #naigc-tnt-app .card { border: 1px solid #c8d8db; border-radius: 10px; margin-bottom: 13px; }
+    #naigc-tnt-app .card-title { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.12em; color: #5a6a78; font-weight: 700; }
+    #naigc-tnt-app .skill-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+    #naigc-tnt-app .skill-row .num { width: 26px; text-align: right; font-weight: 700; color: #5a6a78; font-size: 0.9rem; flex-shrink: 0; }
+    #naigc-tnt-app .skill-row .skill-pick { flex: 1; }
+    #naigc-tnt-app .skill-row .dd-input { width: 76px; text-align: center; font-weight: 700; flex-shrink: 0; }
+    #naigc-tnt-app .exec-input { width: 110px; text-align: center; font-weight: 700; }
+    #naigc-tnt-app .warn { background: #fde4dc; color: #b3401f; border-radius: 8px; padding: 8px 12px; font-size: 0.86rem; margin-top: 8px; }
+    #naigc-tnt-app .score-card { background: #1d2a38; color: #fff; border: none; }
+    #naigc-tnt-app .score-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.12em; color: #c3dade; }
+    #naigc-tnt-app .score-value { font-size: 2.1rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+    #naigc-tnt-app .score-final { color: #f46949; }
+    #naigc-tnt-app .pass-score { font-size: 0.95rem; color: #5a6a78; font-weight: 700; }
+    #naigc-tnt-app .form-select, #naigc-tnt-app .form-control { border-color: #c8d8db; }
+    #naigc-tnt-app .footnote { font-size: 0.75rem; color: #8a99a4; text-align: center; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <div id="naigc-tnt-app">
+    <h1>T&amp;T Scoring</h1>
+    <div class="subtitle">NAIGC Trampoline &amp; Tumbling — pick skills (type to search), DD fills from the NAIGC DD charts. Pass score = execution + difficulty.</div>
+
+    <div class="card"><div class="card-body">
+      <div class="row g-2 align-items-end">
+        <div class="col">
+          <label class="card-title d-block mb-1">Event</label>
+          <select id="naigc-tnt-event" class="form-select">
+            <option value="TR">Individual Trampoline</option>
+            <option value="DM">Double Mini</option>
+            <option value="TU">Power Tumbling</option>
+          </select>
+        </div>
+        <div class="col">
+          <label class="card-title d-block mb-1">Level</label>
+          <select id="naigc-tnt-level" class="form-select">
+            <option>New Flyers</option>
+            <option>Intermediate Flyers</option>
+            <option>High Flyers</option>
+          </select>
+        </div>
+        <div class="col-auto">
+          <button type="button" id="naigc-tnt-reset" class="btn btn-danger">Reset</button>
+        </div>
+      </div>
+      <div id="naigc-tnt-level-note" class="footnote" style="text-align:left; margin-top:8px;"></div>
+    </div></div>
+
+    <div id="naigc-tnt-passes"></div>
+
+    <div class="card"><div class="card-body">
+      <div class="row g-2 align-items-center">
+        <label class="col-auto col-form-label" for="naigc-tnt-penalty">Chair of Panel penalties (e.g. level violation 2.0, missing card 0.2):</label>
+        <div class="col-auto"><input type="number" id="naigc-tnt-penalty" class="form-control exec-input" min="0" step="0.1" value="0" /></div>
+      </div>
+    </div></div>
+
+    <div class="card score-card"><div class="card-body">
+      <div class="row text-center">
+        <div class="col-4"><div class="score-label">Difficulty</div><div id="naigc-tnt-d" class="score-value">0.0</div></div>
+        <div class="col-4"><div class="score-label">Execution</div><div id="naigc-tnt-e" class="score-value">0.0</div></div>
+        <div class="col-4"><div class="score-label">Final</div><div id="naigc-tnt-final" class="score-value score-final">0.0</div></div>
+      </div>
+      <div id="naigc-tnt-warnings"></div>
+    </div></div>
+
+    <div class="footnote">Skills not on the DD chart need Rules-Team approval — enter their approved DD manually. Repeats per NAIGC COP are the judge's call; this tool totals what you enter.</div>
+    <datalist id="naigc-tnt-skills"></datalist>
+  </div>
+
+  <script src="tt-skills.js"></script>
+  <script>
+  (function () {
+    var $ = function (id) { return document.getElementById(id); };
+    var EVENT_KEY = { TR: 'trampoline', DM: 'dmt', TU: 'tumbling' };
+
+    // Per-event/level structure + requirement checks (NAIGC T&T COP v3.41).
+    var STRUCTURE = {
+      TR: { passes: [{ name: 'Routine', skills: 10, exec: 'Execution (out of 10)' }] },
+      DM: { passes: [
+        { name: 'Pass 1', skills: 2, labels: ['First skill', 'Dismount'], exec: 'Pass 1 execution (out of 10)' },
+        { name: 'Pass 2', skills: 2, labels: ['First skill', 'Dismount'], exec: 'Pass 2 execution (out of 10)' },
+      ] },
+      TU: { passes: [
+        { name: 'Pass 1', skills: 8, exec: 'Pass 1 execution (out of 10)' },
+        { name: 'Pass 2', skills: 8, exec: 'Pass 2 execution (out of 10)' },
+      ] },
+    };
+
+    var LEVEL_RULES = {
+      TR: {
+        'New Flyers': { maxSkill: 0.4, note: 'Skills ≤0.4 (up to 2 listed exceptions, e.g. tucks/baranis). 0.0 skills may repeat once. Violations = 2.0 CJP.', maxSkillSoft: true },
+        'Intermediate Flyers': { maxSkill: 0.8, maxTotal: 5.0, note: 'Skills ≤0.8 · ≥3 skills with ≥360° flip · routine DD ≤5.0.' },
+        'High Flyers': { minTotal: 4.5, note: 'Routine DD must be ≥4.5.' },
+      },
+      DM: {
+        'New Flyers': { maxSkill: 0.7, note: 'Skills ≤0.5 (one 0.6/0.7 allowed) · max 1 salto per pass.', maxSkillSoft: true },
+        'Intermediate Flyers': { maxSkill: 1.2, maxPass: 1.6, note: 'Skills ≤1.2 · ≥2 of 4 skills ≥0.5 · each pass DD ≤1.6.' },
+        'High Flyers': { minPass: 1.4, note: 'Each pass DD must be ≥1.4.' },
+      },
+      TU: {
+        'New Flyers': { maxSkill: 0.2, maxPass: 1.3, note: '4–7 skills/pass · skills ≤0.2 · pass DD ≤1.3.' },
+        'Intermediate Flyers': { maxSkill: 1.0, maxPassEach: [2.6, 2.9], note: 'Pass 1: 5–8 skills, DD ≤2.6 · Pass 2: 8 skills, DD ≤2.9 · skills ≥0.2 (rebound 0.1 ok).' },
+        'High Flyers': { minPass: 2.0, note: 'Two 8-skill passes · each pass DD ≥2.0.' },
+      },
+    };
+
+    var ddByName = {};
+    function loadSkills(evCode) {
+      var list = (window.TT_SKILLS && window.TT_SKILLS[EVENT_KEY[evCode]]) || [];
+      var dl = $('naigc-tnt-skills');
+      dl.innerHTML = '';
+      ddByName = {};
+      list.forEach(function (s) {
+        ddByName[s.n.toLowerCase()] = s.dd;
+        var o = document.createElement('option');
+        o.value = s.n;
+        o.label = s.dd.toFixed(1) + (s.fig ? ' · ' + s.fig : '');
+        dl.appendChild(o);
+      });
+    }
+
+    function render() {
+      var ev = $('naigc-tnt-event').value;
+      var lvl = $('naigc-tnt-level').value;
+      loadSkills(ev);
+      $('naigc-tnt-level-note').textContent = (LEVEL_RULES[ev][lvl] || {}).note || '';
+      var html = '';
+      STRUCTURE[ev].passes.forEach(function (pass, pi) {
+        html += '<div class="card"><div class="card-body">';
+        html += '<div class="d-flex justify-content-between align-items-center mb-2">' +
+          '<h2 class="card-title mb-0">' + pass.name + ' <span class="pass-score" id="naigc-tnt-passdd-' + pi + '"></span></h2>' +
+          '<div class="d-flex align-items-center gap-2"><label class="card-title mb-0">' + pass.exec + '</label>' +
+          '<input type="number" class="form-control exec-input tnt-exec" data-pass="' + pi + '" min="0" max="10" step="0.1" value="10.0" /></div></div>';
+        for (var i = 0; i < pass.skills; i++) {
+          var label = pass.labels ? pass.labels[i] : (i + 1) + ')';
+          html += '<div class="skill-row">' +
+            '<span class="num">' + label + '</span>' +
+            '<input type="text" class="form-control skill-pick tnt-skill" data-pass="' + pi + '" list="naigc-tnt-skills" placeholder="Type to search skills…" />' +
+            '<input type="number" class="form-control dd-input tnt-dd" data-pass="' + pi + '" min="0" step="0.1" placeholder="DD" /></div>';
+        }
+        html += '</div></div>';
+      });
+      $('naigc-tnt-passes').innerHTML = html;
+      // Wire events
+      document.querySelectorAll('.tnt-skill').forEach(function (inp) {
+        inp.addEventListener('input', function () {
+          var dd = ddByName[inp.value.toLowerCase()];
+          if (dd != null) {
+            var ddInput = inp.parentElement.querySelector('.tnt-dd');
+            ddInput.value = dd.toFixed(1);
+          }
+          calc();
+        });
+      });
+      document.querySelectorAll('.tnt-dd, .tnt-exec').forEach(function (inp) { inp.addEventListener('input', calc); });
+      calc();
+    }
+
+    function calc() {
+      var ev = $('naigc-tnt-event').value;
+      var lvl = $('naigc-tnt-level').value;
+      var rules = LEVEL_RULES[ev][lvl] || {};
+      var warnings = [];
+      var totalDD = 0, totalExec = 0;
+      STRUCTURE[ev].passes.forEach(function (pass, pi) {
+        var passDD = 0;
+        document.querySelectorAll('.tnt-dd[data-pass="' + pi + '"]').forEach(function (inp) {
+          var v = parseFloat(inp.value);
+          if (!isNaN(v) && v > 0) {
+            passDD += v;
+            if (rules.maxSkill != null && v > rules.maxSkill + 1e-9) {
+              warnings.push('Skill DD ' + v.toFixed(1) + ' exceeds ' + lvl + ' max ' + rules.maxSkill.toFixed(1) + (rules.maxSkillSoft ? ' (check listed exceptions)' : '') + ' — 2.0 CJP if not allowed.');
+            }
+          }
+        });
+        passDD = Math.round(passDD * 100) / 100;
+        var el = $('naigc-tnt-passdd-' + pi);
+        if (el) el.textContent = '— DD ' + passDD.toFixed(1);
+        var exec = parseFloat(document.querySelector('.tnt-exec[data-pass="' + pi + '"]').value);
+        if (isNaN(exec)) exec = 0;
+        totalDD += passDD; totalExec += exec;
+        if (rules.maxPass != null && passDD > rules.maxPass + 1e-9) warnings.push(pass.name + ' DD ' + passDD.toFixed(1) + ' exceeds max ' + rules.maxPass.toFixed(1) + '.');
+        if (rules.maxPassEach && rules.maxPassEach[pi] != null && passDD > rules.maxPassEach[pi] + 1e-9) warnings.push(pass.name + ' DD ' + passDD.toFixed(1) + ' exceeds max ' + rules.maxPassEach[pi].toFixed(1) + '.');
+        if (rules.minPass != null && passDD > 0 && passDD < rules.minPass - 1e-9) warnings.push(pass.name + ' DD ' + passDD.toFixed(1) + ' below required ' + rules.minPass.toFixed(1) + '.');
+      });
+      if (rules.maxTotal != null && totalDD > rules.maxTotal + 1e-9) warnings.push('Routine DD ' + totalDD.toFixed(1) + ' exceeds max ' + rules.maxTotal.toFixed(1) + '.');
+      if (rules.minTotal != null && totalDD > 0 && totalDD < rules.minTotal - 1e-9) warnings.push('Routine DD ' + totalDD.toFixed(1) + ' below required ' + rules.minTotal.toFixed(1) + '.');
+
+      var penalty = parseFloat($('naigc-tnt-penalty').value); if (isNaN(penalty) || penalty < 0) penalty = 0;
+      var final = Math.max(0, Math.round((totalDD + totalExec - penalty) * 1000) / 1000);
+      $('naigc-tnt-d').textContent = (Math.round(totalDD * 100) / 100).toFixed(1);
+      $('naigc-tnt-e').textContent = (Math.round(totalExec * 100) / 100).toFixed(1);
+      $('naigc-tnt-final').textContent = final.toFixed(final % 1 === 0 ? 1 : 2);
+      $('naigc-tnt-warnings').innerHTML = warnings.length
+        ? '<div class="warn">⚠ ' + warnings.join('<br>⚠ ') + '</div>' : '';
+    }
+
+    $('naigc-tnt-event').addEventListener('change', render);
+    $('naigc-tnt-level').addEventListener('change', render);
+    $('naigc-tnt-penalty').addEventListener('input', calc);
+    $('naigc-tnt-reset').addEventListener('click', function () { $('naigc-tnt-penalty').value = 0; render(); });
+
+    render();
+  })();
+  </script>
+  <!-- UCG embed bridge -->
+  <script src="bridge.js"></script>
+</body>
+</html>

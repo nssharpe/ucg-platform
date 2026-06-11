@@ -16,7 +16,7 @@
     #naigc-wsv-app .vp-row label { width: 230px; font-size: 0.95rem; }
     #naigc-wsv-app .stepper { display: inline-flex; align-items: center; gap: 6px; }
     #naigc-wsv-app .stepper button { width: 34px; height: 34px; font-weight: 700; }
-    #naigc-wsv-app .stepper .val { min-width: 34px; text-align: center; font-weight: 700; font-size: 1.05rem; }
+    #naigc-wsv-app .stepper input { width: 52px; text-align: center; font-weight: 700; font-size: 1.05rem; border: 1px solid #c8d8db; border-radius: 6px; padding: 4px; }
     #naigc-wsv-app .sr-item { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 7px; font-size: 0.92rem; }
     #naigc-wsv-app .sr-item input { margin-top: 3px; width: 18px; height: 18px; }
     #naigc-wsv-app .score-card { background: #1d2a38; color: #fff; border: none; }
@@ -71,7 +71,7 @@
         <h2 class="card-title mb-2">Penalties &amp; Bonus</h2>
         <div class="sr-item"><input type="checkbox" id="naigc-wsv-nodismount" /><label for="naigc-wsv-nodismount">No dismount performed (&minus;0.30)</label></div>
         <div class="vp-row"><label>Restricted elements performed (&minus;0.50 each)</label>
-          <div class="stepper" data-step="restricted"><button type="button" data-d="-1">&minus;</button><span class="val" id="naigc-wsv-restricted">0</span><button type="button" data-d="1">+</button></div>
+          <div class="stepper" data-step="restricted"><button type="button" data-d="-1">&minus;</button><input type="number" min="0" step="1" value="0" id="naigc-wsv-restricted" /><button type="button" data-d="1">+</button></div>
         </div>
         <div class="vp-row" id="naigc-wsv-bonus-row" style="display:none;"><label>Bonus earned (CV / D-E, max <span id="naigc-wsv-bonus-max">0.30</span>)</label>
           <select id="naigc-wsv-bonus" class="form-select" style="width:auto;">
@@ -181,8 +181,9 @@
     });
     levelSel.value = 'Silver';
 
-    var performed = { A: 0, B: 0, C: 0 }; // C bucket also holds C/D credit
-    var restricted = 0;
+    // All state lives in DOM inputs so the embed bridge can capture/restore it.
+    function count(id) { var el = $(id); var n = el ? parseInt(el.value, 10) : 0; return isNaN(n) || n < 0 ? 0 : n; }
+    function performedCounts() { return { A: count('naigc-wsv-vp-A'), B: count('naigc-wsv-vp-B'), C: count('naigc-wsv-vp-C') }; }
 
     function curLevel() { return LEVELS[levelSel.value]; }
 
@@ -197,6 +198,7 @@
         Object.keys(req).filter(function (k) { return req[k] > 0; })
           .map(function (k) { return req[k] + '×"' + k + '"'; }).join(' + ') +
         '. Higher value parts fill lower slots. Missing: A &minus;0.10, B &minus;0.30, C &minus;0.50.';
+      var keep = performedCounts(); // preserve counts across re-render (level/event change)
       var html = '';
       parts.forEach(function (p) {
         var label = p === 'C'
@@ -204,10 +206,11 @@
           : p + ' performed';
         html += '<div class="vp-row"><label>' + label + '</label>' +
           '<div class="stepper" data-step="' + p + '"><button type="button" data-d="-1">&minus;</button>' +
-          '<span class="val" id="naigc-wsv-vp-' + p + '">' + performed[p] + '</span>' +
+          '<input type="number" min="0" step="1" id="naigc-wsv-vp-' + p + '" value="' + (keep[p] || 0) + '" />' +
           '<button type="button" data-d="1">+</button></div></div>';
       });
       $('naigc-wsv-vp-rows').innerHTML = html;
+      $('naigc-wsv-vp-rows').querySelectorAll('input').forEach(function (inp) { inp.addEventListener('input', calc); });
     }
 
     function renderSR() {
@@ -235,6 +238,7 @@
 
     function missingVP() {
       var req = curLevel().req;
+      var performed = performedCounts();
       var avail = performed.C, miss = 0, need, use;
       need = req.C; use = Math.min(need, avail); need -= use; avail -= use; miss += need * VP_VALUE.C;
       avail += performed.B; need = req.B; use = Math.min(need, avail); need -= use; avail -= use; miss += need * VP_VALUE.B;
@@ -254,7 +258,7 @@
         var srMissing = 0;
         document.querySelectorAll('.naigc-wsv-sr').forEach(function (cb) { if (!cb.checked) srMissing += 0.5; });
         var noDis = $('naigc-wsv-nodismount').checked ? 0.3 : 0;
-        var restr = restricted * 0.5;
+        var restr = count('naigc-wsv-restricted') * 0.5;
         var bonus = 0;
         if (lvl.bonus) bonus = parseFloat($('naigc-wsv-bonus').value) || 0;
         sv = lvl.base + bonus - mvp - srMissing - noDis - restr;
@@ -284,13 +288,13 @@
       calc();
     }
 
-    // Stepper + control wiring (event-delegated)
+    // Stepper + control wiring (event-delegated); steppers adjust the DOM inputs.
     document.addEventListener('click', function (e) {
       var btn = e.target.closest('.stepper button'); if (!btn) return;
       var step = btn.closest('.stepper').dataset.step;
       var d = parseInt(btn.dataset.d, 10);
-      if (step === 'restricted') { restricted = Math.max(0, restricted + d); $('naigc-wsv-restricted').textContent = restricted; }
-      else { performed[step] = Math.max(0, performed[step] + d); var el = $('naigc-wsv-vp-' + step); if (el) el.textContent = performed[step]; }
+      var input = step === 'restricted' ? $('naigc-wsv-restricted') : $('naigc-wsv-vp-' + step);
+      if (input) input.value = Math.max(0, (parseInt(input.value, 10) || 0) + d);
       calc();
     });
     levelSel.addEventListener('change', function () { syncMode(); });
@@ -299,8 +303,8 @@
     $('naigc-wsv-bonus').addEventListener('change', calc);
     $('naigc-wsv-vault-select').addEventListener('change', calc);
     $('naigc-wsv-reset').addEventListener('click', function () {
-      performed = { A: 0, B: 0, C: 0 }; restricted = 0;
-      $('naigc-wsv-restricted').textContent = '0'; $('naigc-wsv-nodismount').checked = false; $('naigc-wsv-bonus').value = '0';
+      ['naigc-wsv-vp-A', 'naigc-wsv-vp-B', 'naigc-wsv-vp-C', 'naigc-wsv-restricted'].forEach(function (id) { var el = $(id); if (el) el.value = 0; });
+      $('naigc-wsv-nodismount').checked = false; $('naigc-wsv-bonus').value = '0';
       syncMode();
     });
 

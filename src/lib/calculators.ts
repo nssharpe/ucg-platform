@@ -1,7 +1,7 @@
 // Maps UCG levels to the embedded NAIGC scoring calculators and bridges their output.
 import type { Score } from './types';
 
-export type CalcKind = 'mag' | 'wag-open' | 'wag-vault' | 'wag-sv' | 'masters';
+export type CalcKind = 'mag' | 'wag-open' | 'wag-vault' | 'wag-sv' | 'tnt' | 'masters';
 
 export interface CalcConfig {
   kind: CalcKind;
@@ -24,6 +24,9 @@ export interface CalcMessage {
 }
 
 const BASE = import.meta.env.BASE_URL; // e.g. "/ucg-platform/"
+
+/** Route to a score's detail page (score ids contain `|`, so encode). */
+export const scoreDetailPath = (scoreId: string) => `/scores/${encodeURIComponent(scoreId)}`;
 
 /** Returns the calculator config for a given level + event, or null if none exists yet.
  *  Vault is scored differently from other apparatus, so the event matters. */
@@ -53,8 +56,15 @@ export function calcForLevel(levelId: string, eventCode?: string): CalcConfig | 
       return { kind: 'wag-sv', path: `${BASE}calculators/wag-sv.html`, level: 'Diamond', produces: 'd', label: 'USAG Xcel Diamond — Start Value' };
     case 'wag-l9':
       return { kind: 'wag-sv', path: `${BASE}calculators/wag-sv.html`, level: 'Level 9', produces: 'd', label: 'USAG Level 9 — Start Value' };
+    // NAIGC T&T — one calculator, level preset; computes D + E + Final per the NAIGC COP.
+    case 'tnt-new':
+      return { kind: 'tnt', path: `${BASE}calculators/tnt.html`, level: 'New Flyers', produces: 'full', label: 'NAIGC T&T — New Flyers' };
+    case 'tnt-int':
+      return { kind: 'tnt', path: `${BASE}calculators/tnt.html`, level: 'Intermediate Flyers', produces: 'full', label: 'NAIGC T&T — Intermediate Flyers' };
+    case 'tnt-high':
+      return { kind: 'tnt', path: `${BASE}calculators/tnt.html`, level: 'High Flyers', produces: 'full', label: 'NAIGC T&T — High Flyers' };
     default:
-      return null; // T&T calculators not built yet
+      return null;
   }
 }
 
@@ -80,10 +90,9 @@ export function scoreFromCalc(cfg: CalcConfig, msg: CalcMessage): Partial<Score>
       eScore: e,
       deductions: e != null ? Math.round((10 - e) * 1000) / 1000 : null,
       final,
-      source: cfg.kind === 'masters' ? 'masters-calc' : 'wag-open-calc', // wag-vault records as wag-open-calc
+      source: cfg.kind === 'masters' ? 'masters-calc' : cfg.kind === 'tnt' ? 'tnt-calc' : 'wag-open-calc',
     };
   }
-  // MAG: the calculator's start value already bakes in the 10.0 execution base.
-  // Judge still applies execution deductions; final = sv - deductions.
-  return { sv: msg.d ?? null, source: 'mag-calc' };
+  // SV-only calculators (MAG, Xcel/L9): judge applies deductions; final = sv - deductions.
+  return { sv: msg.d ?? null, source: cfg.kind === 'wag-sv' ? 'wag-sv-calc' : 'mag-calc' };
 }

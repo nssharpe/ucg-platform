@@ -168,7 +168,14 @@ export interface Score {
   deductions: number | null; // total E deductions (for capped levels: final = sv - deductions)
   eScore?: number | null; // E-score out of 10 (open scoring: final = sv + eScore)
   final: number | null;
-  source?: 'manual' | 'mag-calc' | 'wag-open-calc' | 'masters-calc';
+  source?: 'manual' | 'mag-calc' | 'wag-open-calc' | 'masters-calc' | 'wag-sv-calc' | 'tnt-calc';
+  /** Which embedded calculator produced this score (CalcKind), if any. */
+  calc?: string;
+  /** Serialized calculator inputs exactly as filled when the score was posted —
+   *  lets athletes/admins reopen the calculator as it was, and admins adjust it. */
+  calcState?: unknown;
+  adjustNote?: string;
+  adjustedAt?: string;
   enteredBy: string;
   enteredAt: string;
   flashed: boolean;

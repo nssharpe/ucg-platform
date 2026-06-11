@@ -10,6 +10,7 @@ import { Profile } from './pages/Profile';
 import { ClubPage, ClubCart } from './pages/Club';
 import { Meets, MeetDetail, MeetManage } from './pages/Meets';
 import { Judge } from './pages/Judge';
+import { ScoreDetail } from './pages/ScoreDetail';
 import { ResultsIndex, MeetResults } from './pages/Results';
 import { AdminMembers, AdminClubs, AdminLeague, Communicate } from './pages/Admin';
 
@@ -30,6 +31,7 @@ export default function App() {
             <Route path="/meets/:slug" element={<MeetDetail />} />
             <Route path="/meets/:slug/manage" element={<MeetManage />} />
             <Route path="/judge" element={<Judge />} />
+            <Route path="/scores/:scoreId" element={<ScoreDetail />} />
             <Route path="/results" element={<ResultsIndex />} />
             <Route path="/results/:slug" element={<MeetResults />} />
             <Route path="/admin/members" element={<AdminMembers />} />
