@@ -35,6 +35,17 @@
       d: 'naigc-wagv-d-score', e: 'naigc-wagv-e-score', final: 'naigc-wagv-final-score',
     },
     {
+      // Xcel & Level 9 start-value builder — produces a start value only.
+      calc: 'wag-sv',
+      test: function () { return document.getElementById('naigc-wsv-sv'); },
+      d: 'naigc-wsv-sv', e: null, final: null,
+      preset: function () {
+        setSelect('naigc-wsv-level', params.get('level'));
+        var map = { UB: 'bars', BB: 'beam', FX: 'floor', VT: 'vault' };
+        setSelect('naigc-wsv-event', map[params.get('apparatus')]);
+      },
+    },
+    {
       calc: 'masters',
       test: function () { return document.getElementById('nm-final-score'); },
       // Read whichever block (non-vault or vault) is visible.

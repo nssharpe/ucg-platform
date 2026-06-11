@@ -1,13 +1,14 @@
 // Maps UCG levels to the embedded NAIGC scoring calculators and bridges their output.
 import type { Score } from './types';
 
-export type CalcKind = 'mag' | 'wag-open' | 'wag-vault' | 'masters';
+export type CalcKind = 'mag' | 'wag-open' | 'wag-vault' | 'wag-sv' | 'masters';
 
 export interface CalcConfig {
   kind: CalcKind;
   /** Path to the calculator HTML, relative to the app base. */
   path: string;
   ruleset?: string; // MAG ruleset preset
+  level?: string;   // Xcel/Level 9 level preset (e.g. 'Silver', 'Level 9')
   /** Which scores the calculator produces. */
   produces: 'd' | 'full'; // 'd' = start value only; 'full' = D + E + final
   label: string;
@@ -43,8 +44,17 @@ export function calcForLevel(levelId: string, eventCode?: string): CalcConfig | 
       return isVault
         ? { kind: 'wag-vault', path: `${BASE}calculators/wag-vault.html`, produces: 'full', label: 'NAIGC WAG Open Vault Calculator' }
         : { kind: 'wag-open', path: `${BASE}calculators/wag-open.html`, produces: 'full', label: 'NAIGC WAG Open Scoring Calculator' };
+    // USAG Xcel & Development Program (Level 9) — start-value builders (judge adds deductions).
+    case 'wag-silver':
+      return { kind: 'wag-sv', path: `${BASE}calculators/wag-sv.html`, level: 'Silver', produces: 'd', label: 'USAG Xcel Silver — Start Value' };
+    case 'wag-plat':
+      return { kind: 'wag-sv', path: `${BASE}calculators/wag-sv.html`, level: 'Platinum', produces: 'd', label: 'USAG Xcel Platinum — Start Value' };
+    case 'wag-diamond':
+      return { kind: 'wag-sv', path: `${BASE}calculators/wag-sv.html`, level: 'Diamond', produces: 'd', label: 'USAG Xcel Diamond — Start Value' };
+    case 'wag-l9':
+      return { kind: 'wag-sv', path: `${BASE}calculators/wag-sv.html`, level: 'Level 9', produces: 'd', label: 'USAG Level 9 — Start Value' };
     default:
-      return null; // other WAG levels & T&T: calculators not built yet
+      return null; // T&T calculators not built yet
   }
 }
 
@@ -53,6 +63,7 @@ export function calcUrl(cfg: CalcConfig, eventCode: string): string {
   const p = new URLSearchParams();
   p.set('apparatus', eventCode);
   if (cfg.ruleset) p.set('ruleset', cfg.ruleset);
+  if (cfg.level) p.set('level', cfg.level);
   return `${cfg.path}?${p.toString()}`;
 }
 

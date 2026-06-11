@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WAG Start Value Calculator — Xcel & Level 9</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <style>
+    #naigc-wsv-app { font-family: 'Helvetica Neue', Arial, sans-serif; color: #1d2a38; max-width: 760px; margin: 0 auto; padding: 18px; }
+    #naigc-wsv-app h1 { font-weight: 800; letter-spacing: -0.01em; font-size: 1.7rem; text-align: center; }
+    #naigc-wsv-app .subtitle { text-align: center; color: #5a6a78; margin-bottom: 16px; font-style: italic; }
+    #naigc-wsv-app .card { border: 1px solid #c8d8db; border-radius: 10px; margin-bottom: 14px; }
+    #naigc-wsv-app .card-title { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.12em; color: #5a6a78; font-weight: 700; }
+    #naigc-wsv-app .req-note { font-size: 0.85rem; color: #5a6a78; }
+    #naigc-wsv-app .vp-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    #naigc-wsv-app .vp-row label { width: 230px; font-size: 0.95rem; }
+    #naigc-wsv-app .stepper { display: inline-flex; align-items: center; gap: 6px; }
+    #naigc-wsv-app .stepper button { width: 34px; height: 34px; font-weight: 700; }
+    #naigc-wsv-app .stepper .val { min-width: 34px; text-align: center; font-weight: 700; font-size: 1.05rem; }
+    #naigc-wsv-app .sr-item { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 7px; font-size: 0.92rem; }
+    #naigc-wsv-app .sr-item input { margin-top: 3px; width: 18px; height: 18px; }
+    #naigc-wsv-app .score-card { background: #1d2a38; color: #fff; border: none; }
+    #naigc-wsv-app .sv-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.12em; color: #c3dade; }
+    #naigc-wsv-app .sv-value { font-size: 2.6rem; font-weight: 800; font-variant-numeric: tabular-nums; color: #f46949; line-height: 1; }
+    #naigc-wsv-app .breakdown { font-size: 0.82rem; color: #c3dade; margin-top: 6px; }
+    #naigc-wsv-app .form-select, #naigc-wsv-app .form-control { border-color: #c8d8db; }
+    #naigc-wsv-app .footnote { font-size: 0.76rem; color: #8a99a4; text-align: center; margin-top: 6px; }
+    #naigc-wsv-app .pill { background:#eef5f6; border-radius: 99px; padding: 2px 10px; font-size:0.8rem; font-weight:700; }
+  </style>
+</head>
+<body>
+  <div id="naigc-wsv-app">
+    <h1>WAG Start Value</h1>
+    <div class="subtitle">USAG Xcel &amp; Development Program (Level 9) — builds the start value; the judge then applies execution deductions.</div>
+
+    <div class="card"><div class="card-body">
+      <div class="row g-2 align-items-end">
+        <div class="col">
+          <label class="card-title d-block mb-1">Level</label>
+          <select id="naigc-wsv-level" class="form-select"></select>
+        </div>
+        <div class="col">
+          <label class="card-title d-block mb-1">Event</label>
+          <select id="naigc-wsv-event" class="form-select">
+            <option value="bars">Uneven Bars</option>
+            <option value="beam">Balance Beam</option>
+            <option value="floor">Floor Exercise</option>
+            <option value="vault">Vault</option>
+          </select>
+        </div>
+        <div class="col-auto">
+          <button type="button" id="naigc-wsv-reset" class="btn btn-danger">Reset</button>
+        </div>
+      </div>
+    </div></div>
+
+    <!-- Non-vault: VP + SR + penalties -->
+    <div id="naigc-wsv-routine">
+      <div class="card"><div class="card-body">
+        <h2 class="card-title mb-1">Value Parts (difficulty)</h2>
+        <div class="req-note mb-2" id="naigc-wsv-vp-req"></div>
+        <div id="naigc-wsv-vp-rows"></div>
+      </div></div>
+
+      <div class="card"><div class="card-body">
+        <h2 class="card-title mb-2">Special Requirements <span class="pill">0.50 each</span></h2>
+        <div id="naigc-wsv-sr-list"></div>
+      </div></div>
+
+      <div class="card"><div class="card-body">
+        <h2 class="card-title mb-2">Penalties &amp; Bonus</h2>
+        <div class="sr-item"><input type="checkbox" id="naigc-wsv-nodismount" /><label for="naigc-wsv-nodismount">No dismount performed (&minus;0.30)</label></div>
+        <div class="vp-row"><label>Restricted elements performed (&minus;0.50 each)</label>
+          <div class="stepper" data-step="restricted"><button type="button" data-d="-1">&minus;</button><span class="val" id="naigc-wsv-restricted">0</span><button type="button" data-d="1">+</button></div>
+        </div>
+        <div class="vp-row" id="naigc-wsv-bonus-row" style="display:none;"><label>Bonus earned (CV / D-E, max <span id="naigc-wsv-bonus-max">0.30</span>)</label>
+          <select id="naigc-wsv-bonus" class="form-select" style="width:auto;">
+            <option value="0">0.00</option><option value="0.1">0.10</option><option value="0.2">0.20</option><option value="0.3">0.30</option>
+          </select>
+        </div>
+      </div></div>
+    </div>
+
+    <!-- Vault -->
+    <div id="naigc-wsv-vault" style="display:none;">
+      <div class="card"><div class="card-body">
+        <h2 class="card-title mb-2">Select Vault</h2>
+        <select id="naigc-wsv-vault-select" class="form-select"></select>
+        <div class="req-note mt-2">The vault's table value is the start value; deductions are applied directly.</div>
+      </div></div>
+    </div>
+
+    <div class="card score-card"><div class="card-body text-center">
+      <div class="sv-label">Start Value</div>
+      <div id="naigc-wsv-sv" class="sv-value">10.0</div>
+      <div class="breakdown" id="naigc-wsv-breakdown"></div>
+    </div></div>
+
+    <div class="footnote" id="naigc-wsv-foot"></div>
+  </div>
+
+  <script>
+  (function () {
+    var VP_VALUE = { A: 0.10, B: 0.30, C: 0.50 };
+
+    // base SV + required value parts per level. (Xcel starts at 10.0; Level 9 at 9.70 + bonus.)
+    var LEVELS = {
+      'Bronze':   { program: 'Xcel', base: 10.0, req: { A: 4, B: 0, C: 0 }, bonus: false },
+      'Silver':   { program: 'Xcel', base: 10.0, req: { A: 5, B: 0, C: 0 }, bonus: false },
+      'Gold':     { program: 'Xcel', base: 10.0, req: { A: 6, B: 0, C: 0 }, bonus: false },
+      'Platinum': { program: 'Xcel', base: 10.0, req: { A: 6, B: 1, C: 0 }, bonus: false },
+      'Diamond':  { program: 'Xcel', base: 10.0, req: { A: 5, B: 2, C: 0 }, bonus: false },
+      'Level 9':  { program: 'DP',   base: 9.70, req: { A: 3, B: 4, C: 1 }, bonus: true, bonusMax: 0.30 }
+    };
+
+    // 4 Special Requirements per event, per level. (Concise judge-facing labels.)
+    var SR = {
+      'Bronze': {
+        bars:  ['Mount (low bar)', 'Cast — hips leave bar (not mount/dismount)', '360° circling skill (not mount/dismount)', 'Dismount (low bar, no saltos)'],
+        beam:  ['Min ½ turn (1 or 2 feet)', 'One jump or leap (no split required)', 'One non-flight acro element', 'Dismount (no saltos/aerials)'],
+        floor: ['Min 2 directly-connected acro elements', '2nd acro pass — min 1 acro element', 'Dance: 2 diff. Group 1, leap min 60° split', 'Min ½ turn on one foot']
+      },
+      'Silver': {
+        bars:  ['Mount', 'Cast to ≥45° below horizontal (not mount/dismount)', '360° circling skill (not mount/dismount)', 'Dismount (low/high bar, no saltos)'],
+        beam:  ['Min ½ turn on one foot', 'Jump/leap, min 90° cross/side split', 'One non-flight acro element', 'Dismount'],
+        floor: ['Min 2 directly-connected acro, ≥1 with flight', '2nd acro pass (connection or flight element)', 'Dance: 2 diff. Group 1, leap min 90° split', 'Min 1/1 turn on one foot']
+      },
+      'Gold': {
+        bars:  ['Skill finishing in clear support ≥ horizontal', '360° circling skill (not mount/dismount)', '2nd 360° circling skill', 'Dismount from high bar'],
+        beam:  ['Min 1/1 turn on one foot', 'Two diff. Group 2, one min 120° split', 'Two acro elements, one through inverted vertical', 'Dismount'],
+        floor: ['Min 2 directly-connected acro flight elements', '2nd acro pass (flight, or aerial/salto)', 'Dance: 2 diff. Group 1, leap min 120° split', 'Min 1/1 turn on one foot']
+      },
+      'Platinum': {
+        bars:  ['Skill finishing in clear support above horizontal', '360° circling skill (not mount/dismount)', 'Kip', 'Dismount from high bar (min "A")'],
+        beam:  ['Min 1/1 turn on one foot', 'Dance series + jump/leap min 120° split', 'Acro flight element or series (one through vertical)', 'Dismount'],
+        floor: ['Min 2 connected acro flight w/ "A" or "B" salto', '2nd acro pass (or one "B" salto)', 'Dance: 2 diff. Group 1, leap min 150° split', 'Min 1/1 turn on one foot']
+      },
+      'Diamond': {
+        bars:  ['Clear support ≥45° from vertical (not mount/dismount)', 'Min "B" 360° circling skill', 'Additional min "B": release, turn, or 2nd circling', 'Salto/hecht dismount min "A" (or any min "B") from HB'],
+        beam:  ['Min 1/1 turn on one foot', 'Dance series + jump/leap min 150° split', 'Acro series + one acro flight element', 'Dismount — salto or aerial'],
+        floor: ['Two acro flight passes (each 2 connected flight)', 'Two different saltos, one min "B"', 'Dance: 2 diff. Group 1, leap min 150° split', 'Min "B" turn on one foot']
+      },
+      'Level 9': {
+        bars:  ['Min two bar changes', 'Flight element min "B" (excl. dismount)', '2nd diff. flight min "C", or LA turn ≥180° min "B"', 'Salto dismount min "B"'],
+        beam:  ['Acro series: 2 connected flight, or one min "C" flight, or non-flight "A" + flight "E"', 'Leap/jump req. 180° cross/side split', 'Min 360° turn on one foot', 'Aerial/salto dismount min "B"'],
+        floor: ['Acro pass with min 2 saltos (connected w/ flight)', 'Three different saltos (not aerials)', 'Dance passage: 2 diff. Group 1 + leap 180° split', 'Last isolated salto min "B"']
+      }
+    };
+
+    // Vault tables. value = start value at that level. Xcel Silver/Gold are fixed 10.0 sets.
+    var L9_VAULTS = [
+      ['Handspring', 8.5], ['Handspring ½ off', 8.6], ['Yamashita', 8.5], ['Yamashita ½ off', 8.6],
+      ['Handspring 1/1', 9.0], ['Handspring 1½', 9.4], ['Yamashita 1/1', 9.0], ['Handspring 2/1', 9.7],
+      ['Handspring → front tuck', 10.0], ['Handspring → front pike', 10.0], ['Handspring → front tuck ½', 10.0],
+      ['Tsukahara tuck', 9.6], ['Tsukahara pike', 9.7], ['Tsukahara layout', 10.0], ['Tsukahara tuck 1/1', 10.0],
+      ['RO, FF → 1/1 twist', 9.1], ['RO, FF → 1½ twist (Allen)', 9.6], ['RO, FF → back tuck', 9.6],
+      ['RO, FF → back pike', 9.7], ['RO, FF → back layout', 10.0], ['RO, FF → 2/1 twist', 9.8], ['RO, FF → back tuck 1/1', 10.0],
+      ['RO, FF ½ → handspring', 8.9], ['RO, FF ½ → front tuck', 10.0], ['RO, FF ½ → 1/1 twist', 9.2]
+    ];
+    var XCEL_VAULTS = {
+      'Bronze':   [['Stretch jump onto mat stack + kick to handstand, fall to flat back', 9.0], ['Jump to handstand, fall to flat back', 10.0]],
+      'Silver':   [['Handspring over mat stack', 10.0], ['¼–½ turn on → repulsion off, landing facing stack', 10.0]],
+      'Gold':     [['Any allowed Gold vault (handspring/Yamashita family)', 10.0]],
+      'Platinum': [['Handspring', 9.7], ['Handspring ½ off', 9.9], ['Yamashita', 9.7], ['Yamashita ½ off', 10.0],
+                   ['½ on → ½ off (or ¼ on → ¾ off)', 9.9], ['Handspring 1/1', 10.0], ['Handspring 1½', 10.0],
+                   ['Yamashita 1/1', 10.0], ['½ on → 1/1 off', 10.0], ['1/1 on → handspring/Yamashita', 10.0],
+                   ['1/1 on → ½ off', 10.0], ['RO, FF → repulsion off', 9.7], ['RO, FF → repulsion ½ off', 9.7]],
+      'Diamond':  [['Handspring', 9.4], ['Handspring ½ off', 9.6], ['Yamashita', 9.4], ['Yamashita ½ off', 9.6],
+                   ['Handspring 1/1', 10.0], ['Handspring 1½', 10.0], ['Handspring 2/1', 10.0], ['Yamashita 1/1', 10.0],
+                   ['½ on → 1½ off', 10.0], ['½ on → 1/1 off', 9.9], ['1/1 on → handspring/Yamashita', 10.0], ['1/1 on → ½ off', 10.0],
+                   ['Tsukahara back tuck', 9.4], ['Tsukahara back pike', 9.6], ['Tsukahara back layout', 10.0],
+                   ['RO, FF → repulsion off', 10.0], ['RO, FF → 1/1 twist', 10.0], ['RO, FF → back tuck', 9.8],
+                   ['RO, FF → back pike', 10.0], ['RO, FF → back layout', 10.0],
+                   ['RO, FF ½ → handspring', 9.6], ['RO, FF ½ → ½ off', 10.0], ['RO, FF ½ → 1/1 off', 10.0]]
+    };
+
+    var $ = function (id) { return document.getElementById(id); };
+    var levelSel = $('naigc-wsv-level'), eventSel = $('naigc-wsv-event');
+    Object.keys(LEVELS).forEach(function (k) {
+      var o = document.createElement('option'); o.value = k; o.textContent = k + ' (' + LEVELS[k].program + ')'; levelSel.appendChild(o);
+    });
+    levelSel.value = 'Silver';
+
+    var performed = { A: 0, B: 0, C: 0 }; // C bucket also holds C/D credit
+    var restricted = 0;
+
+    function curLevel() { return LEVELS[levelSel.value]; }
+
+    function renderVP() {
+      var lvl = curLevel();
+      var req = lvl.req;
+      var parts = ['A', 'B'];
+      // Show a C/D row when the level requires C (Level 9) or allows C+ (Diamond/Platinum).
+      var showC = req.C > 0 || levelSel.value === 'Diamond' || levelSel.value === 'Platinum';
+      if (showC) parts.push('C');
+      $('naigc-wsv-vp-req').innerHTML = 'Required: ' +
+        Object.keys(req).filter(function (k) { return req[k] > 0; })
+          .map(function (k) { return req[k] + '×"' + k + '"'; }).join(' + ') +
+        '. Higher value parts fill lower slots. Missing: A &minus;0.10, B &minus;0.30, C &minus;0.50.';
+      var html = '';
+      parts.forEach(function (p) {
+        var label = p === 'C'
+          ? 'C performed' + (lvl.program === 'DP' ? ' (incl. allowable D/E → "C")' : ' / D')
+          : p + ' performed';
+        html += '<div class="vp-row"><label>' + label + '</label>' +
+          '<div class="stepper" data-step="' + p + '"><button type="button" data-d="-1">&minus;</button>' +
+          '<span class="val" id="naigc-wsv-vp-' + p + '">' + performed[p] + '</span>' +
+          '<button type="button" data-d="1">+</button></div></div>';
+      });
+      $('naigc-wsv-vp-rows').innerHTML = html;
+    }
+
+    function renderSR() {
+      var key = levelSel.value, ev = eventSel.value;
+      var list = (SR[key] && SR[key][ev]) || ['SR 1', 'SR 2', 'SR 3', 'SR 4'];
+      var html = '';
+      list.forEach(function (txt, i) {
+        html += '<div class="sr-item"><input type="checkbox" class="naigc-wsv-sr" id="naigc-wsv-sr-' + i + '" checked />' +
+          '<label for="naigc-wsv-sr-' + i + '">' + txt + '</label></div>';
+      });
+      $('naigc-wsv-sr-list').innerHTML = html;
+      $('naigc-wsv-sr-list').querySelectorAll('input').forEach(function (cb) { cb.addEventListener('change', calc); });
+    }
+
+    function renderVault() {
+      var sel = $('naigc-wsv-vault-select');
+      sel.innerHTML = '';
+      var list = curLevel().program === 'DP' ? L9_VAULTS : (XCEL_VAULTS[levelSel.value] || [['(no vault table for this level)', 10.0]]);
+      list.forEach(function (v) {
+        var o = document.createElement('option'); o.value = String(v[1]); o.dataset.sv = String(v[1]);
+        o.textContent = v[0] + '  (' + v[1].toFixed(1) + ')'; sel.appendChild(o);
+      });
+      sel.value = sel.options[0] ? sel.options[0].value : '10';
+    }
+
+    function missingVP() {
+      var req = curLevel().req;
+      var avail = performed.C, miss = 0, need, use;
+      need = req.C; use = Math.min(need, avail); need -= use; avail -= use; miss += need * VP_VALUE.C;
+      avail += performed.B; need = req.B; use = Math.min(need, avail); need -= use; avail -= use; miss += need * VP_VALUE.B;
+      avail += performed.A; need = req.A; use = Math.min(need, avail); need -= use; avail -= use; miss += need * VP_VALUE.A;
+      return Math.round(miss * 100) / 100;
+    }
+
+    function calc() {
+      var lvl = curLevel();
+      var sv, breakdown;
+      if (eventSel.value === 'vault') {
+        var opt = $('naigc-wsv-vault-select').selectedOptions[0];
+        sv = opt ? parseFloat(opt.dataset.sv) : 0;
+        breakdown = 'Vault table value';
+      } else {
+        var mvp = missingVP();
+        var srMissing = 0;
+        document.querySelectorAll('.naigc-wsv-sr').forEach(function (cb) { if (!cb.checked) srMissing += 0.5; });
+        var noDis = $('naigc-wsv-nodismount').checked ? 0.3 : 0;
+        var restr = restricted * 0.5;
+        var bonus = 0;
+        if (lvl.bonus) bonus = parseFloat($('naigc-wsv-bonus').value) || 0;
+        sv = lvl.base + bonus - mvp - srMissing - noDis - restr;
+        sv = Math.min(10.0, Math.max(0, sv));
+        breakdown = 'base ' + lvl.base.toFixed(2) +
+          (bonus ? ' + bonus ' + bonus.toFixed(2) : '') +
+          (mvp ? ' − VP ' + mvp.toFixed(2) : '') +
+          (srMissing ? ' − SR ' + srMissing.toFixed(2) : '') +
+          (noDis ? ' − no dismount 0.30' : '') +
+          (restr ? ' − restricted ' + restr.toFixed(2) : '');
+      }
+      sv = Math.round(sv * 100) / 100;
+      $('naigc-wsv-sv').textContent = sv.toFixed(1);
+      $('naigc-wsv-breakdown').textContent = breakdown;
+    }
+
+    function syncMode() {
+      var vault = eventSel.value === 'vault';
+      $('naigc-wsv-routine').style.display = vault ? 'none' : '';
+      $('naigc-wsv-vault').style.display = vault ? '' : 'none';
+      $('naigc-wsv-bonus-row').style.display = (!vault && curLevel().bonus) ? '' : 'none';
+      if (curLevel().bonus) $('naigc-wsv-bonus-max').textContent = curLevel().bonusMax.toFixed(2);
+      $('naigc-wsv-foot').textContent = curLevel().program === 'DP'
+        ? 'Level 9 builds from a 9.70 base + bonus (max +0.30), capped at 10.0. CV/D-E bonus is entered by the judge from the routine.'
+        : 'Xcel builds from 10.0 with no bonus system. Final = start value − execution deductions.';
+      if (vault) renderVault(); else { renderVP(); renderSR(); }
+      calc();
+    }
+
+    // Stepper + control wiring (event-delegated)
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest('.stepper button'); if (!btn) return;
+      var step = btn.closest('.stepper').dataset.step;
+      var d = parseInt(btn.dataset.d, 10);
+      if (step === 'restricted') { restricted = Math.max(0, restricted + d); $('naigc-wsv-restricted').textContent = restricted; }
+      else { performed[step] = Math.max(0, performed[step] + d); var el = $('naigc-wsv-vp-' + step); if (el) el.textContent = performed[step]; }
+      calc();
+    });
+    levelSel.addEventListener('change', function () { syncMode(); });
+    eventSel.addEventListener('change', syncMode);
+    $('naigc-wsv-nodismount').addEventListener('change', calc);
+    $('naigc-wsv-bonus').addEventListener('change', calc);
+    $('naigc-wsv-vault-select').addEventListener('change', calc);
+    $('naigc-wsv-reset').addEventListener('click', function () {
+      performed = { A: 0, B: 0, C: 0 }; restricted = 0;
+      $('naigc-wsv-restricted').textContent = '0'; $('naigc-wsv-nodismount').checked = false; $('naigc-wsv-bonus').value = '0';
+      syncMode();
+    });
+
+    syncMode();
+  })();
+  </script>
+  <!-- UCG embed bridge -->
+  <script src="bridge.js"></script>
+</body>
+</html>
