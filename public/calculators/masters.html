@@ -1,0 +1,974 @@
+<div id="naigc-masters-app">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <style>
+        #naigc-masters-app {
+            font-family: 'Inter', sans-serif;
+            padding: 20px 0;
+            background-color: transparent;
+            width: 100%;
+        }
+        #naigc-masters-app .card {
+            border: 1px solid #dee2e6;
+            box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+            margin-bottom: 1.5rem;
+        }
+        #naigc-masters-app h2 {
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            margin-top: 0;
+            font-size: 1.75rem;
+        }
+        #naigc-masters-app h5 {
+            font-weight: normal;
+            font-size: 1rem;
+            color: #6c757d;
+            margin: 0;
+            padding-bottom: 10px;
+        }
+
+        /* Discipline Tabs */
+        #naigc-masters-app .nav-pills .nav-link {
+            font-weight: 700;
+            font-size: 1.1rem;
+            color: #495057;
+            border: 2px solid #dee2e6;
+            border-radius: 0.375rem;
+            padding: 0.5rem 1.5rem;
+            cursor: pointer;
+        }
+        #naigc-masters-app .nav-pills .nav-link.active {
+            background-color: #0d6efd;
+            color: #fff;
+            border-color: #0d6efd;
+        }
+        #naigc-masters-app .nav-pills .nav-link:not(.active):hover {
+            background-color: #e9ecef;
+        }
+
+        #nm-header {
+            background-color: #fff;
+            padding: 1.5rem;
+            border-radius: 0.375rem;
+            margin-bottom: 1.5rem;
+        }
+
+        /* Input Stepper Buttons */
+        #naigc-masters-app .input-group {
+            max-width: 250px;
+            margin: 0 auto;
+            flex-wrap: nowrap;
+        }
+        #naigc-masters-app .form-control.skill-count {
+            border-left: 0;
+            border-right: 0;
+            text-align: center;
+        }
+        #naigc-masters-app .btn-stepper {
+            border-color: #ced4da;
+            background-color: #fff;
+            z-index: 0;
+        }
+        #naigc-masters-app .btn-stepper:hover {
+            background-color: #e9ecef;
+        }
+        #naigc-masters-app .skill-count::-webkit-outer-spin-button,
+        #naigc-masters-app .skill-count::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        #naigc-masters-app .skill-count {
+            -moz-appearance: textfield;
+        }
+
+        /* Disabled skill row */
+        #naigc-masters-app .skill-row-disabled {
+            opacity: 0.35;
+        }
+        #naigc-masters-app .skill-row-disabled .btn-stepper,
+        #naigc-masters-app .skill-row-disabled .skill-count {
+            pointer-events: none;
+        }
+
+        /* Score Breakdown */
+        #naigc-masters-app .summary-score-label {
+            font-size: 1.25rem;
+            font-weight: 700;
+            display: block;
+        }
+        #naigc-masters-app .score-value {
+            font-size: 2rem;
+            font-weight: 700;
+            padding: 5px 10px;
+            border-radius: 0.375rem;
+            display: inline-block;
+        }
+        .nm-d-score, .nm-e-score {
+            border: 2px solid #adb5bd;
+            background-color: #e9ecef;
+            color: #495057;
+        }
+        #naigc-masters-app .score-component-breakdown {
+            font-size: 0.9rem;
+            margin-top: 0.25rem;
+            color: #6c757d;
+        }
+        .nm-final-score {
+            font-size: 2.5rem !important;
+            color: #0d6efd;
+            border: 2px solid #0d6efd !important;
+            background-color: #e7f1ff !important;
+        }
+
+        /* Vault info */
+        #naigc-masters-app .vault-info {
+            font-size: 1.1rem;
+            margin-top: 0.5rem;
+        }
+
+        /* Footer */
+        #nm-footer {
+            padding: 2rem 0;
+            font-size: 14px;
+            color: #6c757d;
+            text-align: center;
+        }
+        #nm-footer img {
+            max-width: 100px;
+            height: auto;
+        }
+
+        /* Dismount section */
+        #nm-dismount-section {
+            border-top: 1px solid #dee2e6;
+            padding-top: 1rem;
+            margin-top: 1rem;
+        }
+    </style>
+
+    <div class="row justify-content-center">
+        <div class="col-lg-10 col-md-12">
+
+            <!-- HEADER -->
+            <section id="nm-header" class="card">
+                <div class="text-center mb-2">
+                    <ul class="nav nav-pills justify-content-center" id="nm-discipline-tabs" role="tablist">
+                        <li class="nav-item">
+                            <a class="nav-link active" data-discipline="WAG" href="#" role="tab">WAG</a>
+                        </li>
+                        <li class="nav-item ms-2">
+                            <a class="nav-link" data-discipline="MAG" href="#" role="tab">MAG</a>
+                        </li>
+                    </ul>
+                </div>
+                <div class="text-center mb-3">
+                    <a href="https://naigc.org/wp-content/uploads/NAIGC-Masters-Rules-Policy.pdf" target="_blank" rel="noopener" class="btn btn-outline-secondary btn-sm me-2 mb-2">NAIGC Masters Rules Policy</a>
+                    <a id="nm-cop-link" href="#" target="_blank" rel="noopener" class="btn btn-outline-primary btn-sm me-2 mb-2">Masters Extra Skills</a>
+                    <a id="nm-fig-link" href="#" target="_blank" rel="noopener" class="btn btn-outline-primary btn-sm mb-2">FIG/WG Code of Points</a>
+                </div>
+                <div class="row justify-content-center align-items-center">
+                    <div class="col-12 col-md-auto text-center mb-3 mb-md-0">
+                        <label for="nm-age" class="me-2"><strong>Age Decade:</strong></label>
+                        <select id="nm-age" class="form-select d-inline-block w-auto">
+                            <option value="30">30-39</option>
+                            <option value="40">40-49</option>
+                            <option value="50">50-59</option>
+                            <option value="60">60-69</option>
+                            <option value="70">70+</option>
+                        </select>
+                    </div>
+                    <div class="col-12 col-md-auto text-center mb-3 mb-md-0">
+                        <label for="nm-apparatus" class="me-2"><strong>Apparatus:</strong></label>
+                        <select id="nm-apparatus" class="form-select d-inline-block w-auto"></select>
+                    </div>
+                    <div class="col-12 col-md-auto text-center">
+                        <button type="button" id="nm-reset" class="btn btn-danger btn-lg">Reset</button>
+                    </div>
+                </div>
+            </section>
+
+            <form id="nm-form">
+
+                <!-- ===== NON-VAULT SECTION ===== -->
+                <div id="nm-non-vault">
+
+                    <!-- Skills -->
+                    <div class="card">
+                        <div class="card-body">
+                            <section class="text-center">
+                                <h2 class="card-title">Top 6 Skills</h2>
+                                <h5 class="card-subtitle mb-3"><i>Enter the top 6 counting skills below.</i></h5>
+                                <div id="nm-warning" class="text-danger mb-3" style="visibility: hidden;">&nbsp;</div>
+                                <div id="nm-skills-container"></div>
+                            </section>
+                        </div>
+                    </div>
+
+                    <!-- Element Group Bonus -->
+                    <div class="card">
+                        <div class="card-body text-center">
+                            <section>
+                                <h2 class="card-title">Element Group Bonus</h2>
+                                <h5 id="nm-eg-subtitle" class="card-subtitle mb-3"></h5>
+                                <div id="nm-eg-container" class="d-flex flex-column align-items-center"></div>
+                                <div id="nm-dismount-section" style="display:none;">
+                                    <h5 class="card-subtitle mb-2" style="padding-bottom:0;"><i>EG IV Dismount Bonus = difficulty value of dismount skill.<br>The dismount should also be counted in the Top 6 Skills above.</i></h5>
+                                    <div class="d-flex justify-content-center align-items-center flex-wrap gap-2 mt-2">
+                                        <label for="nm-dismount-level"><strong>Dismount Level:</strong></label>
+                                        <select id="nm-dismount-level" class="form-select d-inline-block w-auto">
+                                            <option value="none">None</option>
+                                            <option value="misc">Misc.</option>
+                                            <option value="me">ME</option>
+                                            <option value="a">A</option>
+                                            <option value="b">B</option>
+                                            <option value="c">C</option>
+                                            <option value="d+">D+</option>
+                                        </select>
+                                        <span class="vault-info">Bonus: <strong>+<span id="nm-dismount-bonus-display">0.00</span></strong></span>
+                                    </div>
+                                </div>
+                            </section>
+                        </div>
+                    </div>
+
+                    <!-- Deductions -->
+                    <div class="card">
+                        <div class="card-body text-center">
+                            <section>
+                                <h2 class="card-title">Deductions</h2>
+                                <h5 class="card-subtitle mb-3"><i>Enter total execution/neutral deductions below (not execution score, just how many points they lost due to deductions).</i><br><strong><i>NOTE: Short routine deduction is applied automatically.</i></strong></h5>
+                                <div class="row justify-content-center">
+                                    <label for="nm-deductions" class="col-auto col-form-label">Total Deductions:</label>
+                                    <div class="col-auto">
+                                        <input type="number" class="form-control" id="nm-deductions" min="0" max="10" step="0.1" value="0.00">
+                                    </div>
+                                </div>
+                            </section>
+                        </div>
+                    </div>
+
+                    <!-- Score Breakdown -->
+                    <div class="card">
+                        <div class="card-body">
+                            <section class="text-center">
+                                <h2>Score Breakdown</h2>
+                                <div class="row text-center justify-content-center align-items-start">
+                                    <div class="col-md-6 mb-3 mb-md-0">
+                                        <label class="summary-score-label">Difficulty (D-Score)</label>
+                                        <div id="nm-d-score" class="score-value nm-d-score">0.00</div>
+                                        <div class="score-component-breakdown">
+                                            (Skills: <span id="nm-d-skills">0.00</span> + EG Bonus: <span id="nm-d-bonus">0.00</span>)
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="summary-score-label">Execution (E-Score)</label>
+                                        <div id="nm-e-score" class="score-value nm-e-score">10.00</div>
+                                        <div class="score-component-breakdown">
+                                            (10.00 - Deductions: <span id="nm-e-exec-ded">0.00</span> - Short Routine: <span id="nm-e-short-ded">0.00</span>)
+                                        </div>
+                                    </div>
+                                </div>
+                                <hr class="my-4">
+                                <div class="row text-center justify-content-center">
+                                    <div class="col-12">
+                                        <label class="summary-score-label">Final Score (D+E)</label>
+                                        <div id="nm-final-score" class="score-value nm-final-score">10.00</div>
+                                    </div>
+                                </div>
+                            </section>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- ===== VAULT SECTION ===== -->
+                <div id="nm-vault" style="display: none;">
+
+                    <!-- Vault Selector -->
+                    <div class="card">
+                        <div class="card-body text-center">
+                            <section>
+                                <h2 class="card-title">Select Vault</h2>
+                                <h5 class="card-subtitle mb-3"><i>Choose the vault performed from the dropdown below.</i></h5>
+                                <div class="row justify-content-center mb-3">
+                                    <div class="col-md-8">
+                                        <select id="nm-vault-select" class="form-select"></select>
+                                    </div>
+                                </div>
+                                <div class="vault-info">
+                                    <span>FIG Base Value: <strong id="nm-vault-base">0.00</strong></span> &nbsp;|&nbsp;
+                                    <span>Age Bonus: <strong id="nm-vault-age-bonus-display">0.00</strong></span> &nbsp;|&nbsp;
+                                    <span>Total Vault DV: <strong id="nm-vault-dv">0.00</strong></span>
+                                </div>
+                            </section>
+                        </div>
+                    </div>
+
+                    <!-- Vault Deductions -->
+                    <div class="card">
+                        <div class="card-body text-center">
+                            <section>
+                                <h2 class="card-title">Deductions</h2>
+                                <h5 class="card-subtitle mb-3"><i>Enter total execution/neutral deductions below.</i></h5>
+                                <div class="row justify-content-center">
+                                    <label for="nm-vault-deductions" class="col-auto col-form-label">Total Deductions:</label>
+                                    <div class="col-auto">
+                                        <input type="number" class="form-control" id="nm-vault-deductions" min="0" max="10" step="0.1" value="0.00">
+                                    </div>
+                                </div>
+                            </section>
+                        </div>
+                    </div>
+
+                    <!-- Vault Score Breakdown -->
+                    <div class="card">
+                        <div class="card-body">
+                            <section class="text-center">
+                                <h2>Score Breakdown</h2>
+                                <div class="row text-center justify-content-center align-items-start">
+                                    <div class="col-md-6 mb-3 mb-md-0">
+                                        <label class="summary-score-label">Difficulty (D-Score)</label>
+                                        <div id="nm-vault-d-score" class="score-value nm-d-score">0.00</div>
+                                        <div class="score-component-breakdown">
+                                            (Base: <span id="nm-vault-d-base">0.00</span> + Age Bonus: <span id="nm-vault-d-age">0.00</span>)
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="summary-score-label">Execution (E-Score)</label>
+                                        <div id="nm-vault-e-score" class="score-value nm-e-score">10.00</div>
+                                        <div class="score-component-breakdown">
+                                            (10.00 - Deductions: <span id="nm-vault-e-deductions">0.00</span>)
+                                        </div>
+                                    </div>
+                                </div>
+                                <hr class="my-4">
+                                <div class="row text-center justify-content-center">
+                                    <div class="col-12">
+                                        <label class="summary-score-label">Final Score (D+E)</label>
+                                        <div id="nm-vault-final-score" class="score-value nm-final-score">10.00</div>
+                                    </div>
+                                </div>
+                            </section>
+                        </div>
+                    </div>
+
+                </div>
+
+            </form>
+
+        </div>
+    </div>
+
+    <footer id="nm-footer">
+        <img src="https://naigc.org/wp-content/uploads/2019/01/NAIGC-Logo-Round-No-Text-1.png" alt="NAIGC Logo" class="mb-2" />
+        <p class="mb-0">This tool was developed by the NAIGC. If you have feedback, please email us at
+            <a href="mailto:rules@naigc.org">rules@naigc.org</a>.
+        </p>
+    </footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+
+        // === CONSTANTS ===
+        const MAX_SKILLS = 6;
+        const MIN_SKILLS = 6;
+        const SHORT_ROUTINE_DEDUCTION_PER_SKILL = 1.0;
+        const EG_BONUS_AMOUNT = 0.5; // per EG for both MAG (I-III) and WAG (I-IV)
+
+        // Skill difficulty values by age decade (identical for MAG and WAG)
+        const SKILL_VALUES = {
+            '30': { misc: null, me: 0.0, a: 0.2, b: 0.4, c: 0.6, 'd+': 0.8 },
+            '40': { misc: null, me: 0.1, a: 0.3, b: 0.5, c: 0.7, 'd+': 0.9 },
+            '50': { misc: 0.1, me: 0.2, a: 0.4, b: 0.6, c: 0.8, 'd+': 1.0 },
+            '60': { misc: 0.2, me: 0.3, a: 0.5, b: 0.7, c: 0.9, 'd+': 1.1 },
+            '70': { misc: 0.3, me: 0.4, a: 0.6, b: 0.8, c: 1.0, 'd+': 1.2 }
+        };
+
+        // Display order: highest difficulty first
+        const SKILL_LEVELS = ['d+', 'c', 'b', 'a', 'me', 'misc'];
+        const SKILL_LABELS = { 'd+': 'D+', 'c': 'C', 'b': 'B', 'a': 'A', 'me': 'ME', 'misc': 'Misc.' };
+
+        // Apparatus per discipline
+        const APPARATUS = {
+            MAG: ['floor', 'pommel', 'rings', 'vault', 'pbars', 'hbar'],
+            WAG: ['vault', 'bars', 'beam', 'floor']
+        };
+        const APPARATUS_NAMES = {
+            floor: 'Floor Exercise', pommel: 'Pommel Horse', rings: 'Rings',
+            vault: 'Vault', pbars: 'Parallel Bars', hbar: 'High Bar',
+            bars: 'Uneven Bars', beam: 'Balance Beam'
+        };
+
+        // Element Group labels
+        const EG_LABELS = {
+            MAG: {
+                floor:  ['I: Non-Acrobatic', 'II: Acro Forward', 'III: Acro Backward', 'IV: Single Saltos with \u22651 twist'],
+                pommel: ['I: Scissors', 'II: Circles/Russians', 'III: Travels'],
+                rings:  ['I: Kips & Swings', 'II: Strength', 'III: Swing to Strength'],
+                pbars:  ['I: Upper Arm', 'II: Support', 'III: Long Hang & Underswing'],
+                hbar:   ['I: Long Hang Swings', 'II: Flight Elements', 'III: In-Bar/Adler']
+            },
+            WAG: {
+                bars:  ['I: Mounts', 'II: Casts, Clear Hips, Stalders, Pike Circles', 'III: Giant Circles', 'IV: Dismounts'],
+                beam:  ['I: Leaps, Jumps, and Hops', 'II: Turns', 'III: Holds, Acro Non-Flight, Acro Flight', 'IV: Mounts and Dismounts'],
+                floor: ['I: Leaps, Jumps, and Hops', 'II: Turns', 'III: Hand Support Elements', 'IV: Saltos Fwd, Sideward, and Bwd']
+            }
+        };
+
+        // Vault age bonuses
+        const VAULT_AGE_BONUS = {
+            MAG: { '30': 0.8, '40': 1.6, '50': 2.4, '60': 2.8, '70': 3.2 },
+            WAG: { '30': 1.8, '40': 2.6, '50': 3.4, '60': 4.2, '70': 5.0 }
+        };
+
+        // Vault data (from Masters Vault Values.xlsx)
+        const VAULT_DATA = {
+            MAG: [
+                { name: 'Squat onto table - straight jump down', fig: 0.0 },
+                { name: 'Roll onto and over the table', fig: 0.0 },
+                { name: 'Straddle hecht over table', fig: 0.4 },
+                { name: 'Tuck hecht over table', fig: 0.4 },
+                { name: 'Pike hecht over table', fig: 0.8 },
+                { name: 'Straight hecht over table', fig: 1.2 },
+                null,
+                { name: 'Front handspring', fig: 1.2 },
+                { name: 'Front handspring with 1/2 twist', fig: 1.4 },
+                { name: 'Front handspring with 1/1 twist', fig: 1.6 },
+                { name: 'Front handspring with 3/2 twist', fig: 1.8 },
+                { name: 'Front handspring and salto fwd. tucked', fig: 2.0 },
+                { name: 'Front handspring and salto fwd. tucked with 1/2 twist', fig: 2.4 },
+                { name: 'Front handspring and salto fwd. piked', fig: 2.4 },
+                { name: 'Front handspring and salto fwd. piked with 1/2 twist', fig: 2.8 },
+                { name: 'Front handspring and salto fwd. stretched', fig: 3.2 },
+                { name: 'Front handspring and salto fwd. stretched with 1/2 twist', fig: 3.6 },
+                null,
+                { name: 'Front handspring sw with 1/4 twist', fig: 1.2 },
+                { name: 'Front handspring sw with 3/4 twist', fig: 1.4 },
+                { name: 'Front handspring sw with 5/4 twist', fig: 1.6 },
+                { name: 'Tsukahara or Yurchenko tucked', fig: 1.8 },
+                { name: 'Tsukahara or Yurchenko piked', fig: 2.0 },
+                { name: 'Tsukahara or Yurchenko tucked with 1/2 twist', fig: 2.0 },
+                { name: 'Tsukahara or Yurchenko tucked with 1/1 twist', fig: 2.4 },
+                { name: 'Tsukahara or Yurchenko stretched', fig: 2.8 },
+                { name: 'Tsukahara or Yurchenko stretched with 1/2 twist', fig: 3.2 },
+                { name: 'Tsukahara or Yurchenko stretched with 1/1 twist', fig: 3.6 }
+            ],
+            WAG: [
+                { name: 'Squat onto table - straight jump down', fig: 0.0 },
+                { name: 'Roll onto and over the table', fig: 0.0 },
+                { name: 'Straddle hecht over table', fig: 0.6 },
+                { name: 'Tuck hecht over table', fig: 0.6 },
+                { name: 'Pike hecht over table', fig: 1.1 },
+                { name: 'Straight hecht over table', fig: 1.6 },
+                null,
+                { name: 'Front handspring', fig: 1.6 },
+                { name: 'Front handspring with 1/2 twist', fig: 2.0 },
+                { name: 'Front handspring with 1/1 twist', fig: 2.6 },
+                { name: 'Front handspring with 3/2 twist', fig: 3.2 },
+                { name: 'Front handspring with 1/2 twist 1st phase', fig: 1.6 },
+                { name: 'Front handspring with 1/2 twist 1st & 2nd phase', fig: 2.4 },
+                { name: 'Yamashita', fig: 2.0 },
+                { name: 'Yamashita 1/2 twist', fig: 2.4 },
+                { name: 'Yamashita 1/1 twist', fig: 2.8 },
+                { name: 'Front handspring and salto fwd. tucked', fig: 3.6 },
+                { name: 'Front handspring and salto fwd. tucked with 1/2 twist', fig: 3.8 },
+                { name: 'Front handspring and salto fwd. piked', fig: 3.8 },
+                { name: 'Front handspring and salto fwd. piked with 1/2 twist', fig: 4.0 },
+                null,
+                { name: 'Front handspring sw with 1/4 twist', fig: 1.6 },
+                { name: 'Front handspring sw with 3/4 twist', fig: 2.0 },
+                { name: 'Front handspring sw with 5/4 twist', fig: 2.6 },
+                { name: 'Yurchenko tucked', fig: 3.0 },
+                { name: 'Yurchenko piked', fig: 3.2 },
+                { name: 'Yurchenko tucked with 1/2 twist', fig: 3.2 },
+                { name: 'Yurchenko tucked with 1/1 twist', fig: 3.6 },
+                { name: 'Yurchenko stretched', fig: 3.6 },
+                { name: 'Yurchenko stretched with 1/2 twist', fig: 3.8 },
+                { name: 'Yurchenko stretched with 1/1 twist', fig: 4.2 },
+                { name: 'Tsukahara tucked', fig: 3.2 },
+                { name: 'Tsukahara piked', fig: 3.4 },
+                { name: 'Tsukahara tucked with 1/2 twist', fig: 3.4 },
+                { name: 'Tsukahara tucked with 1/1 twist', fig: 3.8 },
+                { name: 'Tsukahara stretched', fig: 3.8 },
+                { name: 'Tsukahara stretched with 1/2 twist', fig: 4.0 },
+                { name: 'Tsukahara stretched with 1/1 twist', fig: 4.4 }
+            ]
+        };
+
+        // === STATE ===
+        let currentDiscipline = 'WAG';
+        let currentAge = '30';
+        let currentApparatus = 'vault';
+
+        const COP_LINKS = {
+            MAG: 'https://naigc.org/wp-content/uploads/Masters-MAG-Code-of-Points-2026.pdf',
+            WAG: 'https://naigc.org/wp-content/uploads/NAIGC-WAG-Masters-Code-of-Points.pdf'
+        };
+        const FIG_LINKS = {
+            MAG: 'https://www.gymnastics.sport/publicdir/rules/files/en_1.1%20-%20MAG%20Code%20of%20Points%202025-2028.pdf',
+            WAG: 'https://www.gymnastics.sport/publicdir/rules/files/en_1.1.%20WAG%20Code%20of%20Points%202025-2028.pdf'
+        };
+
+        // === DOM REFERENCES ===
+        const ageSelect = document.getElementById('nm-age');
+        const apparatusSelect = document.getElementById('nm-apparatus');
+        const nonVaultSection = document.getElementById('nm-non-vault');
+        const vaultSection = document.getElementById('nm-vault');
+        const skillsContainer = document.getElementById('nm-skills-container');
+        const egContainer = document.getElementById('nm-eg-container');
+        const egSubtitle = document.getElementById('nm-eg-subtitle');
+        const dismountSection = document.getElementById('nm-dismount-section');
+        const dismountLevel = document.getElementById('nm-dismount-level');
+        const dismountBonusDisplay = document.getElementById('nm-dismount-bonus-display');
+        const warningEl = document.getElementById('nm-warning');
+        const deductionsInput = document.getElementById('nm-deductions');
+        const vaultSelect = document.getElementById('nm-vault-select');
+        const vaultDeductionsInput = document.getElementById('nm-vault-deductions');
+        const form = document.getElementById('nm-form');
+        const copLink = document.getElementById('nm-cop-link');
+        const figLink = document.getElementById('nm-fig-link');
+
+        const disp = {
+            dScore: document.getElementById('nm-d-score'),
+            dSkills: document.getElementById('nm-d-skills'),
+            dBonus: document.getElementById('nm-d-bonus'),
+            eScore: document.getElementById('nm-e-score'),
+            eExecDed: document.getElementById('nm-e-exec-ded'),
+            eShortDed: document.getElementById('nm-e-short-ded'),
+            finalScore: document.getElementById('nm-final-score'),
+            vaultBase: document.getElementById('nm-vault-base'),
+            vaultAgeBonusDisp: document.getElementById('nm-vault-age-bonus-display'),
+            vaultDV: document.getElementById('nm-vault-dv'),
+            vaultDScore: document.getElementById('nm-vault-d-score'),
+            vaultDBase: document.getElementById('nm-vault-d-base'),
+            vaultDAge: document.getElementById('nm-vault-d-age'),
+            vaultEScore: document.getElementById('nm-vault-e-score'),
+            vaultEDed: document.getElementById('nm-vault-e-deductions'),
+            vaultFinalScore: document.getElementById('nm-vault-final-score')
+        };
+
+        // === RENDER FUNCTIONS ===
+
+        function renderApparatusOptions() {
+            const list = APPARATUS[currentDiscipline];
+            apparatusSelect.innerHTML = list.map(a =>
+                '<option value="' + a + '">' + APPARATUS_NAMES[a] + '</option>'
+            ).join('');
+            // Default to first non-vault
+            var nonVault = list.find(function(a) { return a !== 'vault'; });
+            if (nonVault) apparatusSelect.value = nonVault;
+            currentApparatus = apparatusSelect.value;
+        }
+
+        function renderSkillCounters() {
+            var values = SKILL_VALUES[currentAge];
+            var html = '';
+            for (var i = 0; i < SKILL_LEVELS.length; i++) {
+                var level = SKILL_LEVELS[i];
+                var val = values[level];
+                var isDisabled = val === null;
+                var label = SKILL_LABELS[level];
+                var valText = isDisabled ? 'N/A' : val.toFixed(2);
+                var rowClass = isDisabled ? ' skill-row-disabled' : '';
+                var disabledAttr = isDisabled ? ' disabled' : '';
+
+                html += '<div class="row mb-3 justify-content-center' + rowClass + '" data-skill-level="' + level + '">'
+                    + '<label for="nm-count-' + level + '" class="col-form-label col-md-6 col-lg-5 text-md-end">'
+                    + '# of counting ' + label + '\'s (' + valText + ' each):</label>'
+                    + '<div class="col-md-6 col-lg-5"><div class="input-group">'
+                    + '<button type="button" class="btn btn-stepper" data-step="-1" data-target="nm-count-' + level + '"' + disabledAttr + '>-</button>'
+                    + '<input type="number" id="nm-count-' + level + '" class="form-control skill-count" min="0" max="6" value="0"' + disabledAttr + '>'
+                    + '<button type="button" class="btn btn-stepper" data-step="1" data-target="nm-count-' + level + '"' + disabledAttr + '>+</button>'
+                    + '</div></div></div>';
+            }
+            skillsContainer.innerHTML = html;
+        }
+
+        function renderEGCheckboxes() {
+            if (currentApparatus === 'vault') return;
+
+            var isMAG = currentDiscipline === 'MAG';
+            var labels;
+
+            if (isMAG) {
+                labels = EG_LABELS.MAG[currentApparatus] || ['EG I', 'EG II', 'EG III'];
+                if (currentApparatus === 'floor') {
+                    egSubtitle.innerHTML = '<i>Check each fulfilled Element Group (+0.50 each).</i>';
+                    dismountSection.style.display = 'none';
+                } else {
+                    egSubtitle.innerHTML = '<i>Check each fulfilled Element Group (+0.50 each for EG I\u2013III).</i>';
+                    dismountSection.style.display = 'block';
+                }
+            } else {
+                labels = EG_LABELS.WAG[currentApparatus] || ['EG I', 'EG II', 'EG III', 'EG IV'];
+                egSubtitle.innerHTML = '<i>Check each fulfilled Condensed Element Group (+0.50 each).</i>';
+                dismountSection.style.display = 'none';
+            }
+
+            var html = '';
+            for (var i = 0; i < labels.length; i++) {
+                html += '<div class="form-check d-inline-flex justify-content-center align-items-center me-3 mb-2">'
+                    + '<input type="checkbox" class="form-check-input eg-bonus" id="nm-eg-' + i + '">'
+                    + '<label class="form-check-label ms-2" for="nm-eg-' + i + '">' + labels[i] + '</label></div>';
+            }
+            egContainer.innerHTML = html;
+        }
+
+        function renderVaultOptions() {
+            var vaults = VAULT_DATA[currentDiscipline];
+            var ageBonus = VAULT_AGE_BONUS[currentDiscipline][currentAge];
+
+            var html = '<option value="-1">-- Select a vault --</option>';
+            html += '<option value="custom">Other / Not Listed (Base: 0.00)</option>';
+
+            for (var i = 0; i < vaults.length; i++) {
+                if (vaults[i] === null) {
+                    html += '<option disabled>\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500</option>';
+                } else {
+                    var finalVal = (vaults[i].fig + ageBonus).toFixed(1);
+                    html += '<option value="' + i + '">' + vaults[i].name + ' (' + finalVal + ')</option>';
+                }
+            }
+            vaultSelect.innerHTML = html;
+        }
+
+        // === CALCULATION FUNCTIONS ===
+
+        function getSkillInputs() {
+            return Array.from(document.querySelectorAll('#nm-skills-container .skill-count'));
+        }
+
+        function calculateSkillTotals() {
+            var values = SKILL_VALUES[currentAge];
+            var totalValue = 0;
+            var totalCount = 0;
+            var inputs = getSkillInputs();
+
+            for (var i = 0; i < inputs.length; i++) {
+                var count = parseInt(inputs[i].value, 10) || 0;
+                var level = inputs[i].id.replace('nm-count-', '');
+                var val = values[level];
+                if (val !== null) {
+                    totalValue += count * val;
+                    totalCount += count;
+                }
+            }
+            return { totalValue: totalValue, totalCount: totalCount };
+        }
+
+        function getDismountBonus() {
+            var level = dismountLevel.value;
+            if (level === 'none') return 0;
+            var val = SKILL_VALUES[currentAge][level];
+            return (val !== null) ? val : 0;
+        }
+
+        function calculateEGBonus() {
+            var checked = egContainer.querySelectorAll('.eg-bonus:checked').length;
+            var bonus = checked * EG_BONUS_AMOUNT;
+
+            // MAG (non-floor): add dismount EG bonus
+            if (currentDiscipline === 'MAG' && currentApparatus !== 'vault' && currentApparatus !== 'floor') {
+                bonus += getDismountBonus();
+            }
+            return bonus;
+        }
+
+        function getDisplayPrecision(input) {
+            var rawStr = input.value;
+            var dotIndex = rawStr.indexOf('.');
+            var inputDecimals = dotIndex === -1 ? 0 : Math.min(rawStr.length - dotIndex - 1, 3);
+            return inputDecimals === 3 ? 3 : 2;
+        }
+
+        function calculateNonVaultScore() {
+            var totals = calculateSkillTotals();
+            var skillValue = totals.totalValue;
+            var skillCount = totals.totalCount;
+            var bonusValue = calculateEGBonus();
+            var shortRoutineDeduction = Math.max(0, MIN_SKILLS - skillCount) * SHORT_ROUTINE_DEDUCTION_PER_SKILL;
+            var executionDeductions = parseFloat(deductionsInput.value) || 0;
+            var totalDeductions = executionDeductions + shortRoutineDeduction;
+
+            var dScore = skillValue + bonusValue;
+            var eScore = 10.0 - totalDeductions;
+            var finalScore = Math.max(0, dScore + eScore);
+
+            var dp = getDisplayPrecision(deductionsInput);
+
+            disp.dScore.textContent = dScore.toFixed(2);
+            disp.dSkills.textContent = skillValue.toFixed(2);
+            disp.dBonus.textContent = bonusValue.toFixed(2);
+            disp.eScore.textContent = eScore.toFixed(dp);
+            disp.eExecDed.textContent = executionDeductions.toFixed(dp);
+            disp.eShortDed.textContent = shortRoutineDeduction.toFixed(dp);
+            disp.finalScore.textContent = finalScore.toFixed(dp);
+
+            // Update dismount bonus display
+            if (currentDiscipline === 'MAG') {
+                dismountBonusDisplay.textContent = getDismountBonus().toFixed(2);
+            }
+        }
+
+        function calculateVaultScore() {
+            var selectedIdx = vaultSelect.value;
+            var baseDV = 0;
+            var ageBonus = VAULT_AGE_BONUS[currentDiscipline][currentAge];
+
+            if (selectedIdx === '-1') {
+                baseDV = 0;
+                ageBonus = 0;
+            } else if (selectedIdx === 'custom') {
+                baseDV = 0;
+            } else {
+                var vault = VAULT_DATA[currentDiscipline][parseInt(selectedIdx, 10)];
+                baseDV = vault ? vault.fig : 0;
+            }
+
+            var totalDV = baseDV + ageBonus;
+            var executionDeductions = parseFloat(vaultDeductionsInput.value) || 0;
+            var eScore = 10.0 - executionDeductions;
+            var finalScore = Math.max(0, totalDV + eScore);
+
+            var dp = getDisplayPrecision(vaultDeductionsInput);
+
+            disp.vaultBase.textContent = baseDV.toFixed(2);
+            disp.vaultAgeBonusDisp.textContent = ageBonus.toFixed(2);
+            disp.vaultDV.textContent = totalDV.toFixed(2);
+            disp.vaultDScore.textContent = totalDV.toFixed(2);
+            disp.vaultDBase.textContent = baseDV.toFixed(2);
+            disp.vaultDAge.textContent = ageBonus.toFixed(2);
+            disp.vaultEScore.textContent = eScore.toFixed(dp);
+            disp.vaultEDed.textContent = executionDeductions.toFixed(dp);
+            disp.vaultFinalScore.textContent = finalScore.toFixed(dp);
+        }
+
+        function updateScores() {
+            if (currentApparatus === 'vault') {
+                calculateVaultScore();
+            } else {
+                calculateNonVaultScore();
+            }
+        }
+
+        // === EVENT HANDLERS ===
+
+        function handleApparatusChange() {
+            currentApparatus = apparatusSelect.value;
+            var isVault = currentApparatus === 'vault';
+
+            nonVaultSection.style.display = isVault ? 'none' : 'block';
+            vaultSection.style.display = isVault ? 'block' : 'none';
+
+            if (isVault) {
+                renderVaultOptions();
+                calculateVaultScore();
+            } else {
+                renderEGCheckboxes();
+                calculateNonVaultScore();
+            }
+        }
+
+        function handleDisciplineChange(discipline) {
+            currentDiscipline = discipline;
+
+            // Update tab active state
+            var tabs = document.querySelectorAll('#nm-discipline-tabs .nav-link');
+            for (var i = 0; i < tabs.length; i++) {
+                if (tabs[i].dataset.discipline === discipline) {
+                    tabs[i].classList.add('active');
+                } else {
+                    tabs[i].classList.remove('active');
+                }
+            }
+
+            // Update deduction step size per discipline
+            var step = discipline === 'WAG' ? '0.05' : '0.1';
+            deductionsInput.step = step;
+            vaultDeductionsInput.step = step;
+
+            // Update resource links
+            copLink.href = COP_LINKS[discipline];
+            copLink.textContent = discipline + ' Masters Extra Skills';
+            figLink.href = FIG_LINKS[discipline];
+            figLink.textContent = 'FIG/WG ' + discipline + ' Code of Points';
+
+            renderApparatusOptions();
+            renderSkillCounters();
+            handleApparatusChange();
+            resetForm();
+        }
+
+        function handleAgeChange() {
+            currentAge = ageSelect.value;
+            renderSkillCounters();
+            if (currentApparatus === 'vault') {
+                renderVaultOptions();
+                calculateVaultScore();
+            } else {
+                renderEGCheckboxes();
+                calculateNonVaultScore();
+            }
+        }
+
+        function flashInputRed(inputEl) {
+            inputEl.style.backgroundColor = '#f8d7da';
+            inputEl.style.borderColor = '#dc3545';
+            // Also flash the sibling stepper buttons
+            var group = inputEl.closest('.input-group');
+            var buttons = group ? group.querySelectorAll('.btn-stepper') : [];
+            for (var b = 0; b < buttons.length; b++) {
+                buttons[b].style.backgroundColor = '#f8d7da';
+                buttons[b].style.borderColor = '#dc3545';
+                buttons[b].style.color = '#dc3545';
+            }
+            setTimeout(function() {
+                inputEl.style.backgroundColor = '';
+                inputEl.style.borderColor = '';
+                for (var b = 0; b < buttons.length; b++) {
+                    buttons[b].style.backgroundColor = '';
+                    buttons[b].style.borderColor = '';
+                    buttons[b].style.color = '';
+                }
+            }, 600);
+        }
+
+        function handleSkillValidation(event) {
+            var totals = calculateSkillTotals();
+
+            if (totals.totalCount > MAX_SKILLS) {
+                var excess = totals.totalCount - MAX_SKILLS;
+                var currentInput = event.target;
+                if (!currentInput.classList.contains('skill-count')) {
+                    var group = currentInput.closest('.input-group');
+                    if (group) currentInput = group.querySelector('.skill-count');
+                }
+                if (currentInput && currentInput.classList.contains('skill-count')) {
+                    currentInput.value = Math.max(0, (parseInt(currentInput.value, 10) || 0) - excess);
+                    flashInputRed(currentInput);
+                }
+                warningEl.textContent = 'Total skills cannot exceed ' + MAX_SKILLS + '.';
+                warningEl.style.visibility = 'visible';
+            } else {
+                warningEl.style.visibility = 'hidden';
+            }
+            calculateNonVaultScore();
+        }
+
+        function handleStepperClick(event) {
+            var button = event.target.closest('.btn-stepper');
+            if (!button || button.disabled) return;
+            var targetInput = document.getElementById(button.dataset.target);
+            if (!targetInput || targetInput.disabled) return;
+
+            var stepVal = parseInt(button.dataset.step, 10);
+            var min = parseInt(targetInput.min, 10);
+            var max = parseInt(targetInput.max, 10);
+            var value = parseInt(targetInput.value, 10) || 0;
+            var raw = value + stepVal;
+
+            // Trying to increment beyond per-row max OR total skills limit
+            if (raw > max || (raw > value && calculateSkillTotals().totalCount >= MAX_SKILLS)) {
+                warningEl.textContent = 'Total skills cannot exceed ' + MAX_SKILLS + '.';
+                warningEl.style.visibility = 'visible';
+                flashInputRed(targetInput);
+                return;
+            }
+
+            var proposedValue = Math.max(min, raw);
+            targetInput.value = proposedValue;
+            warningEl.style.visibility = 'hidden';
+            targetInput.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+
+        function resetForm() {
+            var inputs = getSkillInputs();
+            for (var i = 0; i < inputs.length; i++) {
+                inputs[i].value = 0;
+                inputs[i].classList.remove('is-invalid');
+            }
+            var checkboxes = egContainer.querySelectorAll('.eg-bonus');
+            for (var i = 0; i < checkboxes.length; i++) checkboxes[i].checked = false;
+
+            dismountLevel.value = 'none';
+            deductionsInput.value = '0.00';
+            vaultDeductionsInput.value = '0.00';
+            if (vaultSelect.options.length) vaultSelect.value = '-1';
+            warningEl.style.visibility = 'hidden';
+
+            updateScores();
+        }
+
+        // === INIT ===
+
+        // Discipline tabs
+        var tabLinks = document.querySelectorAll('#nm-discipline-tabs .nav-link');
+        for (var t = 0; t < tabLinks.length; t++) {
+            (function(tab) {
+                tab.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    handleDisciplineChange(tab.dataset.discipline);
+                });
+            })(tabLinks[t]);
+        }
+
+        ageSelect.addEventListener('change', handleAgeChange);
+        apparatusSelect.addEventListener('change', function() { handleApparatusChange(); resetForm(); });
+        document.getElementById('nm-reset').addEventListener('click', resetForm);
+
+        // Delegated form events
+        form.addEventListener('input', function(e) {
+            if (e.target.classList.contains('skill-count')) {
+                handleSkillValidation(e);
+            } else if (e.target === deductionsInput) {
+                var maxDec = currentDiscipline === 'WAG' ? 2 : 1;
+                var val = deductionsInput.value;
+                var dot = val.indexOf('.');
+                if (dot !== -1 && val.length - dot - 1 > maxDec) {
+                    deductionsInput.value = val.slice(0, dot + maxDec + 1);
+                }
+                calculateNonVaultScore();
+            } else if (e.target === vaultDeductionsInput) {
+                var maxDec2 = currentDiscipline === 'WAG' ? 2 : 1;
+                var val2 = vaultDeductionsInput.value;
+                var dot2 = val2.indexOf('.');
+                if (dot2 !== -1 && val2.length - dot2 - 1 > maxDec2) {
+                    vaultDeductionsInput.value = val2.slice(0, dot2 + maxDec2 + 1);
+                }
+                calculateVaultScore();
+            }
+        });
+
+        form.addEventListener('click', function(e) {
+            handleStepperClick(e);
+        });
+
+        form.addEventListener('change', function(e) {
+            if (e.target.classList.contains('eg-bonus') || e.target === dismountLevel) {
+                calculateNonVaultScore();
+            } else if (e.target === vaultSelect) {
+                calculateVaultScore();
+            }
+        });
+
+        // Initial render
+        copLink.href = COP_LINKS[currentDiscipline];
+        copLink.textContent = currentDiscipline + ' Masters Extra Skills';
+        figLink.href = FIG_LINKS[currentDiscipline];
+        figLink.textContent = 'FIG/WG ' + currentDiscipline + ' Code of Points';
+        deductionsInput.step = currentDiscipline === 'WAG' ? '0.05' : '0.1';
+        vaultDeductionsInput.step = currentDiscipline === 'WAG' ? '0.05' : '0.1';
+        renderApparatusOptions();
+        renderSkillCounters();
+        handleApparatusChange();
+        updateScores();
+    });
+</script>
+<!-- UCG embed bridge -->
+<script src="bridge.js"></script>

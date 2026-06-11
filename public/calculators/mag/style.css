@@ -1,0 +1,292 @@
+/* Basic page styling */
+body {
+    font-family: Arial, sans-serif;
+    margin: 20px;
+    padding: 0;
+    background-color: #f4f4f4;
+}
+
+.container {
+    margin: 0 auto;
+    background-color: #fff;
+    padding: 20px;
+    border-radius: 5px;
+    box-shadow: 0 0 10px rgba(0,0,0,0.1);
+}
+
+/* Header Styling */
+    header {
+        text-align: center;
+        margin-bottom: 20px;
+    }
+
+    #header-section label {
+        white-space: nowrap;  /* Prevent the label from wrapping */
+        margin-bottom: 0;     /* Ensure labels align with inputs */
+    }
+
+    #header-section .form-control {
+        margin-bottom: 0;  /* Ensure the dropdowns align properly */
+    }
+
+    /* Center text in dropdown options */
+    select {
+        text-align-last: center; /* Center the text for the selected option */
+    }
+
+    select option {
+        text-align: center; /* Center the text of all options */
+    }
+
+    #reset-section {
+        text-align: center;  /* Centers the button */
+    }
+
+    #reset-button {
+        padding-top: 7.5px;   /* Adjust this value as needed */
+        padding-bottom: 7.5px; /* Adjust this value as needed */
+        margin-left: 20px; /* Separate it a bit from the dropdowns */
+        height: auto;       /* Allow button to resize based on content */
+        line-height: normal; /* Ensure button text doesn't add extra height */
+        vertical-align: middle; /* Align it with the dropdowns */
+        background-color: #f44336;  /* You can adjust the color if you want */
+        color: white;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+    }
+
+    #reset-button:hover {
+        background-color: #d32f2f;  /* Darker shade on hover */
+    }
+
+    #hide-neutral-deductions-checkbox {
+        margin-left: 10px;
+        margin-right: 5px;
+    }
+
+    #eg-warning-message, #rings-warning-message {
+        margin-top: 10px;
+        margin-bottom: 10px;
+        font-size: 1.1rem;
+        text-align: center;
+    }
+
+
+/* Skill row styling */
+    .skill-row {
+        display: flex;
+        justify-content: center;
+        align-items: center;  /* This will vertically align the label and buttons */
+        margin-bottom: 15px;
+    }
+
+    .skill-row label {
+        margin-right: 10px;
+        font-size: 1.1rem;
+    }
+
+    .buttons button, .eg-buttons button {
+        margin-right: 5px;
+        padding: 10px;
+        font-size: 1rem;
+        cursor: pointer;
+        transition: background-color 0.2s ease;
+    }
+
+    /* Hover effect for unselected buttons */
+    .buttons button:hover, .eg-buttons button:hover {
+        background-color: #d9d9d9; /* Darker gray on hover */
+    }
+
+    /* Add margin to separate the skill buttons from the EG buttons */
+    .separator {
+        width: 50px;
+    }
+
+    /* Add selected class to highlight chosen button */
+    .selected {
+        background-color: #4caf50;  /* Green background */
+        color: white;
+    }
+
+    /* Hover effect for selected buttons */
+    .buttons button.selected:hover, .eg-buttons button.selected:hover {
+        background-color: darkgreen !important; /* Darker green on hover for selected buttons */
+    }
+
+    .excluded-skill {
+        background-color: red !important;
+        color: white !important;
+    }
+
+
+/* Vault Row Styling */
+    .vault-row {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        margin-bottom: 10px;
+    }
+
+    .vault-row label {
+        margin-right: 10px;
+        margin-bottom: 0px;
+    }
+
+/* Bonus Styling */
+    #bonus-section {
+        text-align: center;
+        margin-top: 30px;
+    }
+
+    #bonus-options > div {
+        margin-bottom: 10px;  /* Adds space between bonus items */
+    }
+
+    #neutral-deductions-section {
+        margin-top: 20px;
+        text-align: center;
+    }
+
+    #neutral-deductions-options {
+        margin-top: 10px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+    }
+
+/* Neutral Deduction Styling */
+    .neutral-deduction {
+        display: flex;
+        justify-content: space-between;
+        width: 300px;
+        border: 1px solid #000;
+        padding: 5px;
+        font-size: 16px;
+    }
+
+    .neutral-deduction-label {
+        font-weight: bold;
+    }
+
+    .neutral-deduction-input {
+        text-align: right;
+    }
+
+/* Start Value Styling */
+    #start-value {
+        text-align: center;
+        font-size: 1.5rem;
+        margin-top: 20px;
+    }
+
+    #start-value-display {
+        text-align: center;
+        margin-top: 10px;
+    }
+
+    /* On wide screens (greater than 768px) */
+    @media (min-width: 768px) {
+        .start-value-breakdown .col-md-auto {
+            margin-right: 0px;  /* Adjust the horizontal gap between items */
+        }
+
+        .start-value-breakdown .plus-symbol,
+        .start-value-breakdown .minus-symbol,
+        .start-value-breakdown .equals-symbol {
+            margin-right: 0px;   /* Adjust the spacing for the symbols */
+        }
+
+        /* Remove extra vertical space between elements */
+        .start-value-breakdown .col-md-auto {
+            margin-bottom: 0;    /* Ensure no extra vertical space */
+        }
+    }
+
+    /* On narrow screens (less than 768px) */
+    @media (max-width: 767.98px) {
+        .start-value-breakdown .col-6 {
+            margin-bottom: 0px;  /* Reduce vertical space when items are stacked */
+        }
+
+        .start-value-breakdown .plus-symbol,
+        .start-value-breakdown .minus-symbol,
+        .start-value-breakdown .equals-symbol {
+            margin-bottom: 0px;  /* Reduce vertical space for symbols when stacked */
+        }
+    }
+
+    .start-value-breakdown {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .start-value-breakdown div {
+        display: inline-block;
+        text-align: center;
+    }
+
+    .start-value-breakdown label, .start-value-breakdown div {
+        margin-bottom: 0;
+    }
+
+    .start-value-breakdown div label {
+        display: block;
+        font-weight: bold;
+    }
+
+    .start-value-breakdown div div {
+        border: 1px solid #000;
+        padding: 5px 10px;
+        font-size: 18px;
+        font-weight: bold;
+        min-width: 50px;
+    }
+
+    #execution-value {
+        border: none;  /* No border around the constant 10.0 */
+    }
+
+    .plus-symbol, .equals-symbol, .minus-symbol {
+        font-size: 24px;
+        font-weight: bold;
+        padding: 0px 0px 0px 0px;
+        min-width: 20px;
+        text-align: center;
+        border: none;
+    }
+
+    .cap-notification {
+        margin-top: 10px;
+        font-size: 14px;
+        color: red;
+        font-weight: bold;
+        text-align: center;
+    }
+
+/* Footer Styling */
+    #naigc-footer {
+        background-color: #f8f9fa; /* Light background for footer */
+        padding: 0px;
+        font-size: 14px;
+        color: #333;
+    }
+
+    #naigc-footer img {
+        max-width: 50px; /* Set the size of the logo */
+        margin-bottom: 10px;
+        margin-top: 10px;
+    }
+
+    #naigc-footer a {
+        color: #007bff; /* Email link color */
+        text-decoration: none;
+    }
+
+    #naigc-footer a:hover {
+        text-decoration: underline;
+    }

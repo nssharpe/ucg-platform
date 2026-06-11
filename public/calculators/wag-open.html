@@ -1,0 +1,459 @@
+<div id="naigc-wag-app">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <style>
+        /* Scoped Wrapper */
+        #naigc-wag-app {
+            font-family: 'Inter', sans-serif;
+            padding: 20px 0;
+            background-color: transparent; /* Changed from fixed grey to transparent */
+            width: 100%;
+        }
+
+        /* Prevent Bootstrap from affecting the whole page if possible, 
+           but allow it inside our wrapper */
+        #naigc-wag-app .card {
+            border: 1px solid #dee2e6;
+            box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+            margin-bottom: 1.5rem;
+        }
+
+        #naigc-wag-app h2 {
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            margin-top: 0;
+            font-size: 1.75rem; /* Ensure consistent size */
+        }
+
+        #naigc-wag-app h5 { 
+            font-weight: normal;
+            font-size: 1rem;
+            color: #6c757d;
+            margin: 0;
+            padding-bottom: 10px;
+        }
+
+        #naigc-wag-header {
+            background-color: #fff;
+            padding: 1.5rem;
+            border-radius: 0.375rem;
+            margin-bottom: 1.5rem;
+        }
+
+        /* Input Stepper Buttons */
+        #naigc-wag-app .input-group {
+            max-width: 250px;
+            margin: 0 auto;
+            flex-wrap: nowrap; /* Prevent wrapping */
+        }
+        
+        #naigc-wag-app .form-control.skill-count {
+            border-left: 0;
+            border-right: 0;
+            text-align: center;
+        }
+        
+        #naigc-wag-app .btn-stepper {
+            border-color: #ced4da;
+            background-color: #fff;
+            z-index: 0; /* Fix overlap issues */
+        }
+        
+        #naigc-wag-app .btn-stepper:hover {
+            background-color: #e9ecef;
+        }
+
+        /* Hide browser default number input spinners */
+        #naigc-wag-app .skill-count::-webkit-outer-spin-button,
+        #naigc-wag-app .skill-count::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        #naigc-wag-app .skill-count {
+            -moz-appearance: textfield;
+        }
+
+        /* Score Breakdown */
+        #naigc-wag-app .summary-score-label {
+            font-size: 1.25rem;
+            font-weight: 700;
+            display: block;
+        }
+
+        #naigc-wag-app .score-value {
+            font-size: 2rem;
+            font-weight: 700;
+            padding: 5px 10px;
+            border-radius: 0.375rem;
+            display: inline-block;
+        }
+
+        #naigc-wag-d-score, #naigc-wag-e-score {
+            border: 2px solid #adb5bd;
+            background-color: #e9ecef;
+            color: #495057;
+        }
+        
+        #naigc-wag-app .score-component-breakdown {
+            font-size: 0.9rem;
+            margin-top: 0.25rem;
+            color: #6c757d;
+        }
+
+        #naigc-wag-final-score {
+            font-size: 2.5rem;
+            color: #0d6efd;
+            border: 2px solid #0d6efd;
+            background-color: #e7f1ff;
+        }
+
+        /* Footer */
+        #naigc-wag-footer {
+            padding: 2rem 0;
+            font-size: 14px;
+            color: #6c757d;
+            text-align: center;
+        }
+        #naigc-wag-footer img {
+            max-width: 100px;
+            height: auto;
+        }
+    </style>
+
+    <div class="row justify-content-center">
+        <div class="col-lg-10 col-md-12">
+            
+            <section id="naigc-wag-header" class="card">
+                <div class="row justify-content-center align-items-center">
+                    <div class="col-12 col-md-auto text-center mb-3 mb-md-0">
+                        <label for="naigc-wag-apparatus" class="me-2"><strong>Apparatus:</strong></label>
+                        <select id="naigc-wag-apparatus" class="form-select d-inline-block w-auto">
+                            <option value="bars">Uneven Bars</option>
+                            <option value="beam">Balance Beam</option>
+                            <option value="floor">Floor Exercise</option>
+                        </select>
+                    </div>
+                    <div class="col-12 col-md-auto text-center">
+                        <button type="button" id="naigc-wag-reset" class="btn btn-danger btn-lg">Reset Routine</button>
+                    </div>
+                </div>
+            </section>
+
+            <form id="naigc-wag-form">
+                <div class="card">
+                    <div class="card-body">
+                        <section class="text-center">
+                            <h2 class="card-title">Top 8 Skills</h2>
+                            <h5 class="card-subtitle mb-3"><i>Enter the top 8 counting skills below.</i></h5>
+                            <div id="naigc-wag-warning" class="text-danger mb-3" style="display: none;"></div>
+
+                            <div class="row mb-3 justify-content-center">
+                                <label for="naigc-wag-count-a" class="col-form-label col-md-6 col-lg-5 text-md-end"># of counting A's (0.10 each):</label>
+                                <div class="col-md-6 col-lg-5">
+                                    <div class="input-group">
+                                        <button type="button" class="btn btn-stepper" data-step="-1" data-target="naigc-wag-count-a">-</button>
+                                        <input type="number" id="naigc-wag-count-a" class="form-control skill-count" min="0" max="8" value="0">
+                                        <button type="button" class="btn btn-stepper" data-step="1" data-target="naigc-wag-count-a">+</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row mb-3 justify-content-center">
+                                <label for="naigc-wag-count-b" class="col-form-label col-md-6 col-lg-5 text-md-end"># of counting B's (0.30 each):</label>
+                                <div class="col-md-6 col-lg-5">
+                                    <div class="input-group">
+                                        <button type="button" class="btn btn-stepper" data-step="-1" data-target="naigc-wag-count-b">-</button>
+                                        <input type="number" id="naigc-wag-count-b" class="form-control skill-count" min="0" max="8" value="0">
+                                        <button type="button" class="btn btn-stepper" data-step="1" data-target="naigc-wag-count-b">+</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row mb-3 justify-content-center">
+                                <label for="naigc-wag-count-c" class="col-form-label col-md-6 col-lg-5 text-md-end"># of counting C's (0.50 each):</label>
+                                <div class="col-md-6 col-lg-5">
+                                    <div class="input-group">
+                                        <button type="button" class="btn btn-stepper" data-step="-1" data-target="naigc-wag-count-c">-</button>
+                                        <input type="number" id="naigc-wag-count-c" class="form-control skill-count" min="0" max="8" value="0">
+                                        <button type="button" class="btn btn-stepper" data-step="1" data-target="naigc-wag-count-c">+</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row mb-3 justify-content-center">
+                                <label for="naigc-wag-count-d" class="col-form-label col-md-6 col-lg-5 text-md-end"># of counting D's (0.70 each):</label>
+                                <div class="col-md-6 col-lg-5">
+                                    <div class="input-group">
+                                        <button type="button" class="btn btn-stepper" data-step="-1" data-target="naigc-wag-count-d">-</button>
+                                        <input type="number" id="naigc-wag-count-d" class="form-control skill-count" min="0" max="8" value="0">
+                                        <button type="button" class="btn btn-stepper" data-step="1" data-target="naigc-wag-count-d">+</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row justify-content-center">
+                                <label for="naigc-wag-count-e" class="col-form-label col-md-6 col-lg-5 text-md-end"># of counting E's (0.90 each):</label>
+                                <div class="col-md-6 col-lg-5">
+                                    <div class="input-group">
+                                        <button type="button" class="btn btn-stepper" data-step="-1" data-target="naigc-wag-count-e">-</button>
+                                        <input type="number" id="naigc-wag-count-e" class="form-control skill-count" min="0" max="8" value="0">
+                                        <button type="button" class="btn btn-stepper" data-step="1" data-target="naigc-wag-count-e">+</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-body text-center">
+                         <section>
+                            <h2 class="card-title">Element Group Bonus</h2>
+                            <h5 class="card-subtitle mb-3"><i>For each group with a B+ skill, check the box (+0.30 each).</i></h5>
+                            <div id="naigc-wag-eg-container" class="d-flex flex-column align-items-center"></div>
+                        </section>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-body text-center">
+                        <section>
+                            <h2 class="card-title">Deductions</h2>
+                            <h5 class="card-subtitle mb-3"><i>Enter total execution/neutral deductions below (not execution score, just how many points they lost due to deductions).</i><br><strong><i>NOTE: Short routine deduction is applied automatically.</strong></i></h5>
+                            <div class="row justify-content-center">
+                                <label for="naigc-wag-deductions" class="col-auto col-form-label">Total Deductions:</label>
+                                <div class="col-auto">
+                                    <input type="number" class="form-control" id="naigc-wag-deductions" min="0" max="10" step="0.001" value="0.00">
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+                </div>
+
+                <div class="card">
+                     <div class="card-body">
+                         <section class="text-center">
+                            <h2>Score Breakdown</h2>
+                            <div class="row text-center justify-content-center align-items-start">
+                                <div class="col-md-6 mb-3 mb-md-0">
+                                    <label class="summary-score-label">Difficulty (D-Score)</label>
+                                    <div id="naigc-wag-d-score" class="score-value">0.00</div>
+                                    <div class="score-component-breakdown">
+                                        (Skills: <span id="naigc-wag-d-score-skills">0.00</span> + Bonus: <span id="naigc-wag-d-score-bonus">0.00</span>)
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="summary-score-label">Execution (E-Score)</label>
+                                    <div id="naigc-wag-e-score" class="score-value">10.00</div>
+                                    <div class="score-component-breakdown">
+                                        (10.00 - Deductions: <span id="naigc-wag-e-score-deductions">0.00</span>)
+                                    </div>
+                                </div>
+                            </div>
+                            <hr class="my-4">
+                            <div class="row text-center justify-content-center">
+                                <div class="col-12">
+                                    <label class="summary-score-label">Final Score (D+E)</label>
+                                    <div id="naigc-wag-final-score" class="score-value">10.00</div>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <footer id="naigc-wag-footer">
+        <img src="https://naigc.org/wp-content/uploads/2019/01/NAIGC-Logo-Round-No-Text-1.png" alt="NAIGC Logo" class="mb-2" />
+        <p class="mb-0">This tool was developed by the NAIGC. If you have feedback, please email us at 
+            <a href="mailto:rules@naigc.org">rules@naigc.org</a>.
+        </p>
+    </footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+
+        // --- CONSTANTS ---
+        const MAX_SKILLS = 8;
+        const MIN_SKILLS_FOR_NO_DEDUCTION = 6;
+        const SHORT_ROUTINE_DEDUCTION_PER_SKILL = 1.0;
+        const ELEMENT_GROUP_BONUS = 0.3;
+        const SKILL_VALUES = { 'e': 0.90, 'd': 0.70, 'c': 0.50, 'b': 0.30, 'a': 0.10 };
+        const APPARATUS_DATA = {
+            bars: { labels: ['Mounts (1) & Dismounts (8)', 'Casts/Counterswings (2)', 'Underswings/Clear Hips (3), Stalders (6), & Circle Swings/Hechts (7)', 'Giant Swings Backward (4) & Giants/Circles Forward (5)'] },
+            beam: { labels: ['Mounts (1) & Dismounts (9)', 'Leaps/Jumps/Hops (2) & Turns (3)', 'Waves (4), Holds/Stands (5), & Rolls (6)', 'Walkovers/Cartwheels (7) & Saltos (8)'] },
+            floor: { labels: ['Leaps/Jumps/Hops (1) & Turns (2)', 'Handstands (3), Rolls (4), & Walkovers/Cartwheels etc. (5)', 'Saltos Forward (6) & Saltos Sideward/Arabians (7)', 'Saltos Backward (8)'] }
+        };
+
+        // --- REFERENCES (Scoped IDs) ---
+        const form = document.getElementById('naigc-wag-form');
+        const skillWarningEl = document.getElementById('naigc-wag-warning');
+        const apparatusSelect = document.getElementById('naigc-wag-apparatus');
+        const elementGroupContainer = document.getElementById('naigc-wag-eg-container');
+        const executionDeductionsInput = document.getElementById('naigc-wag-deductions');
+        // Scoped selector for skill counts
+        const skillInputs = Array.from(document.querySelectorAll('#naigc-wag-form .skill-count'));
+        
+        const display = {
+            dScore: document.getElementById('naigc-wag-d-score'),
+            dScoreSkills: document.getElementById('naigc-wag-d-score-skills'),
+            dScoreBonus: document.getElementById('naigc-wag-d-score-bonus'),
+            eScore: document.getElementById('naigc-wag-e-score'),
+            eScoreDeductions: document.getElementById('naigc-wag-e-score-deductions'),
+            finalScore: document.getElementById('naigc-wag-final-score')
+        };
+
+        // --- LOGIC ---
+        const calculateSkillTotals = () => skillInputs.reduce((acc, input) => {
+            const count = parseInt(input.value, 10) || 0;
+            // ID format is now "naigc-wag-count-x"
+            // Split by '-' gives ["naigc", "wag", "count", "x"] -> index 3 is type
+            const parts = input.id.split('-');
+            const skillType = parts[parts.length - 1]; 
+            
+            acc.totalValue += count * (SKILL_VALUES[skillType] || 0);
+            acc.totalCount += count;
+            return acc;
+        }, { totalValue: 0, totalCount: 0 });
+
+        const calculateElementGroupBonus = () => elementGroupContainer.querySelectorAll('.eg-bonus:checked').length * ELEMENT_GROUP_BONUS;
+        const calculateShortRoutineDeduction = (skillCount) => Math.max(0, MIN_SKILLS_FOR_NO_DEDUCTION - skillCount) * SHORT_ROUTINE_DEDUCTION_PER_SKILL;
+        
+        const calculateAndDisplayScore = () => {
+            const { totalValue: skillValue, totalCount: skillCount } = calculateSkillTotals();
+            const bonusValue = calculateElementGroupBonus();
+            const shortRoutineDeduction = calculateShortRoutineDeduction(skillCount);
+            const executionDeductions = parseFloat(executionDeductionsInput.value) || 0;
+            const totalDeductions = executionDeductions + shortRoutineDeduction;
+
+            const dScore = skillValue + bonusValue;
+            const eScore = 10.0 - totalDeductions;
+            const finalScore = Math.max(0, dScore + eScore);
+
+            // Determine display precision from the raw deduction input string.
+            // Use 3 decimal places only if the user typed exactly 3; otherwise 2.
+            const rawStr = executionDeductionsInput.value;
+            const dotIndex = rawStr.indexOf('.');
+            const inputDecimals = dotIndex === -1 ? 0 : Math.min(rawStr.length - dotIndex - 1, 3);
+            const dp = inputDecimals === 3 ? 3 : 2;
+
+            // D-score components are always multiples of 0.1/0.3 — always show 2 decimals.
+            display.dScore.textContent = dScore.toFixed(2);
+            display.dScoreSkills.textContent = skillValue.toFixed(2);
+            display.dScoreBonus.textContent = bonusValue.toFixed(2);
+            // E-score and Final Score match the precision of the deductions input.
+            display.eScore.textContent = eScore.toFixed(dp);
+            display.eScoreDeductions.textContent = totalDeductions.toFixed(dp);
+            display.finalScore.textContent = finalScore.toFixed(dp);
+        };
+
+        const renderElementGroupCheckboxes = () => {
+            const { labels } = APPARATUS_DATA[apparatusSelect.value];
+            elementGroupContainer.innerHTML = labels.map((labelText, i) => `
+                <div class="form-check d-inline-flex justify-content-center align-items-center me-3 mb-2">
+                    <input type="checkbox" class="form-check-input eg-bonus" id="naigc-wag-eg-bonus-${i}">
+                    <label class="form-check-label ms-2" for="naigc-wag-eg-bonus-${i}">${labelText}</label>
+                </div>`).join('');
+        };
+
+        const handleSkillCountValidation = (event) => {
+            skillInputs.forEach(inp => inp.classList.remove('is-invalid'));
+            const { totalCount } = calculateSkillTotals();
+            
+            // Note: Since we updated inputs before calling this (in the stepper or direct input),
+            // totalCount includes the current change.
+            if (totalCount > MAX_SKILLS) {
+                const excess = totalCount - MAX_SKILLS;
+                
+                // If triggered by button click, event.target might be the button.
+                // If triggered by input, it's the input. 
+                // We need the input element associated with the event.
+                let currentInput = event.target;
+                if (!currentInput.classList.contains('skill-count')) {
+                     // Try to find it in the closest group if we clicked a button
+                     const group = currentInput.closest('.input-group');
+                     if(group) currentInput = group.querySelector('.skill-count');
+                }
+
+                if (currentInput && currentInput.classList.contains('skill-count')) {
+                     currentInput.value = Math.max(0, (parseInt(currentInput.value, 10) || 0) - excess);
+                     currentInput.classList.add('is-invalid');
+                }
+
+                skillWarningEl.textContent = `Total skills cannot exceed ${MAX_SKILLS}.`;
+                skillWarningEl.style.display = 'block';
+            } else {
+                skillWarningEl.style.display = 'none';
+            }
+            calculateAndDisplayScore();
+        };
+
+        const handleStepperClick = (event) => {
+            const button = event.target.closest('.btn-stepper');
+            if (!button) return;
+            const targetInput = document.getElementById(button.dataset.target);
+            const step = parseInt(button.dataset.step, 10);
+            const min = parseInt(targetInput.min, 10);
+            const max = parseInt(targetInput.max, 10);
+            let value = parseInt(targetInput.value, 10) || 0;
+            
+            // Temporarily apply change to check validation
+            const proposedValue = Math.max(min, Math.min(max, value + step));
+            
+            // Check if this increase would exceed max total skills
+            if (proposedValue > value) {
+                 const { totalCount } = calculateSkillTotals();
+                 if (totalCount >= MAX_SKILLS) {
+                     skillWarningEl.textContent = `Total skills cannot exceed ${MAX_SKILLS}.`;
+                     skillWarningEl.style.display = 'block';
+                     targetInput.classList.add('is-invalid');
+                     return; // Do not increment
+                 }
+            }
+
+            targetInput.value = proposedValue;
+            skillWarningEl.style.display = 'none';
+            targetInput.classList.remove('is-invalid');
+            targetInput.dispatchEvent(new Event('input', { bubbles: true }));
+        };
+        
+        const resetRoutine = () => {
+            form.reset();
+            skillInputs.forEach(inp => inp.classList.remove('is-invalid'));
+            executionDeductionsInput.value = '0.00';
+            skillWarningEl.style.display = 'none';
+            renderElementGroupCheckboxes();
+            calculateAndDisplayScore();
+        };
+
+        // --- INIT ---
+        // Listen for direct input on skill fields
+        form.addEventListener('input', (e) => {
+            if (e.target.classList.contains('skill-count')) {
+                handleSkillCountValidation(e);
+            } else {
+                // Enforce max 3 decimal places on the deductions input.
+                if (e.target === executionDeductionsInput) {
+                    const val = executionDeductionsInput.value;
+                    const dotIndex = val.indexOf('.');
+                    if (dotIndex !== -1 && val.length - dotIndex - 1 > 3) {
+                        executionDeductionsInput.value = val.slice(0, dotIndex + 4);
+                    }
+                }
+                calculateAndDisplayScore();
+            }
+        });
+        
+        form.addEventListener('click', handleStepperClick);
+        apparatusSelect.addEventListener('change', () => { renderElementGroupCheckboxes(); calculateAndDisplayScore(); });
+        document.getElementById('naigc-wag-reset').addEventListener('click', resetRoutine);
+        
+        renderElementGroupCheckboxes();
+        calculateAndDisplayScore();
+    });
+</script>
+<!-- UCG embed bridge -->
+<script src="bridge.js"></script>

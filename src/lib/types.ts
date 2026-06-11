@@ -164,9 +164,11 @@ export interface Score {
   sessionId: string;
   regId: string;
   event: string;
-  sv: number | null; // start value (D)
-  deductions: number | null; // total E deductions
+  sv: number | null; // start value / D-score
+  deductions: number | null; // total E deductions (for capped levels: final = sv - deductions)
+  eScore?: number | null; // E-score out of 10 (open scoring: final = sv + eScore)
   final: number | null;
+  source?: 'manual' | 'mag-calc' | 'wag-open-calc' | 'masters-calc';
   enteredBy: string;
   enteredAt: string;
   flashed: boolean;

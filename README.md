@@ -34,11 +34,23 @@ loads a demo persona:
 
 Membership lifecycle with waivers & club-pay · searchable type-to-search dropdowns ·
 club roster & meet-reg grid · club cart, coupons & invoices · meet sessions & squad builder ·
-judge scoring with SV-calculator-style entry & live flash · live results (all-around,
+judge scoring with **the real NAIGC scoring calculators embedded** (MAG SV, WAG Open,
+Masters) feeding D / E / Final straight into the live flash · live results (all-around,
 event rankings, team scores with top-3-counting) · admin member/club management with
 membership toggles · league controls (seasons, levels, regions, waivers) · bulk
 communicate tool · CSV "export everything" · regions mapping · unique URLs per page ·
 mobile/tablet responsive · password gate.
+
+### Embedded calculators
+
+The three existing NAIGC calculators are bundled verbatim under `public/calculators/`
+and embedded in the judge score-entry flow via an iframe + `postMessage` bridge
+(`public/calculators/bridge.js`), so their tested scoring logic is reused unchanged.
+`src/lib/calculators.ts` maps each UCG level to its calculator and presets apparatus /
+ruleset. MAG (Developmental / Intermediate / Advanced) computes a start value the judge
+adds deductions to; WAG Open and Masters compute the full D / E / Final and post directly.
+**Not yet covered:** other WAG levels (Xcel Silver/Platinum/Diamond, Level 9), T&T, and
+WAG/Masters vault (table-value based) — those still use manual entry.
 
 ## Not yet built (future passes)
 

@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>MAG SV Calculator</title>
+        <!-- Bootstrap CSS -->
+        <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
+
+        <!-- Custom CSS -->
+        <link rel="stylesheet" href="style.css">
+
+        <!-- Bootstrap JS and dependencies since we plan to use interactive components like modals or dropdowns -->
+        <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.5.2/dist/js/bootstrap.bundle.min.js"></script>
+    </head>
+    <body>
+        <div class="container mt-5">
+            <header>
+                <h1>Start Value Calculator</h1>
+                <div id="header-section" class="row justify-content-center align-items-center">
+                    <!-- Dropdown to select ruleset, defaults to whichever is listed first -->
+                    <div class="col-12 col-md-auto text-center mb-2 mb-md-0">
+                        <label for="ruleset" class="mr-2">Rules Set:</label>
+                        <select id="ruleset" class="form-control">
+                            <option value="FIG">FIG</option>
+                            <option value="NAIGC Developmental">NAIGC Developmental</option>
+                            <option value="NAIGC Intermediate">NAIGC Intermediate</option>
+                            <option value="NAIGC Advanced">NAIGC Advanced (GymACT)</option>
+                        </select>
+                    </div>
+                    <!-- Dropdown to select apparatus -->
+                    <div class="col-12 col-md-auto text-center mb-2 mb-md-0">
+                        <label for="apparatus" class="mr-2">Apparatus:</label>
+                        <select id="apparatus" class="form-control">
+                            <option value="FX">FX</option>
+                            <option value="PH">PH</option>
+                            <option value="SR">SR</option>
+                            <option value="VT">VT</option>
+                            <option value="PB">PB</option>
+                            <option value="HB">HB</option>
+                        </select>
+                    </div>
+                    <!-- Button to reset/clear routine -->
+                    <div class="col-12 col-md-auto text-center mb-2 mb-md-0">
+                        <button id="reset-button" class="btn btn-danger btn-lg">Reset Routine</button>
+                    </div>
+                    <!-- Checkbox for hiding Neutral Deductions -->
+                    <div class="col-12 col-md-auto text-center mb-2 mb-md-0">
+                        <input type="checkbox" id="hide-neutral-deductions-checkbox">
+                        <label for="hide-neutral-deductions-checkbox">Hide Neutral Deductions</label>
+                    </div>
+                </div>
+            </header>
+            
+            <main>
+                <!-- Warning message containers -->
+                <div id="eg-warning-message" style="display: none; color: red; font-weight: bold;"></div>
+                <div id="rings-warning-message" style="display: none; color: red; font-weight: bold; text-align: center;"></div>
+
+                <!-- Skill Rows will be dynamically generated here -->
+                <div id="skill-rows"></div>
+
+                <!-- Bonus Section -->
+                <div id="bonus-section">
+                    <h2>Bonus Options</h2>
+                    <div id="bonus-options"></div>
+                </div>
+
+                <!-- Neutral Deductions Section -->
+                <div id="neutral-deductions-section">
+                    <h2>Neutral Deductions</h2>
+                    <div id="neutral-deductions-options"></div>
+                </div>
+
+                <!-- Display Start Value, with default being 0.0 -->
+                <div id="start-value-display">
+                    <h2>Start Value</h2>
+                    <div class="start-value-breakdown row text-center">
+                        <div class="col-6 col-md-auto mb-0 mb-md-0">
+                            <label>Execution</label>
+                            <div id="execution-value">10.0</div>
+                        </div>
+                        <div class="col-6 col-md-auto mb-0 mb-md-0 plus-symbol">+</div>
+                        <div class="col-6 col-md-auto mb-0 mb-md-0">
+                            <label>Skills</label>
+                            <div id="skills-value">0.0</div>
+                        </div>
+                        <div class="col-6 col-md-auto mb-0 mb-md-0 plus-symbol">+</div>
+                        <div class="col-6 col-md-auto mb-0 mb-md-0">
+                            <label>EG Bonus</label>
+                            <div id="eg-bonus-value">0.0</div>
+                        </div>
+                        <div class="col-6 col-md-auto mb-0 mb-md-0 plus-symbol">+</div>
+                        <div class="col-6 col-md-auto mb-0 mb-md-0">
+                            <label>Other Bonus</label>
+                            <div id="other-bonus-value">0.0</div>
+                        </div>
+                        <div id="minus-symbol" class="col-6 col-md-auto mb-0 mb-md-0 minus-symbol">-</div>
+                        <div id="neutral-deductions-display" class="col-6 col-md-auto mb-0 mb-md-0">
+                            <label>Neutral Deductions</label>
+                            <div id="neutral-deductions-value">0.0</div>
+                        </div>
+                        <div class="col-6 col-md-auto mb-0 mb-md-0 equals-symbol">=</div>
+                        <div class="col-6 col-md-auto mb-0 mb-md-0">
+                            <label>Total Start Value</label>
+                            <div id="start-value-total">10.0</div>
+                        </div>
+                    </div>            
+                    <div class="alert alert-warning my-3" role="alert" id="cap-notification" style="display: none;">
+                        Start Value Cap implemented, SV reduced to XX.X from YY.Y
+                    </div>
+                </div>
+            </main>
+
+            <!-- Script reference -->
+            <script src="script.js"></script>
+            <!-- UCG embed bridge -->
+            <script src="../bridge.js"></script>
+
+
+        </div>
+    </body>
+        <!-- Footer Section -->
+    <footer id="naigc-footer" class="text-center mt-5">
+        <div>
+            <img src="https://naigc.org/wp-content/uploads/2019/01/NAIGC-Logo-Round-No-Text-1.png" alt="NAIGC Logo" id="naigc-logo" />
+        </div>
+        <p>This tool was developed by the NAIGC. If you have feedback, please email us at 
+            <a href="mailto:rules@naigc.org">rules@naigc.org</a>
+        </p>
+    </footer>
+</html>

@@ -3,6 +3,9 @@ import { useDB, mutate } from '../lib/store';
 import { Badge, Field, useToast } from '../components/ui';
 import { EVENTS } from '../lib/types';
 import { fmtScore } from '../lib/scoring';
+import { calcForLevel, scoreFromCalc } from '../lib/calculators';
+import type { CalcMessage } from '../lib/calculators';
+import { CalculatorModal } from '../components/CalculatorModal';
 
 /** Tablet-first judge pad. SV + deductions entry mirrors the UCG SV calculators
  *  so judges are forced through them — catching SV errors at entry time. */
@@ -32,31 +35,52 @@ export function Judge() {
   const [activeReg, setActiveReg] = useState<string | null>(null);
   const [sv, setSv] = useState('');
   const [ded, setDed] = useState('');
+  const [calcOpen, setCalcOpen] = useState(false);
 
   const active = regs.find((r) => r.id === activeReg);
   const activeAthlete = active && db.people.find((p) => p.id === active.athleteId);
   const activeLevel = active && db.levels.find((l) => l.id === active.levelId);
+  const calcCfg = activeLevel ? calcForLevel(activeLevel.id) : null;
   const svMax = activeLevel?.svMax;
   const svNum = parseFloat(sv);
   const dedNum = parseFloat(ded);
   const svError = sv !== '' && svMax != null && svNum > svMax;
   const finalScore = !isNaN(svNum) && !isNaN(dedNum) ? Math.max(0, Math.round((svNum - dedNum) * 1000) / 1000) : null;
 
-  const submit = () => {
-    if (!active || finalScore == null) return;
+  const postScore = (fields: { sv: number | null; deductions: number | null; eScore?: number | null; final: number; source: NonNullable<import('../lib/types').Score['source']> }) => {
+    if (!active) return;
     const athleteName = `${activeAthlete!.firstName} ${activeAthlete!.lastName}`;
     mutate((d) => {
       const id = `${meet.id}|${active.id}|${event}`;
       d.scores = d.scores.filter((s) => s.id !== id);
       d.scores.push({
         id, meetId: meet.id, sessionId: session.id, regId: active.id, event,
-        sv: svNum, deductions: dedNum, final: finalScore,
+        ...fields,
         enteredBy: 'judge-you', enteredAt: new Date().toISOString(), flashed: true,
       });
     });
-    setFlash({ name: athleteName, score: finalScore });
-    setActiveReg(null); setSv(''); setDed('');
-    toast(`Score posted: ${athleteName} — ${fmtScore(finalScore)}`);
+    setFlash({ name: athleteName, score: fields.final });
+    setActiveReg(null); setSv(''); setDed(''); setCalcOpen(false);
+    toast(`Score posted: ${athleteName} — ${fmtScore(fields.final)}`);
+  };
+
+  const submit = () => {
+    if (finalScore == null) return;
+    postScore({ sv: svNum, deductions: dedNum, eScore: null, final: finalScore, source: 'manual' });
+  };
+
+  // From the embedded NAIGC calculator: full calcs post directly; the MAG SV
+  // calculator just fills the start value so the judge can add execution deductions.
+  const useCalc = (msg: CalcMessage) => {
+    if (!calcCfg) return;
+    const fields = scoreFromCalc(calcCfg, msg);
+    if (calcCfg.produces === 'full' && fields.final != null) {
+      postScore({ sv: fields.sv ?? null, deductions: fields.deductions ?? null, eScore: fields.eScore ?? null, final: fields.final, source: fields.source! });
+    } else if (fields.sv != null) {
+      setSv(String(fields.sv));
+      setCalcOpen(false);
+      toast(`Start value ${fmtScore(fields.sv)} pulled in — now enter execution deductions.`);
+    }
   };
 
   return (
@@ -101,10 +125,27 @@ export function Judge() {
             </div>
             <button className="btn ghost small" onClick={() => { setActiveReg(null); setSv(''); setDed(''); }}>Cancel</button>
           </div>
+          {calcCfg ? (
+            <div className="card card-pad" style={{ background: 'var(--ice-100)', border: '1px solid var(--line)', marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ fontSize: 13.5 }}>
+                <strong>{calcCfg.label}</strong> is wired in for this level.
+                <div style={{ color: 'var(--ink-soft)' }}>
+                  {calcCfg.produces === 'full'
+                    ? 'Build the routine and the full D / E / Final scores post straight to results.'
+                    : 'Build the routine to compute the start value, then add execution deductions here.'}
+                </div>
+              </div>
+              <button className="btn primary" onClick={() => setCalcOpen(true)}>Open calculator →</button>
+            </div>
+          ) : (
+            <div style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 12 }}>
+              No calculator built for {activeLevel?.name} yet — enter D and deductions manually.
+            </div>
+          )}
           <div className="grid cols-2">
             <Field
               label={`Start value (D)${svMax != null ? ` — max ${svMax.toFixed(1)} for ${activeLevel!.name}` : ' — open'}`}
-              hint="Production embeds the full MAG SV / Masters / WAG Open calculators here, capturing routine composition."
+              hint={calcCfg ? 'Pulled from the calculator, or enter manually.' : 'Enter the start value.'}
             >
               <input type="number" inputMode="decimal" step="0.1" style={{ fontSize: 22, fontWeight: 700 }} value={sv} onChange={(e) => setSv(e.target.value)} placeholder="0.0" autoFocus />
             </Field>
@@ -152,6 +193,17 @@ export function Judge() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {calcOpen && calcCfg && active && (
+        <CalculatorModal
+          cfg={calcCfg}
+          eventCode={event}
+          eventName={events.find((e) => e.code === event)?.name ?? event}
+          athleteName={`${activeAthlete!.firstName} ${activeAthlete!.lastName}`}
+          onUse={useCalc}
+          onClose={() => setCalcOpen(false)}
+        />
       )}
     </div>
   );
