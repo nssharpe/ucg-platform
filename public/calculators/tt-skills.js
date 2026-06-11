@@ -277,14 +277,12 @@ window.TT_SKILLS = {
   ],
 
   dmt: [
-    // NOTE: page 2 says "Tuck, pike and straddle jumps will be worth 0.1
-    // DD each" (used below), but the page 4 "NAIGC Double Mini Trampoline
-    // Additional Skills" table lists these same three jumps at 0.0 DD.
-    // Flagging this conflict for developer review -- verify against current
-    // NAIGC rules before relying on the 0.1 value in competition.
-    { n: "Tuck Jump", fig: "--o", dd: 0.1, flag: "addendum" },
-    { n: "Pike Jump", fig: "-->", dd: 0.1, flag: "addendum" },
-    { n: "Straddle Jump", fig: "Straddle", dd: 0.1, flag: "addendum" },
+    // DMT shape jumps are 0.0 DD — confirmed by the NAIGC T&T rules lead
+    // (2026-06-11), resolving the page 2 (0.1) vs page 4 (0.0) chart conflict
+    // in favor of the page-4 Additional Skills value.
+    { n: "Tuck Jump", fig: "--o", dd: 0.0 },
+    { n: "Pike Jump", fig: "-->", dd: 0.0 },
+    { n: "Straddle Jump", fig: "Straddle", dd: 0.0 },
     // NAIGC Double Mini Trampoline Additional Skills (page 4)
     { n: "Half Turn", fig: "-1/", dd: 0.1 },
     { n: "Full Turn", fig: "-2/", dd: 0.2 },
