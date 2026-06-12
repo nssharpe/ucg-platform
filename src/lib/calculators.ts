@@ -1,5 +1,8 @@
-// Maps UCG levels to the embedded NAIGC scoring calculators and bridges their output.
+// Maps UCG levels to scoring calculators. New entry uses the native engines in
+// src/scoring (ScoringPanel); the iframe `path` + bridge message types remain
+// only to restore legacy DOM-snapshot calcState on old scores (CalcPanel).
 import type { Score } from './types';
+import type { ScoringOutcome } from '../scoring';
 
 export type CalcKind = 'mag' | 'wag-open' | 'wag-vault' | 'wag-sv' | 'tnt' | 'masters';
 
@@ -77,22 +80,26 @@ export function calcUrl(cfg: CalcConfig, eventCode: string): string {
   return `${cfg.path}?${p.toString()}`;
 }
 
-/** Translates a calculator message into the fields stored on a Score. */
-export function scoreFromCalc(cfg: CalcConfig, msg: CalcMessage): Partial<Score> {
+export function calcSource(kind: CalcKind): Score['source'] {
+  switch (kind) {
+    case 'masters': return 'masters-calc';
+    case 'tnt': return 'tnt-calc';
+    case 'wag-open': case 'wag-vault': return 'wag-open-calc';
+    case 'wag-sv': return 'wag-sv-calc';
+    default: return 'mag-calc';
+  }
+}
+
+/** Translates a native engine outcome into the fields stored on a Score. */
+export function scoreFromOutcome(cfg: CalcConfig, oc: ScoringOutcome): Partial<Score> {
   if (cfg.produces === 'full') {
-    // Open scoring: final = D + E. Store D as sv, E as eScore, and keep the
-    // judge's "deductions" field in sync (10 - E) so the manual view still reads.
-    const d = msg.d ?? null;
-    const e = msg.e ?? null;
-    const final = msg.final ?? (d != null && e != null ? Math.round((d + e) * 1000) / 1000 : null);
     return {
-      sv: d,
-      eScore: e,
-      deductions: e != null ? Math.round((10 - e) * 1000) / 1000 : null,
-      final,
-      source: cfg.kind === 'masters' ? 'masters-calc' : cfg.kind === 'tnt' ? 'tnt-calc' : 'wag-open-calc',
+      sv: oc.d,
+      eScore: oc.e,
+      deductions: oc.e != null ? Math.round((10 - oc.e) * 1000) / 1000 : null,
+      final: oc.final,
+      source: calcSource(cfg.kind),
     };
   }
-  // SV-only calculators (MAG, Xcel/L9): judge applies deductions; final = sv - deductions.
-  return { sv: msg.d ?? null, source: cfg.kind === 'wag-sv' ? 'wag-sv-calc' : 'mag-calc' };
+  return { sv: oc.d, source: calcSource(cfg.kind) };
 }

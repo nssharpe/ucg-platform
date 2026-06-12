@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { pushScore } from '../lib/supabase';
@@ -6,13 +6,12 @@ import { Badge, Field, useToast } from '../components/ui';
 import { EVENTS } from '../lib/types';
 import type { Score } from '../lib/types';
 import { fmtScore } from '../lib/scoring';
-import { calcForLevel, scoreFromCalc, scoreDetailPath } from '../lib/calculators';
-import type { CalcMessage } from '../lib/calculators';
-import { CalcPanel } from '../components/CalcPanel';
-import type { CalcPanelHandle } from '../components/CalcPanel';
+import { calcForLevel, calcSource, scoreFromOutcome, scoreDetailPath } from '../lib/calculators';
+import { computeScoring, initScoring, isCalcStateV2 } from '../scoring';
+import { ScoringPanel } from '../components/scoring/ScoringPanel';
 
-/** Tablet-first judge pad. The level's scoring calculator is embedded directly in
- *  the scoring view — judges build the routine there and the score posts live.
+/** Tablet-first judge pad. The level's scoring panel is built into the scoring
+ *  view — judges build the routine natively and the score posts live.
  *  A manual override is always available. */
 export function Judge() {
   const db = useDB();
@@ -46,54 +45,63 @@ export function Judge() {
   const [sv, setSv] = useState('');
   const [ded, setDed] = useState('');
   const [override, setOverride] = useState(false);
-  const [live, setLive] = useState<CalcMessage | null>(null);
-  const calcRef = useRef<CalcPanelHandle>(null);
+  const [calcSt, setCalcSt] = useState<unknown>(null);
 
   const active = regs.find((r) => r.id === activeReg);
   const activeAthlete = active && db.people.find((p) => p.id === active.athleteId);
   const activeLevel = active && db.levels.find((l) => l.id === active.levelId);
   const calcCfg = activeLevel ? calcForLevel(activeLevel.id, event) : null;
   const svMax = activeLevel?.svMax;
-  const svNum = parseFloat(sv);
+
+  // Pure and cheap — recompute every render (the React Compiler memoizes it).
+  const outcome = calcCfg && activeLevel && calcSt != null
+    ? computeScoring(calcCfg.kind, calcSt, activeLevel.id, event)
+    : null;
+
+  const usingCalcFull = !!calcCfg && calcCfg.produces === 'full' && !override;
+  const usingCalcSv = !!calcCfg && calcCfg.produces === 'd' && !override;
+  const svNum = usingCalcSv ? (outcome?.d ?? NaN) : parseFloat(sv);
   const dedNum = parseFloat(ded);
-  const svError = sv !== '' && svMax != null && svNum > svMax;
+  const svError = !isNaN(svNum) && svMax != null && svNum > svMax;
 
   // What would post right now?
-  const usingCalcFull = !!calcCfg && calcCfg.produces === 'full' && !override;
   const finalScore = usingCalcFull
-    ? (live?.final ?? null)
+    ? (outcome?.final ?? null)
     : (!isNaN(svNum) && !isNaN(dedNum) ? Math.max(0, Math.round((svNum - dedNum) * 1000) / 1000) : null);
 
   const openScoring = (reg: typeof regs[number]) => {
     const sc = scoreFor(reg.id);
+    const level = db.levels.find((l) => l.id === reg.levelId);
+    const cfg = level ? calcForLevel(level.id, event) : null;
     setActiveReg(reg.id);
     setSv(sc?.sv?.toString() ?? '');
     setDed(sc?.deductions?.toString() ?? '');
     setOverride(false);
-    setLive(null);
+    // Editing a score re-opens the panel exactly as it was posted.
+    if (cfg && level) {
+      const prior = sc?.calcState;
+      setCalcSt(isCalcStateV2(prior) && prior.kind === cfg.kind ? prior.state : initScoring(cfg.kind, level.id, event));
+    } else {
+      setCalcSt(null);
+    }
   };
 
-  const onCalcLive = (msg: CalcMessage) => {
-    setLive(msg);
-    // SV-only calculators stream the start value into the form unless overridden.
-    if (calcCfg && calcCfg.produces === 'd' && !override && msg.d != null) setSv(String(msg.d));
-  };
+  const close = () => { setActiveReg(null); setSv(''); setDed(''); setCalcSt(null); };
 
-  const submit = async () => {
+  const submit = () => {
     if (!active || finalScore == null) return;
     const athleteName = `${activeAthlete!.firstName} ${activeAthlete!.lastName}`;
-    const calcState = calcCfg ? await calcRef.current?.requestState() : null;
     let fields: Partial<Score>;
-    if (usingCalcFull && live) {
-      fields = scoreFromCalc(calcCfg!, live);
+    if (usingCalcFull && outcome) {
+      fields = scoreFromOutcome(calcCfg!, outcome);
     } else {
-      // SV-only calculators still credit the calc as the SV source unless overridden.
-      const svFromCalc = calcCfg?.produces === 'd' && !override;
+      // SV-only panels still credit the calculator as the SV source unless overridden.
       fields = {
         sv: isNaN(svNum) ? null : svNum, deductions: isNaN(dedNum) ? null : dedNum, eScore: null,
-        source: svFromCalc ? (calcCfg!.kind === 'wag-sv' ? 'wag-sv-calc' : 'mag-calc') : 'manual',
+        source: usingCalcSv ? calcSource(calcCfg!.kind) : 'manual',
       };
     }
+    const calcState = calcCfg && calcSt != null ? { v: 2 as const, kind: calcCfg.kind, state: calcSt } : undefined;
     mutate((d) => {
       const id = `${meet.id}|${active.id}|${event}`;
       d.scores = d.scores.filter((s) => s.id !== id);
@@ -101,14 +109,14 @@ export function Judge() {
         id, meetId: meet.id, sessionId: session.id, regId: active.id, event,
         sv: fields.sv ?? null, deductions: fields.deductions ?? null, eScore: fields.eScore ?? null,
         final: finalScore, source: fields.source,
-        calc: calcCfg?.kind, calcState: calcState ?? undefined,
+        calc: calcCfg?.kind, calcState,
         enteredBy: 'judge-you', enteredAt: new Date().toISOString(), flashed: true,
       };
       d.scores.push(score);
       pushScore(score);
     });
     setFlash({ name: athleteName, score: finalScore });
-    setActiveReg(null); setSv(''); setDed(''); setLive(null);
+    close();
     toast(`Score posted: ${athleteName} — ${fmtScore(finalScore)}`);
   };
 
@@ -119,17 +127,17 @@ export function Judge() {
 
       <div className="grid cols-3" style={{ marginBottom: 14 }}>
         <Field label="Meet">
-          <select className="input" value={meetId} onChange={(e) => { setMeetId(e.target.value); const m = db.meets.find((x) => x.id === e.target.value)!; setSessionId(m.sessions[0].id); setEvent(EVENTS[m.sessions[0].discipline][0].code); setActiveReg(null); }}>
+          <select className="input" value={meetId} onChange={(e) => { setMeetId(e.target.value); const m = db.meets.find((x) => x.id === e.target.value)!; setSessionId(m.sessions[0].id); setEvent(EVENTS[m.sessions[0].discipline][0].code); close(); }}>
             {db.meets.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
           </select>
         </Field>
         <Field label="Session">
-          <select className="input" value={sessionId} onChange={(e) => { setSessionId(e.target.value); const s = meet.sessions.find((x) => x.id === e.target.value)!; setEvent(EVENTS[s.discipline][0].code); setActiveReg(null); }}>
+          <select className="input" value={sessionId} onChange={(e) => { setSessionId(e.target.value); const s = meet.sessions.find((x) => x.id === e.target.value)!; setEvent(EVENTS[s.discipline][0].code); close(); }}>
             {meet.sessions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </Field>
         <Field label="Event">
-          <select className="input" value={event} onChange={(e) => { setEvent(e.target.value); setActiveReg(null); }}>
+          <select className="input" value={event} onChange={(e) => { setEvent(e.target.value); close(); }}>
             {events.map((ev) => <option key={ev.code} value={ev.code}>{ev.name}</option>)}
           </select>
         </Field>
@@ -159,21 +167,21 @@ export function Judge() {
                   <input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} /> Manual override
                 </label>
               )}
-              <button className="btn ghost small" onClick={() => { setActiveReg(null); setSv(''); setDed(''); setLive(null); }}>Cancel</button>
+              <button className="btn ghost small" onClick={close}>Cancel</button>
             </div>
           </div>
 
-          {calcCfg && (
+          {calcCfg && !override && calcSt != null && (
             <div style={{ marginBottom: 14 }}>
-              <CalcPanel ref={calcRef} cfg={calcCfg} eventCode={event} onLive={onCalcLive} />
+              <ScoringPanel kind={calcCfg.kind} levelId={activeLevel!.id} eventCode={event} value={calcSt} onChange={setCalcSt} />
             </div>
           )}
 
           {usingCalcFull ? (
             <div style={{ display: 'flex', gap: 22, alignItems: 'center', flexWrap: 'wrap' }}>
-              <Readout label="D" value={live?.d} />
-              <Readout label="E" value={live?.e} />
-              <Readout label="Final" value={live?.final} accent />
+              <Readout label="D" value={outcome?.d} />
+              <Readout label="E" value={outcome?.e} />
+              <Readout label="Final" value={outcome?.final} accent />
               <button className="btn primary" style={{ fontSize: 16, padding: '12px 28px' }} disabled={finalScore == null} onClick={submit}>
                 Post & flash score →
               </button>
@@ -183,10 +191,11 @@ export function Judge() {
               <div className="grid cols-2">
                 <Field
                   label={`Start value (D)${svMax != null ? ` — max ${svMax.toFixed(1)} for ${activeLevel!.name}` : ' — open'}`}
-                  hint={calcCfg && !override ? 'Streams from the calculator above. Tick manual override to type it.' : 'Enter the start value.'}
+                  hint={usingCalcSv ? 'Builds live from the routine above. Tick manual override to type it.' : 'Enter the start value.'}
                 >
-                  <input type="number" inputMode="decimal" step="0.1" style={{ fontSize: 22, fontWeight: 700 }} value={sv}
-                    readOnly={!!calcCfg && !override}
+                  <input type="number" inputMode="decimal" step="0.1" style={{ fontSize: 22, fontWeight: 700 }}
+                    value={usingCalcSv ? (outcome?.d ?? '') : sv}
+                    readOnly={usingCalcSv}
                     onChange={(e) => setSv(e.target.value)} placeholder="0.0" />
                 </Field>
                 <Field label="Total deductions (E)" hint="Execution + neutral deductions, summed.">

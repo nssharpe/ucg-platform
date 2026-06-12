@@ -454,6 +454,91 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
   font-variant-numeric: tabular-nums;
 }
 
+/* ---------- native scoring panels ---------- */
+.sp-panel { display: flex; flex-direction: column; gap: 14px; }
+.sp-section {
+  background: var(--ice-100);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+.sp-section-head { display: flex; justify-content: space-between; align-items: start; gap: 12px; margin-bottom: 10px; }
+.sp-section-title {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.14em;
+  color: var(--ink-soft); font-weight: 700;
+}
+.sp-section-sub { font-size: 12.5px; color: var(--ink-soft); margin-top: 3px; max-width: 64ch; }
+
+.sp-stepper { display: inline-flex; align-items: stretch; }
+.sp-stepper button {
+  width: 40px; height: 40px;
+  border: 1.5px solid var(--line); background: var(--white);
+  font-size: 20px; font-weight: 700; color: var(--navy-700); cursor: pointer;
+}
+.sp-stepper button:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+.sp-stepper button:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+.sp-stepper button:hover:not(:disabled) { background: var(--ice-200); }
+.sp-stepper button:disabled { opacity: 0.35; cursor: default; }
+.sp-stepper input {
+  width: 52px; height: 40px; text-align: center; font-weight: 700; font-size: 17px;
+  border: 1.5px solid var(--line); border-left: 0; border-right: 0;
+  background: var(--white); color: var(--ink);
+  -moz-appearance: textfield; appearance: textfield;
+}
+.sp-stepper input::-webkit-outer-spin-button, .sp-stepper input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.sp-stepper input:focus { outline: none; }
+.sp-stepper.disabled { opacity: 0.4; pointer-events: none; }
+
+.sp-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 0; }
+.sp-row > label { font-size: 14px; flex: 1; }
+.sp-row-hint { display: block; font-size: 12px; color: var(--ink-soft); }
+
+.sp-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.sp-chips.dense { gap: 4px; }
+.sp-chip {
+  border: 1.5px solid var(--line); background: var(--white); color: var(--navy-700);
+  border-radius: 99px; padding: 8px 14px; font-size: 14px; font-weight: 700; cursor: pointer;
+  transition: background 0.1s, border-color 0.1s, transform 0.06s;
+  min-width: 42px;
+}
+.sp-chips.dense .sp-chip { padding: 7px 0; min-width: 38px; font-size: 13.5px; }
+.sp-chip:hover { border-color: var(--navy-600); }
+.sp-chip:active { transform: scale(0.96); }
+.sp-chip.on, .sp-chip.sel { background: var(--navy-800); border-color: var(--navy-800); color: var(--white); }
+.sp-chip.contrib { background: var(--green-600); border-color: var(--green-600); color: var(--white); }
+.sp-chip.excluded { background: var(--coral-500); border-color: var(--coral-500); color: var(--white); text-decoration: line-through; }
+
+.sp-check { margin-bottom: 4px; }
+.sp-check span { font-size: 14px; }
+
+.sp-decimal { max-width: 130px; text-align: center; font-weight: 700; }
+.sp-decimal.big { font-size: 22px; }
+
+.sp-strip {
+  display: flex; gap: 26px; align-items: center; flex-wrap: wrap;
+  background: var(--navy-800); color: var(--white);
+  border-radius: var(--radius); padding: 14px 20px;
+}
+.sp-strip-item { text-align: center; min-width: 70px; }
+.sp-strip-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--ice-300); font-weight: 700; }
+.sp-strip-value { font-family: var(--font-display); font-size: 34px; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.sp-strip-value.accent { color: var(--coral-500); }
+
+.sp-warn {
+  background: var(--coral-100); color: var(--coral-600);
+  border-radius: var(--radius-sm); padding: 9px 13px; font-size: 13.5px; font-weight: 600;
+  display: flex; flex-direction: column; gap: 3px;
+}
+.sp-breakdown { font-size: 12.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+
+.sp-skillgrid { display: flex; flex-direction: column; gap: 8px; }
+.sp-skillrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.sp-skillrow .sp-skillnum {
+  width: 26px; text-align: right; font-weight: 800; color: var(--ink-soft);
+  font-size: 13px; flex-shrink: 0;
+}
+.sp-skillrow .sp-sep { width: 1px; align-self: stretch; background: var(--line); }
+
 /* rank chips */
 .rank-chip {
   display: inline-grid;

@@ -4,33 +4,50 @@ import { useDB, mutate, useRole, usePersona } from '../lib/store';
 import { Badge, Field, useToast } from '../components/ui';
 import { pushScore } from '../lib/supabase';
 import { EVENTS } from '../lib/types';
+import type { Score } from '../lib/types';
 import { fmtScore } from '../lib/scoring';
 import { calcForLevel } from '../lib/calculators';
 import type { CalcMessage } from '../lib/calculators';
+import { computeScoring, isCalcStateV2 } from '../scoring';
+import { ScoringPanel } from '../components/scoring/ScoringPanel';
 import { CalcPanel } from '../components/CalcPanel';
 import type { CalcPanelHandle } from '../components/CalcPanel';
 
 /** Score details: how the score was built, with the calculator restored exactly
  *  as it was filled in. Athletes see their own; admins see all and can adjust
- *  (score verification / inquiries). */
+ *  (score verification / inquiries). Scores posted before the native panels
+ *  carry a legacy iframe DOM snapshot and re-open in the embedded calculator. */
 export function ScoreDetail() {
   const { scoreId } = useParams();
+  const db = useDB();
+  const score = db.scores.find((s) => s.id === decodeURIComponent(scoreId ?? ''));
+  if (!score) return <p>Score not found.</p>;
+  // Keyed so panel state resets when navigating between scores.
+  return <ScoreDetailInner key={score.id} score={score} />;
+}
+
+function ScoreDetailInner({ score }: { score: Score }) {
   const db = useDB();
   const role = useRole();
   const persona = usePersona();
   const toast = useToast();
-  const score = db.scores.find((s) => s.id === decodeURIComponent(scoreId ?? ''));
-  const calcRef = useRef<CalcPanelHandle>(null);
-  const [live, setLive] = useState<CalcMessage | null>(null);
-  const [note, setNote] = useState('');
-
-  if (!score) return <p>Score not found.</p>;
 
   const reg = db.registrations.find((r) => r.id === score.regId);
+  const level = reg && db.levels.find((l) => l.id === reg.levelId);
+  const calcCfg = score.calc && reg && level ? calcForLevel(level.id, score.event) : null;
+  const v2 = isCalcStateV2(score.calcState) && calcCfg && score.calcState.kind === calcCfg.kind
+    ? score.calcState : null;
+
+  // Legacy iframe restore (pre-native scores).
+  const calcRef = useRef<CalcPanelHandle>(null);
+  const [live, setLive] = useState<CalcMessage | null>(null);
+  // Native panel state, editable in place.
+  const [nativeSt, setNativeSt] = useState<unknown>(() => v2?.state ?? null);
+  const [note, setNote] = useState('');
+
   const athlete = reg && db.people.find((p) => p.id === reg.athleteId);
   const meet = db.meets.find((m) => m.id === score.meetId);
   const session = meet?.sessions.find((s) => s.id === score.sessionId);
-  const level = reg && db.levels.find((l) => l.id === reg.levelId);
   const club = reg && db.clubs.find((c) => c.id === reg.clubId);
   const eventName = session ? EVENTS[session.discipline].find((e) => e.code === score.event)?.name ?? score.event : score.event;
 
@@ -47,32 +64,38 @@ export function ScoreDetail() {
     );
   }
 
-  const calcCfg = score.calc && reg && level ? calcForLevel(level.id, score.event) : null;
-  const hasState = !!score.calcState && !!calcCfg;
+  const isNative = !!v2 && nativeSt != null && !!calcCfg && !!level;
+  const isLegacy = !isNative && !!score.calcState && !!calcCfg;
+  const outcome = isNative ? computeScoring(calcCfg!.kind, nativeSt, level!.id, score.event) : null;
+
+  // Live values for the adjustment readout: native outcome, else legacy bridge message.
+  const liveD = outcome?.d ?? live?.d ?? score.sv;
+  const liveE = outcome?.e ?? live?.e ?? score.eScore;
+  const liveFinal = calcCfg?.produces === 'd'
+    ? (liveD != null && score.deductions != null
+      ? Math.max(0, Math.round((liveD - score.deductions) * 1000) / 1000)
+      : score.final)
+    : (outcome?.final ?? live?.final ?? score.final);
 
   const saveAdjustment = async () => {
-    const state = await calcRef.current?.requestState();
-    const d = live?.d ?? score.sv;
-    const e = live?.e ?? score.eScore;
-    const final = live?.final ?? (calcCfg?.produces === 'd' && d != null && score.deductions != null
-      ? Math.max(0, Math.round((d - score.deductions) * 1000) / 1000)
-      : score.final);
+    const legacyState = isLegacy ? await calcRef.current?.requestState() : null;
     mutate((db2) => {
       const s = db2.scores.find((x) => x.id === score.id)!;
       if (calcCfg?.produces === 'full') {
-        s.sv = d; s.eScore = e;
-        s.deductions = e != null ? Math.round((10 - e) * 1000) / 1000 : s.deductions;
+        s.sv = liveD; s.eScore = liveE;
+        s.deductions = liveE != null ? Math.round((10 - liveE) * 1000) / 1000 : s.deductions;
       } else {
-        s.sv = d;
+        s.sv = liveD;
       }
-      s.final = final;
-      s.calcState = state ?? s.calcState;
+      s.final = liveFinal;
+      if (isNative) s.calcState = { v: 2, kind: calcCfg!.kind, state: nativeSt };
+      else s.calcState = legacyState ?? s.calcState;
       s.adjustNote = note || 'Adjusted after inquiry';
       s.adjustedAt = new Date().toISOString();
       s.enteredBy = 'admin-verification';
       pushScore(s);
     });
-    toast(`Score adjusted to ${fmtScore(final)} — change is live on results.`);
+    toast(`Score adjusted to ${fmtScore(liveFinal)} — change is live on results.`);
   };
 
   return (
@@ -101,17 +124,23 @@ export function ScoreDetail() {
         </div>
       </div>
 
-      {hasState ? (
+      {isNative || isLegacy ? (
         <>
           <h3 style={{ marginBottom: 8 }}>Calculator as submitted{canAdjust && ' — edit to adjust'}</h3>
-          <CalcPanel
-            ref={calcRef}
-            cfg={calcCfg!}
-            eventCode={score.event}
-            initialState={score.calcState}
-            onLive={setLive}
-            height={560}
-          />
+          {isNative ? (
+            <div className="card card-pad">
+              <ScoringPanel kind={calcCfg!.kind} levelId={level!.id} eventCode={score.event} value={nativeSt} onChange={setNativeSt} />
+            </div>
+          ) : (
+            <CalcPanel
+              ref={calcRef}
+              cfg={calcCfg!}
+              eventCode={score.event}
+              initialState={score.calcState}
+              onLive={setLive}
+              height={560}
+            />
+          )}
           {canAdjust && (
             <div className="card card-pad" style={{ marginTop: 14, borderLeft: '4px solid var(--coral-500)' }}>
               <h3 className="card-title">Score verification</h3>
@@ -121,7 +150,7 @@ export function ScoreDetail() {
                     <input type="text" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Inquiry #12 — credit given for Barani" />
                   </Field>
                 </div>
-                <Readout label="New final" value={live?.final ?? score.final} />
+                <Readout label="New final" value={liveFinal} />
                 <button className="btn primary" style={{ marginBottom: 14 }} onClick={saveAdjustment}>Save adjusted score</button>
               </div>
               <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: 0 }}>
