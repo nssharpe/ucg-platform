@@ -161,7 +161,7 @@ const rowToRegistration = (r: any): Registration => ({
 const scoreToRow = (s: Score) => ({
   id: s.id, meet_id: s.meetId, session_id: s.sessionId, reg_id: s.regId, event: s.event,
   sv: s.sv, deductions: s.deductions, e_score: s.eScore ?? null, final: s.final,
-  source: (s.source === 'wag-sv-calc' || s.source === 'tnt-calc') ? 'manual' : (s.source ?? 'manual'),
+  source: s.source ?? 'manual',
   entered_by: s.enteredBy, entered_at: s.enteredAt, flashed: s.flashed,
 });
 const rowToScore = (r: any): Score => ({
