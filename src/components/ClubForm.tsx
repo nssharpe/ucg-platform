@@ -3,6 +3,7 @@ import { useDB, mutate } from '../lib/store';
 import { Combo, Field, Modal, useToast } from './ui';
 import { STATE_REGIONS } from '../lib/types';
 import type { Club } from '../lib/types';
+import { pushClub } from '../lib/supabase';
 
 /** Next seed-style id: max numeric suffix + 1 (e.g. club-9 after club-8). */
 export function nextId(items: { id: string }[], prefix: string): string {
@@ -35,8 +36,11 @@ export function ClubForm({ club, onClose }: { club?: Club; onClose: () => void }
       if (club) {
         const i = d.clubs.findIndex((c) => c.id === club.id);
         d.clubs[i] = { ...d.clubs[i], ...data };
+        pushClub(d.clubs[i]);
       } else {
-        d.clubs.push({ id: nextId(d.clubs, 'club-'), ...data });
+        const created = { id: nextId(d.clubs, 'club-'), ...data };
+        d.clubs.push(created);
+        pushClub(created);
       }
     });
     toast(club ? 'Club updated.' : 'Club created.');

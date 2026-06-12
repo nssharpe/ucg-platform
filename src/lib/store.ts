@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from 'react';
 import type { DB, Role, RoleId } from './types';
 import { buildSeed } from './seed';
+import { isSupabaseConfigured, loadAll } from './supabase';
 
 const LS_KEY = 'ucg-db-v1';
 const SEED_VERSION = 3;
@@ -46,6 +47,21 @@ export function resetDemo() {
   persist();
   listeners.forEach((l) => l());
 }
+
+/** Replace the in-memory snapshot with a fresh load from Supabase, if configured. */
+export async function syncFromSupabase() {
+  if (!isSupabaseConfigured) return;
+  const remote = await loadAll();
+  if (!remote) return;
+  db = remote;
+  snapshotVersion++;
+  persist();
+  listeners.forEach((l) => l());
+}
+
+// Boot hydration: keep the localStorage/seed snapshot for first paint (no
+// flash), then replace it with Supabase data once it arrives.
+if (isSupabaseConfigured) void syncFromSupabase();
 
 // Cross-tab sync
 window.addEventListener('storage', (e) => {

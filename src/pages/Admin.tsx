@@ -7,6 +7,7 @@ import { PersonForm } from '../components/PersonForm';
 import { DISCIPLINES, STATE_REGIONS } from '../lib/types';
 import type { Athlete, Club, Region } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
+import { isSupabaseConfigured, pushAll, pushSeason } from '../lib/supabase';
 
 // ---------- Members ----------
 export function AdminMembers() {
@@ -157,7 +158,11 @@ function Seasons() {
               <td className="num">{fmtMoney(s.coachFee)}</td>
               <td>
                 <label className="checkrow" style={{ margin: 0 }}>
-                  <input type="checkbox" checked={s.active} onChange={() => mutate((d) => { const x = d.seasons.find((y) => y.id === s.id)!; x.active = !x.active; })} />
+                  <input type="checkbox" checked={s.active} onChange={() => mutate((d) => {
+                    const x = d.seasons.find((y) => y.id === s.id)!;
+                    x.active = !x.active;
+                    pushSeason(x);
+                  })} />
                   {s.active ? 'Yes' : 'No'}
                 </label>
               </td>
@@ -167,7 +172,9 @@ function Seasons() {
                   <button className="btn small ghost" data-tip="Copy fees, waivers & levels into a new season" onClick={() => {
                     mutate((d) => {
                       const yr = +s.startsOn.slice(0, 4) + 1;
-                      d.seasons.push({ ...s, id: `s${yr - 1999}`, name: `${yr}–${String(yr + 1).slice(2)}`, startsOn: `${yr}-07-01`, endsOn: `${yr + 1}-06-30`, active: false, current: false });
+                      const next = { ...s, id: `s${yr - 1999}`, name: `${yr}–${String(yr + 1).slice(2)}`, startsOn: `${yr}-07-01`, endsOn: `${yr + 1}-06-30`, active: false, current: false };
+                      d.seasons.push(next);
+                      pushSeason(next);
                     });
                     toast('Season copied — update fees & waiver, then mark purchasable.');
                   }}>Copy → next year</button>
@@ -246,8 +253,10 @@ function Waivers() {
 }
 
 function DemoTools() {
+  const db = useDB();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
+  const [pushStatus, setPushStatus] = useState('');
   return (
     <div className="card card-pad" style={{ maxWidth: 560 }}>
       <h3 className="card-title">Prototype demo tools</h3>
@@ -274,6 +283,34 @@ function DemoTools() {
         </button>
         <button className="btn danger" onClick={() => { resetDemo(); toast('Demo data reset to the original seed.'); }}>Reset demo data</button>
       </div>
+      {isSupabaseConfigured && (
+        <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--line)' }}>
+          <p style={{ fontSize: 14, color: 'var(--ink-soft)', marginTop: 0 }}>
+            Push the current browser snapshot to the live Supabase project — this is how production gets seeded.
+          </p>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              className="btn"
+              disabled={!!pushStatus && pushStatus !== 'Done' && pushStatus !== 'Error'}
+              onClick={async () => {
+                setPushStatus('Starting…');
+                try {
+                  await pushAll(db, (label) => setPushStatus(label));
+                  setPushStatus('Done');
+                } catch (e) {
+                  console.error(e);
+                  setPushStatus('Error');
+                }
+              }}
+            >
+              Push local DB → Supabase
+            </button>
+            {pushStatus && <span style={{ fontSize: 13, color: pushStatus === 'Error' ? 'var(--coral-600)' : 'var(--ink-soft)' }}>
+              {pushStatus === 'Done' ? '✓ Done' : pushStatus === 'Error' ? '✕ Failed — see console' : `Pushing: ${pushStatus}…`}
+            </span>}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

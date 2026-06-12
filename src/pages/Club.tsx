@@ -5,6 +5,7 @@ import { Badge, Field, Tabs, useToast, useFmtDate } from '../components/ui';
 import { EVENTS } from '../lib/types';
 import type { Discipline } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
+import { deleteRegistration, pushCart, pushInvoice, pushMembership, pushPerson, pushRegistration } from '../lib/supabase';
 
 export function ClubPage() {
   const { clubId } = useParams();
@@ -112,14 +113,21 @@ function MeetRegGrid({ clubId }: { clubId: string }) {
         const levelId = athlete.levels[disc] ?? levels[0].id;
         const session = meet.sessions.find((s) => s.discipline === disc && s.levelIds.includes(levelId))
           ?? meet.sessions.find((s) => s.discipline === disc);
-        d.registrations.push({
+        const created = {
           id: `reg-${Date.now()}-${athleteId}`, meetId: meet.id, athleteId, clubId,
           discipline: disc, levelId, events: [ev], sessionId: session?.id ?? null,
-        });
+        };
+        d.registrations.push(created);
+        pushRegistration(created);
       } else {
         const r = d.registrations.find((x) => x.id === reg.id)!;
         r.events = r.events.includes(ev) ? r.events.filter((e) => e !== ev) : [...r.events, ev];
-        if (r.events.length === 0) d.registrations = d.registrations.filter((x) => x.id !== r.id);
+        if (r.events.length === 0) {
+          d.registrations = d.registrations.filter((x) => x.id !== r.id);
+          deleteRegistration(r.id);
+        } else {
+          pushRegistration(r);
+        }
       }
     });
   };
@@ -132,9 +140,11 @@ function MeetRegGrid({ clubId }: { clubId: string }) {
         r.levelId = levelId;
         const session = meet.sessions.find((s) => s.discipline === disc && s.levelIds.includes(levelId));
         if (session) r.sessionId = session.id;
+        pushRegistration(r);
       } else {
         const p = d.people.find((x) => x.id === athleteId)!;
         p.levels[disc] = levelId;
+        pushPerson(p);
       }
     });
   };
@@ -239,6 +249,7 @@ function MeetRegGrid({ clubId }: { clubId: string }) {
                   kind: 'meet-entry', refUserId: r.athleteId,
                 });
               }
+              pushCart(clubId, cart, true);
             });
             toast(`Added ${regs.length} ${disc} entries to the club cart. Selections are saved locally as you click — no postbacks.`);
           }}
@@ -283,7 +294,10 @@ export function ClubCart() {
                     <td>{i.label} <Badge tone="info">{i.kind}</Badge></td>
                     <td className="num">{fmtMoney(i.amount)}</td>
                     <td style={{ width: 40 }}>
-                      <button className="btn small ghost" data-tip="Remove from cart" onClick={() => mutate((d) => { d.carts[club.id] = (d.carts[club.id] ?? []).filter((x) => x.id !== i.id); })}>✕</button>
+                      <button className="btn small ghost" data-tip="Remove from cart" onClick={() => mutate((d) => {
+                        d.carts[club.id] = (d.carts[club.id] ?? []).filter((x) => x.id !== i.id);
+                        pushCart(club.id, d.carts[club.id], true);
+                      })}>✕</button>
                     </td>
                   </tr>
                 ))}
@@ -303,20 +317,23 @@ export function ClubCart() {
                 onClick={() => {
                   mutate((d) => {
                     const items = d.carts[club.id] ?? [];
-                    d.invoices.push({
+                    const invoice = {
                       id: `inv-${Date.now()}`, number: `UCG-2026-${String(d.invoices.length + 1).padStart(4, '0')}`,
                       clubId: club.id, athleteId: null, createdAt: new Date().toISOString(), paidAt: new Date().toISOString(),
                       items: [...items], couponCode: couponDef?.code,
-                    });
+                    };
+                    d.invoices.push(invoice);
+                    pushInvoice(invoice);
                     // Activate any pending memberships paid by this checkout
                     for (const item of items) {
                       if (item.kind === 'membership' && item.refUserId) {
                         const person = d.people.find((p) => p.id === item.refUserId);
                         const m = person?.memberships.find((x) => x.status === 'pending-club-payment');
-                        if (m) { m.status = 'active'; m.paidVia = 'club'; }
+                        if (m) { m.status = 'active'; m.paidVia = 'club'; pushMembership(person!.id, m); }
                       }
                     }
                     d.carts[club.id] = [];
+                    pushCart(club.id, [], true);
                   });
                   toast('Payment processed — memberships activated, confirmations emailed.');
                 }}

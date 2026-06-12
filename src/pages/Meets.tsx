@@ -6,6 +6,7 @@ import { MeetWizard } from '../components/MeetWizard';
 import { MeetStatusBadge } from './Home';
 import { EVENTS } from '../lib/types';
 import type { Meet, MeetSession } from '../lib/types';
+import { pushMeet, pushMeetSessions } from '../lib/supabase';
 import { fmtMoney } from '../lib/scoring';
 
 export function Meets() {
@@ -84,7 +85,7 @@ export function MeetDetail() {
             : <Badge tone="warn">Registration closed{role === 'admin' ? ' — admin can override below' : ''}</Badge>}
           {role === 'admin' && meet.status !== 'reg-open' && (
             <div style={{ marginTop: 10, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              <button className="btn small ghost" onClick={() => { mutate((d) => { d.meets.find((m) => m.id === meet.id)!.status = 'reg-open'; }); toast('Deadline overridden — registration re-opened.'); }}>Override: reopen reg</button>
+              <button className="btn small ghost" onClick={() => { mutate((d) => { const m = d.meets.find((m) => m.id === meet.id)!; m.status = 'reg-open'; pushMeet(m); }); toast('Deadline overridden — registration re-opened.'); }}>Override: reopen reg</button>
               <button className="btn small ghost" data-tip="Generates a private reg link + password for late adds" onClick={() => toast(`Private link: ucg.org/#/meets/${meet.slug}?code=LATE26 (demo)`)}>Private reg link</button>
             </div>
           )}
@@ -232,6 +233,7 @@ function SquadBuilder({ meet, session }: { meet: Meet; session: MeetSession }) {
         athleteRegIds: [],
       }));
       sregs.forEach((r, i) => s.squads[i % n].athleteRegIds.push(r.id));
+      pushMeetSessions(m, d.registrations);
     });
     toast(`Split ${regs.length} athletes into ${n} squads. Adjust then Save.`);
   };
@@ -250,6 +252,7 @@ function SquadBuilder({ meet, session }: { meet: Meet; session: MeetSession }) {
         }));
         sregs.forEach((r, i) => s.squads[i % n].athleteRegIds.push(r.id));
       }
+      pushMeetSessions(m, d.registrations);
     });
     toast('Squad setup copied to other ' + session.discipline + ' sessions.');
   };
@@ -260,6 +263,7 @@ function SquadBuilder({ meet, session }: { meet: Meet; session: MeetSession }) {
       const s = m.sessions.find((x) => x.id === session.id)!;
       for (const q of s.squads) q.athleteRegIds = q.athleteRegIds.filter((id) => id !== regId);
       if (toSquadId !== 'holding') s.squads.find((q) => q.id === toSquadId)!.athleteRegIds.push(regId);
+      pushMeetSessions(m, d.registrations);
     });
   };
 

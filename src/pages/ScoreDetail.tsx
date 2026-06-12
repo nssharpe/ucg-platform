@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useDB, mutate, useRole, usePersona } from '../lib/store';
 import { Badge, Field, useToast } from '../components/ui';
+import { pushScore } from '../lib/supabase';
 import { EVENTS } from '../lib/types';
 import { fmtScore } from '../lib/scoring';
 import { calcForLevel } from '../lib/calculators';
@@ -69,6 +70,7 @@ export function ScoreDetail() {
       s.adjustNote = note || 'Adjusted after inquiry';
       s.adjustedAt = new Date().toISOString();
       s.enteredBy = 'admin-verification';
+      pushScore(s);
     });
     toast(`Score adjusted to ${fmtScore(final)} — change is live on results.`);
   };

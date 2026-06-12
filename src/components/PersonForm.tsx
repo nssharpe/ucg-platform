@@ -4,6 +4,7 @@ import { Combo, Field, Modal, useToast } from './ui';
 import { DIETARY_OPTIONS, DISCIPLINES, SHIRT_SIZES, STATE_REGIONS } from '../lib/types';
 import type { Athlete, Gender, Placement } from '../lib/types';
 import { nextId } from './ClubForm';
+import { pushPerson } from '../lib/supabase';
 
 const GENDERS: Gender[] = ['Male', 'Female', 'Non-binary', 'Genderfluid', 'Agender', 'Other'];
 
@@ -36,8 +37,11 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
       if (person) {
         const i = d.people.findIndex((x) => x.id === person.id);
         d.people[i] = { ...d.people[i], ...data };
+        pushPerson(d.people[i]);
       } else {
-        d.people.push({ id: nextId(d.people, 'p-'), ...data });
+        const created = { id: nextId(d.people, 'p-'), ...data };
+        d.people.push(created);
+        pushPerson(created);
       }
     });
     toast(person ? 'Person updated.' : `${data.kind === 'coach' ? 'Coach' : 'Athlete'} created — open their profile to manage memberships.`);

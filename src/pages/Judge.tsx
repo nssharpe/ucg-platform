@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
+import { pushScore } from '../lib/supabase';
 import { Badge, Field, useToast } from '../components/ui';
 import { EVENTS } from '../lib/types';
 import type { Score } from '../lib/types';
@@ -96,13 +97,15 @@ export function Judge() {
     mutate((d) => {
       const id = `${meet.id}|${active.id}|${event}`;
       d.scores = d.scores.filter((s) => s.id !== id);
-      d.scores.push({
+      const score = {
         id, meetId: meet.id, sessionId: session.id, regId: active.id, event,
         sv: fields.sv ?? null, deductions: fields.deductions ?? null, eScore: fields.eScore ?? null,
         final: finalScore, source: fields.source,
         calc: calcCfg?.kind, calcState: calcState ?? undefined,
         enteredBy: 'judge-you', enteredAt: new Date().toISOString(), flashed: true,
-      });
+      };
+      d.scores.push(score);
+      pushScore(score);
     });
     setFlash({ name: athleteName, score: finalScore });
     setActiveReg(null); setSv(''); setDed(''); setLive(null);

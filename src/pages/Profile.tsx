@@ -4,6 +4,7 @@ import { useDB, mutate, usePersona } from '../lib/store';
 import { Combo, Field, useToast, Badge } from '../components/ui';
 import { SHIRT_SIZES, DIETARY_OPTIONS, STATE_REGIONS, DISCIPLINES } from '../lib/types';
 import type { Athlete, Gender } from '../lib/types';
+import { pushMembership, pushPerson } from '../lib/supabase';
 
 export function Profile({ adminView = false }: { adminView?: boolean }) {
   const db = useDB();
@@ -23,6 +24,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
     mutate((d) => {
       const i = d.people.findIndex((x) => x.id === personId);
       d.people[i] = { ...p };
+      pushPerson(d.people[i]);
     });
     setDraft(null);
     toast('Profile saved.');
@@ -168,14 +170,16 @@ function AdminMembershipControls({ personId }: { personId: string }) {
               onClick={() => {
                 mutate((d) => {
                   const p = d.people.find((x) => x.id === personId)!;
-                  const em = p.memberships.find((x) => x.seasonId === s.id);
+                  let em = p.memberships.find((x) => x.seasonId === s.id);
                   if (em?.status === 'active') {
                     em.status = 'none';
                   } else if (em) {
                     em.status = 'active'; em.activatedByAdmin = true;
                   } else {
-                    p.memberships.push({ seasonId: s.id, status: 'active', waiverSignedAt: null, waiverSignedBy: null, paidVia: 'comp', activatedByAdmin: true });
+                    em = { seasonId: s.id, status: 'active', waiverSignedAt: null, waiverSignedBy: null, paidVia: 'comp', activatedByAdmin: true };
+                    p.memberships.push(em);
                   }
+                  pushMembership(p.id, em);
                 });
                 toast(`Membership ${m?.status === 'active' ? 'deactivated' : 'activated'} for ${s.name}.`);
               }}

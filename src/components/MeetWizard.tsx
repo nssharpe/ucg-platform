@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { mutate, useDB } from '../lib/store';
+import { pushMeet } from '../lib/supabase';
 import { Combo, Field, Modal, useToast } from './ui';
 import { DISCIPLINES, STATE_REGIONS } from '../lib/types';
 import type { Discipline, Level, Meet, MeetSession, MeetStatus } from '../lib/types';
@@ -142,7 +143,7 @@ export function MeetWizard({ onClose }: { onClose: () => void }) {
       sessions: meetSessions,
       ...(hasBanquet ? { banquet: { name: banquetName.trim(), price: bPrice } } : {}),
     };
-    mutate((d) => d.meets.push(meet));
+    mutate((d) => { d.meets.push(meet); pushMeet(meet); });
     toast(`${meet.name} sanctioned — #/meets/${slug}`);
     onClose();
     navigate(`/meets/${slug}`);

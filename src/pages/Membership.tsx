@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useDB, mutate, usePersona } from '../lib/store';
 import { Badge, Field, useToast } from '../components/ui';
 import { fmtMoney } from '../lib/scoring';
+import { pushCart, pushInvoice, pushMembership } from '../lib/supabase';
+import type { Membership } from '../lib/types';
 
 export function Membership() {
   const db = useDB();
@@ -33,23 +35,28 @@ export function Membership() {
     mutate((d) => {
       const p = d.people.find((x) => x.id === me.id)!;
       p.memberships = p.memberships.filter((m) => m.seasonId !== seasonId);
-      p.memberships.push({
+      const membership: Membership = {
         seasonId,
         status: via === 'card' ? 'active' : 'pending-club-payment',
         waiverSignedAt: new Date().toISOString(),
         waiverSignedBy: waiverSig,
         paidVia: via === 'card' ? 'card' : null,
-      });
+      };
+      p.memberships.push(membership);
+      pushMembership(p.id, membership);
       if (via === 'club' && club) {
         const cart = d.carts[club.id] ?? (d.carts[club.id] = []);
         cart.push({ id: `ci-${Date.now()}`, label: `Athlete membership ${season.name} — ${me.firstName} ${me.lastName}`, amount: discounted, kind: 'membership', refUserId: me.id });
+        pushCart(club.id, cart, true);
       } else {
-        d.invoices.push({
+        const invoice = {
           id: `inv-${Date.now()}`, number: `UCG-2026-${String(d.invoices.length + 1).padStart(4, '0')}`,
           clubId: null, athleteId: me.id, createdAt: new Date().toISOString(), paidAt: new Date().toISOString(),
-          items: [{ id: `ii-${Date.now()}`, label: `Athlete membership ${season.name}`, amount: discounted, kind: 'membership', refUserId: me.id }],
+          items: [{ id: `ii-${Date.now()}`, label: `Athlete membership ${season.name}`, amount: discounted, kind: 'membership' as const, refUserId: me.id }],
           couponCode: couponDef?.code,
-        });
+        };
+        d.invoices.push(invoice);
+        pushInvoice(invoice);
       }
     });
     setStep('done');
