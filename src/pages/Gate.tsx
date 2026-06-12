@@ -1,7 +1,13 @@
 import { useState } from 'react';
 import { checkPassword } from '../lib/store';
+import { isSupabaseConfigured, supabase } from '../lib/supabase';
 
 export function Gate({ onUnlock }: { onUnlock: () => void }) {
+  if (isSupabaseConfigured) return <AuthGate />;
+  return <PasswordGate onUnlock={onUnlock} />;
+}
+
+function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
   const [pw, setPw] = useState('');
   const [err, setErr] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -29,6 +35,73 @@ export function Gate({ onUnlock }: { onUnlock: () => void }) {
         />
         <button className="btn primary" disabled={busy || !pw}>Enter the gym →</button>
         {err && <div className="gate-err">That's not it — check with Nate or Julia.</div>}
+        <div className="gate-note">United Club Gymnastics · Registration & Scoring Platform · Private prototype</div>
+      </form>
+    </div>
+  );
+}
+
+function AuthGate() {
+  const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
+  const [email, setEmail] = useState('');
+  const [pw, setPw] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supabase) return;
+    setBusy(true);
+    setErr(null);
+    setInfo(null);
+    if (mode === 'sign-in') {
+      const { error } = await supabase.auth.signInWithPassword({ email, password: pw });
+      setBusy(false);
+      if (error) setErr(error.message);
+      // onAuthStateChange picks up the new session and re-renders App.
+    } else {
+      const { data, error } = await supabase.auth.signUp({ email, password: pw });
+      setBusy(false);
+      if (error) { setErr(error.message); return; }
+      if (!data.session) setInfo('Check your email to confirm your account, then sign in.');
+    }
+  };
+
+  return (
+    <div className="gate">
+      <form className="gate-card" onSubmit={submit}>
+        <div className="gate-logo">UCG<span className="spark">.</span></div>
+        <div className="gate-tag">For the love<br />of the sport.</div>
+        <input
+          type="email"
+          placeholder="EMAIL"
+          value={email}
+          autoFocus
+          autoComplete="email"
+          onChange={(e) => { setEmail(e.target.value); setErr(null); setInfo(null); }}
+          style={{ marginBottom: 10 }}
+        />
+        <input
+          type="password"
+          placeholder="PASSWORD"
+          value={pw}
+          autoComplete={mode === 'sign-in' ? 'current-password' : 'new-password'}
+          onChange={(e) => { setPw(e.target.value); setErr(null); setInfo(null); }}
+        />
+        <button className="btn primary" disabled={busy || !email || !pw}>
+          {busy ? 'Please wait…' : mode === 'sign-in' ? 'Sign in →' : 'Sign up →'}
+        </button>
+        {err && <div className="gate-err">{err}</div>}
+        {info && <div className="gate-note" style={{ color: 'var(--ice-200)', marginTop: 12 }}>{info}</div>}
+        <button
+          type="button"
+          className="btn ghost"
+          style={{ width: '100%', justifyContent: 'center', marginTop: 10 }}
+          onClick={() => { setMode((m) => (m === 'sign-in' ? 'sign-up' : 'sign-in')); setErr(null); setInfo(null); }}
+        >
+          {mode === 'sign-in' ? 'Need an account? Sign up' : 'Have an account? Sign in'}
+        </button>
         <div className="gate-note">United Club Gymnastics · Registration & Scoring Platform · Private prototype</div>
       </form>
     </div>

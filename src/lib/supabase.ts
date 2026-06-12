@@ -5,7 +5,7 @@
 // additionally fires one of the `push*` helpers below to mirror the change to
 // Supabase. All writes are fire-and-forget (console.error on failure, never
 // block the UI) and are no-ops when `isSupabaseConfigured` is false.
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient, type RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import type {
   Athlete, Club, Coupon, DB, Invoice, Level, Meet, Membership, Registration, Score, Season,
 } from './types';
@@ -166,7 +166,7 @@ const scoreToRow = (s: Score) => ({
   adjust_note: s.adjustNote ?? null, adjusted_at: s.adjustedAt ?? null,
   entered_by: s.enteredBy, entered_at: s.enteredAt, flashed: s.flashed,
 });
-const rowToScore = (r: any): Score => ({
+export const rowToScore = (r: any): Score => ({
   id: r.id, meetId: r.meet_id, sessionId: r.session_id, regId: r.reg_id, event: r.event,
   sv: r.sv == null ? null : Number(r.sv), deductions: r.deductions == null ? null : Number(r.deductions),
   eScore: r.e_score == null ? null : Number(r.e_score), final: r.final == null ? null : Number(r.final),
@@ -450,12 +450,36 @@ export async function pushAll(db: DB, onProgress?: (label: string) => void): Pro
   onProgress?.('Done');
 }
 
-/** Example realtime wiring for live results once the backend is live. */
-export function subscribeMeetScores(meetId: string, onChange: () => void): () => void {
+/** Realtime wiring for live results: subscribes to score changes for a meet.
+ *  `onChange` receives the raw postgres_changes payload — use
+ *  `applyScoreChange` to merge it into a local Score[] snapshot. */
+export function subscribeMeetScores(
+  meetId: string,
+  onChange: (payload: RealtimePostgresChangesPayload<Record<string, any>>) => void,
+): () => void {
   if (!supabase) return () => {};
   const channel = supabase
     .channel(`scores:${meetId}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'scores', filter: `meet_id=eq.${meetId}` }, onChange)
     .subscribe();
   return () => { supabase.removeChannel(channel); };
+}
+
+/** Merge a scores-table realtime change into a local Score[] snapshot
+ *  (match by id: replace existing, append new, or remove on DELETE). */
+export function applyScoreChange(
+  scores: Score[],
+  payload: RealtimePostgresChangesPayload<Record<string, any>>,
+): Score[] {
+  if (payload.eventType === 'DELETE') {
+    const oldId = (payload.old as Record<string, any> | null)?.id;
+    if (oldId == null) return scores;
+    return scores.filter((s) => s.id !== oldId);
+  }
+  const updated = rowToScore(payload.new as Record<string, any>);
+  const idx = scores.findIndex((s) => s.id === updated.id);
+  if (idx === -1) return [...scores, updated];
+  const next = [...scores];
+  next[idx] = updated;
+  return next;
 }

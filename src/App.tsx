@@ -3,6 +3,8 @@ import { HashRouter, Routes, Route } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { ToastProvider } from './components/ui';
 import { isUnlocked } from './lib/store';
+import { isSupabaseConfigured } from './lib/supabase';
+import { useSession, useAuthLoading, hasLikelySession } from './lib/auth';
 import { Gate } from './pages/Gate';
 import { Home } from './pages/Home';
 
@@ -51,9 +53,23 @@ function PageFallback() {
 }
 
 export default function App() {
-  const [unlocked, setUnlocked] = useState(isUnlocked());
+  const session = useSession();
+  const authLoading = useAuthLoading();
+  const [unlockedLocally, setUnlockedLocally] = useState(isUnlocked());
   usePrefetchRoutes();
-  if (!unlocked) return <Gate onUnlock={() => setUnlocked(true)} />;
+
+  if (isSupabaseConfigured) {
+    if (!session) {
+      // Avoid flashing the gate for a signed-in user while getSession()
+      // resolves on refresh: if a Supabase auth token is present locally,
+      // show a blank shell instead of the gate until the real session loads.
+      if (authLoading && hasLikelySession()) return <PageFallback />;
+      return <Gate onUnlock={() => {}} />;
+    }
+  } else if (!unlockedLocally) {
+    return <Gate onUnlock={() => setUnlockedLocally(true)} />;
+  }
+
   return (
     <ToastProvider>
       <HashRouter>

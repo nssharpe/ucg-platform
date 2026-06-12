@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useDB, useRole, usePersona } from '../lib/store';
 import { Tabs, useFmtDate, Badge } from '../components/ui';
@@ -6,8 +6,9 @@ import { MeetStatusBadge } from './Home';
 import { sessionResults, fmtScore } from '../lib/scoring';
 import { scoreDetailPath } from '../lib/calculators';
 import { EVENTS } from '../lib/types';
-import type { Registration, Score } from '../lib/types';
+import type { Registration, Score, DB } from '../lib/types';
 import type { AthleteResult } from '../lib/scoring';
+import { isSupabaseConfigured, subscribeMeetScores, applyScoreChange } from '../lib/supabase';
 
 export function ResultsIndex() {
   const db = useDB();
@@ -56,9 +57,29 @@ export function MeetResults() {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   const session = meet?.sessions.find((s) => s.id === sessionId) ?? meet?.sessions[0];
+
+  // Realtime score overlay: starts as the store's scores for this meet, then
+  // gets patched in-place by `subscribeMeetScores` postgres_changes events.
+  const [liveScores, setLiveScores] = useState<Score[] | null>(null);
+  useEffect(() => {
+    setLiveScores(null); // reset overlay when the meet changes
+    if (!isSupabaseConfigured || !meet) return;
+    const unsubscribe = subscribeMeetScores(meet.id, (payload) => {
+      setLiveScores((prev) => applyScoreChange(prev ?? db.scores.filter((s) => s.meetId === meet.id), payload));
+    });
+    return unsubscribe;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meet?.id]);
+
+  const effectiveDb: DB = useMemo(() => {
+    if (!liveScores || !meet) return db;
+    const otherScores = db.scores.filter((s) => s.meetId !== meet.id);
+    return { ...db, scores: [...otherScores, ...liveScores] };
+  }, [db, liveScores, meet]);
+
   const computed = useMemo(
-    () => (meet && session ? sessionResults(db, meet, session.id) : null),
-    [db, meet, session],
+    () => (meet && session ? sessionResults(effectiveDb, meet, session.id) : null),
+    [effectiveDb, meet, session],
   );
 
   if (!meet || !session || !computed) return <p>Meet not found.</p>;

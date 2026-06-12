@@ -1,10 +1,20 @@
-# UCG backend (Supabase) — scaffold
+# UCG backend (Supabase) — wired in
 
-This folder holds the database schema and security policies for the eventual
-production backend. **Nothing here is wired into the running app yet** — the
-prototype still runs entirely in the browser on the localStorage store
-(`src/lib/store.ts`). This is the migration target, ready to stand up when you
-greenlight hosting.
+This folder holds the database schema and security policies for the production
+backend, and it is now **wired into the running app**:
+
+- `src/lib/supabase.ts` is a write-through layer — every local `mutate()` call
+  site also pushes the change to Supabase (no-ops when env vars are absent).
+- `src/pages/Gate.tsx` + `src/lib/auth.ts` replace the localStorage password
+  gate with Supabase Auth (email/password sign in & sign up) once configured.
+- `src/pages/Results.tsx` subscribes to realtime score changes via
+  `subscribeMeetScores` so spectators see scores the moment a judge posts them.
+- The admin "Demo tools" panel can push the local seed DB to Supabase
+  (`pushAll`) for initial seeding.
+
+When `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` are absent, the app falls
+back unchanged to the localStorage prototype store (`src/lib/store.ts`) with
+the original password gate.
 
 ## Why Supabase
 
@@ -22,6 +32,8 @@ PostgREST API is automatic, and Edge Functions cover custom endpoints.
 |------|---------|
 | `migrations/0001_schema.sql` | All tables + enums, mirroring `src/lib/types.ts`. |
 | `migrations/0002_rls.sql` | Row-level security: the 6 roles + public read for results. |
+| `migrations/0003_score_source_calcs.sql` | Adds `wag-sv-calc` / `tnt-calc` to the `score_source` enum. |
+| `migrations/0004_text_ids_score_extras.sql` | Converts app-generated id columns to `text` and adds score calc-state columns. |
 
 ## Stand it up
 
@@ -34,6 +46,38 @@ PostgREST API is automatic, and Edge Functions cover custom endpoints.
 4. Seed: export the prototype's demo data (League Controls → Demo tools can be
    extended to dump JSON) or write an `INSERT` seed. The shapes match the schema
    1:1, so a small script can map the seed in `src/lib/seed.ts` to rows.
+
+## Post-deploy setup
+
+After the schema (0001 + 0002) is applied and the app is deployed with the env
+vars set, finish setup with the following one-time steps:
+
+1. **Apply migrations 0003 and 0004** in the SQL editor.
+   - 0004 runs fine as a single script (it's wrapped in its own transaction).
+   - 0003 uses `alter type ... add value if not exists`, which **cannot run
+     inside a transaction block**. Run each statement individually (select and
+     execute one line at a time, or paste them one at a time):
+     ```sql
+     alter type score_source add value if not exists 'wag-sv-calc';
+     alter type score_source add value if not exists 'tnt-calc';
+     ```
+
+2. **Grant yourself admin** after your first sign-up (Gate → Sign up):
+   ```sql
+   insert into user_roles (user_id, role)
+   select id, 'admin' from auth.users where email = 'nssharpe@gmail.com';
+   ```
+
+3. **Enable realtime for `scores`** so live results push to spectators:
+   - Database → Replication → add the `scores` table to the
+     `supabase_realtime` publication, or run:
+     ```sql
+     alter publication supabase_realtime add table scores;
+     ```
+
+4. **Seed data**: sign in as the admin user, then use Admin → League Controls
+   → Demo tools → "Push local DB → Supabase" to copy the seeded prototype data
+   into the new database.
 
 ## Role model (RLS)
 
@@ -51,20 +95,24 @@ Maps to the app's "Viewing as" personas:
 Roles live in `user_roles` (a user may hold several). Helper SQL functions
 (`is_admin()`, `manages_club()`, `my_person_id()`) keep the policies readable.
 
-## Migration path for the app data layer
+## How the app data layer uses this
 
-`src/lib/store.ts` exposes a small surface (`useDB`, `mutate`, role helpers).
-`src/lib/supabase.ts` sketches the `UcgRepository` contract that mirrors those
-reads/writes. Migrate table-by-table:
+`src/lib/store.ts` exposes the reactive `useDB`/`mutate` surface the UI reads
+and writes. `src/lib/supabase.ts` provides:
 
-1. Implement `loadAll()` to hydrate the in-memory snapshot from Supabase on boot.
-2. Point each `mutate(...)` call site at the matching repository method, which
-   writes to Supabase and lets realtime (`subscribeMeetScores`) refresh other
-   clients — this is what makes live results push to spectators.
-3. Replace the localStorage password gate with Supabase Auth (magic-link or
-   email/password); drop the SHA-256 gate in `store.ts`.
+- `loadAll()` — hydrates the in-memory snapshot from Supabase on boot
+  (`syncFromSupabase`), after first painting the localStorage/seed snapshot
+  so there's no flash.
+- `push*` helpers — called alongside every `mutate(...)` site to mirror
+  changes to Supabase (fire-and-forget, no-op when not configured).
+- `subscribeMeetScores` / `applyScoreChange` — realtime score updates for the
+  live results page.
+- `pushAll` — bulk-pushes a full local DB snapshot, used by the admin
+  "Push local DB → Supabase" seed tool.
 
-Because the table shapes equal the TS types, most of this is mechanical.
+The localStorage password gate (`checkPassword`/`isUnlocked` in `store.ts`)
+remains as the fallback when Supabase isn't configured; `src/pages/Gate.tsx`
+and `src/lib/auth.ts` handle Supabase Auth when it is.
 
 ## Not covered yet (future migrations)
 

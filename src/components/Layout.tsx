@@ -1,6 +1,8 @@
 import { NavLink, Link, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { useDB, useRole, setRole, ROLES, usePersona, useViewPersonId, setViewPersonId } from '../lib/store';
+import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import { useSession } from '../lib/auth';
 import type { RoleId } from '../lib/types';
 import { Combo } from './ui';
 
@@ -72,6 +74,7 @@ export function Layout({ children }: { children: ReactNode }) {
   const roleInfo = ROLES.find((r) => r.id === role)!;
   const persona = usePersona();
   const viewPersonId = useViewPersonId();
+  const session = useSession();
 
   // Membership banner for the athlete persona (spec: always-obvious status)
   const me = db.people.find((p) => p.id === persona.athleteId);
@@ -131,6 +134,16 @@ export function Layout({ children }: { children: ReactNode }) {
             )}
           </div>
           <div className="persona">{personaName} — {roleInfo.description}</div>
+          {isSupabaseConfigured && session && (
+            <button
+              type="button"
+              className="btn small ghost"
+              style={{ width: '100%', justifyContent: 'center', marginTop: 8 }}
+              onClick={() => supabase!.auth.signOut()}
+            >
+              Sign out
+            </button>
+          )}
         </div>
       </aside>
       <div className="main">
