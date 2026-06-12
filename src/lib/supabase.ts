@@ -162,6 +162,8 @@ const scoreToRow = (s: Score) => ({
   id: s.id, meet_id: s.meetId, session_id: s.sessionId, reg_id: s.regId, event: s.event,
   sv: s.sv, deductions: s.deductions, e_score: s.eScore ?? null, final: s.final,
   source: s.source ?? 'manual',
+  calc: s.calc ?? null, calc_state: s.calcState ?? null,
+  adjust_note: s.adjustNote ?? null, adjusted_at: s.adjustedAt ?? null,
   entered_by: s.enteredBy, entered_at: s.enteredAt, flashed: s.flashed,
 });
 const rowToScore = (r: any): Score => ({
@@ -169,6 +171,10 @@ const rowToScore = (r: any): Score => ({
   sv: r.sv == null ? null : Number(r.sv), deductions: r.deductions == null ? null : Number(r.deductions),
   eScore: r.e_score == null ? null : Number(r.e_score), final: r.final == null ? null : Number(r.final),
   source: r.source, enteredBy: r.entered_by, enteredAt: r.entered_at, flashed: r.flashed,
+  ...(r.calc != null ? { calc: r.calc } : {}),
+  ...(r.calc_state != null ? { calcState: r.calc_state } : {}),
+  ...(r.adjust_note != null ? { adjustNote: r.adjust_note } : {}),
+  ...(r.adjusted_at != null ? { adjustedAt: r.adjusted_at } : {}),
 });
 
 // cart_items: one row per item, owner = club_id or person_id
