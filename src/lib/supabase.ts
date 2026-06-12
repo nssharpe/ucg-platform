@@ -113,6 +113,8 @@ const personToRow = (p: Athlete) => ({
 });
 
 const membershipToRow = (personId: string, m: Membership) => ({
+  // Membership has no TS id; derive a stable one (0004 dropped the uuid default)
+  id: `${personId}:${m.seasonId}`,
   person_id: personId, season_id: m.seasonId, status: m.status,
   waiver_signed_at: m.waiverSignedAt, waiver_signed_by: m.waiverSignedBy,
   paid_via: m.paidVia, activated_by_admin: m.activatedByAdmin ?? false,
