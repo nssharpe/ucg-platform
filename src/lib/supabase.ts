@@ -452,7 +452,7 @@ export async function pushAll(db: DB, onProgress?: (label: string) => void): Pro
 
 /** Realtime wiring for live results: subscribes to score changes for a meet.
  *  `onChange` receives the raw postgres_changes payload — use
- *  `applyScoreChange` to merge it into a local Score[] snapshot. */
+ *  `applyScorePatch` to accumulate it into a patch map. */
 export function subscribeMeetScores(
   meetId: string,
   onChange: (payload: RealtimePostgresChangesPayload<Record<string, any>>) => void,
@@ -465,21 +465,21 @@ export function subscribeMeetScores(
   return () => { supabase.removeChannel(channel); };
 }
 
-/** Merge a scores-table realtime change into a local Score[] snapshot
- *  (match by id: replace existing, append new, or remove on DELETE). */
-export function applyScoreChange(
-  scores: Score[],
+/** Accumulate a scores-table realtime change into a patch map
+ *  (id → Score for insert/update, id → null for delete). Callers overlay the
+ *  patches onto the store's scores at render time, so a store refresh
+ *  (loadAll / local mutate) is reconciled automatically. */
+export function applyScorePatch(
+  patches: ReadonlyMap<string, Score | null>,
   payload: RealtimePostgresChangesPayload<Record<string, any>>,
-): Score[] {
+): Map<string, Score | null> {
+  const next = new Map(patches);
   if (payload.eventType === 'DELETE') {
     const oldId = (payload.old as Record<string, any> | null)?.id;
-    if (oldId == null) return scores;
-    return scores.filter((s) => s.id !== oldId);
+    if (oldId != null) next.set(oldId, null);
+    return next;
   }
   const updated = rowToScore(payload.new as Record<string, any>);
-  const idx = scores.findIndex((s) => s.id === updated.id);
-  if (idx === -1) return [...scores, updated];
-  const next = [...scores];
-  next[idx] = updated;
+  next.set(updated.id, updated);
   return next;
 }

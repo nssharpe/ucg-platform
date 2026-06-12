@@ -8,7 +8,7 @@ import { scoreDetailPath } from '../lib/calculators';
 import { EVENTS } from '../lib/types';
 import type { Registration, Score, DB } from '../lib/types';
 import type { AthleteResult } from '../lib/scoring';
-import { isSupabaseConfigured, subscribeMeetScores, applyScoreChange } from '../lib/supabase';
+import { isSupabaseConfigured, subscribeMeetScores, applyScorePatch } from '../lib/supabase';
 
 export function ResultsIndex() {
   const db = useDB();
@@ -58,24 +58,28 @@ export function MeetResults() {
 
   const session = meet?.sessions.find((s) => s.id === sessionId) ?? meet?.sessions[0];
 
-  // Realtime score overlay: starts as the store's scores for this meet, then
-  // gets patched in-place by `subscribeMeetScores` postgres_changes events.
-  const [liveScores, setLiveScores] = useState<Score[] | null>(null);
+  // Realtime score overlay: a patch map (id → Score | null) accumulated from
+  // `subscribeMeetScores` postgres_changes events, overlaid on the store's
+  // scores at render time so store refreshes stay reconciled.
+  const [livePatches, setLivePatches] = useState<ReadonlyMap<string, Score | null>>(new Map());
   useEffect(() => {
-    setLiveScores(null); // reset overlay when the meet changes
+    setLivePatches(new Map()); // reset overlay when the meet changes
     if (!isSupabaseConfigured || !meet) return;
     const unsubscribe = subscribeMeetScores(meet.id, (payload) => {
-      setLiveScores((prev) => applyScoreChange(prev ?? db.scores.filter((s) => s.meetId === meet.id), payload));
+      setLivePatches((prev) => applyScorePatch(prev, payload));
     });
     return unsubscribe;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meet?.id]);
 
   const effectiveDb: DB = useMemo(() => {
-    if (!liveScores || !meet) return db;
-    const otherScores = db.scores.filter((s) => s.meetId !== meet.id);
-    return { ...db, scores: [...otherScores, ...liveScores] };
-  }, [db, liveScores, meet]);
+    if (livePatches.size === 0 || !meet) return db;
+    const scores = db.scores
+      .filter((s) => livePatches.get(s.id) !== null) // drop realtime-deleted rows
+      .map((s) => livePatches.get(s.id) ?? s);
+    const known = new Set(db.scores.map((s) => s.id));
+    for (const [id, s] of livePatches) if (s && !known.has(id)) scores.push(s);
+    return { ...db, scores };
+  }, [db, livePatches, meet]);
 
   const computed = useMemo(
     () => (meet && session ? sessionResults(effectiveDb, meet, session.id) : null),

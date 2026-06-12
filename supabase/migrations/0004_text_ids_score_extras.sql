@@ -186,4 +186,11 @@ alter table scores add column if not exists calc_state  jsonb;
 alter table scores add column if not exists adjust_note text;
 alter table scores add column if not exists adjusted_at timestamptz;
 
+-- ---------------------------------------------------------------------------
+-- 10. Realtime: DELETE events must carry meet_id so the per-meet
+--     postgres_changes filter can match them (default replica identity
+--     replicates only the primary key on delete).
+-- ---------------------------------------------------------------------------
+alter table scores replica identity full;
+
 commit;

@@ -74,6 +74,9 @@ vars set, finish setup with the following one-time steps:
      ```sql
      alter publication supabase_realtime add table scores;
      ```
+   - Migration 0004 also sets `alter table scores replica identity full;` —
+     without it, DELETE events replicate only the primary key, so the per-meet
+     `meet_id=eq.…` realtime filter silently drops them.
 
 4. **Seed data**: sign in as the admin user, then use Admin → League Controls
    → Demo tools → "Push local DB → Supabase" to copy the seeded prototype data
