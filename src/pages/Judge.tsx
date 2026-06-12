@@ -86,7 +86,12 @@ export function Judge() {
     if (usingCalcFull && live) {
       fields = scoreFromCalc(calcCfg!, live);
     } else {
-      fields = { sv: isNaN(svNum) ? null : svNum, deductions: isNaN(dedNum) ? null : dedNum, eScore: null, source: 'manual' };
+      // SV-only calculators still credit the calc as the SV source unless overridden.
+      const svFromCalc = calcCfg?.produces === 'd' && !override;
+      fields = {
+        sv: isNaN(svNum) ? null : svNum, deductions: isNaN(dedNum) ? null : dedNum, eScore: null,
+        source: svFromCalc ? (calcCfg!.kind === 'wag-sv' ? 'wag-sv-calc' : 'mag-calc') : 'manual',
+      };
     }
     mutate((d) => {
       const id = `${meet.id}|${active.id}|${event}`;

@@ -76,6 +76,12 @@ export default defineConfig({
         // Big test datasets are runtime-cached instead of precached.
         globIgnores: ['data/**'],
         navigateFallback: '/ucg-platform/index.html',
+        // Calculator iframes are real documents, not SPA routes — without this,
+        // the fallback serves index.html INSIDE the calc iframe (app-in-app bug).
+        navigateFallbackDenylist: [/\/calculators\//],
+        // Calc URLs carry preset params (?apparatus=&ruleset=&level=); strip them
+        // when matching the precache so the calculators also work offline.
+        ignoreURLParametersMatching: [/^utm_/, /^fbclid$/, /^apparatus$/, /^ruleset$/, /^level$/],
         runtimeCaching: [
           {
             // Results test data & future API reads: serve cached instantly, refresh in background.

@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { useDB, useRole, PERSONA } from '../lib/store';
+import { useDB, useRole, usePersona } from '../lib/store';
 import { Stat, Badge, useFmtDate } from '../components/ui';
 import { fmtMoney } from '../lib/scoring';
 
@@ -169,7 +169,8 @@ function MeetList() {
 
 function ClubManagerHome() {
   const db = useDB();
-  const club = db.clubs.find((c) => c.id === PERSONA.clubId)!;
+  const persona = usePersona();
+  const club = db.clubs.find((c) => c.id === persona.clubId)!;
   const season = db.seasons.find((s) => s.current)!;
   const roster = db.people.filter((p) => p.mainClubId === club.id);
   const active = roster.filter((p) => p.memberships.some((m) => m.seasonId === season.id && m.status === 'active'));
@@ -204,7 +205,8 @@ function ClubManagerHome() {
 function AthleteHome() {
   const db = useDB();
   const fmtDate = useFmtDate();
-  const me = db.people.find((p) => p.id === PERSONA.athleteId)!;
+  const persona = usePersona();
+  const me = db.people.find((p) => p.id === persona.athleteId)!;
   const season = db.seasons.find((s) => s.current)!;
   const membership = me.memberships.find((m) => m.seasonId === season.id);
   const myRegs = db.registrations.filter((r) => r.athleteId === me.id && !r.refunded);

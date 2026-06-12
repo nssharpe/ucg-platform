@@ -2,8 +2,10 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useDB, mutate, resetDemo } from '../lib/store';
 import { Badge, Field, Tabs, useToast } from '../components/ui';
+import { ClubForm } from '../components/ClubForm';
+import { PersonForm } from '../components/PersonForm';
 import { DISCIPLINES, STATE_REGIONS } from '../lib/types';
-import type { Region } from '../lib/types';
+import type { Athlete, Club, Region } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
 
 // ---------- Members ----------
@@ -11,6 +13,7 @@ export function AdminMembers() {
   const db = useDB();
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState<'all' | 'active' | 'pending' | 'none'>('all');
+  const [editing, setEditing] = useState<Athlete | 'new' | null>(null);
   const season = db.seasons.find((s) => s.current)!;
 
   const rows = useMemo(() => db.people
@@ -36,10 +39,11 @@ export function AdminMembers() {
           <option value="none">No membership</option>
         </select>
         <span style={{ alignSelf: 'center', fontSize: 13, color: 'var(--ink-soft)' }}>{rows.length} people</span>
+        <button className="btn primary" style={{ marginLeft: 'auto' }} onClick={() => setEditing('new')}>+ New person</button>
       </div>
       <div className="card" style={{ overflow: 'hidden' }}>
         <table className="tbl">
-          <thead><tr><th>Name</th><th>Type</th><th>Club</th><th>Region</th><th>Membership</th><th>Waiver</th></tr></thead>
+          <thead><tr><th>Name</th><th>Type</th><th>Club</th><th>Region</th><th>Membership</th><th>Waiver</th><th /></tr></thead>
           <tbody>
             {rows.slice(0, 120).map((p) => {
               const m = p.memberships.find((x) => x.seasonId === season.id);
@@ -52,12 +56,14 @@ export function AdminMembers() {
                   <td>{club?.region ?? STATE_REGIONS[p.state] ?? 'Other'}</td>
                   <td>{m?.status === 'active' ? <Badge tone="ok">Active</Badge> : m?.status === 'pending-club-payment' ? <Badge tone="warn">Pending</Badge> : <Badge tone="err">None</Badge>}</td>
                   <td style={{ fontSize: 12.5 }}>{m?.waiverSignedAt ? `✓ ${m.waiverSignedAt.slice(0, 10)} by ${m.waiverSignedBy}` : '—'}</td>
+                  <td><button className="btn small ghost" onClick={() => setEditing(p)}>Edit</button></td>
                 </tr>
               );
             })}
           </tbody>
         </table>
       </div>
+      {editing && <PersonForm person={editing === 'new' ? undefined : editing} onClose={() => setEditing(null)} />}
     </div>
   );
 }
@@ -66,10 +72,14 @@ export function AdminMembers() {
 export function AdminClubs() {
   const db = useDB();
   const season = db.seasons.find((s) => s.current)!;
+  const [editing, setEditing] = useState<Club | 'new' | null>(null);
   return (
     <div>
       <h1 className="page-title display">Clubs</h1>
       <p className="page-sub">Flags show what each club is missing — contact them right from here.</p>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
+        <button className="btn primary" onClick={() => setEditing('new')}>+ New club</button>
+      </div>
       <div className="card" style={{ overflow: 'hidden' }}>
         <table className="tbl">
           <thead><tr><th>Club</th><th>Region</th><th className="num">Roster</th><th className="num">Active</th><th>Flags</th><th /></tr></thead>
@@ -89,13 +99,17 @@ export function AdminClubs() {
                   <td className="num">{roster.length}</td>
                   <td className="num">{active.length}</td>
                   <td>{flags.length === 0 ? <Badge tone="ok">✓ Complete</Badge> : flags.map((f) => <Badge key={f} tone="warn">{f}</Badge>)}</td>
-                  <td><a className="btn small ghost" href={`mailto:${c.email}`}>✉ Contact</a></td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    <button className="btn small ghost" onClick={() => setEditing(c)}>Edit</button>{' '}
+                    <a className="btn small ghost" href={`mailto:${c.email}`}>✉ Contact</a>
+                  </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
       </div>
+      {editing && <ClubForm club={editing === 'new' ? undefined : editing} onClose={() => setEditing(null)} />}
     </div>
   );
 }

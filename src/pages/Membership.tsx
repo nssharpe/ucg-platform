@@ -1,12 +1,13 @@
 import { useState } from 'react';
-import { useDB, mutate, PERSONA } from '../lib/store';
+import { useDB, mutate, usePersona } from '../lib/store';
 import { Badge, Field, useToast } from '../components/ui';
 import { fmtMoney } from '../lib/scoring';
 
 export function Membership() {
   const db = useDB();
   const toast = useToast();
-  const me = db.people.find((p) => p.id === PERSONA.athleteId)!;
+  const persona = usePersona();
+  const me = db.people.find((p) => p.id === persona.athleteId)!;
   const purchasable = db.seasons.filter((s) => s.active);
   const [seasonId, setSeasonId] = useState(db.seasons.find((s) => s.current)!.id);
   const season = db.seasons.find((s) => s.id === seasonId)!;

@@ -1,7 +1,8 @@
 import { NavLink, Link, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
-import { useDB, useRole, setRole, ROLES, PERSONA } from '../lib/store';
+import { useDB, useRole, setRole, ROLES, usePersona, useViewPersonId, setViewPersonId } from '../lib/store';
 import type { RoleId } from '../lib/types';
+import { Combo } from './ui';
 
 const NAV: Record<RoleId, { group: string; items: { to: string; label: string }[] }[]> = {
   admin: [
@@ -20,6 +21,7 @@ const NAV: Record<RoleId, { group: string; items: { to: string; label: string }[
   'club-manager': [
     { group: 'My Club', items: [
       { to: '/', label: 'Dashboard' },
+      // club-1 is a placeholder rewritten to the impersonated persona's club at render time
       { to: '/club/club-1', label: 'Roster' },
       { to: '/club/club-1/cart', label: 'Club Cart & Invoices' },
     ]},
@@ -68,9 +70,17 @@ export function Layout({ children }: { children: ReactNode }) {
   const db = useDB();
   const loc = useLocation();
   const roleInfo = ROLES.find((r) => r.id === role)!;
+  const persona = usePersona();
+  const viewPersonId = useViewPersonId();
 
   // Membership banner for the athlete persona (spec: always-obvious status)
-  const me = db.people.find((p) => p.id === PERSONA.athleteId);
+  const me = db.people.find((p) => p.id === persona.athleteId);
+  const personOptions = db.people.map((p) => ({
+    value: p.id,
+    label: `${p.firstName} ${p.lastName}`,
+    sub: `${p.kind}${p.mainClubId ? ` · ${db.clubs.find((c) => c.id === p.mainClubId)?.shortName ?? ''}` : ''}`,
+  }));
+  const personaName = me && viewPersonId ? `${me.firstName} ${me.lastName}` : roleInfo.personaName;
   const season = db.seasons.find((s) => s.current)!;
   const myMembership = me?.memberships.find((m) => m.seasonId === season.id);
 
@@ -87,7 +97,7 @@ export function Layout({ children }: { children: ReactNode }) {
             {g.items.map((it) => (
               <NavLink
                 key={it.to}
-                to={it.to}
+                to={it.to.replace('club-1', persona.clubId)}
                 end={it.to === '/'}
                 className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
               >
@@ -101,7 +111,26 @@ export function Layout({ children }: { children: ReactNode }) {
           <select value={role} onChange={(e) => setRole(e.target.value as RoleId)}>
             {ROLES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
           </select>
-          <div className="persona">{roleInfo.personaName} — {roleInfo.description}</div>
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center', marginTop: 6 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Combo
+                options={personOptions}
+                value={viewPersonId}
+                onChange={(v) => setViewPersonId(v)}
+                placeholder="View as person…"
+              />
+            </div>
+            {viewPersonId && (
+              <button
+                type="button"
+                className="btn ghost"
+                title="Reset to default persona"
+                onClick={() => setViewPersonId(null)}
+                style={{ padding: '2px 8px' }}
+              >✕</button>
+            )}
+          </div>
+          <div className="persona">{personaName} — {roleInfo.description}</div>
         </div>
       </aside>
       <div className="main">

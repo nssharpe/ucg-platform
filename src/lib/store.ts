@@ -96,12 +96,57 @@ export function setRole(r: RoleId) {
   roleListeners.forEach((l) => l());
 }
 
-// Persona context: which club/athlete the current role "is"
-export const PERSONA = {
+// Persona context: which club/athlete the current role "is".
+// Admins can impersonate any person in db.people; null = the default seed persona.
+export interface Persona {
+  athleteId: string;
+  clubId: string;
+  hostClubId: string;
+}
+
+const DEFAULT_PERSONA: Persona = {
   athleteId: 'p-1', // Maya Okafor
   clubId: 'club-1', // U. Minnesota
   hostClubId: 'club-6', // Ohio State, hosts Midwest Regional
 };
+
+const PERSON_KEY = 'ucg-view-person';
+let viewPersonId: string | null = sessionStorage.getItem(PERSON_KEY);
+const personaListeners = new Set<() => void>();
+
+/** The raw impersonation selection (null = default persona). */
+export function useViewPersonId(): string | null {
+  return useSyncExternalStore(
+    (cb) => { personaListeners.add(cb); return () => personaListeners.delete(cb); },
+    () => viewPersonId,
+  );
+}
+
+export function setViewPersonId(id: string | null) {
+  viewPersonId = id;
+  if (id) sessionStorage.setItem(PERSON_KEY, id);
+  else sessionStorage.removeItem(PERSON_KEY);
+  personaListeners.forEach((l) => l());
+}
+
+/** Non-reactive persona snapshot. Falls back to the seed default if the
+ *  selected person no longer exists (e.g. after a demo reset). */
+export function getPersona(): Persona {
+  const person = viewPersonId ? db.people.find((p) => p.id === viewPersonId) : undefined;
+  if (!person) return DEFAULT_PERSONA;
+  return {
+    athleteId: person.id,
+    clubId: person.mainClubId ?? DEFAULT_PERSONA.clubId,
+    hostClubId: DEFAULT_PERSONA.hostClubId,
+  };
+}
+
+/** Reactive persona — tracks both the impersonation selection and DB changes. */
+export function usePersona(): Persona {
+  useViewPersonId();
+  useDB();
+  return getPersona();
+}
 
 // ---- Password gate ----
 const GATE_KEY = 'ucg-gate-ok';

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useDB, mutate, useRole } from '../lib/store';
 import { Badge, Tabs, useToast, useFmtDate } from '../components/ui';
+import { MeetWizard } from '../components/MeetWizard';
 import { MeetStatusBadge } from './Home';
 import { EVENTS } from '../lib/types';
 import type { Meet, MeetSession } from '../lib/types';
@@ -11,13 +12,15 @@ export function Meets() {
   const db = useDB();
   const role = useRole();
   const fmtDate = useFmtDate();
+  const [wizardOpen, setWizardOpen] = useState(false);
   return (
     <div>
       <h1 className="page-title display">Meets</h1>
       <p className="page-sub">Every meet gets its own unique URL, sessions, squads, and live results page.</p>
       {role === 'admin' && (
-        <button className="btn primary" style={{ marginBottom: 18 }} onClick={() => alert('New meet wizard (post-MVP): name, host club, dates, timezone, fees, sessions from default templates.')}>+ Sanction new meet</button>
+        <button className="btn primary" style={{ marginBottom: 18 }} onClick={() => setWizardOpen(true)}>+ Sanction new meet</button>
       )}
+      {wizardOpen && <MeetWizard onClose={() => setWizardOpen(false)} />}
       <div className="grid cols-3">
         {db.meets.map((m) => {
           const regs = db.registrations.filter((r) => r.meetId === m.id && !r.refunded);

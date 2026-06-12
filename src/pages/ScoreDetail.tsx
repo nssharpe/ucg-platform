@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { useDB, mutate, useRole, PERSONA } from '../lib/store';
+import { useDB, mutate, useRole, usePersona } from '../lib/store';
 import { Badge, Field, useToast } from '../components/ui';
 import { EVENTS } from '../lib/types';
 import { fmtScore } from '../lib/scoring';
@@ -16,6 +16,7 @@ export function ScoreDetail() {
   const { scoreId } = useParams();
   const db = useDB();
   const role = useRole();
+  const persona = usePersona();
   const toast = useToast();
   const score = db.scores.find((s) => s.id === decodeURIComponent(scoreId ?? ''));
   const calcRef = useRef<CalcPanelHandle>(null);
@@ -33,7 +34,7 @@ export function ScoreDetail() {
   const eventName = session ? EVENTS[session.discipline].find((e) => e.code === score.event)?.name ?? score.event : score.event;
 
   const canView = role === 'admin' || role === 'judge' || role === 'meet-host'
-    || (role === 'athlete' && reg?.athleteId === PERSONA.athleteId);
+    || (role === 'athlete' && reg?.athleteId === persona.athleteId);
   const canAdjust = role === 'admin';
 
   if (!canView) {

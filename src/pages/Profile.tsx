@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { useDB, mutate, PERSONA } from '../lib/store';
+import { useDB, mutate, usePersona } from '../lib/store';
 import { Combo, Field, useToast, Badge } from '../components/ui';
 import { SHIRT_SIZES, DIETARY_OPTIONS, STATE_REGIONS, DISCIPLINES } from '../lib/types';
 import type { Athlete, Gender } from '../lib/types';
@@ -9,7 +9,8 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   const db = useDB();
   const params = useParams();
   const toast = useToast();
-  const personId = adminView ? params.personId! : PERSONA.athleteId;
+  const persona = usePersona();
+  const personId = adminView ? params.personId! : persona.athleteId;
   const person = db.people.find((p) => p.id === personId);
   const [draft, setDraft] = useState<Athlete | null>(null);
   if (!person) return <p>Person not found.</p>;
