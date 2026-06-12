@@ -403,13 +403,14 @@ export async function pushAll(db: DB, onProgress?: (label: string) => void): Pro
   await step('Levels', () => supabase!.from('levels').upsert(db.levels.map(levelToRow)));
   await step('Coupons', () => db.coupons.length ? supabase!.from('coupons').upsert(db.coupons.map(couponToRow)) : undefined);
   await step('Clubs', () => supabase!.from('clubs').upsert(db.clubs.map(clubToRow)));
+  for (const part of chunk(db.people)) {
+    await step('People', () => supabase!.from('people').upsert(part.map(personToRow)));
+  }
+  // after people: club_managers.person_id references people
   await step('Club managers', () => {
     const rows = db.clubs.flatMap((c) => c.managerIds.map((personId) => ({ club_id: c.id, person_id: personId })));
     return rows.length ? supabase!.from('club_managers').upsert(rows) : undefined;
   });
-  for (const part of chunk(db.people)) {
-    await step('People', () => supabase!.from('people').upsert(part.map(personToRow)));
-  }
   await step('Alt clubs', () => {
     const rows = db.people.flatMap((p) => p.altClubIds.map((clubId) => ({ person_id: p.id, club_id: clubId })));
     return rows.length ? supabase!.from('person_alt_clubs').upsert(rows) : undefined;
