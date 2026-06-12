@@ -97,7 +97,11 @@ function AuthGate() {
         <button
           type="button"
           className="btn ghost"
-          style={{ width: '100%', justifyContent: 'center', marginTop: 10 }}
+          style={{
+            width: '100%', justifyContent: 'center', marginTop: 10,
+            // the gate sits on navy — the default ghost button text is invisible here
+            color: 'var(--ice-200)', border: '1px solid rgba(219, 235, 237, 0.35)', background: 'transparent',
+          }}
           onClick={() => { setMode((m) => (m === 'sign-in' ? 'sign-up' : 'sign-in')); setErr(null); setInfo(null); }}
         >
           {mode === 'sign-in' ? 'Need an account? Sign up' : 'Have an account? Sign in'}
