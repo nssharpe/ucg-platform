@@ -17,6 +17,17 @@ Supabase backend (env-gated). Deploys via GitHub Actions on push to `main`.
 - Pre-existing lint debt (`src/lib/supabase.ts` `any`s, etc.) — `npm run lint` has
   never been clean. Lint only the files you touch.
 
+## Tests
+- Vitest, **node environment**, config in `vitest.config.ts` (no app plugins loaded).
+  Tests live in `tests/**/*.test.ts` and cover the **pure** logic: the scoring
+  engines (`src/scoring/*`) and capability derivation (`src/lib/capabilities-core.ts`,
+  split out from the React hooks in `capabilities.ts` so it imports zero runtime deps).
+- Run: `node node_modules/vitest/vitest.mjs run` (npm script `test`, but the shim is
+  broken on this path — call the binary directly). Watch: drop `run`.
+- The scoring tests encode ground-truth values verified against the original NAIGC
+  calculators, so they lock in the port's correctness. No DOM/React/component tests
+  yet — those would need a jsdom environment + @testing-library added later.
+
 ## Deferred / TODO (not yet built)
 - **Transactional email** — the new-club-request flow (and any future notifications)
   should email `newclubinquiries@naigc.org`, but no email provider/Edge Function
