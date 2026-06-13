@@ -233,21 +233,6 @@ export interface ClubRequest {
   createdClubId?: string | null;
 }
 
-export type RoleId =
-  | 'admin'
-  | 'club-manager'
-  | 'athlete'
-  | 'judge'
-  | 'meet-host'
-  | 'spectator';
-
-export interface Role {
-  id: RoleId;
-  label: string;
-  personaName: string;
-  description: string;
-}
-
 export interface DB {
   seasons: Season[];
   levels: Level[];

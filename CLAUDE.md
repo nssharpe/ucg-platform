@@ -28,6 +28,14 @@ Supabase backend (env-gated). Deploys via GitHub Actions on push to `main`.
   calculators, so they lock in the port's correctness. No DOM/React/component tests
   yet — those would need a jsdom environment + @testing-library added later.
 
+## Docs
+- `README.md` — overview/architecture. `docs/` — `specs/`, `plans/`, and reference
+  notes (`docs/hosting-and-launch.md`, `docs/README.md` index). `supabase/README.md`
+  — backend schema + RLS model.
+- Write new design specs to `docs/specs/`, implementation plans to `docs/plans/`
+  (overrides the brainstorming/writing-plans skill defaults — do NOT recreate
+  `docs/superpowers/`).
+
 ## Deferred / TODO (not yet built)
 - **Transactional email** — the new-club-request flow (and any future notifications)
   should email `newclubinquiries@naigc.org`, but no email provider/Edge Function
@@ -36,4 +44,5 @@ Supabase backend (env-gated). Deploys via GitHub Actions on push to `main`.
   land, then make the request flow fire a best-effort email.
 - Stripe payments (memberships, meet entries, banquet), typed membership purchase +
   per-season waiver, codeless judge access (URL / 6-digit / QR), multi-judge + score-
-  entry-mode meet config, PDF certs, finals rosters. See `docs/superpowers/specs/`.
+  entry-mode meet config, PDF certs, finals rosters. See `docs/specs/` + `docs/plans/`,
+  and the roadmap in `docs/README.md`.

@@ -1,72 +1,92 @@
-# UCG Registration & Scoring Platform — MVP prototype
+# UCG Registration & Scoring Platform
 
-A working prototype of the **United Club Gymnastics** (formerly NAIGC) registration and
-scoring platform, intended to replace ScoreFlippers. Built with React + TypeScript + Vite.
+The **United Club Gymnastics** (formerly NAIGC) registration and scoring platform,
+intended to replace ScoreFlippers. React + TypeScript + Vite, with a Supabase backend.
 
-**Live demo:** https://nssharpe.github.io/ucg-platform/
-**Access password:** `fortheloveofthesport`
+**Live (development):** https://nssharpe.github.io/ucg-platform/ — deploys from `main`
+via GitHub Actions. Hosting is GitHub Pages **for development only**; see
+[`docs/hosting-and-launch.md`](docs/hosting-and-launch.md) for the production plan
+(`registration.unitedgymnastics.org`).
 
-## What this is
+## Architecture
 
-A clickable, data-driven prototype seeded with realistic demo data (8 clubs, ~70 members,
-3 meets, live + completed scoring). All data lives in the browser (`localStorage`), seeded
-deterministically — there is no backend yet. The data layer (`src/lib/store.ts`) is shaped
-like an async API so a real backend can swap in with minimal churn.
+Two independent halves:
 
-## Roles
+- **Frontend** — a static Vite/React SPA. Reactive in-memory store
+  (`src/lib/store.ts`, `useDB`/`mutate`) is the UI's source of truth.
+- **Backend** — Supabase (Postgres + Auth + RLS + realtime). `src/lib/supabase.ts`
+  is a **write-through** layer: every `mutate()` also mirrors the change to Supabase,
+  and `loadAll()` hydrates the snapshot on boot. Row-Level Security is the real
+  security boundary. See [`supabase/README.md`](supabase/README.md).
 
-Switch roles from the **"Viewing as"** dropdown in the sidebar. No real login — each role
-loads a demo persona:
+When the Supabase env vars are absent, the app falls back to a **localStorage-only
+prototype** with a password gate — handy for offline demos. With them present (the
+deployed config), it runs on real Supabase Auth + data.
 
-- **League Admin** — dashboard with attention flags, members, clubs, league controls
-  (seasons/fees/levels/regions/waivers), and the Communicate tool (filtered email/SMS).
-- **Club Manager** — roster, the meet-registration grid (level dropdown + event checkboxes
-  with live team totals), and the club cart + invoices.
-- **Athlete** — membership purchase flow (confirm info → e-sign waiver → pay/club-cart),
-  profile, and personal meet schedule.
-- **Judge** — tablet-first score entry with SV-cap validation and a flash-score display
-  that pushes live to results instantly.
-- **Meet Host** — session + squad builder (default rotations, copy setup to other sessions,
-  holding squad) and host dashboard.
-- **Spectator** — public live results, no login.
+### Auth & capabilities
 
-## Features implemented (this pass)
+There is no role switcher. Permissions are derived from the signed-in user's real
+state by [`src/lib/capabilities.ts`](src/lib/capabilities.ts) (React hooks) over the
+pure [`src/lib/capabilities-core.ts`](src/lib/capabilities-core.ts) (`deriveCapabilities`):
 
-Membership lifecycle with waivers & club-pay · searchable type-to-search dropdowns ·
-club roster & meet-reg grid · club cart, coupons & invoices · meet sessions & squad builder ·
-judge scoring with **the real NAIGC scoring calculators embedded** (MAG SV, WAG Open,
-Masters) feeding D / E / Final straight into the live flash · live results (all-around,
-event rankings, team scores with top-3-counting) · admin member/club management with
-membership toggles · league controls (seasons, levels, regions, waivers) · bulk
-communicate tool · CSV "export everything" · regions mapping · unique URLs per page ·
-mobile/tablet responsive · password gate.
+- **Guests** (no account) browse public pages — live results, meets.
+- **Members** (signed in) manage their profile, buy memberships, self-attach to
+  clubs, request new clubs.
+- **Club managers** (a `club_managers` row) co-manage their club's roster, managers,
+  and meet registration.
+- **Admins** (the only `user_roles` role) get league controls + a "View as" person
+  impersonation tool.
+- **Meet host** = a manager of the meet's host club (derived, not a stored role).
+- **Judges** will be account-free via a per-meet code (sub-project D, not built yet).
 
-### Embedded calculators
+Accounts link to a person row by **verified email** on first sign-in
+(`link_or_create_person` RPC); email confirmation must stay ON.
 
-The three existing NAIGC calculators are bundled verbatim under `public/calculators/`
-and embedded in the judge score-entry flow via an iframe + `postMessage` bridge
-(`public/calculators/bridge.js`), so their tested scoring logic is reused unchanged.
-`src/lib/calculators.ts` maps each UCG level to its calculator and presets apparatus /
-ruleset. MAG (Developmental / Intermediate / Advanced) computes a start value the judge
-adds deductions to; WAG Open and Masters compute the full D / E / Final and post directly.
-**Not yet covered:** other WAG levels (Xcel Silver/Platinum/Diamond, Level 9), T&T, and
-WAG/Masters vault (table-value based) — those still use manual entry.
+### Scoring
 
-## Not yet built (future passes)
-
-Real backend + auth + payments (Stripe) · the actual embedded SV calculators · PDF
-certificates/score sheets · banquet tickets & add-ons checkout · under-18 guardian
-e-sign delivery · API for external leagues · meet-creation wizard · finals rosters ·
-nationals status dashboard. See `../Reg & Scoring Platform Specification.md`.
+All six NAIGC scoring systems are implemented as **pure TypeScript engines** in
+[`src/scoring/`](src/scoring) (MAG SV, Masters, WAG Open, WAG vault, Xcel/Level 9 SV,
+T&T), with a shared `init`/`compute` contract and UCG-branded React panels in
+[`src/components/scoring/`](src/components/scoring). The judge pad streams D/E/Final
+live and posts to results instantly. The original NAIGC calculators remain under
+`public/calculators/` only to restore the embedded state of scores entered before the
+native engines (legacy `calcState`); new entry never uses them.
 
 ## Develop
+
+The repo path contains spaces and an `&`, which breaks npm/npx shims on Windows —
+invoke binaries directly. See [`CLAUDE.md`](CLAUDE.md) for the full gotcha list
+(including the Dropbox `dist/` lock during builds).
 
 ```bash
 npm install
 npm run dev      # http://localhost:5173/ucg-platform/
 npm run build    # production build to dist/
+npm test         # Vitest — scoring engines + capability derivation
+npm run lint
 ```
 
-To change the access password, update `GATE_HASH` in `src/lib/store.ts` with the SHA-256
-hex of the new password. Note: the gate is light obfuscation suitable for a private
-prototype, not real security — the bundle is public on GitHub Pages.
+Tests live in [`tests/`](tests) (Vitest, node env): ground-truth checks for every
+scoring engine plus the capability logic. Run directly with
+`node node_modules/vitest/vitest.mjs run` if the npm shim misbehaves on this path.
+
+Without Supabase env vars the app uses the password gate `fortheloveofthesport`
+(SHA-256 in `src/lib/store.ts` `GATE_HASH`) — obfuscation for private demos, not
+real security.
+
+## Status & roadmap
+
+**Done:** Supabase backend (write-through + realtime live results) · real auth +
+capability model · accounts↔people · club management + new-club requests · admin
+role grants · membership lifecycle (waivers, club-pay) · club roster & meet-reg grid ·
+club cart, coupons & invoices · meet/session/squad builder + meet wizard · native
+scoring engines for all disciplines · live results (AA, event rankings, team scores) ·
+imported real Nationals 2026 data · PWA + perf work · test suite.
+
+**Next (sub-projects):** Stripe payments → typed memberships + per-season waiver (B) →
+club-based registration multi-club picker (C) → codeless judge access (D) → meet
+1-vs-2-panel + calculator-vs-simple config (E). Further out: PDF certs, banquet
+tickets, transactional email, external API, finals rosters. Full status in
+[`CLAUDE.md`](CLAUDE.md); docs index in [`docs/`](docs).
+
+Spec: `../Reg & Scoring Platform Specification.md`.

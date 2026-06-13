@@ -31,9 +31,13 @@ PostgREST API is automatic, and Edge Functions cover custom endpoints.
 | File | Purpose |
 |------|---------|
 | `migrations/0001_schema.sql` | All tables + enums, mirroring `src/lib/types.ts`. |
-| `migrations/0002_rls.sql` | Row-level security: the 6 roles + public read for results. |
+| `migrations/0002_rls.sql` | Row-level security: helper functions + public read for results. |
 | `migrations/0003_score_source_calcs.sql` | Adds `wag-sv-calc` / `tnt-calc` to the `score_source` enum. |
 | `migrations/0004_text_ids_score_extras.sql` | Converts app-generated id columns to `text` and adds score calc-state columns. |
+| `migrations/0005_account_foundation.sql` | `club_requests` table + RLS, widened `club_managers` RLS (managers co-manage their own club), and the `link_or_create_person` claim-by-email RPC. |
+
+All five migrations are applied to the live project. Migrations are append-only;
+add new ones rather than editing applied files.
 
 ## Stand it up
 
@@ -84,19 +88,28 @@ vars set, finish setup with the following one-time steps:
 
 ## Role model (RLS)
 
-Maps to the app's "Viewing as" personas:
+The app's permission model (see `src/lib/capabilities-core.ts`) collapses to a few
+real concepts, enforced by RLS:
 
-- **admin** — full access to everything.
-- **club-manager** — read/write the people, registrations, cart and invoices for
-  clubs they manage (via `club_managers`).
-- **athlete** — read/write their own `people` row, memberships, and registrations.
-- **judge** / **meet-host** — write `scores`; hosts also manage their meet's
-  sessions and squads.
-- **spectator / anon** — public read of meets, sessions, registrations, and
-  scores so the live-results and meet pages work with no login.
+- **admin** — the only account-level role; lives in `user_roles`. Full access.
+- **club manager** — a `club_managers` row (person↔club). Reads/writes the people,
+  registrations, cart and invoices for clubs they manage, and (since 0005)
+  co-manages their own club's manager list. Not a `user_roles` entry.
+- **meet host** — *derived*, not stored: a manager of the meet's `host_club_id`.
+  Manages that meet's sessions/squads and may write its scores.
+- **member** (baseline signed-in person) — reads/writes their own `people` row,
+  memberships, alt-clubs, and registrations. "Athlete"/"coach" are membership
+  types, not roles.
+- **judge** — will be account-free via a per-meet code (sub-project D); not yet
+  built. Until then, admins/hosts enter scores.
+- **anon / guest** — public read of meets, sessions, registrations, and scores so
+  live-results and meet pages work with no login.
 
-Roles live in `user_roles` (a user may hold several). Helper SQL functions
+Accounts link to a `people` row by verified email on first sign-in via the
+`link_or_create_person` security-definer RPC (0005). Helper SQL functions
 (`is_admin()`, `manages_club()`, `my_person_id()`) keep the policies readable.
+The `app_role` enum still carries the original six values, but only `admin` is
+issued as an account role now.
 
 ## How the app data layer uses this
 
@@ -108,7 +121,7 @@ and writes. `src/lib/supabase.ts` provides:
   so there's no flash.
 - `push*` helpers — called alongside every `mutate(...)` site to mirror
   changes to Supabase (fire-and-forget, no-op when not configured).
-- `subscribeMeetScores` / `applyScoreChange` — realtime score updates for the
+- `subscribeMeetScores` / `applyScorePatch` — realtime score updates for the
   live results page.
 - `pushAll` — bulk-pushes a full local DB snapshot, used by the admin
   "Push local DB → Supabase" seed tool.
