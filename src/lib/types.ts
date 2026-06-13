@@ -81,6 +81,8 @@ export interface Membership {
 
 export interface Athlete {
   id: string;
+  /** The linked Supabase auth user, if this person has claimed an account. */
+  authUserId?: string | null;
   kind: 'athlete' | 'coach';
   firstName: string;
   lastName: string;

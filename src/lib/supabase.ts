@@ -295,6 +295,15 @@ export function pushUserRole(userId: string, role: string, grant: boolean) {
     .then(({ error }) => { if (error) console.error('[supabase] delete user_roles failed:', error); });
 }
 
+/** All user_roles rows — RLS returns every row for an admin, own rows otherwise.
+ *  Used by the admin Members screen to reflect/manage admin grants. */
+export async function fetchAllRoles(): Promise<{ userId: string; role: string }[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from('user_roles').select('user_id, role');
+  if (error) { console.error('[supabase] fetchAllRoles failed:', error); return []; }
+  return (data ?? []).map((r: { user_id: string; role: string }) => ({ userId: r.user_id, role: r.role }));
+}
+
 /** The signed-in user's app roles (RLS returns only their own rows). */
 export async function fetchMyRoles(): Promise<string[]> {
   if (!supabase) return [];
@@ -377,7 +386,7 @@ export async function loadAll(): Promise<DB | null> {
       membershipsByPerson.set(r.person_id, arr);
     }
     const people: Athlete[] = (peopleR.data ?? []).map((r: any) => ({
-      id: r.id, kind: r.kind, firstName: r.first_name, lastName: r.last_name, email: r.email,
+      id: r.id, authUserId: r.auth_user_id ?? null, kind: r.kind, firstName: r.first_name, lastName: r.last_name, email: r.email,
       dob: r.dob ?? '', gender: r.gender, placement: r.placement ?? {}, gradYear: r.grad_year,
       studentStatus: r.student_status, shirt: r.shirt ?? '', country: r.country ?? '', state: r.state ?? '',
       phone: r.phone ?? '', mainClubId: r.main_club_id, altClubIds: altClubsByPerson.get(r.id) ?? [],

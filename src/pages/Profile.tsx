@@ -2,10 +2,10 @@ import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
-import { Combo, Field, useToast, Badge } from '../components/ui';
+import { Combo, Field, Modal, useToast, Badge } from '../components/ui';
 import { SHIRT_SIZES, DIETARY_OPTIONS, STATE_REGIONS, DISCIPLINES } from '../lib/types';
-import type { Athlete, Gender } from '../lib/types';
-import { pushMembership, pushPerson } from '../lib/supabase';
+import type { Athlete, ClubRequest, Gender, Region } from '../lib/types';
+import { pushClubRequest, pushMembership, pushPerson } from '../lib/supabase';
 
 export function Profile({ adminView = false }: { adminView?: boolean }) {
   const db = useDB();
@@ -15,6 +15,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   const personId = adminView ? params.personId! : caps.personId;
   const person = db.people.find((p) => p.id === personId);
   const [draft, setDraft] = useState<Athlete | null>(null);
+  const [clubReqOpen, setClubReqOpen] = useState(false);
   if (!person) return <p>Person not found.</p>;
   const pid: string = person.id; // narrowed (personId may be null before this guard)
   const p = draft ?? person;
@@ -118,6 +119,11 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                 ))}
               </div>
             )}
+            {!adminView && (
+              <button type="button" className="btn ghost small" style={{ marginTop: 8 }} onClick={() => setClubReqOpen(true)}>
+                Don't see your club? Request a new one
+              </button>
+            )}
           </Field>
           {DISCIPLINES.map((d) => (
             <Field key={d} label={`${d} level`}>
@@ -168,7 +174,56 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
         {draft && <button className="btn ghost" onClick={() => setDraft(null)}>Discard</button>}
         {draft && <span style={{ alignSelf: 'center', fontSize: 13, color: 'var(--coral-600)', fontWeight: 600 }}>Unsaved changes</span>}
       </div>
+
+      {clubReqOpen && <ClubRequestForm requesterPersonId={pid} onClose={() => setClubReqOpen(false)} />}
     </div>
+  );
+}
+
+/** Member-facing "request a new club" form. Admins review the queue in AdminClubs.
+ *  Email to newclubinquiries@naigc.org is deferred (see CLAUDE.md). */
+function ClubRequestForm({ requesterPersonId, onClose }: { requesterPersonId: string; onClose: () => void }) {
+  const toast = useToast();
+  const [name, setName] = useState('');
+  const [shortName, setShortName] = useState('');
+  const [state, setState] = useState('');
+  const [note, setNote] = useState('');
+  const states = Object.keys(STATE_REGIONS);
+
+  const submit = () => {
+    if (!name.trim()) return;
+    const req: ClubRequest = {
+      id: crypto.randomUUID(),
+      requesterPersonId,
+      proposedName: name.trim(),
+      shortName: shortName.trim(),
+      state,
+      region: (STATE_REGIONS[state] ?? '') as Region | '',
+      note: note.trim(),
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    };
+    mutate((d) => { d.clubRequests.push(req); pushClubRequest(req); });
+    toast('Request submitted — a UCG admin will review it.');
+    onClose();
+  };
+
+  return (
+    <Modal title="Request a new club" onClose={onClose}>
+      <Field label="Club name"><input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Rocky Mountain Gymnastics Club" autoFocus /></Field>
+      <Field label="Short name" hint="Abbreviation shown on results."><input type="text" value={shortName} onChange={(e) => setShortName(e.target.value)} placeholder="RMGC" /></Field>
+      <Field label="State">
+        <select className="input" value={state} onChange={(e) => setState(e.target.value)}>
+          <option value="">Select a state…</option>
+          {states.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+      </Field>
+      <Field label="Anything else?" hint="Region is set automatically from the state."><textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} /></Field>
+      <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+        <button className="btn primary" disabled={!name.trim()} onClick={submit}>Submit request</button>
+        <button className="btn ghost" onClick={onClose}>Cancel</button>
+      </div>
+    </Modal>
   );
 }
 
