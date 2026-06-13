@@ -148,6 +148,11 @@ export function setViewPersonId(id: string | null) {
   personaListeners.forEach((l) => l());
 }
 
+/** Non-reactive impersonation selection (null = no impersonation). */
+export function getViewPersonId(): string | null {
+  return viewPersonId;
+}
+
 /** Non-reactive persona snapshot. Falls back to the seed default if the
  *  selected person no longer exists (e.g. after a demo reset). */
 export function getPersona(): Persona {
