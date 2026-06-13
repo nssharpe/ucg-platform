@@ -304,13 +304,18 @@ export async function fetchAllRoles(): Promise<{ userId: string; role: string }[
   return (data ?? []).map((r: { user_id: string; role: string }) => ({ userId: r.user_id, role: r.role }));
 }
 
-/** The signed-in user's app roles (RLS returns only their own rows). */
-export async function fetchMyRoles(): Promise<string[]> {
+/** The signed-in user's app roles. Pass the known auth uid (from the session)
+ *  to avoid a redundant getUser() round-trip; falls back to getUser() if omitted.
+ *  RLS returns only the caller's own rows. */
+export async function fetchMyRoles(uid?: string): Promise<string[]> {
   if (!supabase) return [];
-  const { data: userData } = await supabase.auth.getUser();
-  const uid = userData.user?.id;
-  if (!uid) return [];
-  const { data, error } = await supabase.from('user_roles').select('role').eq('user_id', uid);
+  let userId = uid;
+  if (!userId) {
+    const { data: userData } = await supabase.auth.getUser();
+    userId = userData.user?.id;
+  }
+  if (!userId) return [];
+  const { data, error } = await supabase.from('user_roles').select('role').eq('user_id', userId);
   if (error) { console.error('[supabase] fetchMyRoles failed:', error); return []; }
   return (data ?? []).map((r: { role: string }) => r.role);
 }

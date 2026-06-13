@@ -62,12 +62,18 @@ begin
     return v_id;
   end if;
 
-  -- Claim an unclaimed row with a matching verified email.
+  -- Claim ONE unclaimed row with a matching verified email. email is not unique,
+  -- so pick the oldest match deterministically and link only that row (never
+  -- claim several rows for one auth user).
   if v_email <> '' then
     update people
       set auth_user_id = v_uid
-      where auth_user_id is null
-        and lower(email) = v_email
+      where id = (
+        select id from people
+        where auth_user_id is null and lower(email) = v_email
+        order by created_at asc
+        limit 1
+      )
       returning id into v_id;
     if v_id is not null then
       return v_id;
@@ -86,3 +92,9 @@ end;
 $$ language plpgsql volatile security definer;
 
 grant execute on function link_or_create_person(text, text) to authenticated;
+
+-- At most one auth user per email (claimed rows). Unclaimed rows (auth_user_id
+-- null) are exempt so imports / invited-but-not-signed-up people may share an
+-- address until one of them is claimed.
+create unique index if not exists people_one_auth_per_email
+  on people (lower(email)) where auth_user_id is not null;

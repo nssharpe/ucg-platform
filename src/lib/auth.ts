@@ -38,7 +38,7 @@ async function onAuthenticated(user: Session['user']) {
     sessionStorage.removeItem('ucg-signup-name');
     await syncFromSupabase(); // pull the claimed/created person into the snapshot
   }
-  roles = await fetchMyRoles();
+  roles = await fetchMyRoles(user.id);
   notifyRoles();
 }
 

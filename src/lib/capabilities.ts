@@ -65,8 +65,15 @@ export function deriveCapabilities(
   };
 }
 
-/** Match the signed-in user's email to a person row (the linked row shares it). */
-function personIdForEmail(db: DB, email: string | undefined | null): string | null {
+/** Resolve the signed-in user's person row. The authoritative key is the auth
+ *  uid (people.auth_user_id, set by link_or_create_person); email is only a
+ *  fallback while the linked row hasn't hydrated yet. Email is NOT unique, so
+ *  never trust it over the uid. */
+function authPersonId(db: DB, uid: string | undefined | null, email: string | undefined | null): string | null {
+  if (uid) {
+    const byUid = db.people.find((p) => p.authUserId === uid);
+    if (byUid) return byUid.id;
+  }
   if (!email) return null;
   const lower = email.toLowerCase();
   return db.people.find((p) => p.email && p.email.toLowerCase() === lower)?.id ?? null;
@@ -84,8 +91,8 @@ export function useCapabilities(): Capabilities {
   if (!isSupabaseConfigured) {
     return deriveCapabilities(db, true, ['admin'], persona.athleteId, null, season);
   }
-  const authPersonId = personIdForEmail(db, session?.user?.email);
-  return deriveCapabilities(db, !!session, roles, authPersonId, getViewPersonId(), season);
+  const personId = authPersonId(db, session?.user?.id, session?.user?.email);
+  return deriveCapabilities(db, !!session, roles, personId, getViewPersonId(), season);
 }
 
 export function getCapabilities(): Capabilities {
@@ -94,6 +101,7 @@ export function getCapabilities(): Capabilities {
   if (!isSupabaseConfigured) {
     return deriveCapabilities(db, true, ['admin'], getPersona().athleteId, null, season);
   }
-  const authPersonId = personIdForEmail(db, getSession()?.user?.email);
-  return deriveCapabilities(db, !!getSession(), getMyRoles(), authPersonId, getViewPersonId(), season);
+  const session = getSession();
+  const personId = authPersonId(db, session?.user?.id, session?.user?.email);
+  return deriveCapabilities(db, !!session, getMyRoles(), personId, getViewPersonId(), season);
 }
