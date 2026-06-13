@@ -7,7 +7,7 @@
 // block the UI) and are no-ops when `isSupabaseConfigured` is false.
 import { createClient, type SupabaseClient, type RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import type {
-  Athlete, Club, Coupon, DB, Invoice, Level, Meet, Membership, Registration, Score, Season,
+  Athlete, Club, ClubRequest, Coupon, DB, Invoice, Level, Meet, Membership, Registration, Score, Season,
 } from './types';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
@@ -196,6 +196,18 @@ const invoiceItemToRow = (invoiceId: string, it: Invoice['items'][number]) => ({
   ref_user_id: it.refUserId ?? null, refunded: it.refunded ?? false,
 });
 
+const clubRequestToRow = (r: ClubRequest) => ({
+  id: r.id, requester_person_id: r.requesterPersonId, proposed_name: r.proposedName,
+  short_name: r.shortName, state: r.state || null, region: r.region || null, note: r.note,
+  status: r.status, created_at: r.createdAt, decided_at: r.decidedAt ?? null,
+  created_club_id: r.createdClubId ?? null,
+});
+const rowToClubRequest = (r: any): ClubRequest => ({
+  id: r.id, requesterPersonId: r.requester_person_id ?? null, proposedName: r.proposed_name,
+  shortName: r.short_name ?? '', state: r.state ?? '', region: r.region ?? '', note: r.note ?? '',
+  status: r.status, createdAt: r.created_at, decidedAt: r.decided_at, createdClubId: r.created_club_id,
+});
+
 // ---------------------------------------------------------------------------
 // Domain push helpers — call from mutation sites alongside local mutate()
 // ---------------------------------------------------------------------------
@@ -257,6 +269,66 @@ export function pushInvoice(inv: Invoice) {
   remoteReplace('invoice_items', { invoice_id: inv.id }, inv.items.map((it) => invoiceItemToRow(inv.id, it)));
 }
 
+export function pushClubRequest(r: ClubRequest) { remoteUpsert('club_requests', [clubRequestToRow(r)]); }
+
+/** Add or remove a single person↔club manager link. */
+export function pushClubManager(clubId: string, personId: string, add: boolean) {
+  if (!supabase) return;
+  if (add) remoteUpsert('club_managers', [{ club_id: clubId, person_id: personId }], 'club_id,person_id');
+  else supabase.from('club_managers').delete().eq('club_id', clubId).eq('person_id', personId)
+    .then(({ error }) => { if (error) console.error('[supabase] delete club_managers failed:', error); });
+}
+
+/** Add or remove a single person↔alternate-club link. */
+export function pushAltClub(personId: string, clubId: string, add: boolean) {
+  if (!supabase) return;
+  if (add) remoteUpsert('person_alt_clubs', [{ person_id: personId, club_id: clubId }], 'person_id,club_id');
+  else supabase.from('person_alt_clubs').delete().eq('person_id', personId).eq('club_id', clubId)
+    .then(({ error }) => { if (error) console.error('[supabase] delete person_alt_clubs failed:', error); });
+}
+
+/** Grant or revoke an app role for an auth user (user_roles). */
+export function pushUserRole(userId: string, role: string, grant: boolean) {
+  if (!supabase) return;
+  if (grant) remoteUpsert('user_roles', [{ user_id: userId, role }], 'user_id,role');
+  else supabase.from('user_roles').delete().eq('user_id', userId).eq('role', role)
+    .then(({ error }) => { if (error) console.error('[supabase] delete user_roles failed:', error); });
+}
+
+/** All user_roles rows — RLS returns every row for an admin, own rows otherwise.
+ *  Used by the admin Members screen to reflect/manage admin grants. */
+export async function fetchAllRoles(): Promise<{ userId: string; role: string }[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from('user_roles').select('user_id, role');
+  if (error) { console.error('[supabase] fetchAllRoles failed:', error); return []; }
+  return (data ?? []).map((r: { user_id: string; role: string }) => ({ userId: r.user_id, role: r.role }));
+}
+
+/** The signed-in user's app roles. Pass the known auth uid (from the session)
+ *  to avoid a redundant getUser() round-trip; falls back to getUser() if omitted.
+ *  RLS returns only the caller's own rows. */
+export async function fetchMyRoles(uid?: string): Promise<string[]> {
+  if (!supabase) return [];
+  let userId = uid;
+  if (!userId) {
+    const { data: userData } = await supabase.auth.getUser();
+    userId = userData.user?.id;
+  }
+  if (!userId) return [];
+  const { data, error } = await supabase.from('user_roles').select('role').eq('user_id', userId);
+  if (error) { console.error('[supabase] fetchMyRoles failed:', error); return []; }
+  return (data ?? []).map((r: { role: string }) => r.role);
+}
+
+/** Link the signed-in auth user to an existing (claimed by verified email) or
+ *  new person; returns the person id (text) or null when unconfigured/failed. */
+export async function linkOrCreatePerson(first: string, last: string): Promise<string | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase.rpc('link_or_create_person', { p_first: first, p_last: last });
+  if (error) { console.error('[supabase] link_or_create_person failed:', error); return null; }
+  return (data as string) ?? null;
+}
+
 // ---------------------------------------------------------------------------
 // loadAll — hydrate the in-memory DB shape from Supabase on boot
 // ---------------------------------------------------------------------------
@@ -266,6 +338,7 @@ export async function loadAll(): Promise<DB | null> {
     const [
       seasonsR, levelsR, clubsR, clubManagersR, peopleR, altClubsR, membershipsR,
       meetsR, sessionsR, squadsR, registrationsR, scoresR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
+      clubRequestsR,
     ] = await Promise.all([
       supabase.from('seasons').select('*'),
       supabase.from('levels').select('*'),
@@ -283,8 +356,10 @@ export async function loadAll(): Promise<DB | null> {
       supabase.from('cart_items').select('*'),
       supabase.from('invoices').select('*'),
       supabase.from('invoice_items').select('*'),
+      supabase.from('club_requests').select('*'),
     ]);
 
+    // club_requests may not exist on a pre-0005 DB — tolerate its error, fail on the rest.
     const errors = [
       seasonsR, levelsR, clubsR, clubManagersR, peopleR, altClubsR, membershipsR,
       meetsR, sessionsR, squadsR, registrationsR, scoresR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
@@ -316,7 +391,7 @@ export async function loadAll(): Promise<DB | null> {
       membershipsByPerson.set(r.person_id, arr);
     }
     const people: Athlete[] = (peopleR.data ?? []).map((r: any) => ({
-      id: r.id, kind: r.kind, firstName: r.first_name, lastName: r.last_name, email: r.email,
+      id: r.id, authUserId: r.auth_user_id ?? null, kind: r.kind, firstName: r.first_name, lastName: r.last_name, email: r.email,
       dob: r.dob ?? '', gender: r.gender, placement: r.placement ?? {}, gradYear: r.grad_year,
       studentStatus: r.student_status, shirt: r.shirt ?? '', country: r.country ?? '', state: r.state ?? '',
       phone: r.phone ?? '', mainClubId: r.main_club_id, altClubIds: altClubsByPerson.get(r.id) ?? [],
@@ -381,7 +456,9 @@ export async function loadAll(): Promise<DB | null> {
       arr.push({ id: r.id, label: r.label, amount: Number(r.amount), kind: r.kind, refUserId: r.ref_user_id ?? undefined });
     }
 
-    return { seasons, levels, clubs, people, meets, registrations, scores, invoices, coupons, carts };
+    const clubRequests: ClubRequest[] = (clubRequestsR.error ? [] : clubRequestsR.data ?? []).map(rowToClubRequest);
+
+    return { seasons, levels, clubs, people, meets, registrations, scores, invoices, coupons, carts, clubRequests };
   } catch (e) {
     console.error('[supabase] loadAll threw:', e);
     return null;
@@ -450,6 +527,8 @@ export async function pushAll(db: DB, onProgress?: (label: string) => void): Pro
     const rows = db.invoices.flatMap((inv) => inv.items.map((it) => invoiceItemToRow(inv.id, it)));
     return rows.length ? supabase!.from('invoice_items').upsert(rows) : undefined;
   });
+  await step('Club requests', () => db.clubRequests.length
+    ? supabase!.from('club_requests').upsert(db.clubRequests.map(clubRequestToRow)) : undefined);
   onProgress?.('Done');
 }
 

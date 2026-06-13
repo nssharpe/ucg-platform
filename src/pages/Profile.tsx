@@ -1,20 +1,23 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { useDB, mutate, usePersona } from '../lib/store';
-import { Combo, Field, useToast, Badge } from '../components/ui';
+import { useDB, mutate } from '../lib/store';
+import { useCapabilities } from '../lib/capabilities';
+import { Combo, Field, Modal, useToast, Badge } from '../components/ui';
 import { SHIRT_SIZES, DIETARY_OPTIONS, STATE_REGIONS, DISCIPLINES } from '../lib/types';
-import type { Athlete, Gender } from '../lib/types';
-import { pushMembership, pushPerson } from '../lib/supabase';
+import type { Athlete, ClubRequest, Gender, Region } from '../lib/types';
+import { pushClubRequest, pushMembership, pushPerson } from '../lib/supabase';
 
 export function Profile({ adminView = false }: { adminView?: boolean }) {
   const db = useDB();
   const params = useParams();
   const toast = useToast();
-  const persona = usePersona();
-  const personId = adminView ? params.personId! : persona.athleteId;
+  const caps = useCapabilities();
+  const personId = adminView ? params.personId! : caps.personId;
   const person = db.people.find((p) => p.id === personId);
   const [draft, setDraft] = useState<Athlete | null>(null);
+  const [clubReqOpen, setClubReqOpen] = useState(false);
   if (!person) return <p>Person not found.</p>;
+  const pid: string = person.id; // narrowed (personId may be null before this guard)
   const p = draft ?? person;
   const set = (patch: Partial<Athlete>) => setDraft({ ...p, ...patch });
   const clubOptions = db.clubs.map((c) => ({ value: c.id, label: c.name, sub: `${c.state} · ${c.region}` }));
@@ -22,7 +25,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
 
   const save = () => {
     mutate((d) => {
-      const i = d.people.findIndex((x) => x.id === personId);
+      const i = d.people.findIndex((x) => x.id === pid);
       d.people[i] = { ...p };
       pushPerson(d.people[i]);
     });
@@ -41,7 +44,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
 
       {adminView && (
         <div className="card card-pad" style={{ marginBottom: 16, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <AdminMembershipControls personId={personId} />
+          <AdminMembershipControls personId={pid} />
         </div>
       )}
 
@@ -97,6 +100,31 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
           <Field label="Region" hint="Derived from training state.">
             <input type="text" disabled value={STATE_REGIONS[p.state] ?? 'Other'} />
           </Field>
+          <Field label="Other clubs" hint="Clubs you also belong to — choose which one you compete for per meet at registration.">
+            <Combo
+              options={clubOptions.filter((c) => c.value !== p.mainClubId && !p.altClubIds.includes(c.value))}
+              value={null}
+              onChange={(v) => set({ altClubIds: [...p.altClubIds, v] })}
+              placeholder="Add another club…"
+            />
+            {p.altClubIds.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                {p.altClubIds.map((cid) => (
+                  <span key={cid} className="badge info" style={{ gap: 8 }}>
+                    {db.clubs.find((c) => c.id === cid)?.shortName ?? cid}
+                    <button type="button" title="Remove club"
+                      onClick={() => set({ altClubIds: p.altClubIds.filter((x) => x !== cid) })}
+                      style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }}>✕</button>
+                  </span>
+                ))}
+              </div>
+            )}
+            {!adminView && (
+              <button type="button" className="btn ghost small" style={{ marginTop: 8 }} onClick={() => setClubReqOpen(true)}>
+                Don't see your club? Request a new one
+              </button>
+            )}
+          </Field>
           {DISCIPLINES.map((d) => (
             <Field key={d} label={`${d} level`}>
               <select className="input" value={p.levels[d] ?? ''} onChange={(e) => set({ levels: { ...p.levels, [d]: e.target.value || undefined } })}>
@@ -146,7 +174,56 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
         {draft && <button className="btn ghost" onClick={() => setDraft(null)}>Discard</button>}
         {draft && <span style={{ alignSelf: 'center', fontSize: 13, color: 'var(--coral-600)', fontWeight: 600 }}>Unsaved changes</span>}
       </div>
+
+      {clubReqOpen && <ClubRequestForm requesterPersonId={pid} onClose={() => setClubReqOpen(false)} />}
     </div>
+  );
+}
+
+/** Member-facing "request a new club" form. Admins review the queue in AdminClubs.
+ *  Email to newclubinquiries@naigc.org is deferred (see CLAUDE.md). */
+function ClubRequestForm({ requesterPersonId, onClose }: { requesterPersonId: string; onClose: () => void }) {
+  const toast = useToast();
+  const [name, setName] = useState('');
+  const [shortName, setShortName] = useState('');
+  const [state, setState] = useState('');
+  const [note, setNote] = useState('');
+  const states = Object.keys(STATE_REGIONS);
+
+  const submit = () => {
+    if (!name.trim()) return;
+    const req: ClubRequest = {
+      id: crypto.randomUUID(),
+      requesterPersonId,
+      proposedName: name.trim(),
+      shortName: shortName.trim(),
+      state,
+      region: (STATE_REGIONS[state] ?? '') as Region | '',
+      note: note.trim(),
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    };
+    mutate((d) => { d.clubRequests.push(req); pushClubRequest(req); });
+    toast('Request submitted — a UCG admin will review it.');
+    onClose();
+  };
+
+  return (
+    <Modal title="Request a new club" onClose={onClose}>
+      <Field label="Club name"><input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Rocky Mountain Gymnastics Club" autoFocus /></Field>
+      <Field label="Short name" hint="Abbreviation shown on results."><input type="text" value={shortName} onChange={(e) => setShortName(e.target.value)} placeholder="RMGC" /></Field>
+      <Field label="State">
+        <select className="input" value={state} onChange={(e) => setState(e.target.value)}>
+          <option value="">Select a state…</option>
+          {states.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+      </Field>
+      <Field label="Anything else?" hint="Region is set automatically from the state."><textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} /></Field>
+      <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+        <button className="btn primary" disabled={!name.trim()} onClick={submit}>Submit request</button>
+        <button className="btn ghost" onClick={onClose}>Cancel</button>
+      </div>
+    </Modal>
   );
 }
 

@@ -43,24 +43,30 @@ function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
 
 function AuthGate() {
   const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
+  const [first, setFirst] = useState('');
+  const [last, setLast] = useState('');
   const [email, setEmail] = useState('');
   const [pw, setPw] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const clearMsg = () => { setErr(null); setInfo(null); };
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!supabase) return;
     setBusy(true);
-    setErr(null);
-    setInfo(null);
+    clearMsg();
     if (mode === 'sign-in') {
       const { error } = await supabase.auth.signInWithPassword({ email, password: pw });
       setBusy(false);
       if (error) setErr(error.message);
       // onAuthStateChange picks up the new session and re-renders App.
     } else {
+      // Stash the name so auth.ts can pass it to link_or_create_person on the
+      // first authenticated load (after email confirmation + sign-in).
+      sessionStorage.setItem('ucg-signup-name', JSON.stringify([first.trim(), last.trim()]));
       const { data, error } = await supabase.auth.signUp({ email, password: pw });
       setBusy(false);
       if (error) { setErr(error.message); return; }
@@ -73,13 +79,25 @@ function AuthGate() {
       <form className="gate-card" onSubmit={submit}>
         <div className="gate-logo">UCG<span className="spark">.</span></div>
         <div className="gate-tag">For the love<br />of the sport.</div>
+        {mode === 'sign-up' && (
+          <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+            <input
+              type="text" placeholder="FIRST NAME" value={first} autoFocus autoComplete="given-name"
+              onChange={(e) => { setFirst(e.target.value); clearMsg(); }}
+            />
+            <input
+              type="text" placeholder="LAST NAME" value={last} autoComplete="family-name"
+              onChange={(e) => { setLast(e.target.value); clearMsg(); }}
+            />
+          </div>
+        )}
         <input
           type="email"
           placeholder="EMAIL"
           value={email}
-          autoFocus
+          autoFocus={mode === 'sign-in'}
           autoComplete="email"
-          onChange={(e) => { setEmail(e.target.value); setErr(null); setInfo(null); }}
+          onChange={(e) => { setEmail(e.target.value); clearMsg(); }}
           style={{ marginBottom: 10 }}
         />
         <input

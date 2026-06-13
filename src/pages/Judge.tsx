@@ -9,12 +9,14 @@ import { fmtScore } from '../lib/scoring';
 import { calcForLevel, calcSource, scoreFromOutcome, scoreDetailPath } from '../lib/calculators';
 import { computeScoring, initScoring, isCalcStateV2 } from '../scoring';
 import { ScoringPanel } from '../components/scoring/ScoringPanel';
+import { useCapabilities } from '../lib/capabilities';
 
 /** Tablet-first judge pad. The level's scoring panel is built into the scoring
  *  view — judges build the routine natively and the score posts live.
  *  A manual override is always available. */
 export function Judge() {
   const db = useDB();
+  const caps = useCapabilities();
   const toast = useToast();
   const [searchParams] = useSearchParams();
   const requestedMeet = searchParams.get('meet');
@@ -119,6 +121,18 @@ export function Judge() {
     close();
     toast(`Score posted: ${athleteName} — ${fmtScore(finalScore)}`);
   };
+
+  // Score entry is for the meet host / league admins. (RLS also blocks score
+  // writes for anyone without the privilege; this is the matching UI gate.)
+  if (!caps.isAdmin && caps.managedClubIds.length === 0) {
+    return (
+      <div className="card card-pad" style={{ maxWidth: 520 }}>
+        <h2 className="display" style={{ fontSize: 22 }}>Score entry is restricted</h2>
+        <p>Only the meet host and league admins can enter scores. Judges receive a
+          dedicated access code from the meet host (coming soon).</p>
+      </div>
+    );
+  }
 
   return (
     <div className="judge-pad">

@@ -256,5 +256,6 @@ export function buildSeed(): DB {
       { code: 'NEWCLUB26', amountOff: 10, appliesTo: 'membership' },
     ],
     carts: {},
+    clubRequests: [],
   };
 }

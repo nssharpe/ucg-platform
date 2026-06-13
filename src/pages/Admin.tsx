@@ -1,21 +1,44 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useDB, mutate, resetDemo } from '../lib/store';
 import { Badge, Field, Tabs, useToast } from '../components/ui';
 import { ClubForm } from '../components/ClubForm';
 import { PersonForm } from '../components/PersonForm';
 import { DISCIPLINES, STATE_REGIONS } from '../lib/types';
-import type { Athlete, Club, Region } from '../lib/types';
+import type { Athlete, Club, ClubRequest, Region } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
-import { isSupabaseConfigured, pushAll, pushSeason } from '../lib/supabase';
+import { fetchAllRoles, isSupabaseConfigured, pushAll, pushClub, pushClubManager, pushClubRequest, pushSeason, pushUserRole } from '../lib/supabase';
 
 // ---------- Members ----------
 export function AdminMembers() {
   const db = useDB();
+  const toast = useToast();
   const [q, setQ] = useState('');
   const [filter, setFilter] = useState<'all' | 'active' | 'pending' | 'none'>('all');
   const [editing, setEditing] = useState<Athlete | 'new' | null>(null);
   const season = db.seasons.find((s) => s.current)!;
+
+  // Admin grants: which auth users hold the 'admin' role (admin reads all rows).
+  const [adminUserIds, setAdminUserIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    let live = true;
+    fetchAllRoles().then((rows) => {
+      if (live) setAdminUserIds(new Set(rows.filter((r) => r.role === 'admin').map((r) => r.userId)));
+    });
+    return () => { live = false; };
+  }, []);
+
+  const toggleAdmin = (p: Athlete) => {
+    if (!p.authUserId) return;
+    const grant = !adminUserIds.has(p.authUserId);
+    pushUserRole(p.authUserId, 'admin', grant);
+    setAdminUserIds((prev) => {
+      const next = new Set(prev);
+      if (grant) next.add(p.authUserId!); else next.delete(p.authUserId!);
+      return next;
+    });
+    toast(grant ? `${p.firstName} is now a league admin.` : `Removed admin from ${p.firstName}.`);
+  };
 
   const rows = useMemo(() => db.people
     .filter((p) => {
@@ -44,11 +67,12 @@ export function AdminMembers() {
       </div>
       <div className="card" style={{ overflow: 'hidden' }}>
         <table className="tbl">
-          <thead><tr><th>Name</th><th>Type</th><th>Club</th><th>Region</th><th>Membership</th><th>Waiver</th><th /></tr></thead>
+          <thead><tr><th>Name</th><th>Type</th><th>Club</th><th>Region</th><th>Membership</th><th>Account</th><th /></tr></thead>
           <tbody>
             {rows.slice(0, 120).map((p) => {
               const m = p.memberships.find((x) => x.seasonId === season.id);
               const club = db.clubs.find((c) => c.id === p.mainClubId);
+              const isAdminUser = !!p.authUserId && adminUserIds.has(p.authUserId);
               return (
                 <tr key={p.id}>
                   <td><Link to={`/admin/members/${p.id}`} style={{ fontWeight: 600 }}>{p.lastName}, {p.firstName}</Link></td>
@@ -56,7 +80,13 @@ export function AdminMembers() {
                   <td style={{ fontSize: 13.5 }}>{club?.name ?? <em>Independent</em>}</td>
                   <td>{club?.region ?? STATE_REGIONS[p.state] ?? 'Other'}</td>
                   <td>{m?.status === 'active' ? <Badge tone="ok">Active</Badge> : m?.status === 'pending-club-payment' ? <Badge tone="warn">Pending</Badge> : <Badge tone="err">None</Badge>}</td>
-                  <td style={{ fontSize: 12.5 }}>{m?.waiverSignedAt ? `✓ ${m.waiverSignedAt.slice(0, 10)} by ${m.waiverSignedBy}` : '—'}</td>
+                  <td style={{ fontSize: 12.5 }}>
+                    {!p.authUserId ? <span style={{ color: 'var(--ink-soft)' }}>No account</span> : (
+                      <label className="checkrow" style={{ margin: 0 }} data-tip="Grant or revoke league admin">
+                        <input type="checkbox" checked={isAdminUser} onChange={() => toggleAdmin(p)} /> Admin
+                      </label>
+                    )}
+                  </td>
                   <td><button className="btn small ghost" onClick={() => setEditing(p)}>Edit</button></td>
                 </tr>
               );
@@ -72,12 +102,69 @@ export function AdminMembers() {
 // ---------- Clubs ----------
 export function AdminClubs() {
   const db = useDB();
+  const toast = useToast();
   const season = db.seasons.find((s) => s.current)!;
   const [editing, setEditing] = useState<Club | 'new' | null>(null);
+  const pending = db.clubRequests.filter((r) => r.status === 'pending');
+
+  const personName = (id: string | null) => {
+    const p = id ? db.people.find((x) => x.id === id) : null;
+    return p ? `${p.firstName} ${p.lastName}` : 'Unknown';
+  };
+
+  const approve = (req: ClubRequest) => {
+    const id = `club-${req.id.slice(0, 8)}`;
+    const club: Club = {
+      id, name: req.proposedName, shortName: req.shortName || req.proposedName.slice(0, 12),
+      state: req.state, region: (req.region || STATE_REGIONS[req.state] || 'Other') as Region,
+      managerIds: req.requesterPersonId ? [req.requesterPersonId] : [],
+      email: '', allowClubPay: true,
+    };
+    mutate((d) => {
+      d.clubs.push(club);
+      pushClub(club);
+      if (req.requesterPersonId) pushClubManager(id, req.requesterPersonId, true);
+      const r = d.clubRequests.find((x) => x.id === req.id);
+      if (r) { r.status = 'approved'; r.decidedAt = new Date().toISOString(); r.createdClubId = id; pushClubRequest(r); }
+    });
+    toast(`Created ${club.name} and made ${personName(req.requesterPersonId)} its manager.`);
+  };
+
+  const dismiss = (req: ClubRequest) => {
+    mutate((d) => {
+      const r = d.clubRequests.find((x) => x.id === req.id);
+      if (r) { r.status = 'dismissed'; r.decidedAt = new Date().toISOString(); pushClubRequest(r); }
+    });
+  };
+
   return (
     <div>
       <h1 className="page-title display">Clubs</h1>
       <p className="page-sub">Flags show what each club is missing — contact them right from here.</p>
+
+      {pending.length > 0 && (
+        <div className="card card-pad" style={{ marginBottom: 16, borderLeft: '4px solid var(--coral-500)' }}>
+          <h3 className="card-title">New-club requests ({pending.length})</h3>
+          <table className="tbl">
+            <thead><tr><th>Proposed club</th><th>State</th><th>Requested by</th><th>Note</th><th /></tr></thead>
+            <tbody>
+              {pending.map((req) => (
+                <tr key={req.id}>
+                  <td><strong>{req.proposedName}</strong>{req.shortName ? ` (${req.shortName})` : ''}</td>
+                  <td>{req.state || '—'}</td>
+                  <td>{personName(req.requesterPersonId)}</td>
+                  <td style={{ fontSize: 13, color: 'var(--ink-soft)' }}>{req.note || '—'}</td>
+                  <td style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
+                    <button className="btn small primary" onClick={() => approve(req)}>Approve</button>{' '}
+                    <button className="btn small ghost" onClick={() => dismiss(req)}>Dismiss</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
         <button className="btn primary" onClick={() => setEditing('new')}>+ New club</button>
       </div>

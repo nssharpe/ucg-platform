@@ -1,8 +1,10 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import { HashRouter, Routes, Route } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { ToastProvider } from './components/ui';
 import { isUnlocked } from './lib/store';
+import { useCapabilities } from './lib/capabilities';
 import { isSupabaseConfigured } from './lib/supabase';
 import { useSession, useAuthLoading, hasLikelySession } from './lib/auth';
 import { Gate } from './pages/Gate';
@@ -52,6 +54,15 @@ function PageFallback() {
   return <div style={{ padding: 40, textAlign: 'center', color: 'var(--ink-soft)' }}>Loading…</div>;
 }
 
+/** Gate account-only pages: guests can browse public routes (results, meets),
+ *  but reaching a member page shows the sign-in screen. In the unconfigured
+ *  prototype `signedIn` is always true, so this is a no-op there. */
+function RequireAccount({ children }: { children: ReactNode }) {
+  const caps = useCapabilities();
+  if (!caps.signedIn) return <Gate onUnlock={() => {}} />;
+  return <>{children}</>;
+}
+
 export default function App() {
   const session = useSession();
   const authLoading = useAuthLoading();
@@ -59,13 +70,10 @@ export default function App() {
   usePrefetchRoutes();
 
   if (isSupabaseConfigured) {
-    if (!session) {
-      // Avoid flashing the gate for a signed-in user while getSession()
-      // resolves on refresh: if a Supabase auth token is present locally,
-      // show a blank shell instead of the gate until the real session loads.
-      if (authLoading && hasLikelySession()) return <PageFallback />;
-      return <Gate onUnlock={() => {}} />;
-    }
+    // Avoid flashing the gate for a signed-in user while getSession() resolves
+    // on refresh. Guests (no token) fall through to the app and browse public
+    // pages; account routes are gated by RequireAccount below.
+    if (!session && authLoading && hasLikelySession()) return <PageFallback />;
   } else if (!unlockedLocally) {
     return <Gate onUnlock={() => setUnlockedLocally(true)} />;
   }
@@ -76,23 +84,25 @@ export default function App() {
         <Layout>
           <Suspense fallback={<PageFallback />}>
             <Routes>
+              {/* Public — no account required */}
               <Route path="/" element={<Home />} />
-              <Route path="/me" element={<Profile />} />
-              <Route path="/membership" element={<Membership />} />
-              <Route path="/club/:clubId" element={<ClubPage />} />
-              <Route path="/club/:clubId/cart" element={<ClubCart />} />
               <Route path="/meets" element={<Meets />} />
               <Route path="/meets/:slug" element={<MeetDetail />} />
-              <Route path="/meets/:slug/manage" element={<MeetManage />} />
-              <Route path="/judge" element={<Judge />} />
-              <Route path="/scores/:scoreId" element={<ScoreDetail />} />
               <Route path="/results" element={<ResultsIndex />} />
               <Route path="/results/:slug" element={<MeetResults />} />
-              <Route path="/admin/members" element={<AdminMembers />} />
-              <Route path="/admin/members/:personId" element={<AdminProfile />} />
-              <Route path="/admin/clubs" element={<AdminClubs />} />
-              <Route path="/admin/league" element={<AdminLeague />} />
-              <Route path="/admin/communicate" element={<Communicate />} />
+              {/* Account required */}
+              <Route path="/me" element={<RequireAccount><Profile /></RequireAccount>} />
+              <Route path="/membership" element={<RequireAccount><Membership /></RequireAccount>} />
+              <Route path="/club/:clubId" element={<RequireAccount><ClubPage /></RequireAccount>} />
+              <Route path="/club/:clubId/cart" element={<RequireAccount><ClubCart /></RequireAccount>} />
+              <Route path="/meets/:slug/manage" element={<RequireAccount><MeetManage /></RequireAccount>} />
+              <Route path="/judge" element={<RequireAccount><Judge /></RequireAccount>} />
+              <Route path="/scores/:scoreId" element={<RequireAccount><ScoreDetail /></RequireAccount>} />
+              <Route path="/admin/members" element={<RequireAccount><AdminMembers /></RequireAccount>} />
+              <Route path="/admin/members/:personId" element={<RequireAccount><AdminProfile /></RequireAccount>} />
+              <Route path="/admin/clubs" element={<RequireAccount><AdminClubs /></RequireAccount>} />
+              <Route path="/admin/league" element={<RequireAccount><AdminLeague /></RequireAccount>} />
+              <Route path="/admin/communicate" element={<RequireAccount><Communicate /></RequireAccount>} />
               <Route path="*" element={<Home />} />
             </Routes>
           </Suspense>
