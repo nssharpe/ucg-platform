@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { useDB, mutate, usePersona } from '../lib/store';
+import { useDB, mutate } from '../lib/store';
+import { useCapabilities } from '../lib/capabilities';
 import { Combo, Field, useToast, Badge } from '../components/ui';
 import { SHIRT_SIZES, DIETARY_OPTIONS, STATE_REGIONS, DISCIPLINES } from '../lib/types';
 import type { Athlete, Gender } from '../lib/types';
@@ -10,11 +11,12 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   const db = useDB();
   const params = useParams();
   const toast = useToast();
-  const persona = usePersona();
-  const personId = adminView ? params.personId! : persona.athleteId;
+  const caps = useCapabilities();
+  const personId = adminView ? params.personId! : caps.personId;
   const person = db.people.find((p) => p.id === personId);
   const [draft, setDraft] = useState<Athlete | null>(null);
   if (!person) return <p>Person not found.</p>;
+  const pid: string = person.id; // narrowed (personId may be null before this guard)
   const p = draft ?? person;
   const set = (patch: Partial<Athlete>) => setDraft({ ...p, ...patch });
   const clubOptions = db.clubs.map((c) => ({ value: c.id, label: c.name, sub: `${c.state} · ${c.region}` }));
@@ -22,7 +24,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
 
   const save = () => {
     mutate((d) => {
-      const i = d.people.findIndex((x) => x.id === personId);
+      const i = d.people.findIndex((x) => x.id === pid);
       d.people[i] = { ...p };
       pushPerson(d.people[i]);
     });
@@ -41,7 +43,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
 
       {adminView && (
         <div className="card card-pad" style={{ marginBottom: 16, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <AdminMembershipControls personId={personId} />
+          <AdminMembershipControls personId={pid} />
         </div>
       )}
 
@@ -96,6 +98,26 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
           </Field>
           <Field label="Region" hint="Derived from training state.">
             <input type="text" disabled value={STATE_REGIONS[p.state] ?? 'Other'} />
+          </Field>
+          <Field label="Other clubs" hint="Clubs you also belong to — choose which one you compete for per meet at registration.">
+            <Combo
+              options={clubOptions.filter((c) => c.value !== p.mainClubId && !p.altClubIds.includes(c.value))}
+              value={null}
+              onChange={(v) => set({ altClubIds: [...p.altClubIds, v] })}
+              placeholder="Add another club…"
+            />
+            {p.altClubIds.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                {p.altClubIds.map((cid) => (
+                  <span key={cid} className="badge info" style={{ gap: 8 }}>
+                    {db.clubs.find((c) => c.id === cid)?.shortName ?? cid}
+                    <button type="button" title="Remove club"
+                      onClick={() => set({ altClubIds: p.altClubIds.filter((x) => x !== cid) })}
+                      style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }}>✕</button>
+                  </span>
+                ))}
+              </div>
+            )}
           </Field>
           {DISCIPLINES.map((d) => (
             <Field key={d} label={`${d} level`}>

@@ -1,10 +1,11 @@
 import { Link } from 'react-router-dom';
-import { useDB, useRole, usePersona } from '../lib/store';
+import { useDB } from '../lib/store';
+import { useCapabilities } from '../lib/capabilities';
 import { Stat, Badge, useFmtDate } from '../components/ui';
 import { fmtMoney } from '../lib/scoring';
 
 export function Home() {
-  const role = useRole();
+  const caps = useCapabilities();
   const db = useDB();
   const fmtDate = useFmtDate();
   const season = db.seasons.find((s) => s.current)!;
@@ -37,7 +38,7 @@ export function Home() {
     <div>
       {hero}
 
-      {role === 'admin' && (
+      {caps.isAdmin && (
         <>
           <div className="grid cols-4" style={{ marginBottom: 16 }}>
             <Stat value={activeMembers.length} label={`Active members · ${season.name}`} accent />
@@ -58,33 +59,11 @@ export function Home() {
         </>
       )}
 
-      {role === 'club-manager' && <ClubManagerHome />}
+      {!caps.isAdmin && caps.managedClubIds.length > 0 && <ClubManagerHome />}
 
-      {role === 'athlete' && <AthleteHome />}
+      {!caps.isAdmin && caps.managedClubIds.length === 0 && caps.person && <AthleteHome />}
 
-      {role === 'judge' && (
-        <div className="grid cols-2">
-          <div className="card card-pad">
-            <h3 className="card-title">Your assignment</h3>
-            <p style={{ marginTop: 0 }}>
-              <strong>{liveMeets[0]?.name ?? 'No live meet'}</strong>
-              {liveMeets[0] && <> — panel judge. Open the score entry pad to begin.</>}
-            </p>
-            <Link className="btn primary" to="/judge">Open score entry →</Link>
-          </div>
-          <div className="card card-pad">
-            <h3 className="card-title">Built-in calculators</h3>
-            <p style={{ marginTop: 0, color: 'var(--ink-soft)' }}>
-              Score entry uses the UCG start-value calculators (MAG SV, Masters, WAG Open) so SV
-              errors get caught at entry time and routine composition is captured for every athlete.
-            </p>
-          </div>
-        </div>
-      )}
-
-      {role === 'meet-host' && <HostHome />}
-
-      {role === 'spectator' && (
+      {!caps.signedIn && (
         <div className="grid cols-2">
           {db.meets.map((m) => (
             <div className="card card-pad" key={m.id}>
@@ -101,7 +80,7 @@ export function Home() {
         </div>
       )}
 
-      {(role === 'admin' || role === 'club-manager') && openMeets.length > 0 && (
+      {(caps.isAdmin || caps.managedClubIds.length > 0) && openMeets.length > 0 && (
         <div className="card card-pad" style={{ marginTop: 16, borderLeft: '4px solid var(--coral-500)' }}>
           <strong>Registration open:</strong> {openMeets.map((m) => (
             <Link key={m.id} to={`/meets/${m.slug}`} style={{ marginLeft: 8 }}>{m.name} (closes {fmtDate(m.regCloses.slice(0, 10))})</Link>
@@ -169,9 +148,10 @@ function MeetList() {
 
 function ClubManagerHome() {
   const db = useDB();
-  const persona = usePersona();
-  const club = db.clubs.find((c) => c.id === persona.clubId)!;
+  const caps = useCapabilities();
+  const club = db.clubs.find((c) => c.id === caps.managedClubIds[0]);
   const season = db.seasons.find((s) => s.current)!;
+  if (!club) return null;
   const roster = db.people.filter((p) => p.mainClubId === club.id);
   const active = roster.filter((p) => p.memberships.some((m) => m.seasonId === season.id && m.status === 'active'));
   const cart = db.carts[club.id] ?? [];
@@ -205,9 +185,10 @@ function ClubManagerHome() {
 function AthleteHome() {
   const db = useDB();
   const fmtDate = useFmtDate();
-  const persona = usePersona();
-  const me = db.people.find((p) => p.id === persona.athleteId)!;
+  const caps = useCapabilities();
+  const me = caps.person;
   const season = db.seasons.find((s) => s.current)!;
+  if (!me) return null;
   const membership = me.memberships.find((m) => m.seasonId === season.id);
   const myRegs = db.registrations.filter((r) => r.athleteId === me.id && !r.refunded);
   return (
@@ -254,27 +235,3 @@ function AthleteHome() {
   );
 }
 
-function HostHome() {
-  const db = useDB();
-  const meet = db.meets.find((m) => m.id === 'meet-mw26')!;
-  const regs = db.registrations.filter((r) => r.meetId === meet.id && !r.refunded);
-  const scores = db.scores.filter((s) => s.meetId === meet.id);
-  return (
-    <>
-      <div className="grid cols-4" style={{ marginBottom: 16 }}>
-        <Stat value={regs.length} label="Registrations" accent />
-        <Stat value={[...new Set(regs.map((r) => r.clubId))].length} label="Clubs attending" />
-        <Stat value={meet.sessions.length} label="Sessions" />
-        <Stat value={scores.length} label="Scores posted" />
-      </div>
-      <div className="card card-pad">
-        <h3 className="card-title">{meet.name} — host dashboard</h3>
-        <p style={{ marginTop: 0, color: 'var(--ink-soft)' }}>Host club athletes register free. Manage sessions, squads and the live meet from one place.</p>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <Link className="btn primary" to={`/meets/${meet.slug}/manage`}>Manage meet →</Link>
-          <Link className="btn ghost" to={`/results/${meet.slug}`}>Live results</Link>
-        </div>
-      </div>
-    </>
-  );
-}

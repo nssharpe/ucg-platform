@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { useDB, mutate, useRole, usePersona } from '../lib/store';
+import { useDB, mutate } from '../lib/store';
+import { useCapabilities } from '../lib/capabilities';
 import { Badge, Field, useToast } from '../components/ui';
 import { pushScore } from '../lib/supabase';
 import { EVENTS } from '../lib/types';
@@ -28,8 +29,7 @@ export function ScoreDetail() {
 
 function ScoreDetailInner({ score }: { score: Score }) {
   const db = useDB();
-  const role = useRole();
-  const persona = usePersona();
+  const caps = useCapabilities();
   const toast = useToast();
 
   const reg = db.registrations.find((r) => r.id === score.regId);
@@ -51,9 +51,9 @@ function ScoreDetailInner({ score }: { score: Score }) {
   const club = reg && db.clubs.find((c) => c.id === reg.clubId);
   const eventName = session ? EVENTS[session.discipline].find((e) => e.code === score.event)?.name ?? score.event : score.event;
 
-  const canView = role === 'admin' || role === 'judge' || role === 'meet-host'
-    || (role === 'athlete' && reg?.athleteId === persona.athleteId);
-  const canAdjust = role === 'admin';
+  const canView = caps.isAdmin || caps.isMeetHost(score.meetId)
+    || (!!reg && caps.personId === reg.athleteId);
+  const canAdjust = caps.isAdmin;
 
   if (!canView) {
     return (

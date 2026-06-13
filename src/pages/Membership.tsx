@@ -1,15 +1,27 @@
 import { useState } from 'react';
-import { useDB, mutate, usePersona } from '../lib/store';
+import { useDB, mutate } from '../lib/store';
+import { useCapabilities } from '../lib/capabilities';
 import { Badge, Field, useToast } from '../components/ui';
 import { fmtMoney } from '../lib/scoring';
 import { pushCart, pushInvoice, pushMembership } from '../lib/supabase';
-import type { Membership } from '../lib/types';
+import type { Athlete, Membership } from '../lib/types';
 
 export function Membership() {
+  const caps = useCapabilities();
+  if (!caps.person) {
+    return (
+      <div className="card card-pad" style={{ maxWidth: 520 }}>
+        <h2 className="display" style={{ fontSize: 22 }}>Finishing sign-in…</h2>
+        <p>We're linking your account to your member profile. If this persists, refresh the page.</p>
+      </div>
+    );
+  }
+  return <MembershipInner me={caps.person} />;
+}
+
+function MembershipInner({ me }: { me: Athlete }) {
   const db = useDB();
   const toast = useToast();
-  const persona = usePersona();
-  const me = db.people.find((p) => p.id === persona.athleteId)!;
   const purchasable = db.seasons.filter((s) => s.active);
   const [seasonId, setSeasonId] = useState(db.seasons.find((s) => s.current)!.id);
   const season = db.seasons.find((s) => s.id === seasonId)!;

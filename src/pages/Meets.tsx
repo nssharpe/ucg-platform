@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { useDB, mutate, useRole } from '../lib/store';
+import { useDB, mutate } from '../lib/store';
+import { useCapabilities } from '../lib/capabilities';
 import { Badge, Tabs, useToast, useFmtDate } from '../components/ui';
 import { MeetWizard } from '../components/MeetWizard';
 import { MeetStatusBadge } from './Home';
@@ -11,14 +12,14 @@ import { fmtMoney } from '../lib/scoring';
 
 export function Meets() {
   const db = useDB();
-  const role = useRole();
+  const caps = useCapabilities();
   const fmtDate = useFmtDate();
   const [wizardOpen, setWizardOpen] = useState(false);
   return (
     <div>
       <h1 className="page-title display">Meets</h1>
       <p className="page-sub">Every meet gets its own unique URL, sessions, squads, and live results page.</p>
-      {role === 'admin' && (
+      {caps.isAdmin && (
         <button className="btn primary" style={{ marginBottom: 18 }} onClick={() => setWizardOpen(true)}>+ Sanction new meet</button>
       )}
       {wizardOpen && <MeetWizard onClose={() => setWizardOpen(false)} />}
@@ -50,14 +51,14 @@ export function Meets() {
 export function MeetDetail() {
   const { slug } = useParams();
   const db = useDB();
-  const role = useRole();
+  const caps = useCapabilities();
   const toast = useToast();
   const fmtDate = useFmtDate();
   const meet = db.meets.find((m) => m.slug === slug);
   if (!meet) return <p>Meet not found.</p>;
   const host = db.clubs.find((c) => c.id === meet.hostClubId);
   const regs = db.registrations.filter((r) => r.meetId === meet.id && !r.refunded);
-  const canManage = role === 'admin' || role === 'meet-host';
+  const canManage = caps.isMeetHost(meet.id);
 
   return (
     <div>
@@ -81,9 +82,9 @@ export function MeetDetail() {
             {meet.banquet && <><br />{meet.banquet.name}: {fmtMoney(meet.banquet.price)}</>}
           </p>
           {meet.status === 'reg-open'
-            ? <Link className="btn primary small" to="/club/club-1">Register your club →</Link>
-            : <Badge tone="warn">Registration closed{role === 'admin' ? ' — admin can override below' : ''}</Badge>}
-          {role === 'admin' && meet.status !== 'reg-open' && (
+            ? <Link className="btn primary small" to={caps.managedClubIds[0] ? `/club/${caps.managedClubIds[0]}` : '/me'}>Register your club →</Link>
+            : <Badge tone="warn">Registration closed{caps.isAdmin ? ' — admin can override below' : ''}</Badge>}
+          {caps.isAdmin && meet.status !== 'reg-open' && (
             <div style={{ marginTop: 10, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               <button className="btn small ghost" onClick={() => { mutate((d) => { const m = d.meets.find((m) => m.id === meet.id)!; m.status = 'reg-open'; pushMeet(m); }); toast('Deadline overridden — registration re-opened.'); }}>Override: reopen reg</button>
               <button className="btn small ghost" data-tip="Generates a private reg link + password for late adds" onClick={() => toast(`Private link: ucg.org/#/meets/${meet.slug}?code=LATE26 (demo)`)}>Private reg link</button>
@@ -178,12 +179,12 @@ function downloadCsv(csv: string, filename: string) {
 export function MeetManage() {
   const { slug } = useParams();
   const db = useDB();
-  const role = useRole();
+  const caps = useCapabilities();
   const meet = db.meets.find((m) => m.slug === slug);
   const [sessionId, setSessionId] = useState(meet?.sessions[0]?.id ?? '');
   if (!meet) return <p>Meet not found.</p>;
   const session = meet.sessions.find((s) => s.id === sessionId) ?? meet.sessions[0];
-  const canScore = role === 'admin' || role === 'meet-host' || role === 'judge';
+  const canScore = caps.isMeetHost(meet.id);
 
   return (
     <div>

@@ -1,19 +1,21 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { useDB, mutate, useRole } from '../lib/store';
-import { Badge, Field, Tabs, useToast, useFmtDate } from '../components/ui';
+import { useDB, mutate } from '../lib/store';
+import { useCapabilities } from '../lib/capabilities';
+import { Badge, Combo, Field, Tabs, useToast, useFmtDate } from '../components/ui';
 import { EVENTS } from '../lib/types';
-import type { Discipline } from '../lib/types';
+import type { Athlete, Club, Discipline } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
-import { deleteRegistration, pushCart, pushInvoice, pushMembership, pushPerson, pushRegistration } from '../lib/supabase';
+import { deleteRegistration, pushCart, pushClubManager, pushInvoice, pushMembership, pushPerson, pushRegistration } from '../lib/supabase';
 
 export function ClubPage() {
   const { clubId } = useParams();
   const db = useDB();
-  const role = useRole();
+  const caps = useCapabilities();
   const club = db.clubs.find((c) => c.id === clubId);
   const [tab, setTab] = useState<'roster' | 'meetreg'>('roster');
   if (!club) return <p>Club not found.</p>;
+  const canManage = caps.isAdmin || caps.managedClubIds.includes(club.id);
 
   return (
     <div>
@@ -21,13 +23,14 @@ export function ClubPage() {
       <p className="page-sub">
         {club.state} · {club.region} region · <a href={`mailto:${club.email}`}>{club.email}</a> ·
         Unique club URL: <code>#/club/{club.id}</code>
-        {role === 'admin' && <> · <Link to="/admin/clubs">all clubs</Link></>}
+        {caps.isAdmin && <> · <Link to="/admin/clubs">all clubs</Link></>}
       </p>
       <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
         <Link className="btn ghost small" to={`/club/${club.id}/cart`}>Club cart & invoices →</Link>
         <button className="btn ghost small" data-tip="Ask UCG to sanction a meet hosted by your club" onClick={() => alert('Sanction request form — wires to league admin approval queue (post-MVP).')}>Request meet sanction</button>
         <button className="btn ghost small" data-tip="Email your members a link to join UCG under this club" onClick={() => alert('Invite link copied! (demo)')}>Invite members</button>
       </div>
+      {canManage && <ClubManagers club={club} />}
       <Tabs
         tabs={[{ id: 'roster' as const, label: `Roster (${db.people.filter((p) => p.mainClubId === club.id).length})` }, { id: 'meetreg' as const, label: 'Meet registration' }]}
         active={tab}
@@ -38,9 +41,87 @@ export function ClubPage() {
   );
 }
 
+/** Co-manage a club's managers — admins and the club's existing managers. */
+function ClubManagers({ club }: { club: Club }) {
+  const db = useDB();
+  const toast = useToast();
+  const [email, setEmail] = useState('');
+  const managers = club.managerIds
+    .map((id) => db.people.find((p) => p.id === id))
+    .filter((p): p is Athlete => !!p);
+  const candidates = db.people
+    .filter((p) => !club.managerIds.includes(p.id))
+    .map((p) => ({ value: p.id, label: `${p.firstName} ${p.lastName}`, sub: `${p.kind} · ${p.email}` }));
+
+  const addManager = (personId: string) => {
+    mutate((d) => {
+      const c = d.clubs.find((x) => x.id === club.id)!;
+      if (!c.managerIds.includes(personId)) c.managerIds.push(personId);
+      pushClubManager(club.id, personId, true);
+    });
+    toast('Manager added.');
+  };
+
+  const removeManager = (personId: string) => {
+    mutate((d) => {
+      const c = d.clubs.find((x) => x.id === club.id)!;
+      c.managerIds = c.managerIds.filter((id) => id !== personId);
+      pushClubManager(club.id, personId, false);
+    });
+  };
+
+  const inviteByEmail = () => {
+    const addr = email.trim().toLowerCase();
+    if (!addr) return;
+    const existing = db.people.find((p) => p.email.toLowerCase() === addr);
+    if (existing) { addManager(existing.id); setEmail(''); return; }
+    const id = crypto.randomUUID();
+    const local = addr.split('@')[0];
+    const person: Athlete = {
+      id, kind: 'coach', firstName: local, lastName: '(invited)', email: addr,
+      dob: '', gender: 'Other', gradYear: 1900, studentStatus: 'Non-Student', shirt: '',
+      country: 'USA', state: club.state ?? '', phone: '', mainClubId: club.id, altClubIds: [],
+      levels: {}, emergency: { contact: '', relation: '', phone: '' }, dietary: [], dietaryNotes: '',
+      memberships: [], achievements: [],
+    };
+    mutate((d) => { d.people.push(person); pushPerson(person); });
+    addManager(id);
+    setEmail('');
+    toast('Invited coach added as a manager — they can claim the account by signing up with this email.');
+  };
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 18 }}>
+      <h3 className="card-title">Club managers</h3>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+        {managers.length === 0 && <span style={{ color: 'var(--ink-soft)', fontSize: 14 }}>No managers yet.</span>}
+        {managers.map((m) => (
+          <span key={m.id} className="badge navy" style={{ gap: 8 }}>
+            {m.firstName} {m.lastName}
+            <button type="button" title="Remove manager" onClick={() => removeManager(m.id)}
+              style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }}>✕</button>
+          </span>
+        ))}
+      </div>
+      <div className="grid cols-2" style={{ gap: 12 }}>
+        <Field label="Add an existing member as manager">
+          <Combo options={candidates} value={null} onChange={addManager} placeholder="Search people…" />
+        </Field>
+        <Field label="Or invite a coach by email">
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input type="email" value={email} placeholder="coach@club.org"
+              onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') inviteByEmail(); }} />
+            <button className="btn small" type="button" onClick={inviteByEmail} disabled={!email.trim()}>Invite</button>
+          </div>
+        </Field>
+      </div>
+    </div>
+  );
+}
+
 function Roster({ clubId }: { clubId: string }) {
   const db = useDB();
-  const role = useRole();
+  const caps = useCapabilities();
   const season = db.seasons.find((s) => s.current)!;
   const roster = db.people.filter((p) => p.mainClubId === clubId)
     .sort((a, b) => (a.kind + a.lastName).localeCompare(b.kind + b.lastName));
@@ -60,7 +141,7 @@ function Roster({ clubId }: { clubId: string }) {
             return (
               <tr key={p.id}>
                 <td>
-                  {role === 'admin'
+                  {caps.isAdmin
                     ? <Link to={`/admin/members/${p.id}`} style={{ fontWeight: 600 }}>{p.firstName} {p.lastName}</Link>
                     : <strong>{p.firstName} {p.lastName}</strong>}
                 </td>

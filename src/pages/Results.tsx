@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { useDB, useRole, usePersona } from '../lib/store';
+import { useDB } from '../lib/store';
+import { useCapabilities } from '../lib/capabilities';
 import { Tabs, useFmtDate, Badge } from '../components/ui';
 import { MeetStatusBadge } from './Home';
 import { sessionResults, fmtScore } from '../lib/scoring';
@@ -45,8 +46,7 @@ type SortSpec = { key: string; dir: 1 | -1 };
 export function MeetResults() {
   const { slug } = useParams();
   const db = useDB();
-  const role = useRole();
-  const persona = usePersona();
+  const caps = useCapabilities();
   const meet = db.meets.find((m) => m.slug === slug);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [view, setView] = useState<'aa' | 'events' | 'team'>('aa');
@@ -119,7 +119,7 @@ export function MeetResults() {
   }, [byLevel, events]);
 
   const canOpenScore = (athleteId: string) =>
-    role === 'admin' || role === 'judge' || role === 'meet-host' || (role === 'athlete' && athleteId === persona.athleteId);
+    caps.isAdmin || caps.isMeetHost(meet?.id ?? '') || caps.personId === athleteId;
 
   const matchesFilters = (r: AthleteResult) => {
     if (catFilter && (r.reg.category ?? '') !== catFilter) return false;
