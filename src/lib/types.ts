@@ -216,6 +216,21 @@ export interface Coupon {
   appliesTo: 'membership' | 'meet-entry' | 'any';
 }
 
+/** A member's request to create a new club (admins approve → real club). */
+export interface ClubRequest {
+  id: string;
+  requesterPersonId: string | null;
+  proposedName: string;
+  shortName: string;
+  state: string;
+  region: Region | '';
+  note: string;
+  status: 'pending' | 'approved' | 'dismissed';
+  createdAt: string;
+  decidedAt?: string | null;
+  createdClubId?: string | null;
+}
+
 export type RoleId =
   | 'admin'
   | 'club-manager'
@@ -242,6 +257,7 @@ export interface DB {
   invoices: Invoice[];
   coupons: Coupon[];
   carts: Record<string, CartItem[]>; // key: clubId or athleteId
+  clubRequests: ClubRequest[];
 }
 
 export const STATE_REGIONS: Record<string, Region> = {
