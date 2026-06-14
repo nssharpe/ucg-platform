@@ -31,6 +31,7 @@ export function buildSeed(): DB {
     { id: 'wag-diamond', discipline: 'WAG', name: 'Xcel Diamond', svMax: 10.0, vaults: 2, order: 3 },
     { id: 'wag-l9', discipline: 'WAG', name: 'Level 9', svMax: 10.1, vaults: 2, order: 4 },
     { id: 'wag-open', discipline: 'WAG', name: 'Open Scoring', svMax: null, vaults: 2, order: 5 },
+    { id: 'wag-masters', discipline: 'WAG', name: 'Masters', svMax: null, vaults: 2, order: 6 },
     { id: 'mag-dev', discipline: 'MAG', name: 'Developmental', svMax: 12.7, vaults: 1, order: 1 },
     { id: 'mag-int', discipline: 'MAG', name: 'Intermediate', svMax: 13.2, vaults: 1, order: 2 },
     { id: 'mag-adv', discipline: 'MAG', name: 'Advanced', svMax: null, vaults: 1, order: 3 },

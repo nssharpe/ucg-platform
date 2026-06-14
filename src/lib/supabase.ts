@@ -5,7 +5,7 @@
 // additionally fires one of the `push*` helpers below to mirror the change to
 // Supabase. All writes are fire-and-forget (console.error on failure, never
 // block the UI) and are no-ops when `isSupabaseConfigured` is false.
-import { createClient, type SupabaseClient, type RealtimePostgresChangesPayload } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient, type RealtimePostgresChangesPayload, type PostgrestError } from '@supabase/supabase-js';
 import type {
   Athlete, Club, ClubRequest, Coupon, DB, Invoice, Level, Meet, Membership, Registration, Score, Season,
 } from './types';
@@ -29,6 +29,24 @@ function chunk<T>(rows: T[], size = CHUNK_SIZE): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < rows.length; i += size) out.push(rows.slice(i, i + size));
   return out;
+}
+
+const PAGE_SIZE = 1000;
+
+/** Fetch every row from a table, paging past PostgREST's default row cap
+ *  (1000) — needed for `people`, which now exceeds that with the full
+ *  ScoreFlippers import. */
+async function fetchAllRows(table: string): Promise<{ data: any[]; error: PostgrestError | null }> {
+  const out: any[] = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase!.from(table).select('*').range(from, from + PAGE_SIZE - 1);
+    if (error) return { data: out, error };
+    out.push(...(data ?? []));
+    if (!data || data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  return { data: out, error: null };
 }
 
 /** Fire-and-forget upsert, chunked for arrays >500 rows. */
@@ -344,7 +362,7 @@ export async function loadAll(): Promise<DB | null> {
       supabase.from('levels').select('*'),
       supabase.from('clubs').select('*'),
       supabase.from('club_managers').select('*'),
-      supabase.from('people').select('*'),
+      fetchAllRows('people'),
       supabase.from('person_alt_clubs').select('*'),
       supabase.from('memberships').select('*'),
       supabase.from('meets').select('*'),

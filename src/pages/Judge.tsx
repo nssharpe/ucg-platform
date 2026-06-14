@@ -23,31 +23,42 @@ export function Judge() {
   const liveMeets = db.meets.filter((m) => m.status === 'in-progress' || m.status === 'reg-closed');
   const [meetId, setMeetId] = useState(
     (requestedMeet && db.meets.find((m) => m.id === requestedMeet || m.slug === requestedMeet)?.id)
-    || liveMeets[0]?.id || db.meets[0].id,
+    || liveMeets[0]?.id || db.meets[0]?.id || '',
   );
-  const meet = db.meets.find((m) => m.id === meetId)!;
-  const [sessionId, setSessionId] = useState(meet.sessions[0].id);
-  const session = meet.sessions.find((s) => s.id === sessionId) ?? meet.sessions[0];
-  const events = EVENTS[session.discipline];
-  const [event, setEvent] = useState(events[0].code);
+  const meet = db.meets.find((m) => m.id === meetId);
+  const [sessionId, setSessionId] = useState(meet?.sessions[0]?.id ?? '');
+  const session = meet?.sessions.find((s) => s.id === sessionId) ?? meet?.sessions[0];
+  const events = session ? EVENTS[session.discipline] : [];
+  const [event, setEvent] = useState(events[0]?.code ?? '');
   const [flash, setFlash] = useState<{ name: string; score: number } | null>(null);
 
   const regs = useMemo(() => {
+    if (!meet || !session) return [];
     const inSession = db.registrations.filter((r) => r.meetId === meet.id && r.sessionId === session.id && !r.refunded && r.events.includes(event));
     return inSession.sort((a, b) => {
       const an = db.people.find((p) => p.id === a.athleteId)!;
       const bn = db.people.find((p) => p.id === b.athleteId)!;
       return an.lastName.localeCompare(bn.lastName);
     });
-  }, [db, meet.id, session.id, event]);
+  }, [db, meet, session, event]);
 
-  const scoreFor = (regId: string) => db.scores.find((s) => s.id === `${meet.id}|${regId}|${event}`);
+  const scoreFor = (regId: string) => db.scores.find((s) => s.id === `${meet?.id}|${regId}|${event}`);
 
   const [activeReg, setActiveReg] = useState<string | null>(null);
   const [sv, setSv] = useState('');
   const [ded, setDed] = useState('');
   const [override, setOverride] = useState(false);
   const [calcSt, setCalcSt] = useState<unknown>(null);
+
+  if (!meet || !session) {
+    return (
+      <div className="card card-pad" style={{ maxWidth: 520 }}>
+        <h2 className="display" style={{ fontSize: 22 }}>No meets yet</h2>
+        <p>Score entry needs at least one meet with a session. Create a meet under
+          Meets to get started.</p>
+      </div>
+    );
+  }
 
   const active = regs.find((r) => r.id === activeReg);
   const activeAthlete = active && db.people.find((p) => p.id === active.athleteId);

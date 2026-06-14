@@ -43,6 +43,7 @@ export function calcForLevel(levelId: string, eventCode?: string): CalcConfig | 
     case 'mag-adv':
       return { kind: 'mag', path: `${BASE}calculators/mag/index.html`, ruleset: 'NAIGC Advanced', produces: 'd', label: 'NAIGC MAG SV Calculator — Advanced (GymACT)' };
     case 'mag-masters':
+    case 'wag-masters':
       // The Masters calculator handles every apparatus (incl. vault) internally.
       return { kind: 'masters', path: `${BASE}calculators/masters.html`, produces: 'full', label: 'NAIGC Masters Scoring Calculator' };
     case 'wag-open':

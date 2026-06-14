@@ -165,8 +165,7 @@ export interface MastersState {
 }
 
 export function init(_levelId: string, eventCode: string): MastersState {
-  // The only masters level is mag-masters; engine + panel retain WAG support.
-  const discipline: MastersDiscipline = 'MAG';
+  const discipline: MastersDiscipline = _levelId === 'wag-masters' ? 'WAG' : 'MAG';
   return {
     discipline,
     age: '30',
