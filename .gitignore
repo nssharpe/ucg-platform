@@ -1,3 +1,7 @@
+# Nationals fixture extractor download cache (raw xlsx from the reference repo).
+# The generated JSON fixtures under tests/fixtures/nationals/ ARE committed.
+.jtmp
+
 # Logs
 logs
 *.log
@@ -22,3 +26,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# ScoreFlippers import: raw/derived athlete & club PII (one-time migration
+# scratch — data already lives in Supabase, never commit these).
+scripts/scoreflippers-import/*_raw.*
+scripts/scoreflippers-import/clubs.json
+scripts/scoreflippers-import/people.json
+scripts/scoreflippers-import/import.sql
