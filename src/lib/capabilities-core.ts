@@ -6,7 +6,14 @@ import type { Athlete, DB, MembershipStatus } from './types';
 
 export interface Capabilities {
   signedIn: boolean;
+  /** True when the real signed-in user holds the 'admin' role, regardless of
+   *  impersonation. Use this to show the impersonation ("View as") control. */
   isAdmin: boolean;
+  /** True only when the user is a real admin AND not currently impersonating
+   *  anyone. Use this to gate admin POWERS in the UI (admin nav, edit buttons,
+   *  grant/revoke) so that "View as (person)" faithfully shows what that
+   *  non-admin person would see. */
+  actingAsAdmin: boolean;
   /** The acting person (impersonated target if an admin is impersonating). */
   personId: string | null;
   person: Athlete | null;
@@ -47,6 +54,7 @@ export function deriveCapabilities(
   return {
     signedIn,
     isAdmin,
+    actingAsAdmin: isAdmin && !impersonating,
     personId,
     person,
     managedClubIds,

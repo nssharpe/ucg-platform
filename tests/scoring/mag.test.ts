@@ -27,7 +27,7 @@ describe('mag scoring engine — Developmental FX', () => {
 
     // Execution 10 + Skills 0 + EG 0 - shortExerciseDeduction(0.5 * 6 = 3.0) = 7.0
     expect(outcome.d).toBe(7.0);
-    expect(outcome.breakdown.find((b) => b.label === 'Execution')?.value).toBe(10.0);
+    expect(outcome.breakdown.find((b) => b.label === 'Base value')?.value).toBe(10.0);
     expect(outcome.breakdown.find((b) => b.label === 'Skills')?.value).toBe(0);
     expect(outcome.breakdown.find((b) => b.label === 'EG bonus')?.value).toBe(0);
     expect(outcome.breakdown.find((b) => b.label === 'Neutral deductions')?.value).toBe(-3.0);

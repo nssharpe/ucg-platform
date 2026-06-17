@@ -19,6 +19,20 @@ export function Membership() {
   return <MembershipInner me={caps.person} />;
 }
 
+// Returns a human-readable label for each required field that is missing.
+function missingProfileFields(me: Athlete): string[] {
+  const missing: string[] = [];
+  if (!me.firstName?.trim()) missing.push('First name');
+  if (!me.lastName?.trim()) missing.push('Last name');
+  if (!me.dob?.trim()) missing.push('Date of birth');
+  if (!me.phone?.trim()) missing.push('Phone number');
+  if (!me.shirt?.trim()) missing.push('T-shirt size');
+  if (!me.studentStatus?.trim()) missing.push('Student status');
+  if (!me.emergency?.contact?.trim()) missing.push('Emergency contact name');
+  if (!me.emergency?.phone?.trim()) missing.push('Emergency contact phone');
+  return missing;
+}
+
 function MembershipInner({ me }: { me: Athlete }) {
   const db = useDB();
   const toast = useToast();
@@ -34,10 +48,20 @@ function MembershipInner({ me }: { me: Athlete }) {
   const [coupon, setCoupon] = useState('');
   const [payMethod, setPayMethod] = useState<'card' | 'club'>('card');
 
+  const missingFields = missingProfileFields(me);
+  const profileComplete = missingFields.length === 0;
+
   const isMinor = (() => {
+    if (!me.dob) return false;
     const age = (Date.now() - new Date(me.dob).getTime()) / (365.25 * 24 * 3600 * 1000);
     return age < 18;
   })();
+
+  // For adult path: signature must match member's legal name (case-insensitive, whitespace-collapsed).
+  const expectedSig = `${me.firstName ?? ''} ${me.lastName ?? ''}`.replace(/\s+/g, ' ').trim();
+  const normalise = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
+  const sigMatchesName = normalise(waiverSig) === normalise(expectedSig);
+  const waiverValid = isMinor ? waiverSig.trim().length >= 2 : sigMatchesName;
 
   const couponDef = db.coupons.find((c) => c.code === coupon.toUpperCase() && (c.appliesTo === 'membership' || c.appliesTo === 'any'));
   const fee = season.athleteFee;
@@ -109,26 +133,45 @@ function MembershipInner({ me }: { me: Athlete }) {
           {step === 'info' && (
             <div className="card card-pad">
               <h3 className="card-title">Step 1 of 3 — Confirm your info</h3>
-              <p style={{ color: 'var(--ink-soft)', marginTop: 0 }}>
-                Autofilled from last season. Please actually read it — wrong info here follows you to every meet.
-              </p>
-              <table className="tbl" style={{ marginBottom: 14 }}>
-                <tbody>
-                  <tr><td>Name</td><td><strong>{me.firstName} {me.lastName}</strong></td></tr>
-                  <tr><td>DoB</td><td>{me.dob}</td></tr>
-                  <tr><td>Main club</td><td>{club?.name ?? '—'}</td></tr>
-                  <tr><td>T-shirt</td><td>{me.shirt}</td></tr>
-                  <tr><td>Emergency contact</td><td>{me.emergency.contact} ({me.emergency.relation}) {me.emergency.phone}</td></tr>
-                </tbody>
-              </table>
-              <label className="checkrow">
-                <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
-                I confirm this information is current and correct.
-              </label>
-              <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                <button className="btn primary" disabled={!confirmed} onClick={() => setStep('waiver')}>Continue →</button>
-                <a className="btn ghost" href="#/me">Edit profile first</a>
-              </div>
+              {!profileComplete ? (
+                <>
+                  <div style={{ background: 'var(--coral-100)', border: '1px solid var(--coral-400)', borderRadius: 8, padding: 14, marginBottom: 14 }}>
+                    <strong style={{ display: 'block', marginBottom: 6 }}>Your profile is missing required information.</strong>
+                    <p style={{ margin: '0 0 8px', fontSize: 14 }}>
+                      You must complete your profile before purchasing a membership. The following fields are missing:
+                    </p>
+                    <ul style={{ margin: 0, paddingLeft: 20, fontSize: 14 }}>
+                      {missingFields.map((f) => <li key={f}>{f}</li>)}
+                    </ul>
+                  </div>
+                  <a className="btn primary" href="#/me?return=membership">Edit profile to continue →</a>
+                </>
+              ) : (
+                <>
+                  <p style={{ color: 'var(--ink-soft)', marginTop: 0 }}>
+                    Autofilled from your profile. Please actually read it — wrong info here follows you to every meet.
+                  </p>
+                  <table className="tbl" style={{ marginBottom: 14 }}>
+                    <tbody>
+                      <tr><td>Name</td><td><strong>{me.firstName} {me.lastName}</strong></td></tr>
+                      <tr><td>DoB</td><td>{me.dob}</td></tr>
+                      <tr><td>Phone</td><td>{me.phone}</td></tr>
+                      <tr><td>Student status</td><td>{me.studentStatus}</td></tr>
+                      <tr><td>Main club</td><td>{club?.name ?? '—'}</td></tr>
+                      <tr><td>T-shirt</td><td>{me.shirt}</td></tr>
+                      <tr><td>Emergency contact</td><td>{me.emergency.contact} ({me.emergency.relation}) {me.emergency.phone}</td></tr>
+                    </tbody>
+                  </table>
+                  <label className="checkrow">
+                    <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
+                    I confirm this information is current and correct.
+                  </label>
+                  <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                    <button className="btn primary" disabled={!confirmed} onClick={() => setStep('waiver')}>Continue →</button>
+                    <a className="btn ghost" href="#/me?return=membership">Edit profile first</a>
+                  </div>
+                </>
+              )}
             </div>
           )}
 
@@ -149,11 +192,18 @@ function MembershipInner({ me }: { me: Athlete }) {
                   <Field label="Guardian email"><input type="email" placeholder="guardian@example.com" /></Field>
                 </>
               ) : (
-                <Field label="Type your full legal name to sign" hint="This constitutes a legal electronic signature with timestamp and IP recorded.">
-                  <input type="text" value={waiverSig} onChange={(e) => setWaiverSig(e.target.value)} placeholder={`${me.firstName} ${me.lastName}`} />
-                </Field>
+                <>
+                  <Field label="Type your full legal name to sign" hint="This constitutes a legal electronic signature with timestamp and IP recorded.">
+                    <input type="text" value={waiverSig} onChange={(e) => setWaiverSig(e.target.value)} placeholder={expectedSig} />
+                  </Field>
+                  {waiverSig.trim().length > 0 && !sigMatchesName && (
+                    <p style={{ color: 'var(--coral-600)', fontSize: 13, marginTop: -8, marginBottom: 10 }}>
+                      Your signature must match your name on file: <strong>{expectedSig}</strong>.
+                    </p>
+                  )}
+                </>
               )}
-              <button className="btn primary" disabled={waiverSig.trim().length < 3} onClick={() => setStep('pay')}>Sign & continue →</button>
+              <button className="btn primary" disabled={!waiverValid} onClick={() => setStep('pay')}>Sign & continue →</button>
             </div>
           )}
 

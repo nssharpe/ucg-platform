@@ -184,6 +184,10 @@ describe('deriveCapabilities', () => {
       expect(caps.personId).toBe('p-coach');
       expect(caps.managedClubIds).toContain('club-A'); // recomputed for impersonated person
       expect(caps.person?.id).toBe('p-coach');
+      // isAdmin still reflects the real user (keeps the "View as" control visible),
+      // but actingAsAdmin drops so the UI shows the impersonated person's view.
+      expect(caps.isAdmin).toBe(true);
+      expect(caps.actingAsAdmin).toBe(false);
     });
 
     it('5b. SECURITY: a non-admin cannot impersonate via viewPersonId', () => {
@@ -198,6 +202,7 @@ describe('deriveCapabilities', () => {
       const caps = deriveCapabilities(db, true, ['admin'], 'p-admin', 'p-admin', 's1');
 
       expect(caps.impersonating).toBe(false);
+      expect(caps.actingAsAdmin).toBe(true);
     });
   });
 

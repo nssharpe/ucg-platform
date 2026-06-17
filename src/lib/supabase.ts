@@ -231,7 +231,9 @@ const rowToClubRequest = (r: any): ClubRequest => ({
 // ---------------------------------------------------------------------------
 export function pushSeason(s: Season) { remoteUpsert('seasons', [seasonToRow(s)]); }
 export function pushLevel(l: Level) { remoteUpsert('levels', [levelToRow(l)]); }
+export function deleteLevel(id: string) { remoteDelete('levels', id); }
 export function pushCoupon(c: Coupon) { remoteUpsert('coupons', [couponToRow(c)]); }
+export function deleteCoupon(code: string) { remoteDelete('coupons', code, 'code'); }
 
 export function pushClub(c: Club) {
   remoteUpsert('clubs', [clubToRow(c)]);

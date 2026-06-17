@@ -4,8 +4,8 @@
 // create) and fetches the user's app roles.
 import { useSyncExternalStore } from 'react';
 import type { Session } from '@supabase/supabase-js';
-import { fetchMyRoles, isSupabaseConfigured, linkOrCreatePerson, supabase } from './supabase';
-import { syncFromSupabase } from './store';
+import { fetchMyRoles, isSupabaseConfigured, linkOrCreatePerson, pushPerson, supabase } from './supabase';
+import { getDB, mutate, syncFromSupabase } from './store';
 
 let session: Session | null = null;
 // True until the initial getSession() resolves — lets callers avoid flashing
@@ -28,15 +28,47 @@ function stashedName(): [string, string] {
   return ['', ''];
 }
 
+/** Read the person kind stashed by the sign-up form (Gate.tsx). */
+function stashedKind(): 'athlete' | 'coach' | null {
+  try {
+    const raw = sessionStorage.getItem('ucg-signup-kind');
+    if (raw === 'athlete' || raw === 'coach') return raw;
+  } catch { /* ignore */ }
+  return null;
+}
+
 /** Once per signed-in user: link/create their person row, then load roles. */
 async function onAuthenticated(user: Session['user']) {
   if (linkedUserId === user.id) return;
   linkedUserId = user.id;
   const [first, last] = stashedName();
+  const signupKind = stashedKind();
   const personId = await linkOrCreatePerson(first, last);
   if (personId) {
     sessionStorage.removeItem('ucg-signup-name');
     await syncFromSupabase(); // pull the claimed/created person into the snapshot
+
+    // If the user registered as a coach, upgrade the freshly-created person row.
+    // We only apply this when:
+    //   (a) ucg-signup-kind is 'coach' (stashed at sign-up time), AND
+    //   (b) the person's current kind is still 'athlete' (the RPC default), AND
+    //   (c) they have no memberships yet — a conservative guard that avoids
+    //       clobbering an existing athlete who coincidentally shares the email.
+    if (signupKind === 'coach') {
+      sessionStorage.removeItem('ucg-signup-kind');
+      const db = getDB();
+      const person = db.people.find((p) => p.id === personId);
+      if (person && person.kind === 'athlete' && person.memberships.length === 0) {
+        const updated = { ...person, kind: 'coach' as const };
+        mutate((d) => {
+          const idx = d.people.findIndex((p) => p.id === personId);
+          if (idx !== -1) d.people[idx] = updated;
+        });
+        pushPerson(updated); // mirror to Supabase
+      }
+    } else {
+      sessionStorage.removeItem('ucg-signup-kind');
+    }
   }
   roles = await fetchMyRoles(user.id);
   notifyRoles();

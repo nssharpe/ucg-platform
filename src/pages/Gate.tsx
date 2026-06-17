@@ -47,6 +47,7 @@ function AuthGate() {
   const [last, setLast] = useState('');
   const [email, setEmail] = useState('');
   const [pw, setPw] = useState('');
+  const [kind, setKind] = useState<'athlete' | 'coach'>('athlete');
   const [err, setErr] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -64,14 +65,31 @@ function AuthGate() {
       if (error) setErr(error.message);
       // onAuthStateChange picks up the new session and re-renders App.
     } else {
-      // Stash the name so auth.ts can pass it to link_or_create_person on the
-      // first authenticated load (after email confirmation + sign-in).
+      // Stash name + kind so auth.ts can pass them to link_or_create_person on
+      // the first authenticated load (after email confirmation + sign-in).
       sessionStorage.setItem('ucg-signup-name', JSON.stringify([first.trim(), last.trim()]));
-      const { data, error } = await supabase.auth.signUp({ email, password: pw });
+      sessionStorage.setItem('ucg-signup-kind', kind);
+
+      // emailRedirectTo ensures the confirmation link returns to the real app
+      // instead of Supabase's default localhost:3000. Works in dev and on
+      // GitHub Pages (e.g. https://nssharpe.github.io/ucg-platform/).
+      const redirectTo = `${window.location.origin}${import.meta.env.BASE_URL ?? '/'}`;
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password: pw,
+        options: { emailRedirectTo: redirectTo },
+      });
       setBusy(false);
       if (error) { setErr(error.message); return; }
-      if (!data.session) setInfo('Check your email to confirm your account, then sign in.');
+      if (!data.session) {
+        setInfo('Check your email to confirm your account — the link returns you here to sign in.');
+      }
     }
+  };
+
+  const radioStyle: React.CSSProperties = {
+    display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+    color: 'var(--ice-200)', fontSize: 13, userSelect: 'none',
   };
 
   return (
@@ -80,16 +98,35 @@ function AuthGate() {
         <div className="gate-logo">UCG<span className="spark">.</span></div>
         <div className="gate-tag">For the love<br />of the sport.</div>
         {mode === 'sign-up' && (
-          <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
-            <input
-              type="text" placeholder="FIRST NAME" value={first} autoFocus autoComplete="given-name"
-              onChange={(e) => { setFirst(e.target.value); clearMsg(); }}
-            />
-            <input
-              type="text" placeholder="LAST NAME" value={last} autoComplete="family-name"
-              onChange={(e) => { setLast(e.target.value); clearMsg(); }}
-            />
-          </div>
+          <>
+            <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+              <input
+                type="text" placeholder="FIRST NAME" value={first} autoFocus autoComplete="given-name"
+                onChange={(e) => { setFirst(e.target.value); clearMsg(); }}
+              />
+              <input
+                type="text" placeholder="LAST NAME" value={last} autoComplete="family-name"
+                onChange={(e) => { setLast(e.target.value); clearMsg(); }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: 20, marginBottom: 12, paddingLeft: 2 }}>
+              <span style={{ color: 'var(--ice-200)', fontSize: 12, alignSelf: 'center', opacity: 0.7 }}>I&apos;m registering as:</span>
+              <label style={radioStyle}>
+                <input
+                  type="radio" name="ucg-kind" value="athlete"
+                  checked={kind === 'athlete'} onChange={() => setKind('athlete')}
+                />
+                Athlete
+              </label>
+              <label style={radioStyle}>
+                <input
+                  type="radio" name="ucg-kind" value="coach"
+                  checked={kind === 'coach'} onChange={() => setKind('coach')}
+                />
+                Coach
+              </label>
+            </div>
+          </>
         )}
         <input
           type="email"

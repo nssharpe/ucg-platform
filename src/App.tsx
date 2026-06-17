@@ -63,6 +63,34 @@ function RequireAccount({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+/**
+ * Gate admin pages to users with the admin role. This is the primary
+ * access-control barrier for /admin/* routes — RequireAccount only checks
+ * that someone is signed in, which is insufficient. Without this gate a
+ * brand-new sign-up could browse admin UI and, in early versions, was offered
+ * an "make me admin" escape hatch and triggered a duplicate stray person.
+ *
+ * Note: the duplicate-person risk (stray athlete created before email confirm)
+ * is a link_or_create_person (DB) concern — see docs/specs/2026-06-16-auth-email-setup.md.
+ * This wrapper stops the privilege-surface exposure on the client side.
+ */
+function RequireAdmin({ children }: { children: ReactNode }) {
+  const caps = useCapabilities();
+  if (!caps.signedIn) return <Gate onUnlock={() => {}} />;
+  if (!caps.isAdmin) {
+    return (
+      <div style={{ padding: '60px 24px', maxWidth: 480, margin: '0 auto', textAlign: 'center' }}>
+        <div style={{ fontSize: 32, marginBottom: 16 }}>🔒</div>
+        <h2 style={{ marginBottom: 8 }}>Admin access required</h2>
+        <p style={{ color: 'var(--ink-soft)' }}>
+          You don't have access to this page. Contact a UCG administrator if you believe this is an error.
+        </p>
+      </div>
+    );
+  }
+  return <>{children}</>;
+}
+
 export default function App() {
   const session = useSession();
   const authLoading = useAuthLoading();
@@ -98,11 +126,11 @@ export default function App() {
               <Route path="/meets/:slug/manage" element={<RequireAccount><MeetManage /></RequireAccount>} />
               <Route path="/judge" element={<RequireAccount><Judge /></RequireAccount>} />
               <Route path="/scores/:scoreId" element={<RequireAccount><ScoreDetail /></RequireAccount>} />
-              <Route path="/admin/members" element={<RequireAccount><AdminMembers /></RequireAccount>} />
-              <Route path="/admin/members/:personId" element={<RequireAccount><AdminProfile /></RequireAccount>} />
-              <Route path="/admin/clubs" element={<RequireAccount><AdminClubs /></RequireAccount>} />
-              <Route path="/admin/league" element={<RequireAccount><AdminLeague /></RequireAccount>} />
-              <Route path="/admin/communicate" element={<RequireAccount><Communicate /></RequireAccount>} />
+              <Route path="/admin/members" element={<RequireAdmin><AdminMembers /></RequireAdmin>} />
+              <Route path="/admin/members/:personId" element={<RequireAdmin><AdminProfile /></RequireAdmin>} />
+              <Route path="/admin/clubs" element={<RequireAdmin><AdminClubs /></RequireAdmin>} />
+              <Route path="/admin/league" element={<RequireAdmin><AdminLeague /></RequireAdmin>} />
+              <Route path="/admin/communicate" element={<RequireAdmin><Communicate /></RequireAdmin>} />
               <Route path="*" element={<Home />} />
             </Routes>
           </Suspense>

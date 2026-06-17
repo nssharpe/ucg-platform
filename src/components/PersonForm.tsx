@@ -8,6 +8,23 @@ import { pushPerson } from '../lib/supabase';
 
 const GENDERS: Gender[] = ['Male', 'Female', 'Non-binary', 'Genderfluid', 'Agender', 'Other'];
 
+// ---------------------------------------------------------------------------
+// Helpers (duplicated from Profile to avoid cross-page coupling)
+// ---------------------------------------------------------------------------
+
+function formatPhone(raw: string): string {
+  const digits = raw.replace(/\D/g, '').slice(0, 10);
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 6) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
+
+function phoneValid(raw: string): boolean {
+  return raw.replace(/\D/g, '').length === 10;
+}
+
+// ---------------------------------------------------------------------------
+
 const blank = (): Omit<Athlete, 'id'> => ({
   kind: 'athlete', firstName: '', lastName: '', email: '', dob: '', gender: 'Female',
   gradYear: 1900, studentStatus: 'Student', shirt: 'Adult M', country: 'United States',
@@ -27,8 +44,13 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
     { value: '', label: 'Independent (no club)' },
     ...db.clubs.map((c) => ({ value: c.id, label: c.name, sub: `${c.state} · ${c.region}` })),
   ];
+  const altClubOptions = db.clubs.map((c) => ({ value: c.id, label: c.name, sub: `${c.state} · ${c.region}` }));
   const noGradYear = draft.gradYear === 1900;
   const valid = draft.firstName.trim() && draft.lastName.trim() && draft.email.trim() && draft.dob && draft.state;
+  const isCoach = draft.kind === 'coach';
+
+  const mainPhoneInvalid = draft.phone && !phoneValid(draft.phone);
+  const emergPhoneInvalid = draft.emergency.phone && !phoneValid(draft.emergency.phone);
 
   const save = () => {
     if (!valid) { toast('Name, email, date of birth, and state are required.'); return; }
@@ -66,7 +88,7 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
             {GENDERS.map((g) => <option key={g}>{g}</option>)}
           </select>
         </Field>
-        {draft.gender !== 'Male' && draft.gender !== 'Female' && DISCIPLINES.map((d) => (
+        {!isCoach && draft.gender !== 'Male' && draft.gender !== 'Female' && DISCIPLINES.map((d) => (
           <Field key={d} label={`${d} placement category`} tip="Determines which division they place in for this discipline">
             <select className="input" value={draft.placement?.[d] ?? ''} onChange={(e) => {
               const v = e.target.value as Placement | '';
@@ -103,7 +125,15 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
         <Field label="Training state">
           <Combo options={states.map((s) => ({ value: s, label: s, sub: STATE_REGIONS[s] }))} value={draft.state || null} onChange={(v) => set({ state: v })} />
         </Field>
-        <Field label="Phone"><input type="tel" value={draft.phone} onChange={(e) => set({ phone: e.target.value })} /></Field>
+        <Field label="Phone">
+          <input
+            type="tel"
+            value={draft.phone}
+            onChange={(e) => set({ phone: formatPhone(e.target.value) })}
+            placeholder="(555) 123-4567"
+          />
+          {mainPhoneInvalid && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Must be a 10-digit US phone number.</div>}
+        </Field>
       </div>
 
       <h3 className="card-title" style={{ marginTop: 8 }}>Competition</h3>
@@ -114,21 +144,56 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
         <Field label="Region" hint="Derived from training state.">
           <input type="text" disabled value={draft.state ? STATE_REGIONS[draft.state] ?? 'Other' : '—'} />
         </Field>
-        {DISCIPLINES.map((d) => (
-          <Field key={d} label={`${d} level`}>
-            <select className="input" value={draft.levels[d] ?? ''} onChange={(e) => set({ levels: { ...draft.levels, [d]: e.target.value || undefined } })}>
-              <option value="">Not competing {d}</option>
-              {db.levels.filter((l) => l.discipline === d).sort((a, b) => a.order - b.order).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-            </select>
-          </Field>
-        ))}
+        <Field label="Other clubs" hint="Clubs they also belong to.">
+          <Combo
+            options={altClubOptions.filter((c) => c.value !== (draft.mainClubId ?? '') && !draft.altClubIds.includes(c.value))}
+            value={null}
+            onChange={(v) => set({ altClubIds: [...draft.altClubIds, v] })}
+            placeholder="Add another club…"
+          />
+          {draft.altClubIds.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+              {draft.altClubIds.map((cid) => (
+                <span key={cid} className="badge info" style={{ gap: 8 }}>
+                  {db.clubs.find((c) => c.id === cid)?.name ?? cid}
+                  <button type="button" title="Remove club"
+                    onClick={() => set({ altClubIds: draft.altClubIds.filter((x) => x !== cid) })}
+                    style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }}>✕</button>
+                </span>
+              ))}
+            </div>
+          )}
+        </Field>
       </div>
+      {!isCoach && (
+        <div style={{ marginTop: 8 }}>
+          <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-soft)', marginBottom: 6, marginTop: 0 }}>Competition levels</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {DISCIPLINES.map((d) => (
+              <Field key={d} label={`${d} level`}>
+                <select className="input" value={draft.levels[d] ?? ''} onChange={(e) => set({ levels: { ...draft.levels, [d]: e.target.value || undefined } })}>
+                  <option value="">Not competing {d}</option>
+                  {db.levels.filter((l) => l.discipline === d).sort((a, b) => a.order - b.order).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                </select>
+              </Field>
+            ))}
+          </div>
+        </div>
+      )}
 
       <h3 className="card-title" style={{ marginTop: 8 }}>Meet-day</h3>
       <div className="grid cols-2">
         <Field label="Emergency contact"><input type="text" value={draft.emergency.contact} onChange={(e) => set({ emergency: { ...draft.emergency, contact: e.target.value } })} /></Field>
         <Field label="Relation"><input type="text" value={draft.emergency.relation} onChange={(e) => set({ emergency: { ...draft.emergency, relation: e.target.value } })} /></Field>
-        <Field label="Emergency phone"><input type="tel" value={draft.emergency.phone} onChange={(e) => set({ emergency: { ...draft.emergency, phone: e.target.value } })} /></Field>
+        <Field label="Emergency phone">
+          <input
+            type="tel"
+            value={draft.emergency.phone}
+            onChange={(e) => set({ emergency: { ...draft.emergency, phone: formatPhone(e.target.value) } })}
+            placeholder="(555) 123-4567"
+          />
+          {emergPhoneInvalid && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Must be a 10-digit US phone number.</div>}
+        </Field>
       </div>
       <Field label="Dietary restrictions">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 18px' }}>

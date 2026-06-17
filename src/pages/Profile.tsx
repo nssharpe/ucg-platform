@@ -1,11 +1,60 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { Combo, Field, Modal, useToast, Badge } from '../components/ui';
 import { SHIRT_SIZES, DIETARY_OPTIONS, STATE_REGIONS, DISCIPLINES } from '../lib/types';
 import type { Athlete, ClubRequest, Gender, Region } from '../lib/types';
-import { pushClubRequest, pushMembership, pushPerson } from '../lib/supabase';
+import { pushClubRequest, pushMembership, pushPerson, deleteRegistration } from '../lib/supabase';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Format raw digits as (555) 123-4567 */
+function formatPhone(raw: string): string {
+  const digits = raw.replace(/\D/g, '').slice(0, 10);
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 6) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
+
+function phoneValid(raw: string): boolean {
+  return raw.replace(/\D/g, '').length === 10;
+}
+
+/** Return age in whole years given a dob string like "YYYY-MM-DD" */
+function ageFromDob(dob: string): number {
+  if (!dob) return 0;
+  const today = new Date();
+  const birth = new Date(dob);
+  let age = today.getFullYear() - birth.getFullYear();
+  const m = today.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
+  return age;
+}
+
+// ---------------------------------------------------------------------------
+// Required-field validation
+// ---------------------------------------------------------------------------
+type ValidationErrors = { field: string; label: string }[];
+
+function validateProfile(p: Athlete): ValidationErrors {
+  const errs: ValidationErrors = [];
+  if (!p.firstName.trim()) errs.push({ field: 'firstName', label: 'First name' });
+  if (!p.lastName.trim()) errs.push({ field: 'lastName', label: 'Last name' });
+  if (!p.dob) errs.push({ field: 'dob', label: 'Date of birth' });
+  if (!p.phone) errs.push({ field: 'phone', label: 'Phone' });
+  if (!p.shirt) errs.push({ field: 'shirt', label: 'T-shirt size' });
+  if (!p.studentStatus) errs.push({ field: 'studentStatus', label: 'Student status' });
+  if (!p.emergency.contact) errs.push({ field: 'emergency.contact', label: 'Emergency contact' });
+  if (!p.emergency.phone) errs.push({ field: 'emergency.phone', label: 'Emergency phone' });
+  return errs;
+}
+
+// ---------------------------------------------------------------------------
+// Main Profile component
+// ---------------------------------------------------------------------------
 
 export function Profile({ adminView = false }: { adminView?: boolean }) {
   const db = useDB();
@@ -14,168 +63,356 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   const caps = useCapabilities();
   const personId = adminView ? params.personId! : caps.personId;
   const person = db.people.find((p) => p.id === personId);
+
+  // Determine if we should auto-open edit mode
+  const returnToMembership = typeof window !== 'undefined' && window.location.hash.includes('return=membership');
+
   const [draft, setDraft] = useState<Athlete | null>(null);
+  const [editMode, setEditMode] = useState<boolean>(() => {
+    if (!person) return false;
+    if (returnToMembership) return true;
+    const errs = validateProfile(person);
+    return errs.length > 0;
+  });
   const [clubReqOpen, setClubReqOpen] = useState(false);
+  const [revokeSeasonId, setRevokeSeasonId] = useState<string | null>(null);
+
   if (!person) return <p>Person not found.</p>;
-  const pid: string = person.id; // narrowed (personId may be null before this guard)
+  const pid: string = person.id;
   const p = draft ?? person;
   const set = (patch: Partial<Athlete>) => setDraft({ ...p, ...patch });
   const clubOptions = db.clubs.map((c) => ({ value: c.id, label: c.name, sub: `${c.state} · ${c.region}` }));
   const states = Object.keys(STATE_REGIONS);
 
+  const validationErrors = useMemo(() => validateProfile(p), [p]);
+
+  // Phone validation (main)
+  const mainPhoneInvalid = p.phone && !phoneValid(p.phone);
+  const emergPhoneInvalid = p.emergency.phone && !phoneValid(p.emergency.phone);
+
+  // Age validation
+  const age = p.dob ? ageFromDob(p.dob) : null;
+  const minAge = p.kind === 'coach' ? 18 : 15;
+  const ageError = age !== null && p.dob ? (age < minAge ? `${p.kind === 'coach' ? 'Coaches' : 'Athletes'} must be ${minAge}+.` : null) : null;
+
+  const canSave = draft !== null
+    && validationErrors.length === 0
+    && !mainPhoneInvalid
+    && !ageError;
+
+  const enterEdit = () => {
+    setDraft({ ...person });
+    setEditMode(true);
+  };
+  const discardEdit = () => {
+    setDraft(null);
+    setEditMode(false);
+  };
+
   const save = () => {
+    if (!canSave) return;
     mutate((d) => {
       const i = d.people.findIndex((x) => x.id === pid);
       d.people[i] = { ...p };
       pushPerson(d.people[i]);
     });
     setDraft(null);
-    toast('Profile saved.');
+    setEditMode(false);
+    if (returnToMembership) {
+      toast('Profile saved.');
+      window.location.hash = '#/membership';
+    } else {
+      toast('Profile saved.');
+    }
   };
+
+  const isCoach = p.kind === 'coach';
 
   return (
     <div style={{ maxWidth: 760 }}>
-      <h1 className="page-title display">{adminView ? `${p.firstName} ${p.lastName}` : 'My profile'}</h1>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', marginBottom: 4 }}>
+        <h1 className="page-title display" style={{ margin: 0 }}>
+          {adminView ? `${p.firstName} ${p.lastName}` : 'My profile'}
+        </h1>
+        {!editMode && (
+          <button className="btn primary small" onClick={enterEdit}>Edit profile</button>
+        )}
+      </div>
       <p className="page-sub">
         {adminView
-          ? <>Unique member URL: <code>#/admin/members/{p.id}</code> · {p.kind} · {p.email}</>
-          : 'Your competition levels, contact info, and meet-day details. Autofills each season — confirm before competing.'}
+          ? <><code>#/admin/members/{p.id}</code> · {p.kind} · {p.email}</>
+          : 'Your competition levels, contact info, and meet-day details.'}
       </p>
 
       {adminView && (
         <div className="card card-pad" style={{ marginBottom: 16, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <AdminMembershipControls personId={pid} />
+          <AdminMembershipControls
+            personId={pid}
+            revokeSeasonId={revokeSeasonId}
+            setRevokeSeasonId={setRevokeSeasonId}
+          />
         </div>
       )}
 
-      <div className="card card-pad" style={{ marginBottom: 16 }}>
-        <h3 className="card-title">Identity</h3>
-        <div className="grid cols-2">
-          <Field label="First name"><input type="text" value={p.firstName} onChange={(e) => set({ firstName: e.target.value })} /></Field>
-          <Field label="Last name"><input type="text" value={p.lastName} onChange={(e) => set({ lastName: e.target.value })} /></Field>
-          <Field label="Date of birth" hint="Athletes must be 15+, coaches 18+."><input type="date" value={p.dob} onChange={(e) => set({ dob: e.target.value })} /></Field>
-          <Field label="Gender">
-            <select className="input" value={p.gender} onChange={(e) => set({ gender: e.target.value as Gender })}>
-              {['Male', 'Female', 'Non-binary', 'Genderfluid', 'Agender', 'Other'].map((g) => <option key={g}>{g}</option>)}
-            </select>
-          </Field>
-          {p.gender !== 'Male' && p.gender !== 'Female' && (
-            <>
-              {DISCIPLINES.map((d) => (
-                <Field key={d} label={`${d} placement category`} tip="Determines which division you place in for this discipline">
-                  <select className="input" value={p.placement?.[d] ?? 'women+'} onChange={(e) => set({ placement: { ...p.placement, [d]: e.target.value as 'men+' | 'women+' } })}>
-                    <option value="women+">women+</option>
-                    <option value="men+">men+</option>
-                  </select>
-                </Field>
-              ))}
-            </>
-          )}
-          <Field label="Undergrad graduation year" hint="Enter 1900 if you do not have a past or future undergraduate graduation year.">
-            <input type="number" value={p.gradYear} onChange={(e) => set({ gradYear: +e.target.value })} />
-          </Field>
-          <Field label="Student status" hint="Full-time student for ≥1 semester this season (Jul–Jun)? Grad students may pick either.">
-            <select className="input" value={p.studentStatus} onChange={(e) => set({ studentStatus: e.target.value as 'Student' | 'Non-Student' })}>
-              <option>Student</option><option>Non-Student</option>
-            </select>
-          </Field>
-          <Field label="T-shirt size">
-            <select className="input" value={p.shirt} onChange={(e) => set({ shirt: e.target.value })}>
-              {SHIRT_SIZES.map((s) => <option key={s}>{s}</option>)}
-            </select>
-          </Field>
-          <Field label="Training state">
-            <Combo options={states.map((s) => ({ value: s, label: s, sub: STATE_REGIONS[s] }))} value={p.state} onChange={(v) => set({ state: v })} />
-          </Field>
-          <Field label="Phone"><input type="tel" value={p.phone} onChange={(e) => set({ phone: e.target.value })} /></Field>
-        </div>
-      </div>
+      {editMode ? (
+        // ----------------------------------------------------------------
+        // EDIT MODE
+        // ----------------------------------------------------------------
+        <>
+          <div className="card card-pad" style={{ marginBottom: 16 }}>
+            <h3 className="card-title">Identity</h3>
+            <div className="grid cols-2">
+              <Field label="First name"><input type="text" value={p.firstName} onChange={(e) => set({ firstName: e.target.value })} /></Field>
+              <Field label="Last name"><input type="text" value={p.lastName} onChange={(e) => set({ lastName: e.target.value })} /></Field>
+              <Field label="Date of birth" hint="Athletes must be 15+, coaches 18+.">
+                <input type="date" value={p.dob} onChange={(e) => set({ dob: e.target.value })} />
+                {ageError && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>{ageError}</div>}
+              </Field>
+              <Field label="Gender">
+                <select className="input" value={p.gender} onChange={(e) => set({ gender: e.target.value as Gender })}>
+                  {['Male', 'Female', 'Non-binary', 'Genderfluid', 'Agender', 'Other'].map((g) => <option key={g}>{g}</option>)}
+                </select>
+              </Field>
+              {!isCoach && p.gender !== 'Male' && p.gender !== 'Female' && (
+                <>
+                  {DISCIPLINES.map((d) => (
+                    <Field key={d} label={`${d} placement category`} tip="Determines which division you place in for this discipline">
+                      <select className="input" value={p.placement?.[d] ?? 'women+'} onChange={(e) => set({ placement: { ...p.placement, [d]: e.target.value as 'men+' | 'women+' } })}>
+                        <option value="women+">women+</option>
+                        <option value="men+">men+</option>
+                      </select>
+                    </Field>
+                  ))}
+                </>
+              )}
+              <Field label="Undergrad graduation year" hint="Enter 1900 if you do not have a past or future undergraduate graduation year.">
+                <input type="number" value={p.gradYear} onChange={(e) => set({ gradYear: +e.target.value })} />
+              </Field>
+              <Field label="Student status" hint="Full-time student for ≥1 semester this season (Jul–Jun)? Grad students may pick either.">
+                <select className="input" value={p.studentStatus} onChange={(e) => set({ studentStatus: e.target.value as 'Student' | 'Non-Student' })}>
+                  <option>Student</option><option>Non-Student</option>
+                </select>
+              </Field>
+              <Field label="T-shirt size">
+                <select className="input" value={p.shirt} onChange={(e) => set({ shirt: e.target.value })}>
+                  {SHIRT_SIZES.map((s) => <option key={s}>{s}</option>)}
+                </select>
+              </Field>
+              <Field label="Training state">
+                <Combo options={states.map((s) => ({ value: s, label: s, sub: STATE_REGIONS[s] }))} value={p.state} onChange={(v) => set({ state: v })} />
+              </Field>
+              <Field label="Phone">
+                <input
+                  type="tel"
+                  value={p.phone}
+                  onChange={(e) => set({ phone: formatPhone(e.target.value) })}
+                  placeholder="(555) 123-4567"
+                />
+                {mainPhoneInvalid && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Must be a 10-digit US phone number.</div>}
+              </Field>
+            </div>
+          </div>
 
-      <div className="card card-pad" style={{ marginBottom: 16 }}>
-        <h3 className="card-title">Competition</h3>
-        <div className="grid cols-2">
-          <Field label="Main club" hint="The only club that can pay your membership fee.">
-            <Combo options={clubOptions} value={p.mainClubId} onChange={(v) => set({ mainClubId: v })} />
-          </Field>
-          <Field label="Region" hint="Derived from training state.">
-            <input type="text" disabled value={STATE_REGIONS[p.state] ?? 'Other'} />
-          </Field>
-          <Field label="Other clubs" hint="Clubs you also belong to — choose which one you compete for per meet at registration.">
-            <Combo
-              options={clubOptions.filter((c) => c.value !== p.mainClubId && !p.altClubIds.includes(c.value))}
-              value={null}
-              onChange={(v) => set({ altClubIds: [...p.altClubIds, v] })}
-              placeholder="Add another club…"
-            />
-            {p.altClubIds.length > 0 && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-                {p.altClubIds.map((cid) => (
-                  <span key={cid} className="badge info" style={{ gap: 8 }}>
-                    {db.clubs.find((c) => c.id === cid)?.shortName ?? cid}
-                    <button type="button" title="Remove club"
-                      onClick={() => set({ altClubIds: p.altClubIds.filter((x) => x !== cid) })}
-                      style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }}>✕</button>
-                  </span>
-                ))}
+          <div className="card card-pad" style={{ marginBottom: 16 }}>
+            <h3 className="card-title">Competition</h3>
+            <div className="grid cols-2">
+              <Field label="Main club" hint="The only club that can pay your membership fee.">
+                <Combo options={clubOptions} value={p.mainClubId} onChange={(v) => set({ mainClubId: v })} />
+              </Field>
+              <Field label="Region" hint="Derived from training state.">
+                <input type="text" disabled value={STATE_REGIONS[p.state] ?? 'Other'} />
+              </Field>
+              <Field label="Other clubs" hint="Clubs you also belong to — choose which one you compete for per meet at registration.">
+                <Combo
+                  options={clubOptions.filter((c) => c.value !== p.mainClubId && !p.altClubIds.includes(c.value))}
+                  value={null}
+                  onChange={(v) => set({ altClubIds: [...p.altClubIds, v] })}
+                  placeholder="Add another club…"
+                />
+                {p.altClubIds.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                    {p.altClubIds.map((cid) => (
+                      <span key={cid} className="badge info" style={{ gap: 8 }}>
+                        {db.clubs.find((c) => c.id === cid)?.name ?? cid}
+                        <button type="button" title="Remove club"
+                          onClick={() => set({ altClubIds: p.altClubIds.filter((x) => x !== cid) })}
+                          style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }}>✕</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {!adminView && (
+                  <button type="button" className="btn ghost small" style={{ marginTop: 8 }} onClick={() => setClubReqOpen(true)}>
+                    Don't see your club? Request a new one
+                  </button>
+                )}
+              </Field>
+            </div>
+            {!isCoach && (
+              <div style={{ marginTop: 12 }}>
+                <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-soft)', marginBottom: 6, marginTop: 0 }}>Competition levels</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {DISCIPLINES.map((d) => (
+                    <Field key={d} label={`${d} level`}>
+                      <select className="input" value={p.levels[d] ?? ''} onChange={(e) => set({ levels: { ...p.levels, [d]: e.target.value || undefined } })}>
+                        <option value="">Not competing {d}</option>
+                        {db.levels.filter((l) => l.discipline === d).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                      </select>
+                    </Field>
+                  ))}
+                </div>
               </div>
             )}
-            {!adminView && (
-              <button type="button" className="btn ghost small" style={{ marginTop: 8 }} onClick={() => setClubReqOpen(true)}>
-                Don't see your club? Request a new one
-              </button>
-            )}
-          </Field>
-          {DISCIPLINES.map((d) => (
-            <Field key={d} label={`${d} level`}>
-              <select className="input" value={p.levels[d] ?? ''} onChange={(e) => set({ levels: { ...p.levels, [d]: e.target.value || undefined } })}>
-                <option value="">Not competing {d}</option>
-                {db.levels.filter((l) => l.discipline === d).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-              </select>
-            </Field>
-          ))}
-        </div>
-      </div>
+          </div>
 
-      <div className="card card-pad" style={{ marginBottom: 16 }}>
-        <h3 className="card-title">Meet-day</h3>
-        <div className="grid cols-2">
-          <Field label="Emergency contact"><input type="text" value={p.emergency.contact} onChange={(e) => set({ emergency: { ...p.emergency, contact: e.target.value } })} /></Field>
-          <Field label="Relation"><input type="text" value={p.emergency.relation} onChange={(e) => set({ emergency: { ...p.emergency, relation: e.target.value } })} /></Field>
-          <Field label="Emergency phone"><input type="tel" value={p.emergency.phone} onChange={(e) => set({ emergency: { ...p.emergency, phone: e.target.value } })} /></Field>
-        </div>
-        <Field label="Dietary restrictions">
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 18px' }}>
-            {DIETARY_OPTIONS.map((opt) => (
-              <label className="checkrow" key={opt}>
+          <div className="card card-pad" style={{ marginBottom: 16 }}>
+            <h3 className="card-title">Meet-day</h3>
+            <div className="grid cols-2">
+              <Field label="Emergency contact"><input type="text" value={p.emergency.contact} onChange={(e) => set({ emergency: { ...p.emergency, contact: e.target.value } })} /></Field>
+              <Field label="Relation"><input type="text" value={p.emergency.relation} onChange={(e) => set({ emergency: { ...p.emergency, relation: e.target.value } })} /></Field>
+              <Field label="Emergency phone">
                 <input
-                  type="checkbox"
-                  checked={p.dietary.includes(opt)}
-                  onChange={(e) => set({ dietary: e.target.checked ? [...p.dietary, opt] : p.dietary.filter((x) => x !== opt) })}
+                  type="tel"
+                  value={p.emergency.phone}
+                  onChange={(e) => set({ emergency: { ...p.emergency, phone: formatPhone(e.target.value) } })}
+                  placeholder="(555) 123-4567"
                 />
-                {opt}
-              </label>
-            ))}
+                {emergPhoneInvalid && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Must be a 10-digit US phone number.</div>}
+              </Field>
+            </div>
+            <Field label="Dietary restrictions">
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 18px' }}>
+                {DIETARY_OPTIONS.map((opt) => (
+                  <label className="checkrow" key={opt}>
+                    <input
+                      type="checkbox"
+                      checked={p.dietary.includes(opt)}
+                      onChange={(e) => set({ dietary: e.target.checked ? [...p.dietary, opt] : p.dietary.filter((x) => x !== opt) })}
+                    />
+                    {opt}
+                  </label>
+                ))}
+              </div>
+            </Field>
+            <Field label="Dietary notes"><textarea rows={2} value={p.dietaryNotes} onChange={(e) => set({ dietaryNotes: e.target.value })} /></Field>
           </div>
-        </Field>
-        <Field label="Dietary notes"><textarea rows={2} value={p.dietaryNotes} onChange={(e) => set({ dietaryNotes: e.target.value })} /></Field>
-      </div>
 
-      {p.achievements.length > 0 && (
-        <div className="card card-pad" style={{ marginBottom: 16 }}>
-          <h3 className="card-title">Achievements</h3>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {p.achievements.map((a) => <Badge key={a} tone="info">🏅 {a}</Badge>)}
+          {/* Sticky save bar */}
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', position: 'sticky', bottom: 16 }}>
+            <button className="btn primary" disabled={!canSave} onClick={save}>Save changes</button>
+            <button className="btn ghost" onClick={discardEdit}>Discard</button>
+            <span style={{ alignSelf: 'center', fontSize: 13, color: 'var(--coral-600)', fontWeight: 600 }}>Unsaved changes</span>
+            {validationErrors.length > 0 && (
+              <span style={{ fontSize: 12, color: 'var(--coral-600)' }}>
+                Required: {validationErrors.map((e) => e.label).join(', ')}
+              </span>
+            )}
           </div>
-        </div>
+        </>
+      ) : (
+        // ----------------------------------------------------------------
+        // VIEW MODE
+        // ----------------------------------------------------------------
+        <>
+          <div className="card card-pad" style={{ marginBottom: 16 }}>
+            <h3 className="card-title">Identity</h3>
+            <div className="grid cols-2">
+              <ViewRow label="First name" value={person.firstName} />
+              <ViewRow label="Last name" value={person.lastName} />
+              <ViewRow label="Date of birth" value={person.dob} />
+              <ViewRow label="Gender" value={person.gender} />
+              {!isCoach && person.gender !== 'Male' && person.gender !== 'Female' && DISCIPLINES.map((d) => (
+                <ViewRow key={d} label={`${d} placement`} value={person.placement?.[d] ?? 'women+'} />
+              ))}
+              <ViewRow label="Grad year" value={person.gradYear === 1900 ? 'N/A' : String(person.gradYear)} />
+              <ViewRow label="Student status" value={person.studentStatus} />
+              <ViewRow label="T-shirt size" value={person.shirt} />
+              <ViewRow label="Training state" value={`${person.state}${STATE_REGIONS[person.state] ? ` (${STATE_REGIONS[person.state]})` : ''}`} />
+              <ViewRow label="Phone" value={person.phone} />
+            </div>
+          </div>
+
+          <div className="card card-pad" style={{ marginBottom: 16 }}>
+            <h3 className="card-title">Competition</h3>
+            <div className="grid cols-2">
+              <ViewRow label="Main club" value={db.clubs.find((c) => c.id === person.mainClubId)?.name ?? '—'} />
+              <ViewRow label="Region" value={STATE_REGIONS[person.state] ?? 'Other'} />
+              <div style={{ gridColumn: '1 / -1' }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-soft)' }}>Other clubs</span>
+                <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {person.altClubIds.length > 0
+                    ? person.altClubIds.map((cid) => (
+                        <Badge key={cid} tone="info">{db.clubs.find((c) => c.id === cid)?.name ?? cid}</Badge>
+                      ))
+                    : <span style={{ fontSize: 13, color: 'var(--ink-soft)' }}>None</span>}
+                </div>
+              </div>
+            </div>
+            {!isCoach && (
+              <div style={{ marginTop: 12 }}>
+                <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-soft)', marginBottom: 6, marginTop: 0 }}>Competition levels</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {DISCIPLINES.map((d) => {
+                    const lvl = db.levels.find((l) => l.id === person.levels[d]);
+                    return (
+                      <div key={d} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <span style={{ fontSize: 13, fontWeight: 500, minWidth: 60 }}>{d}:</span>
+                        {lvl ? <Badge tone="navy">{lvl.name}</Badge> : <span style={{ fontSize: 13, color: 'var(--ink-soft)' }}>Not competing</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="card card-pad" style={{ marginBottom: 16 }}>
+            <h3 className="card-title">Meet-day</h3>
+            <div className="grid cols-2">
+              <ViewRow label="Emergency contact" value={person.emergency.contact} />
+              <ViewRow label="Relation" value={person.emergency.relation} />
+              <ViewRow label="Emergency phone" value={person.emergency.phone} />
+            </div>
+            {person.dietary.length > 0 && (
+              <div style={{ marginTop: 8 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-soft)' }}>Dietary restrictions</span>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                  {person.dietary.map((d) => <Badge key={d} tone="info">{d}</Badge>)}
+                </div>
+              </div>
+            )}
+            {person.dietaryNotes && (
+              <div style={{ marginTop: 8 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-soft)' }}>Dietary notes</span>
+                <p style={{ fontSize: 13, margin: '4px 0 0' }}>{person.dietaryNotes}</p>
+              </div>
+            )}
+          </div>
+
+          {person.achievements.length > 0 && (
+            <div className="card card-pad" style={{ marginBottom: 16 }}>
+              <h3 className="card-title">Achievements</h3>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {person.achievements.map((a) => <Badge key={a} tone="info">🏅 {a}</Badge>)}
+              </div>
+            </div>
+          )}
+        </>
       )}
 
-      <div style={{ display: 'flex', gap: 10, position: 'sticky', bottom: 16 }}>
-        <button className="btn primary" disabled={!draft} onClick={save}>Save changes</button>
-        {draft && <button className="btn ghost" onClick={() => setDraft(null)}>Discard</button>}
-        {draft && <span style={{ alignSelf: 'center', fontSize: 13, color: 'var(--coral-600)', fontWeight: 600 }}>Unsaved changes</span>}
-      </div>
-
       {clubReqOpen && <ClubRequestForm requesterPersonId={pid} onClose={() => setClubReqOpen(false)} />}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Small helper: read-only label/value pair
+// ---------------------------------------------------------------------------
+function ViewRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink-soft)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{label}</span>
+      <p style={{ fontSize: 14, margin: '2px 0 0', fontWeight: 500 }}>{value || <span style={{ color: 'var(--ink-soft)' }}>—</span>}</p>
     </div>
   );
 }
@@ -227,46 +464,98 @@ function ClubRequestForm({ requesterPersonId, onClose }: { requesterPersonId: st
   );
 }
 
-function AdminMembershipControls({ personId }: { personId: string }) {
+function AdminMembershipControls({
+  personId,
+  revokeSeasonId,
+  setRevokeSeasonId,
+}: {
+  personId: string;
+  revokeSeasonId: string | null;
+  setRevokeSeasonId: (id: string | null) => void;
+}) {
   const db = useDB();
   const toast = useToast();
+  const caps = useCapabilities();
   const person = db.people.find((x) => x.id === personId)!;
+
+  const confirmRevoke = () => {
+    if (!revokeSeasonId) return;
+    let removedCount = 0;
+    mutate((d) => {
+      const personInDraft = d.people.find((x) => x.id === personId)!;
+      // Update membership status
+      const em = personInDraft.memberships.find((x) => x.seasonId === revokeSeasonId);
+      if (em) {
+        em.status = 'none';
+        pushMembership(personInDraft.id, em);
+      }
+      // Remove from upcoming meets
+      const openStatuses = new Set(['draft', 'reg-open', 'reg-closed']);
+      const openMeetIds = new Set(d.meets.filter((m) => openStatuses.has(m.status)).map((m) => m.id));
+      const toRemove = d.registrations.filter((r) => r.athleteId === personId && openMeetIds.has(r.meetId));
+      removedCount = toRemove.length;
+      toRemove.forEach((r) => deleteRegistration(r.id));
+      d.registrations = d.registrations.filter((r) => !(r.athleteId === personId && openMeetIds.has(r.meetId)));
+    });
+    toast(`Membership revoked; removed from ${removedCount} upcoming competition${removedCount !== 1 ? 's' : ''}.`);
+    setRevokeSeasonId(null);
+  };
+
   return (
     <>
       {db.seasons.map((s) => {
         const m = person.memberships.find((x) => x.seasonId === s.id);
+        const isActive = m?.status === 'active';
         return (
           <div key={s.id} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <strong style={{ fontSize: 13 }}>{s.name}:</strong>
-            {m?.status === 'active' ? <Badge tone="ok">Active{m.activatedByAdmin ? ' (admin)' : ''}</Badge>
+            {isActive ? <Badge tone="ok">Active{m?.activatedByAdmin ? ' (admin)' : ''}</Badge>
               : m?.status === 'pending-club-payment' ? <Badge tone="warn">Pending club</Badge>
               : <Badge tone="err">None</Badge>}
             {m?.waiverSignedAt && <span data-tip={`Signed by ${m.waiverSignedBy} · ${m.waiverSignedAt.slice(0, 10)}`} style={{ fontSize: 12, cursor: 'help' }}>📝</span>}
-            <button
-              className="btn small ghost"
-              onClick={() => {
-                mutate((d) => {
-                  const p = d.people.find((x) => x.id === personId)!;
-                  let em = p.memberships.find((x) => x.seasonId === s.id);
-                  if (em?.status === 'active') {
-                    em.status = 'none';
-                  } else if (em) {
-                    em.status = 'active'; em.activatedByAdmin = true;
+            {caps.actingAsAdmin && (
+              <button
+                className="btn small ghost"
+                onClick={() => {
+                  if (isActive) {
+                    setRevokeSeasonId(s.id);
                   } else {
-                    em = { seasonId: s.id, status: 'active', waiverSignedAt: null, waiverSignedBy: null, paidVia: 'comp', activatedByAdmin: true };
-                    p.memberships.push(em);
+                    mutate((d) => {
+                      const personInDraft = d.people.find((x) => x.id === personId)!;
+                      let em = personInDraft.memberships.find((x) => x.seasonId === s.id);
+                      if (em) {
+                        em.status = 'active'; em.activatedByAdmin = true;
+                      } else {
+                        em = { seasonId: s.id, status: 'active', waiverSignedAt: null, waiverSignedBy: null, paidVia: 'comp', activatedByAdmin: true };
+                        personInDraft.memberships.push(em);
+                      }
+                      pushMembership(personInDraft.id, em);
+                    });
+                    toast(`Membership activated for ${s.name}.`);
                   }
-                  pushMembership(p.id, em);
-                });
-                toast(`Membership ${m?.status === 'active' ? 'deactivated' : 'activated'} for ${s.name}.`);
-              }}
-            >
-              {m?.status === 'active' ? 'Deactivate' : 'Activate'}
-            </button>
+                }}
+              >
+                {isActive ? 'Revoke' : 'Activate'}
+              </button>
+            )}
           </div>
         );
       })}
       <button className="btn small" onClick={() => toast(`Waiver signing link emailed to ${person.email}. You'll be notified when signed.`)}>✉ Email waiver</button>
+
+      {revokeSeasonId && (
+        <Modal title="Revoke membership?" onClose={() => setRevokeSeasonId(null)}>
+          <p style={{ marginTop: 0 }}>
+            Revoking this membership will remove <strong>{person.firstName} {person.lastName}</strong> from all future registered competitions.
+          </p>
+          <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+            <button className="btn primary" style={{ background: 'var(--coral-600)', borderColor: 'var(--coral-600)' }} onClick={confirmRevoke}>
+              Yes, revoke
+            </button>
+            <button className="btn ghost" onClick={() => setRevokeSeasonId(null)}>Cancel</button>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }

@@ -29,10 +29,7 @@ function navFor(caps: ReturnType<typeof useCapabilities>): NavGroup[] {
       { to: `/club/${cid}/cart`, label: 'Club Cart & Invoices' },
     ]});
   }
-  if (caps.isAdmin || caps.managedClubIds.length > 0) {
-    groups.push({ group: 'Scoring', items: [{ to: '/judge', label: 'Score Entry' }] });
-  }
-  if (caps.isAdmin) {
+  if (caps.actingAsAdmin) {
     groups.push({ group: 'League', items: [
       { to: '/admin/members', label: 'Members' },
       { to: '/admin/clubs', label: 'Clubs' },
@@ -117,7 +114,7 @@ export function Layout({ children }: { children: ReactNode }) {
           {isSupabaseConfigured && session && (
             <button
               type="button"
-              className="btn small ghost"
+              className="btn small ghost signout-btn"
               style={{ width: '100%', justifyContent: 'center', marginTop: 8 }}
               onClick={() => supabase!.auth.signOut()}
             >

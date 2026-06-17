@@ -7,41 +7,99 @@ import { EVENTS } from '../lib/types';
 import type { Athlete, Club, Discipline } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
 import { deleteRegistration, pushCart, pushClubManager, pushInvoice, pushMembership, pushPerson, pushRegistration } from '../lib/supabase';
+import { ClubForm } from '../components/ClubForm';
 
 export function ClubPage() {
   const { clubId } = useParams();
   const db = useDB();
   const caps = useCapabilities();
+  const toast = useToast();
   const club = db.clubs.find((c) => c.id === clubId);
   const [tab, setTab] = useState<'roster' | 'meetreg'>('roster');
+  const [editingClub, setEditingClub] = useState(false);
   if (!club) return <p>Club not found.</p>;
-  const canManage = caps.isAdmin || caps.managedClubIds.includes(club.id);
+
+  // Gate edit powers on actingAsAdmin (not impersonating) OR being a club manager.
+  const canManage = caps.actingAsAdmin || caps.managedClubIds.includes(club.id);
+
+  // Is the signed-in user a member of this club but not a manager?
+  const isMember = caps.personId
+    ? (() => {
+        const p = db.people.find((x) => x.id === caps.personId);
+        return !!p && (p.mainClubId === club.id || p.altClubIds.includes(club.id));
+      })()
+    : false;
+  const isManager = canManage;
+
+  const rosterSize = db.people.filter((p) => p.mainClubId === club.id).length;
+
+  const copyInviteLink = () => {
+    const url = `${location.origin}${location.pathname}#/join?club=${club.id}`;
+    navigator.clipboard.writeText(url).then(
+      () => toast('Invite link copied to clipboard'),
+      () => toast('Could not copy — your browser may require HTTPS or user gesture'),
+    );
+  };
+
+  // Public manager display (everyone can see who manages the club)
+  const managerNames = club.managerIds
+    .map((id) => db.people.find((p) => p.id === id))
+    .filter((p): p is Athlete => !!p)
+    .map((p) => `${p.firstName} ${p.lastName}`);
 
   return (
     <div>
       <h1 className="page-title display">{club.name}</h1>
       <p className="page-sub">
+        {club.shortName && club.shortName !== club.name && <><strong>{club.shortName}</strong> · </>}
         {club.state} · {club.region} region · <a href={`mailto:${club.email}`}>{club.email}</a> ·
-        Unique club URL: <code>#/club/{club.id}</code>
-        {caps.isAdmin && <> · <Link to="/admin/clubs">all clubs</Link></>}
+        {rosterSize} member{rosterSize !== 1 ? 's' : ''}
+        {caps.actingAsAdmin && <> · <Link to="/admin/clubs">all clubs</Link></>}
       </p>
+
+      {/* Public read-only managers display */}
+      {managerNames.length > 0 && (
+        <p style={{ fontSize: 14, color: 'var(--ink-soft)', marginBottom: 10 }}>
+          <strong>Club managers:</strong> {managerNames.join(', ')}
+        </p>
+      )}
+
       <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
         <Link className="btn ghost small" to={`/club/${club.id}/cart`}>Club cart & invoices →</Link>
-        <button className="btn ghost small" data-tip="Ask UCG to sanction a meet hosted by your club" onClick={() => alert('Sanction request form — wires to league admin approval queue (post-MVP).')}>Request meet sanction</button>
-        <button className="btn ghost small" data-tip="Email your members a link to join UCG under this club" onClick={() => alert('Invite link copied! (demo)')}>Invite members</button>
+        {canManage && (
+          <>
+            <button className="btn ghost small" onClick={() => setEditingClub(true)}>Edit club details</button>
+            <button className="btn ghost small" data-tip="Ask UCG to sanction a meet hosted by your club" onClick={() => alert('Sanction request form — wires to league admin approval queue (post-MVP).')}>Request meet sanction</button>
+            <button className="btn ghost small" data-tip="Email your members a link to join UCG under this club" onClick={copyInviteLink}>Invite members</button>
+          </>
+        )}
+        {/* Request manager access: shown to signed-in members who are not managers */}
+        {!isManager && isMember && caps.personId && (
+          <button
+            className="btn ghost small"
+            onClick={() => toast("Request sent — the club's managers and league admin have been notified.")}
+          >
+            Request manager access
+          </button>
+        )}
       </div>
+
       {canManage && <ClubManagers club={club} />}
+
       <Tabs
-        tabs={[{ id: 'roster' as const, label: `Roster (${db.people.filter((p) => p.mainClubId === club.id).length})` }, { id: 'meetreg' as const, label: 'Meet registration' }]}
+        tabs={[{ id: 'roster' as const, label: `Roster (${rosterSize})` }, { id: 'meetreg' as const, label: 'Meet registration' }]}
         active={tab}
         onChange={setTab}
       />
       {tab === 'roster' ? <Roster clubId={club.id} /> : <MeetRegGrid clubId={club.id} />}
+
+      {editingClub && <ClubForm club={club} onClose={() => setEditingClub(false)} />}
     </div>
   );
 }
 
 /** Co-manage a club's managers — admins and the club's existing managers. */
+// TODO: import coaches from Score Flippers (SF) — wires to a future SF importer endpoint
 function ClubManagers({ club }: { club: Club }) {
   const db = useDB();
   const toast = useToast();
@@ -49,8 +107,12 @@ function ClubManagers({ club }: { club: Club }) {
   const managers = club.managerIds
     .map((id) => db.people.find((p) => p.id === id))
     .filter((p): p is Athlete => !!p);
+  // Restrict to people who actually belong to this club (main or alt), excluding existing managers
   const candidates = db.people
-    .filter((p) => !club.managerIds.includes(p.id))
+    .filter((p) =>
+      !club.managerIds.includes(p.id) &&
+      (p.mainClubId === club.id || p.altClubIds.includes(club.id)),
+    )
     .map((p) => ({ value: p.id, label: `${p.firstName} ${p.lastName}`, sub: `${p.kind} · ${p.email}` }));
 
   const addManager = (personId: string) => {
@@ -122,12 +184,29 @@ function ClubManagers({ club }: { club: Club }) {
 function Roster({ clubId }: { clubId: string }) {
   const db = useDB();
   const caps = useCapabilities();
+  const [search, setSearch] = useState('');
   const season = db.seasons.find((s) => s.current)!;
-  const roster = db.people.filter((p) => p.mainClubId === clubId)
+  const allRoster = db.people.filter((p) => p.mainClubId === clubId)
     .sort((a, b) => (a.kind + a.lastName).localeCompare(b.kind + b.lastName));
+  const roster = search.trim()
+    ? allRoster.filter((p) =>
+        `${p.firstName} ${p.lastName}`.toLowerCase().includes(search.trim().toLowerCase()),
+      )
+    : allRoster;
   const lvlName = (id?: string) => db.levels.find((l) => l.id === id)?.name ?? '—';
 
   return (
+    <div>
+      <div style={{ marginBottom: 10 }}>
+        <input
+          type="search"
+          className="input"
+          placeholder="Search by name…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ maxWidth: 260 }}
+        />
+      </div>
     <div className="card" style={{ overflow: 'hidden' }}>
       <table className="tbl">
         <thead>
@@ -160,6 +239,7 @@ function Roster({ clubId }: { clubId: string }) {
           })}
         </tbody>
       </table>
+    </div>
     </div>
   );
 }

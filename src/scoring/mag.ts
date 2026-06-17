@@ -366,7 +366,7 @@ export function compute(state: MagState, levelId: string, eventCode: string): Sc
   }
 
   const breakdown = [
-    { label: 'Execution', value: 10.0 },
+    { label: 'Base value', value: 10.0 },
     { label: 'Skills', value: skillsValue },
     { label: 'EG bonus', value: egBonus },
     { label: 'Other bonus', value: otherBonus },

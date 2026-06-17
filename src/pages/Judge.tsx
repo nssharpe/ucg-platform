@@ -47,6 +47,9 @@ export function Judge() {
   const [activeReg, setActiveReg] = useState<string | null>(null);
   const [sv, setSv] = useState('');
   const [ded, setDed] = useState('');
+  /** Execution-only deductions (judge-typed). Only used in usingCalcSv mode.
+   *  Total deductions = execDed + neutralFromCalc; stored in `ded`. */
+  const [execDed, setExecDed] = useState('');
   const [override, setOverride] = useState(false);
   const [calcSt, setCalcSt] = useState<unknown>(null);
 
@@ -73,6 +76,13 @@ export function Judge() {
 
   const usingCalcFull = !!calcCfg && calcCfg.produces === 'full' && !override;
   const usingCalcSv = !!calcCfg && calcCfg.produces === 'd' && !override;
+
+  /** Neutral deductions already baked into the start value by the calculator.
+   *  Derived from the 'Neutral deductions' breakdown row (negative value → abs). */
+  const neutralFromCalc = usingCalcSv && outcome
+    ? Math.abs(outcome.breakdown.find((b) => b.label === 'Neutral deductions')?.value ?? 0)
+    : 0;
+
   const svNum = usingCalcSv ? (outcome?.d ?? NaN) : parseFloat(sv);
   const dedNum = parseFloat(ded);
   const svError = !isNaN(svNum) && svMax != null && svNum > svMax;
@@ -89,6 +99,7 @@ export function Judge() {
     setActiveReg(reg.id);
     setSv(sc?.sv?.toString() ?? '');
     setDed(sc?.deductions?.toString() ?? '');
+    setExecDed('');
     setOverride(false);
     // Editing a score re-opens the panel exactly as it was posted.
     if (cfg && level) {
@@ -99,7 +110,7 @@ export function Judge() {
     }
   };
 
-  const close = () => { setActiveReg(null); setSv(''); setDed(''); setCalcSt(null); };
+  const close = () => { setActiveReg(null); setSv(''); setDed(''); setExecDed(''); setCalcSt(null); };
 
   const submit = () => {
     if (!active || finalScore == null) return;
@@ -152,9 +163,15 @@ export function Judge() {
 
       <div className="grid cols-3" style={{ marginBottom: 14 }}>
         <Field label="Meet">
-          <select className="input" value={meetId} onChange={(e) => { setMeetId(e.target.value); const m = db.meets.find((x) => x.id === e.target.value)!; setSessionId(m.sessions[0].id); setEvent(EVENTS[m.sessions[0].discipline][0].code); close(); }}>
-            {db.meets.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-          </select>
+          {/* Opened from a specific meet's details page → lock the meet so a host
+              can't accidentally switch contexts mid-entry. */}
+          {requestedMeet && meet ? (
+            <input type="text" className="input" value={meet.name} readOnly disabled data-tip="Locked to the meet you opened score entry from" />
+          ) : (
+            <select className="input" value={meetId} onChange={(e) => { setMeetId(e.target.value); const m = db.meets.find((x) => x.id === e.target.value)!; setSessionId(m.sessions[0].id); setEvent(EVENTS[m.sessions[0].discipline][0].code); close(); }}>
+              {db.meets.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+          )}
         </Field>
         <Field label="Session">
           <select className="input" value={sessionId} onChange={(e) => { setSessionId(e.target.value); const s = meet.sessions.find((x) => x.id === e.target.value)!; setEvent(EVENTS[s.discipline][0].code); close(); }}>
@@ -223,10 +240,47 @@ export function Judge() {
                     readOnly={usingCalcSv}
                     onChange={(e) => setSv(e.target.value)} placeholder="0.0" />
                 </Field>
-                <Field label="Total deductions (E)" hint="Execution + neutral deductions, summed.">
-                  <input type="number" inputMode="decimal" step="0.05" style={{ fontSize: 22, fontWeight: 700 }} value={ded} onChange={(e) => setDed(e.target.value)} placeholder="0.00" autoFocus={!!calcCfg} />
-                </Field>
+                {usingCalcSv ? (
+                  <Field
+                    label="Execution deductions"
+                    hint="Judge-assessed execution deductions only. Neutral deductions are already applied by the calculator above."
+                  >
+                    <input
+                      type="number" inputMode="decimal" step="0.05"
+                      style={{ fontSize: 22, fontWeight: 700 }}
+                      value={execDed}
+                      onChange={(e) => {
+                        setExecDed(e.target.value);
+                        const exec = parseFloat(e.target.value);
+                        if (!isNaN(exec)) setDed((Math.round((exec + neutralFromCalc) * 1000) / 1000).toString());
+                        else setDed('');
+                      }}
+                      placeholder="0.00"
+                      autoFocus
+                    />
+                  </Field>
+                ) : (
+                  <Field label="Total deductions" hint="Execution + neutral deductions, summed.">
+                    <input type="number" inputMode="decimal" step="0.05" style={{ fontSize: 22, fontWeight: 700 }} value={ded} onChange={(e) => setDed(e.target.value)} placeholder="0.00" />
+                  </Field>
+                )}
               </div>
+              {usingCalcSv && (
+                <div style={{ marginBottom: 10 }}>
+                  <Field
+                    label={`Total deductions (execution + neutral)${neutralFromCalc > 0 ? ` — neutral: ${neutralFromCalc.toFixed(3)} from calculator` : ''}`}
+                    hint="Auto-calculated from execution deductions above + neutral deductions from the calculator. Edit directly to override."
+                  >
+                    <input
+                      type="number" inputMode="decimal" step="0.05"
+                      style={{ fontSize: 18, fontWeight: 600 }}
+                      value={ded}
+                      onChange={(e) => { setDed(e.target.value); }}
+                      placeholder="0.00"
+                    />
+                  </Field>
+                </div>
+              )}
               {svError && (
                 <div className="card card-pad" style={{ background: 'var(--coral-100)', border: 'none', marginBottom: 12, padding: 10, fontSize: 14 }}>
                   ⚠ SV {svNum.toFixed(1)} exceeds the {activeLevel!.name} cap of {svMax!.toFixed(1)}. Check the routine card.
