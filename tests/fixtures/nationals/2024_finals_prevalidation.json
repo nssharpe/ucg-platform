@@ -1,0 +1,45 @@
+{
+ "meta": {
+  "year": "2024",
+  "source": "jules-pierce/naigc-2024"
+ },
+ "expected": {
+  "wag": [
+   {
+    "Club_Name": "Miami University",
+    "CompLevel": "XP",
+    "Placement Category": "Collegiate Women+",
+    "VT Valid": "Too many included",
+    "UB Valid": "Valid",
+    "BB Valid": "Valid",
+    "FX Valid": "Valid"
+   }
+  ],
+  "mag": [],
+  "wag qual check": [],
+  "mag qual check": [
+   {
+    "FirstName": "Ryan",
+    "LastName": "Nesspor",
+    "Session": "Session - MAG",
+    "Club_Name": "Virginia Tech Club Gymnastics",
+    "CompLevel": "Int",
+    "Event": "HB",
+    "Prelims Qual": "Y",
+    "Finals Place Eligible": 0,
+    "Problem": "Qualified but not place eligible"
+   },
+   {
+    "FirstName": "William",
+    "LastName": "Payne",
+    "Session": "Session - MAG",
+    "Club_Name": "The Ohio State University",
+    "CompLevel": "Adv",
+    "Event": "Floor",
+    "Prelims Qual": "Y",
+    "Finals Place Eligible": 0,
+    "Problem": "Qualified but not place eligible"
+   }
+  ]
+ }
+}

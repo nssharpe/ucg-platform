@@ -1,0 +1,950 @@
+{
+ "meta": {
+  "year": "2025",
+  "phase": "prelims",
+  "discipline": "decathlon",
+  "source": "jules-pierce/naigc-2024"
+ },
+ "expected": [
+  {
+   "FirstName": "Alex",
+   "LastName": "Forcos",
+   "Athlete_Email": "alexforcos@yahoo.com",
+   "Club_Name": "Seattle Seals Gymnastics Club",
+   "CompLevel": "L9/Adv",
+   "Overall Score": 135.65,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Caroline",
+   "LastName": "Austin",
+   "Athlete_Email": "caroline.austin@colorado.edu",
+   "Club_Name": "University of Colorado Boulder Gymnastics",
+   "CompLevel": "L9/Dev",
+   "Overall Score": 132.65,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Tessa",
+   "LastName": "Luzney",
+   "Athlete_Email": "tlluzney@gmail.com",
+   "Club_Name": "Wisconsin Gymnastics Club",
+   "CompLevel": "L9/Int",
+   "Overall Score": 125.75,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Brody",
+   "LastName": "Penn",
+   "Athlete_Email": "brodypenn1@gmail.com",
+   "Club_Name": "The Ohio State University",
+   "CompLevel": "Open/Adv",
+   "Overall Score": 193.2,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Siena",
+   "LastName": "Lum",
+   "Athlete_Email": "slumplum@gmail.com",
+   "Club_Name": "Jurassic Gymnastics",
+   "CompLevel": "Open/Dev",
+   "Overall Score": 167.8,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Cassie",
+   "LastName": "Potter",
+   "Athlete_Email": "cassiepo@mit.edu",
+   "Club_Name": "Massachusetts Institute of Technology",
+   "CompLevel": "Open/Int",
+   "Overall Score": 171.05,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Ryan",
+   "LastName": "Edmondson",
+   "Athlete_Email": "redmodnson343@berkeley.edu",
+   "Club_Name": "University of California, Berkeley",
+   "CompLevel": "XD/Adv",
+   "Overall Score": 138.35,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Tess",
+   "LastName": "Golabek",
+   "Athlete_Email": "golabek.tess@gmail.com",
+   "Club_Name": "Virginia Tech Club Gymnastics",
+   "CompLevel": "XD/Dev",
+   "Overall Score": 129.45,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Ty",
+   "LastName": "Nickerson",
+   "Athlete_Email": "tnickerson@springfieldcollege.edu",
+   "Club_Name": "Springfield College Club Gymnastics",
+   "CompLevel": "XD/Int",
+   "Overall Score": 130.05,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Samuel",
+   "LastName": "Williams",
+   "Athlete_Email": "sgw91907@uga.edu",
+   "Club_Name": "University of Georgia",
+   "CompLevel": "XP/Adv",
+   "Overall Score": 124.05,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Amaya",
+   "LastName": "Risco",
+   "Athlete_Email": "amayapapaya20@gmail.com",
+   "Club_Name": "James Madison University Club Gymnastics",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 134.75,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Isaac",
+   "LastName": "Petrofsky",
+   "Athlete_Email": "igpgnb@umsystem.edu",
+   "Club_Name": "University of Missouri",
+   "CompLevel": "XP/Int",
+   "Overall Score": 133.8,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Jack",
+   "LastName": "Henry",
+   "Athlete_Email": "Jackthenry02@gmail.com",
+   "Club_Name": "NAIGC Alumni",
+   "CompLevel": "XS/Dev",
+   "Overall Score": 122.95,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Abby",
+   "LastName": "Williams",
+   "Athlete_Email": "loj17@txstate.edu",
+   "Club_Name": "Texas State University",
+   "CompLevel": "XS/Int",
+   "Overall Score": 108.65,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Grady",
+   "LastName": "Georgia",
+   "Athlete_Email": "gradywg2@illinois.edu",
+   "Club_Name": "Flippin' Illini",
+   "CompLevel": "L9/Adv",
+   "Overall Score": 117.85,
+   "Overall Place": 2,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Nicole",
+   "LastName": "Silver",
+   "Athlete_Email": "catherine.silver@colorado.edu",
+   "Club_Name": "University of Colorado Boulder Gymnastics",
+   "CompLevel": "L9/Dev",
+   "Overall Score": 122.1,
+   "Overall Place": 2,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Alexander",
+   "LastName": "Kotnik",
+   "Athlete_Email": "alexanderkotnik@gmail.com",
+   "Club_Name": "University of California, Los Angeles",
+   "CompLevel": "Open/Adv",
+   "Overall Score": 193.15,
+   "Overall Place": 2,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Wendy Jo",
+   "LastName": "Svetanoff",
+   "Athlete_Email": "IrishTumbler07@sbcglobal.net",
+   "Club_Name": "Jurassic Gymnastics",
+   "CompLevel": "Open/Dev",
+   "Overall Score": 142.55,
+   "Overall Place": 2,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Tony",
+   "LastName": "Petelo",
+   "Athlete_Email": "tonypetelo@berkeley.edu",
+   "Club_Name": "University of California, Berkeley",
+   "CompLevel": "Open/Int",
+   "Overall Score": 155.0,
+   "Overall Place": 2,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Jerrilynn",
+   "LastName": "Phillippi",
+   "Athlete_Email": "jrpchp@umsystem.edu",
+   "Club_Name": "University of Missouri",
+   "CompLevel": "XD/Dev",
+   "Overall Score": 127.05,
+   "Overall Place": 2,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "LeAnna",
+   "LastName": "Ung",
+   "Athlete_Email": "leannaung@gmail.com",
+   "Club_Name": "Wisconsin Gymnastics Club",
+   "CompLevel": "XD/Int",
+   "Overall Score": 128.0,
+   "Overall Place": 2,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Noah",
+   "LastName": "Zapata",
+   "Athlete_Email": "naz07888@uga.edu",
+   "Club_Name": "University of Georgia",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 131.35,
+   "Overall Place": 2,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Sydney",
+   "LastName": "Roberts",
+   "Athlete_Email": "sgrcallahan@gmail.com",
+   "Club_Name": "NAIGC Alumni",
+   "CompLevel": "XP/Int",
+   "Overall Score": 133.45,
+   "Overall Place": 2,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Harjas",
+   "LastName": "Sandhu",
+   "Athlete_Email": "harjassandhu@uchicago.edu",
+   "Club_Name": "University of Chicago",
+   "CompLevel": "XS/Dev",
+   "Overall Score": 121.95,
+   "Overall Place": 2,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Chancey",
+   "LastName": "Anderson",
+   "Athlete_Email": "loy13@txstate.edu",
+   "Club_Name": "Texas State University",
+   "CompLevel": "XS/Int",
+   "Overall Score": 108.45,
+   "Overall Place": 2,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Claire",
+   "LastName": "Fritzmann",
+   "Athlete_Email": "cjf4@illinois.edu",
+   "Club_Name": "Flippin' Illini",
+   "CompLevel": "L9/Adv",
+   "Overall Score": 113.3,
+   "Overall Place": 3,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Ria",
+   "LastName": "Bawiskar",
+   "Athlete_Email": "ria.bawiskar@gmail.com",
+   "Club_Name": "Flippin' Illini",
+   "CompLevel": "L9/Dev",
+   "Overall Score": 107.8,
+   "Overall Place": 3,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Julia",
+   "LastName": "Sharpe",
+   "Athlete_Email": "julia.sharpe@naigc.org",
+   "Club_Name": "Massachusetts Institute of Technology",
+   "CompLevel": "Open/Adv",
+   "Overall Score": 187.5,
+   "Overall Place": 3,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Megan",
+   "LastName": "Coden",
+   "Athlete_Email": "mlcoden@umich.edu",
+   "Club_Name": "Jurassic Gymnastics",
+   "CompLevel": "Open/Dev",
+   "Overall Score": 140.6,
+   "Overall Place": 3,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Matthew",
+   "LastName": "Sobiesk",
+   "Athlete_Email": "matthew.sobiesk@gmail.com",
+   "Club_Name": "Massachusetts Institute of Technology",
+   "CompLevel": "Open/Int",
+   "Overall Score": 137.45,
+   "Overall Place": 3,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Nicole",
+   "LastName": "Galloway",
+   "Athlete_Email": "wch8js@virginia.edu",
+   "Club_Name": "University of Virginia",
+   "CompLevel": "XD/Dev",
+   "Overall Score": 126.75,
+   "Overall Place": 3,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Joe",
+   "LastName": "Penney",
+   "Athlete_Email": "penney.kendell@gmail.com",
+   "Club_Name": "Virginia Tech Club Gymnastics",
+   "CompLevel": "XD/Int",
+   "Overall Score": 127.85,
+   "Overall Place": 3,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Madison",
+   "LastName": "Carswell",
+   "Athlete_Email": "mgc69305@uga.edu",
+   "Club_Name": "University of Georgia",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 130.4,
+   "Overall Place": 3,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Eric",
+   "LastName": "Petersen",
+   "Athlete_Email": "ericptrsn5477@gmail.com",
+   "Club_Name": "Jurassic Gymnastics",
+   "CompLevel": "XP/Int",
+   "Overall Score": 131.85,
+   "Overall Place": 3,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "David",
+   "LastName": "Franco",
+   "Athlete_Email": "davidfranco1001@gmail.com",
+   "Club_Name": "Philly inMovement",
+   "CompLevel": "XS/Dev",
+   "Overall Score": 116.95,
+   "Overall Place": 3,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Juliana",
+   "LastName": "Knies",
+   "Athlete_Email": "jknie2@illinois.edu",
+   "Club_Name": "Flippin' Illini",
+   "CompLevel": "L9/Dev",
+   "Overall Score": 106.05,
+   "Overall Place": 4,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Nate",
+   "LastName": "Sharpe",
+   "Athlete_Email": "nssharpe@gmail.com",
+   "Club_Name": "Massachusetts Institute of Technology",
+   "CompLevel": "Open/Adv",
+   "Overall Score": 168.45,
+   "Overall Place": 4,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "William",
+   "LastName": "Bogdan",
+   "Athlete_Email": "williambogdan@berkeley.edu",
+   "Club_Name": "University of California, Berkeley",
+   "CompLevel": "Open/Int",
+   "Overall Score": 134.6,
+   "Overall Place": 4,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Alessandra",
+   "LastName": "Swiryn Di Cosmo",
+   "Athlete_Email": "alessandradicosmo.24@gmail.com",
+   "Club_Name": "University of California, Los Angeles",
+   "CompLevel": "XD/Dev",
+   "Overall Score": 124.9,
+   "Overall Place": 4,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Maya",
+   "LastName": "Barron",
+   "Athlete_Email": "mayagymnast71@gmail.com",
+   "Club_Name": "Wisconsin Gymnastics Club",
+   "CompLevel": "XD/Int",
+   "Overall Score": 122.75,
+   "Overall Place": 4,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Deagan",
+   "LastName": "Kilpatrick",
+   "Athlete_Email": "d.kilpatrick@ufl.edu",
+   "Club_Name": "University of Florida",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 129.75,
+   "Overall Place": 4,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Eduardo",
+   "LastName": "Almanza",
+   "Athlete_Email": "eduardoalmanza2232@gmail.com",
+   "Club_Name": "Texas State University",
+   "CompLevel": "XP/Int",
+   "Overall Score": 126.8,
+   "Overall Place": 4,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Bryan",
+   "LastName": "Olas",
+   "Athlete_Email": "writetobryanolas@gmail.com",
+   "Club_Name": "Arizona Phoenixes",
+   "CompLevel": "XS/Dev",
+   "Overall Score": 116.15,
+   "Overall Place": 4,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Lucy",
+   "LastName": "Brutlag",
+   "Athlete_Email": "lucybrutlag@icloud.com",
+   "Club_Name": "Flippin' Illini",
+   "CompLevel": "L9/Dev",
+   "Overall Score": 96.15,
+   "Overall Place": 5,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Lucas",
+   "LastName": "Marden",
+   "Athlete_Email": "lmarden@mit.edu",
+   "Club_Name": "Massachusetts Institute of Technology",
+   "CompLevel": "Open/Adv",
+   "Overall Score": 153.2,
+   "Overall Place": 5,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "David",
+   "LastName": "Slutz",
+   "Athlete_Email": "david.slutz@gmail.com",
+   "Club_Name": "B.A.T.S.",
+   "CompLevel": "Open/Int",
+   "Overall Score": 133.6,
+   "Overall Place": 5,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Natalie",
+   "LastName": "Ford",
+   "Athlete_Email": "nat04man@gmail.com",
+   "Club_Name": "Indiana University - Bloomington",
+   "CompLevel": "XD/Dev",
+   "Overall Score": 124.85,
+   "Overall Place": 5,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Madison",
+   "LastName": "Trexler",
+   "Athlete_Email": "madisonjtrexler@gmail.com",
+   "Club_Name": "Texas State University",
+   "CompLevel": "XD/Int",
+   "Overall Score": 106.8,
+   "Overall Place": 5,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Constance",
+   "LastName": "Zanze",
+   "Athlete_Email": "czanze.physics@gmail.com",
+   "Club_Name": "Independent Student Athlete",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 128.65,
+   "Overall Place": 5,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Rylen",
+   "LastName": "Byers",
+   "Athlete_Email": "rbyers4@vols.utk.edu",
+   "Club_Name": "University of Tennessee Knoxville",
+   "CompLevel": "XP/Int",
+   "Overall Score": 124.3,
+   "Overall Place": 5,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Delaney",
+   "LastName": "Blandford",
+   "Athlete_Email": "dblandfo@nd.edu",
+   "Club_Name": "University of Notre Dame",
+   "CompLevel": "XS/Dev",
+   "Overall Score": 112.85,
+   "Overall Place": 5,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Sarah",
+   "LastName": "Shanahan",
+   "Athlete_Email": "Sarahshanahan94@gmail.com",
+   "Club_Name": "University of California, Berkeley",
+   "CompLevel": "Open/Int",
+   "Overall Score": 105.75,
+   "Overall Place": 6,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Allie",
+   "LastName": "Stem",
+   "Athlete_Email": "allistem@iu.edu",
+   "Club_Name": "Indiana University - Bloomington",
+   "CompLevel": "XD/Dev",
+   "Overall Score": 124.1,
+   "Overall Place": 6,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Corynne",
+   "LastName": "Rittner",
+   "Athlete_Email": "sabrina.rittner.21@cnu.edu",
+   "Club_Name": "Christopher Newport University",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 127.95,
+   "Overall Place": 6,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Julie",
+   "LastName": "Hodges",
+   "Athlete_Email": "hodgesjulie00@gmail.com",
+   "Club_Name": "Texas State University",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 127.95,
+   "Overall Place": 6,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Daniel",
+   "LastName": "Gallagher",
+   "Athlete_Email": "danielj30047@live.com",
+   "Club_Name": "University of Georgia",
+   "CompLevel": "XP/Int",
+   "Overall Score": 122.1,
+   "Overall Place": 6,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Thomas",
+   "LastName": "R\u00fcd",
+   "Athlete_Email": "rud@mit.edu",
+   "Club_Name": "Massachusetts Institute of Technology",
+   "CompLevel": "XS/Dev",
+   "Overall Score": 109.4,
+   "Overall Place": 6,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Katy",
+   "LastName": "Hasser",
+   "Athlete_Email": "kate.hasser43@gmail.com",
+   "Club_Name": "University of California, Los Angeles",
+   "CompLevel": "XD/Dev",
+   "Overall Score": 122.9,
+   "Overall Place": 7,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "William",
+   "LastName": "van den Bogert",
+   "Athlete_Email": "willvdb@umich.edu",
+   "Club_Name": "University of Michigan",
+   "CompLevel": "XP/Int",
+   "Overall Score": 117.1,
+   "Overall Place": 7,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Thomas",
+   "LastName": "Allen",
+   "Athlete_Email": "tcallen@ucdavis.edu",
+   "Club_Name": "Club Gymnastics at UC Davis",
+   "CompLevel": "XS/Dev",
+   "Overall Score": 107.4,
+   "Overall Place": 7,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Paige",
+   "LastName": "Neff",
+   "Athlete_Email": "paigeneff55@gmail.com",
+   "Club_Name": "University of Florida",
+   "CompLevel": "XD/Dev",
+   "Overall Score": 114.95,
+   "Overall Place": 8,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Stephanie",
+   "LastName": "Pfeiffer",
+   "Athlete_Email": "pfeifferestephanie00@gmail.com",
+   "Club_Name": "University of Tennessee Knoxville",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 127.6,
+   "Overall Place": 8,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Ivy",
+   "LastName": "Logan",
+   "Athlete_Email": "ivyl23@vt.edu",
+   "Club_Name": "Virginia Tech Club Gymnastics",
+   "CompLevel": "XP/Int",
+   "Overall Score": 114.5,
+   "Overall Place": 8,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Jocelyn",
+   "LastName": "Auxier",
+   "Athlete_Email": "email2jocie.college@gmail.com",
+   "Club_Name": "Texas State University",
+   "CompLevel": "XS/Dev",
+   "Overall Score": 107.35,
+   "Overall Place": 8,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Katie",
+   "LastName": "Donaldson",
+   "Athlete_Email": "Katiedonaldson06@gmail.com",
+   "Club_Name": "University of Colorado Boulder Gymnastics",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 126.75,
+   "Overall Place": 9,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Michael",
+   "LastName": "Redd",
+   "Athlete_Email": "reddmalex@gmail.com",
+   "Club_Name": "Texas State University",
+   "CompLevel": "XP/Int",
+   "Overall Score": 113.4,
+   "Overall Place": 9,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Xavier",
+   "LastName": "Stephens",
+   "Athlete_Email": "xavierr.stephenss@gmail.com",
+   "Club_Name": "University of NC at Chapel Hill",
+   "CompLevel": "XS/Dev",
+   "Overall Score": 102.15,
+   "Overall Place": 9,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Lena",
+   "LastName": "Ning",
+   "Athlete_Email": "lsning@gmail.com",
+   "Club_Name": "5280 Gymnastics",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 124.65,
+   "Overall Place": 10,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Leonard",
+   "LastName": "Chambers II",
+   "Athlete_Email": "Continental777@live.com",
+   "Club_Name": "University of Houston",
+   "CompLevel": "XP/Int",
+   "Overall Score": 110.25,
+   "Overall Place": 10,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Naomi",
+   "LastName": "Ho",
+   "Athlete_Email": "nvomiho@gmail.com",
+   "Club_Name": "University of California, Berkeley",
+   "CompLevel": "XS/Dev",
+   "Overall Score": 92.05,
+   "Overall Place": 10,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Caleb",
+   "LastName": "McCracken",
+   "Athlete_Email": "cmccracken429@gmail.com",
+   "Club_Name": "Washington Univ in St. Louis",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 122.95,
+   "Overall Place": 11,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Valentina",
+   "LastName": "Mosca",
+   "Athlete_Email": "valina.mosca06@gmail.com",
+   "Club_Name": "Texas Tech Gymnastics Club",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 122.95,
+   "Overall Place": 11,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Honor",
+   "LastName": "Hicks",
+   "Athlete_Email": "honor.j.hicks@gmail.com",
+   "Club_Name": "Wisconsin Gymnastics Club",
+   "CompLevel": "XP/Int",
+   "Overall Score": 107.95,
+   "Overall Place": 11,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Ty",
+   "LastName": "Seefeldt",
+   "Athlete_Email": "tylerseefeldt18@gmail.com",
+   "Club_Name": "Wisconsin Gymnastics Club",
+   "CompLevel": "XP/Int",
+   "Overall Score": 102.55,
+   "Overall Place": 12,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Sydney",
+   "LastName": "Lewis",
+   "Athlete_Email": "sydneyglewis@gmail.com",
+   "Club_Name": "University of Georgia",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 122.6,
+   "Overall Place": 13,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Melanie",
+   "LastName": "Kuhn",
+   "Athlete_Email": "melanie.kuhn11@gmail.com",
+   "Club_Name": "5280 Gymnastics",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 121.95,
+   "Overall Place": 14,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Susan",
+   "LastName": "Elliott",
+   "Athlete_Email": "susanelliott0921@gmail.com",
+   "Club_Name": "Charlottesville Classics",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 121.25,
+   "Overall Place": 15,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Angela",
+   "LastName": "Fuller",
+   "Athlete_Email": "alsackett@hotmail.com",
+   "Club_Name": "5280 Gymnastics",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 119.95,
+   "Overall Place": 16,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Maya",
+   "LastName": "Dhond",
+   "Athlete_Email": "mayajd622@gmail.com",
+   "Club_Name": "University of California, Berkeley",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 119.75,
+   "Overall Place": 17,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Eva",
+   "LastName": "Wilhelm",
+   "Athlete_Email": "ewilhel@iu.edu",
+   "Club_Name": "Indiana University - Bloomington",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 119.25,
+   "Overall Place": 18,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Sydney",
+   "LastName": "Copeland",
+   "Athlete_Email": "sydcopel@iu.edu",
+   "Club_Name": "Indiana University - Bloomington",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 118.45,
+   "Overall Place": 19,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Ian",
+   "LastName": "Willinghan",
+   "Athlete_Email": "sja6xs@virginia.edu",
+   "Club_Name": "University of Virginia",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 118.3,
+   "Overall Place": 20,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Cullen",
+   "LastName": "Demakis",
+   "Athlete_Email": "cdemakis@uw.edu",
+   "Club_Name": "Seattle Seals Gymnastics Club",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 116.95,
+   "Overall Place": 21,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Leena",
+   "LastName": "Bacha",
+   "Athlete_Email": "snk6kh@virginia.edu",
+   "Club_Name": "University of Virginia",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 115.4,
+   "Overall Place": 22,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Noah",
+   "LastName": "Benschine",
+   "Athlete_Email": "noahbenschine@gmail.com",
+   "Club_Name": "Washington Univ in St. Louis",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 113.25,
+   "Overall Place": 23,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Riley",
+   "LastName": "Potter",
+   "Athlete_Email": "cvb8ca@virginia.edu",
+   "Club_Name": "University of Virginia",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 113.15,
+   "Overall Place": 24,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Michael\u2019a",
+   "LastName": "Langston",
+   "Athlete_Email": "wisegirl0615@gmail.com",
+   "Club_Name": "Texas State University",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 112.35,
+   "Overall Place": 25,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Edward",
+   "LastName": "Cox",
+   "Athlete_Email": "eddietennis@outlook.com",
+   "Club_Name": "University of Georgia",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 111.95,
+   "Overall Place": 26,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Juliet",
+   "LastName": "Whitehead",
+   "Athlete_Email": "jnicw03@gmail.com",
+   "Club_Name": "Washington Univ in St. Louis",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 108.9,
+   "Overall Place": 27,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Jory",
+   "LastName": "Bauer",
+   "Athlete_Email": "bauer121@purdue.edu",
+   "Club_Name": "Purdue University",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 107.75,
+   "Overall Place": 28,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Paridon",
+   "LastName": "Szittai",
+   "Athlete_Email": "paridonszittai@berkeley.edu",
+   "Club_Name": "University of California, Berkeley",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 107.2,
+   "Overall Place": 29,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Ethan",
+   "LastName": "Sturmoski",
+   "Athlete_Email": "e.sturmoski@wustl.edu",
+   "Club_Name": "Washington Univ in St. Louis",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 104.0,
+   "Overall Place": 30,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Danelle",
+   "LastName": "Pecht",
+   "Athlete_Email": "dmpecht@crimson.ua.edu",
+   "Club_Name": "Space City Legacy",
+   "CompLevel": "XP/Dev",
+   "Overall Score": 101.15,
+   "Overall Place": 31,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Aaron",
+   "LastName": "Doyle",
+   "Athlete_Email": "aarondoyle@g.ucla.edu",
+   "Club_Name": "University of California, Los Angeles",
+   "CompLevel": "L9/Int",
+   "Overall Score": 54.5,
+   "Overall Place": 2,
+   "Overall?": "Y"
+  }
+ ]
+}

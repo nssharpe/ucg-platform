@@ -1,0 +1,101 @@
+{
+ "meta": {
+  "year": "2025",
+  "source": "jules-pierce/naigc-2024"
+ },
+ "expected": {
+  "wag aa": [],
+  "wag prelims included": [
+   {
+    "FirstName": "Kaitlyn",
+    "LastName": "Fleming",
+    "Session": "Session 1 - Green",
+    "Event": "Floor"
+   }
+  ],
+  "wag sv cap": [],
+  "mag aa": [
+   {
+    "FirstName": "Angela",
+    "LastName": "Fuller",
+    "Session": "Session 5 - Orange",
+    "SF AA": 54.75,
+    "Calculated AA": 54.7
+   },
+   {
+    "FirstName": "Melanie",
+    "LastName": "Kuhn",
+    "Session": "Session 5 - Orange",
+    "SF AA": 50.5,
+    "Calculated AA": 58.8
+   }
+  ],
+  "mag prelims included": [
+   {
+    "FirstName": "Lena",
+    "LastName": "Ning",
+    "Session": "Session 5 - Orange",
+    "Event": "Floor"
+   }
+  ],
+  "mag sv cap": [
+   {
+    "FirstName": "Melanie",
+    "LastName": "Kuhn",
+    "Session": "Session 5 - Orange",
+    "Event": "PH",
+    "Score": 12.8
+   }
+  ],
+  "syncro missing": [
+   {
+    "Partner 1": "Ashley Carroll",
+    "Partner 2": "Julia Doyle-Uebel",
+    "Session": "Session 2 - Purple"
+   },
+   {
+    "Partner 1": null,
+    "Partner 2": "Aaron Doyle",
+    "Session": "Session 1 - Purple"
+   }
+  ],
+  "syncro levels": [
+   {
+    "Partner 1": "Alek Skankey",
+    "Partner 2": "Joanna Riggs",
+    "Session 1": "Session 3 - Purple",
+    "Session 2": "Session 3 - Purple",
+    "Level 1": "Intermediate Flyers",
+    "Level 2": "New Flyers"
+   }
+  ],
+  "syncro scores": [
+   {
+    "Partner 1": "Nadia Friedman",
+    "Partner 2": "Tess Vanberg",
+    "Session 1": "Session 4 - Purple",
+    "Session 2": "Session 4 - Purple",
+    "Score 1": 2.9,
+    "Score 2": 3.1
+   }
+  ],
+  "wag decimal": [
+   {
+    "FirstName": "keira",
+    "LastName": "leneghan",
+    "Session": "Session 4 - Yellow",
+    "Event": "BM_Score",
+    "Score": 8.7125
+   },
+   {
+    "FirstName": "keira",
+    "LastName": "leneghan",
+    "Session": "Session 4 - Yellow",
+    "Event": "AA_Score",
+    "Score": 34.3625
+   }
+  ],
+  "mag decimal": [],
+  "tnt decimal": []
+ }
+}

@@ -1,0 +1,811 @@
+{
+ "meta": {
+  "year": "2025",
+  "phase": "prelims",
+  "discipline": "omnithon",
+  "source": "jules-pierce/naigc-2024"
+ },
+ "expected": [
+  {
+   "FirstName": "Aaron",
+   "LastName": "Doyle",
+   "Athlete_Email": "aarondoyle@g.ucla.edu",
+   "Club_Name": "University of California, Los Angeles",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Abby",
+   "LastName": "Cichocki",
+   "Athlete_Email": "abby.cichocki@gmail.com",
+   "Club_Name": "Wisconsin Gymnastics Club",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Abby",
+   "LastName": "Madrid",
+   "Athlete_Email": "Carolinemadrid21@gmail.com",
+   "Club_Name": "Texas Tech Gymnastics Club",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Alessandra",
+   "LastName": "Swiryn Di Cosmo",
+   "Athlete_Email": "alessandradicosmo.24@gmail.com",
+   "Club_Name": "University of California, Los Angeles",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Alexander",
+   "LastName": "Kotnik",
+   "Athlete_Email": "alexanderkotnik@gmail.com",
+   "Club_Name": "University of California, Los Angeles",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Allison",
+   "LastName": "Sundeen",
+   "Athlete_Email": "allisonsundeen@gmail.com",
+   "Club_Name": "Wisconsin Gymnastics Club",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Amaya",
+   "LastName": "Risco",
+   "Athlete_Email": "amayapapaya20@gmail.com",
+   "Club_Name": "James Madison University Club Gymnastics",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Andrew",
+   "LastName": "Kerzhner",
+   "Athlete_Email": "andrewkerzhner@berkeley.edu",
+   "Club_Name": "University of California, Berkeley",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Angela",
+   "LastName": "Fuller",
+   "Athlete_Email": "alsackett@hotmail.com",
+   "Club_Name": "5280 Gymnastics",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Anissa",
+   "LastName": "Cavanaugh",
+   "Athlete_Email": "acavana2@nd.edu",
+   "Club_Name": "University of Notre Dame",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Anna",
+   "LastName": "Veenendall",
+   "Athlete_Email": "annaveenendall@gmail.com",
+   "Club_Name": "Wisconsin Gymnastics Club",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Ari",
+   "LastName": "Pasha",
+   "Athlete_Email": "apasha@ucsd.edu",
+   "Club_Name": "University of California, San Diego",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Bryan",
+   "LastName": "Olas",
+   "Athlete_Email": "writetobryanolas@gmail.com",
+   "Club_Name": "Arizona Phoenixes",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Caitlyn",
+   "LastName": "Doherty",
+   "Athlete_Email": "cdoherty22@gwu.edu",
+   "Club_Name": "George Washington University",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Caroline",
+   "LastName": "Austin",
+   "Athlete_Email": "caroline.austin@colorado.edu",
+   "Club_Name": "University of Colorado Boulder Gymnastics",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Cassie",
+   "LastName": "Potter",
+   "Athlete_Email": "cassiepo@mit.edu",
+   "Club_Name": "Massachusetts Institute of Technology",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Charlotte",
+   "LastName": "Pizzillo",
+   "Athlete_Email": "charlottepizzillo1@gmail.com",
+   "Club_Name": "University of California, Los Angeles",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Charlotte",
+   "LastName": "Marsh",
+   "Athlete_Email": "cewmarsh@ucdavis.edu",
+   "Club_Name": "Club Gymnastics at UC Davis",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Chris",
+   "LastName": "Polley",
+   "Athlete_Email": "c1rqu3m4n@gmail.com",
+   "Club_Name": "Golden Era Gymnastics Club",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Coen",
+   "LastName": "Street",
+   "Athlete_Email": "coenstreet888@gmail.com",
+   "Club_Name": "University of Texas at Austin",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Constance",
+   "LastName": "Zanze",
+   "Athlete_Email": "czanze.physics@gmail.com",
+   "Club_Name": "Independent Student Athlete",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Corynne",
+   "LastName": "Rittner",
+   "Athlete_Email": "sabrina.rittner.21@cnu.edu",
+   "Club_Name": "Christopher Newport University",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Cullen",
+   "LastName": "Demakis",
+   "Athlete_Email": "cdemakis@uw.edu",
+   "Club_Name": "Seattle Seals Gymnastics Club",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Danelle",
+   "LastName": "Pecht",
+   "Athlete_Email": "dmpecht@crimson.ua.edu",
+   "Club_Name": "Space City Legacy",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "David",
+   "LastName": "Slutz",
+   "Athlete_Email": "david.slutz@gmail.com",
+   "Club_Name": "B.A.T.S.",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Delaney",
+   "LastName": "Blandford",
+   "Athlete_Email": "dblandfo@nd.edu",
+   "Club_Name": "University of Notre Dame",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Dion",
+   "LastName": "Li",
+   "Athlete_Email": "dion6454@gmail.com",
+   "Club_Name": "Massachusetts Institute of Technology",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Elena",
+   "LastName": "Fries",
+   "Athlete_Email": "efries@nd.edu",
+   "Club_Name": "University of Notre Dame",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Elizabeth",
+   "LastName": "Reznikov",
+   "Athlete_Email": "elizabethreznikov@gmail.com",
+   "Club_Name": "Seattle Seals Gymnastics Club",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Evan",
+   "LastName": "Leach",
+   "Athlete_Email": "evan.leach@gmail.com",
+   "Club_Name": "University of California, Los Angeles",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Hailey",
+   "LastName": "Hicks",
+   "Athlete_Email": "kwc5ex@virginia.edu",
+   "Club_Name": "University of Virginia",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Hannah",
+   "LastName": "Steinbrecher",
+   "Athlete_Email": "hsteinbreche@umass.edu",
+   "Club_Name": "University of Mass - Amherst",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Honor",
+   "LastName": "Hicks",
+   "Athlete_Email": "honor.j.hicks@gmail.com",
+   "Club_Name": "Wisconsin Gymnastics Club",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Isaac",
+   "LastName": "Alvarez",
+   "Athlete_Email": "isaac.n.alvarez134@gmail.com",
+   "Club_Name": "Wisconsin Gymnastics Club",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Jack",
+   "LastName": "Henry",
+   "Athlete_Email": "Jackthenry02@gmail.com",
+   "Club_Name": "NAIGC Alumni",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "James",
+   "LastName": "Gardner",
+   "Athlete_Email": "osa13@txstate.edu",
+   "Club_Name": "Texas State University",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Jordan",
+   "LastName": "Johnson",
+   "Athlete_Email": "Jordanjohnson16@gmail.com",
+   "Club_Name": "Seattle Seals Gymnastics Club",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Jordyn",
+   "LastName": "Ryan",
+   "Athlete_Email": "itsjordynelizabeth@gmail.com",
+   "Club_Name": "Texas Tech Gymnastics Club",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Joshua",
+   "LastName": "Liu",
+   "Athlete_Email": "3105joshua@gmail.com",
+   "Club_Name": "University of Michigan",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Julia",
+   "LastName": "Sharpe",
+   "Athlete_Email": "julia.sharpe@naigc.org",
+   "Club_Name": "Massachusetts Institute of Technology",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Juliana",
+   "LastName": "Gagliardi",
+   "Athlete_Email": "jgagliardi@g.ucla.edu",
+   "Club_Name": "University of California, Los Angeles",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Katie",
+   "LastName": "Donaldson",
+   "Athlete_Email": "Katiedonaldson06@gmail.com",
+   "Club_Name": "University of Colorado Boulder Gymnastics",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Katy",
+   "LastName": "Hasser",
+   "Athlete_Email": "kate.hasser43@gmail.com",
+   "Club_Name": "University of California, Los Angeles",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Kiersten",
+   "LastName": "O\u2019Connell",
+   "Athlete_Email": "kierstencrow@gmail.com",
+   "Club_Name": "University of Mass - Amherst",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Kirin",
+   "LastName": "Chacko",
+   "Athlete_Email": "kirinchacko3@g.ucla.edu",
+   "Club_Name": "University of California, Los Angeles",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Layla",
+   "LastName": "Unzueta",
+   "Athlete_Email": "layla.unzueta@ufl.edu",
+   "Club_Name": "University of Florida",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "LeAnna",
+   "LastName": "Ung",
+   "Athlete_Email": "leannaung@gmail.com",
+   "Club_Name": "Wisconsin Gymnastics Club",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Leena",
+   "LastName": "Bacha",
+   "Athlete_Email": "snk6kh@virginia.edu",
+   "Club_Name": "University of Virginia",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Lena",
+   "LastName": "Ning",
+   "Athlete_Email": "lsning@gmail.com",
+   "Club_Name": "5280 Gymnastics",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Liam",
+   "LastName": "Giuliana",
+   "Athlete_Email": "liamcgiuliana@gmail.com",
+   "Club_Name": "University of California, Los Angeles",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Lianne",
+   "LastName": "Huber",
+   "Athlete_Email": "lianne.t.huber@gmail.com",
+   "Club_Name": "Club Gymnastics at UC Davis",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Lucas",
+   "LastName": "Marden",
+   "Athlete_Email": "lmarden@mit.edu",
+   "Club_Name": "Massachusetts Institute of Technology",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Lucy",
+   "LastName": "Ault",
+   "Athlete_Email": "lucy.ault111@gmail.com",
+   "Club_Name": "Wisconsin Gymnastics Club",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Malia",
+   "LastName": "Lewton",
+   "Athlete_Email": "mlewton@ucsd.edu",
+   "Club_Name": "University of California, San Diego",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Mari",
+   "LastName": "Torii Karch",
+   "Athlete_Email": "maritoriikarch@berkeley.edu",
+   "Club_Name": "University of California, Berkeley",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Matthew",
+   "LastName": "Sobiesk",
+   "Athlete_Email": "matthew.sobiesk@gmail.com",
+   "Club_Name": "Massachusetts Institute of Technology",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Maya",
+   "LastName": "Dhond",
+   "Athlete_Email": "mayajd622@gmail.com",
+   "Club_Name": "University of California, Berkeley",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Maya",
+   "LastName": "Barron",
+   "Athlete_Email": "mayagymnast71@gmail.com",
+   "Club_Name": "Wisconsin Gymnastics Club",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Megan",
+   "LastName": "Palmer",
+   "Athlete_Email": "meganmpalmer66@gmail.com",
+   "Club_Name": "University of California, Los Angeles",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Melanie",
+   "LastName": "Kuhn",
+   "Athlete_Email": "melanie.kuhn11@gmail.com",
+   "Club_Name": "5280 Gymnastics",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Melina",
+   "LastName": "Ung",
+   "Athlete_Email": "ungmelina@gmail.com",
+   "Club_Name": "Wisconsin Gymnastics Club",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Morgan",
+   "LastName": "Kessler",
+   "Athlete_Email": "cce42@txstate.edu",
+   "Club_Name": "Texas State University",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Morgan",
+   "LastName": "Ayan",
+   "Athlete_Email": "meayan@ucsd.edu",
+   "Club_Name": "University of California, San Diego",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Naomi",
+   "LastName": "Ho",
+   "Athlete_Email": "nvomiho@gmail.com",
+   "Club_Name": "University of California, Berkeley",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Nate",
+   "LastName": "Sharpe",
+   "Athlete_Email": "nssharpe@gmail.com",
+   "Club_Name": "Massachusetts Institute of Technology",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Nicole",
+   "LastName": "Galloway",
+   "Athlete_Email": "wch8js@virginia.edu",
+   "Club_Name": "University of Virginia",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Pablo",
+   "LastName": "Ocanas",
+   "Athlete_Email": "maestromusic@aol.com",
+   "Club_Name": "Space City Legacy",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Paige",
+   "LastName": "Neff",
+   "Athlete_Email": "paigeneff55@gmail.com",
+   "Club_Name": "University of Florida",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Paridon",
+   "LastName": "Szittai",
+   "Athlete_Email": "paridonszittai@berkeley.edu",
+   "Club_Name": "University of California, Berkeley",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Raina",
+   "LastName": "Eghbalyans",
+   "Athlete_Email": "rainaeghbalyans@gmail.com",
+   "Club_Name": "University of California, San Diego",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Rebecca",
+   "LastName": "Tran",
+   "Athlete_Email": "beccamaitai@gmail.com",
+   "Club_Name": "Wisconsin Gymnastics Club",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Riley",
+   "LastName": "Potter",
+   "Athlete_Email": "cvb8ca@virginia.edu",
+   "Club_Name": "University of Virginia",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Ryan",
+   "LastName": "Schoenburg",
+   "Athlete_Email": "Rpschoenburg@outlook.com",
+   "Club_Name": "University of California, Los Angeles",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Sabrina",
+   "LastName": "Sura",
+   "Athlete_Email": "sabrina.m.sura@gmail.com",
+   "Club_Name": "Idaho Gems",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Sarah",
+   "LastName": "Shanahan",
+   "Athlete_Email": "Sarahshanahan94@gmail.com",
+   "Club_Name": "University of California, Berkeley",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Sarah",
+   "LastName": "Grady",
+   "Athlete_Email": "sarahgrady18@gmail.com",
+   "Club_Name": "Wisconsin Gymnastics Club",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Sarah",
+   "LastName": "Bush",
+   "Athlete_Email": "sarahbush@utexas.edu",
+   "Club_Name": "University of Texas at Austin",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Soren",
+   "LastName": "Brown",
+   "Athlete_Email": "sorenkbrown@gmail.com",
+   "Club_Name": "University of Maryland, College Park",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Sydney",
+   "LastName": "Roberts",
+   "Athlete_Email": "sgrcallahan@gmail.com",
+   "Club_Name": "NAIGC Alumni",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Tessa",
+   "LastName": "Luzney",
+   "Athlete_Email": "tlluzney@gmail.com",
+   "Club_Name": "Wisconsin Gymnastics Club",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Thomas",
+   "LastName": "R\u00fcd",
+   "Athlete_Email": "rud@mit.edu",
+   "Club_Name": "Massachusetts Institute of Technology",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Thomas",
+   "LastName": "Allen",
+   "Athlete_Email": "tcallen@ucdavis.edu",
+   "Club_Name": "Club Gymnastics at UC Davis",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Tony",
+   "LastName": "Petelo",
+   "Athlete_Email": "tonypetelo@berkeley.edu",
+   "Club_Name": "University of California, Berkeley",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Ty",
+   "LastName": "Seefeldt",
+   "Athlete_Email": "tylerseefeldt18@gmail.com",
+   "Club_Name": "Wisconsin Gymnastics Club",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Ty",
+   "LastName": "Nickerson",
+   "Athlete_Email": "tnickerson@springfieldcollege.edu",
+   "Club_Name": "Springfield College Club Gymnastics",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Valentina",
+   "LastName": "Mosca",
+   "Athlete_Email": "valina.mosca06@gmail.com",
+   "Club_Name": "Texas Tech Gymnastics Club",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Vanessa",
+   "LastName": "Newman",
+   "Athlete_Email": "vanessajade008@gmail.com",
+   "Club_Name": "Christopher Newport University",
+   "Overall Score": 0,
+   "Overall Place": 0,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "William",
+   "LastName": "Bogdan",
+   "Athlete_Email": "williambogdan@berkeley.edu",
+   "Club_Name": "University of California, Berkeley",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Wendy Jo",
+   "LastName": "Svetanoff",
+   "Athlete_Email": "IrishTumbler07@sbcglobal.net",
+   "Club_Name": "Jurassic Gymnastics",
+   "Overall Score": 1,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  }
+ ]
+}

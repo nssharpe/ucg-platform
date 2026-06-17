@@ -1,0 +1,28 @@
+{
+ "meta": {
+  "year": "2024",
+  "phase": "prelims",
+  "discipline": "omnithon",
+  "source": "jules-pierce/naigc-2024"
+ },
+ "expected": [
+  {
+   "FirstName": "Christy",
+   "LastName": "Koleva",
+   "Athlete_Email": "kolevac@mail.gvsu.edu",
+   "Club_Name": "Grand Valley State University",
+   "Overall Score": true,
+   "Overall Place": true,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Steph",
+   "LastName": "Fisher",
+   "Athlete_Email": "steph_fish10@yahoo.com",
+   "Club_Name": "The Ohio State University",
+   "Overall Score": true,
+   "Overall Place": true,
+   "Overall?": "Y"
+  }
+ ]
+}

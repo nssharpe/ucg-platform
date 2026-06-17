@@ -1,0 +1,182 @@
+{
+ "meta": {
+  "year": "2024",
+  "source": "jules-pierce/naigc-2024"
+ },
+ "expected": {
+  "wag aa": [
+   {
+    "FirstName": "Abigail",
+    "LastName": "Anderson",
+    "Session": "Session - WAG",
+    "SF AA": 35.4,
+    "Calculated AA": 35.85
+   },
+   {
+    "FirstName": "Wendy Jo",
+    "LastName": "Svetanoff",
+    "Session": "Session - WAG",
+    "SF AA": 34.4,
+    "Calculated AA": 36.3
+   },
+   {
+    "FirstName": "Megan",
+    "LastName": "Rioux",
+    "Session": "Session - WAG",
+    "SF AA": 20.0,
+    "Calculated AA": 18.1
+   }
+  ],
+  "wag finals included": [
+   {
+    "Club_Name": "Grand Valley State University",
+    "CompLevel": "XP",
+    "Placement Category": "Collegiate Women+",
+    "VT Valid": "Valid",
+    "UB Valid": "Missing Scores",
+    "BB Valid": "Valid",
+    "FX Valid": "Valid"
+   },
+   {
+    "Club_Name": "Kent State University",
+    "CompLevel": "XP",
+    "Placement Category": "Collegiate Women+",
+    "VT Valid": "Valid",
+    "UB Valid": "Missing Scores",
+    "BB Valid": "Valid",
+    "FX Valid": "Missing Scores"
+   },
+   {
+    "Club_Name": "Miami University",
+    "CompLevel": "XP",
+    "Placement Category": "Collegiate Women+",
+    "VT Valid": "Too many included",
+    "UB Valid": "Missing Scores",
+    "BB Valid": "Valid",
+    "FX Valid": "Valid"
+   },
+   {
+    "Club_Name": "The Pennsylvania State University",
+    "CompLevel": "L9",
+    "Placement Category": "Collegiate Women+",
+    "VT Valid": "Missing Scores",
+    "UB Valid": "Missing Scores",
+    "BB Valid": "Valid",
+    "FX Valid": "Valid"
+   },
+   {
+    "Club_Name": "University of Cincinnati",
+    "CompLevel": "XD",
+    "Placement Category": "Collegiate Women+",
+    "VT Valid": "Valid",
+    "UB Valid": "Missing Scores",
+    "BB Valid": "Valid",
+    "FX Valid": "Valid"
+   },
+   {
+    "Club_Name": "University of Michigan",
+    "CompLevel": "XP",
+    "Placement Category": "Collegiate Women+",
+    "VT Valid": "Valid",
+    "UB Valid": "Missing Scores",
+    "BB Valid": "Valid",
+    "FX Valid": "Valid"
+   },
+   {
+    "Club_Name": "University of Michigan",
+    "CompLevel": "XD",
+    "Placement Category": "Collegiate Women+",
+    "VT Valid": "Missing Scores",
+    "UB Valid": "Valid",
+    "BB Valid": "Missing Scores",
+    "FX Valid": "Valid"
+   },
+   {
+    "Club_Name": "University of Pittsburgh",
+    "CompLevel": "XP",
+    "Placement Category": "Collegiate Women+",
+    "VT Valid": "Valid",
+    "UB Valid": "Missing Scores",
+    "BB Valid": "Valid",
+    "FX Valid": "Valid"
+   }
+  ],
+  "wag sv cap": [],
+  "mag aa": [
+   {
+    "FirstName": "Daniel",
+    "LastName": "Seagull",
+    "Session": "Session - MAG",
+    "SF AA": 36.8,
+    "Calculated AA": 26.8
+   },
+   {
+    "FirstName": "Jackson",
+    "LastName": "Coppola",
+    "Session": "Session - MAG",
+    "SF AA": 63.9,
+    "Calculated AA": 64.5
+   }
+  ],
+  "mag finals included": [
+   {
+    "Club_Name": "The Pennsylvania State University",
+    "CompLevel": "Adv",
+    "Placement Category": "Collegiate Men+",
+    "FX Valid": "Missing Scores",
+    "PH Valid": "Missing Scores",
+    "SR Valid": "Valid",
+    "VT Valid": "Missing Scores",
+    "PB Valid": "Missing Scores",
+    "HB Valid": "Valid"
+   },
+   {
+    "Club_Name": "Virginia Tech Club Gymnastics",
+    "CompLevel": "Int",
+    "Placement Category": "Collegiate Men+",
+    "FX Valid": "Missing Scores",
+    "PH Valid": "Valid",
+    "SR Valid": "Valid",
+    "VT Valid": "Valid",
+    "PB Valid": "Valid",
+    "HB Valid": "Missing Scores"
+   }
+  ],
+  "mag sv cap": [
+   {
+    "FirstName": "Jackson",
+    "LastName": "Coppola",
+    "Session": "Session - MAG",
+    "Event": "Floor",
+    "Score": 13.3
+   }
+  ],
+  "wag decimal": [],
+  "mag decimal": [],
+  "wag qual check": [],
+  "mag qual check": [
+   {
+    "FirstName": "Ryan",
+    "LastName": "Nesspor",
+    "Session": "Session - MAG",
+    "Club_Name": "Virginia Tech Club Gymnastics",
+    "CompLevel": "Int",
+    "Event": "HB",
+    "Prelims Qual": "Y",
+    "Finals Place Eligible": 0,
+    "Problem": "Qualified but not place eligible"
+   },
+   {
+    "FirstName": "William",
+    "LastName": "Payne",
+    "Session": "Session - MAG",
+    "Club_Name": "The Ohio State University",
+    "CompLevel": "Adv",
+    "Event": "Floor",
+    "Prelims Qual": "Y",
+    "Finals Place Eligible": 0,
+    "Problem": "Qualified but not place eligible"
+   }
+  ]
+ }
+}

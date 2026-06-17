@@ -148,11 +148,13 @@ const meetToRow = (m: Meet) => ({
   reg_opens: m.regOpens || null, reg_closes: m.regCloses || null, entry_fee: m.entryFee,
   second_discipline_fee: m.secondDisciplineFee, disciplines: m.disciplines,
   private_reg_code: m.privateRegCode ?? null, banquet: m.banquet ?? null,
+  kind: m.kind ?? 'standard', nationals_config: m.nationalsConfig ?? null,
 });
 
 const sessionToRow = (meetId: string, s: Meet['sessions'][number]) => ({
   id: s.id, meet_id: meetId, name: s.name, discipline: s.discipline,
   date: s.date || null, time: s.time || null, level_ids: s.levelIds,
+  phase: s.phase ?? null,
 });
 
 const squadToRow = (sessionId: string, q: Meet['sessions'][number]['squads'][number], i: number) => ({
@@ -185,6 +187,7 @@ const scoreToRow = (s: Score) => ({
   calc: s.calc ?? null, calc_state: s.calcState ?? null,
   adjust_note: s.adjustNote ?? null, adjusted_at: s.adjustedAt ?? null,
   entered_by: s.enteredBy, entered_at: s.enteredAt, flashed: s.flashed,
+  scratched: s.scratched ?? false,
 });
 export const rowToScore = (r: any): Score => ({
   id: r.id, meetId: r.meet_id, sessionId: r.session_id, regId: r.reg_id, event: r.event,
@@ -195,6 +198,7 @@ export const rowToScore = (r: any): Score => ({
   ...(r.calc_state != null ? { calcState: r.calc_state } : {}),
   ...(r.adjust_note != null ? { adjustNote: r.adjust_note } : {}),
   ...(r.adjusted_at != null ? { adjustedAt: r.adjusted_at } : {}),
+  ...(r.scratched ? { scratched: true } : {}),
 });
 
 // cart_items: one row per item, owner = club_id or person_id
@@ -439,6 +443,7 @@ export async function loadAll(): Promise<DB | null> {
       arr.push({
         id: r.id, name: r.name, discipline: r.discipline, date: r.date ?? '', time: r.time ?? '',
         levelIds: r.level_ids ?? [], squads: squadsBySession.get(r.id) ?? [],
+        ...(r.phase ? { phase: r.phase } : {}),
       });
       sessionsByMeet.set(r.meet_id, arr);
     }
@@ -451,6 +456,8 @@ export async function loadAll(): Promise<DB | null> {
       disciplines: r.disciplines ?? [], sessions: sessionsByMeet.get(r.id) ?? [],
       ...(r.private_reg_code ? { privateRegCode: r.private_reg_code } : {}),
       ...(r.banquet ? { banquet: r.banquet } : {}),
+      ...(r.kind && r.kind !== 'standard' ? { kind: r.kind } : {}),
+      ...(r.nationals_config ? { nationalsConfig: r.nationals_config } : {}),
     }));
 
     const registrations: Registration[] = (registrationsR.data ?? []).map(rowToRegistration);

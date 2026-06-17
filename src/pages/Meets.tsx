@@ -100,6 +100,9 @@ export function MeetDetail() {
           <h3 className="card-title">Quick links</h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <Link to={`/results/${meet.slug}`}>→ Live results</Link>
+            {canManage && meet.kind === 'nationals' && (
+              <Link to={`/meets/${meet.slug}/nationals`} style={{ fontWeight: 700 }}>→ Finals qualification &amp; awards</Link>
+            )}
             {canManage && <Link to={`/meets/${meet.slug}/manage`}>→ Manage sessions & squads</Link>}
             {canManage && <Link to={`/judge?meet=${meet.id}`}>→ Score entry</Link>}
             {canManage && <a href="#" onClick={(e) => { e.preventDefault(); exportCsv(db, meet); }}>→ Export registrations (CSV)</a>}

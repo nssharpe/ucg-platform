@@ -1,0 +1,100 @@
+{
+ "meta": {
+  "year": "2024",
+  "phase": "prelims",
+  "discipline": "decathlon",
+  "source": "jules-pierce/naigc-2024"
+ },
+ "expected": [
+  {
+   "FirstName": "Christy",
+   "LastName": "Koleva",
+   "Athlete_Email": "kolevac@mail.gvsu.edu",
+   "Club_Name": "Grand Valley State University",
+   "CompLevel": "XD/Dev",
+   "Overall Score": 135.7,
+   "Overall Place": 1,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Steph",
+   "LastName": "Fisher",
+   "Athlete_Email": "steph_fish10@yahoo.com",
+   "Club_Name": "The Ohio State University",
+   "CompLevel": "XD/Dev",
+   "Overall Score": 135.6,
+   "Overall Place": 2,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Katherine",
+   "LastName": "Miller",
+   "Athlete_Email": "millerkl@mail.gvsu.edu",
+   "Club_Name": "Grand Valley State University",
+   "CompLevel": "XD/Dev",
+   "Overall Score": 134.7,
+   "Overall Place": 3,
+   "Overall?": "Y"
+  },
+  {
+   "FirstName": "Gabbi",
+   "LastName": "Stegeman",
+   "Athlete_Email": "grs5547@psu.edu",
+   "Club_Name": "The Pennsylvania State University",
+   "CompLevel": "XD/Dev",
+   "Overall Score": 133.9,
+   "Overall Place": 4,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Rachel",
+   "LastName": "Lucarielli",
+   "Athlete_Email": "lucariellirachel@gmail.com",
+   "Club_Name": "The Ohio State University",
+   "CompLevel": "XD/Dev",
+   "Overall Score": 133.1,
+   "Overall Place": 5,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Alyssa",
+   "LastName": "Weber",
+   "Athlete_Email": "amw110502@gmail.com",
+   "Club_Name": "Grand Valley State University",
+   "CompLevel": "XD/Dev",
+   "Overall Score": 133.0,
+   "Overall Place": 6,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Brooke",
+   "LastName": "Rishel",
+   "Athlete_Email": "btr5192@psu.edu",
+   "Club_Name": "The Pennsylvania State University",
+   "CompLevel": "XD/Dev",
+   "Overall Score": 131.0,
+   "Overall Place": 7,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Elizabeth",
+   "LastName": "Plumb",
+   "Athlete_Email": "emp5647@psu.edu",
+   "Club_Name": "The Pennsylvania State University",
+   "CompLevel": "XD/Dev",
+   "Overall Score": 125.8,
+   "Overall Place": 8,
+   "Overall?": "N"
+  },
+  {
+   "FirstName": "Wendy Jo",
+   "LastName": "Svetanoff",
+   "Athlete_Email": "IrishTumbler07@sbcglobal.net",
+   "Club_Name": "The Ohio State University",
+   "CompLevel": "XD/Dev",
+   "Overall Score": 124.6,
+   "Overall Place": 9,
+   "Overall?": "N"
+  }
+ ]
+}

@@ -1,0 +1,91 @@
+{
+ "meta": {
+  "year": "2025",
+  "source": "jules-pierce/naigc-2024"
+ },
+ "expected": {
+  "wag": [
+   {
+    "Club_Name": "Clemson University Club Gymnastics",
+    "CompLevel": "XD",
+    "Placement Category": "Collegiate Women+",
+    "VT Valid": "Valid",
+    "UB Valid": "Too many included",
+    "BB Valid": "Not enough included",
+    "FX Valid": "Valid"
+   }
+  ],
+  "mag": [
+   {
+    "Club_Name": "5280 Gymnastics",
+    "CompLevel": "Adv",
+    "Placement Category": "Community Men+",
+    "FX Valid": "Valid",
+    "PH Valid": "Not enough included",
+    "SR Valid": "Not enough included",
+    "VT Valid": "Valid",
+    "PB Valid": "Not enough included",
+    "HB Valid": "Valid"
+   },
+   {
+    "Club_Name": "Arizona State Men's Gymnastics",
+    "CompLevel": "Adv",
+    "Placement Category": "Collegiate Men+",
+    "FX Valid": "Too many included",
+    "PH Valid": "Valid",
+    "SR Valid": "Valid",
+    "VT Valid": "Valid",
+    "PB Valid": "Valid",
+    "HB Valid": "Valid"
+   }
+  ],
+  "wag qual check": [
+   {
+    "FirstName": "Catherine",
+    "LastName": "Saffi",
+    "Session": "Xcel Platinum Finals - Green",
+    "Club_Name": "University of California, Los Angeles",
+    "CompLevel": "XP",
+    "Event": "AA",
+    "Prelims Qual": "N",
+    "Finals Place Eligible": 1,
+    "Problem": "Place eligible but did not qualify"
+   },
+   {
+    "FirstName": "Lena",
+    "LastName": "Gudikunst",
+    "Session": "Xcel Platinum Finals - Green",
+    "Club_Name": "University of California, Los Angeles",
+    "CompLevel": "XP",
+    "Event": "Floor",
+    "Prelims Qual": "Y",
+    "Finals Place Eligible": 0,
+    "Problem": "Qualified but not place eligible"
+   },
+   {
+    "FirstName": "Payton",
+    "LastName": "Rater",
+    "Session": "Xcel Platinum Finals - Green",
+    "Club_Name": "University of California, Los Angeles",
+    "CompLevel": "XP",
+    "Event": "Floor",
+    "Prelims Qual": "N",
+    "Finals Place Eligible": 1,
+    "Problem": "Place eligible but did not qualify"
+   }
+  ],
+  "mag qual check": [
+   {
+    "FirstName": "Sarah",
+    "LastName": "Grady",
+    "Session": "MAG Finals - Orange",
+    "Club_Name": "Wisconsin Gymnastics Club",
+    "CompLevel": "Int",
+    "Event": "AA",
+    "Prelims Qual": "N",
+    "Finals Place Eligible": 1,
+    "Problem": "Place eligible but did not qualify"
+   }
+  ]
+ }
+}

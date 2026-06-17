@@ -1,0 +1,67 @@
+{
+ "meta": {
+  "year": "2024",
+  "source": "jules-pierce/naigc-2024"
+ },
+ "expected": {
+  "wag aa": [
+   {
+    "FirstName": "Abigail",
+    "LastName": "Anderson",
+    "Session": "Session - WAG",
+    "SF AA": 34.95,
+    "Calculated AA": 34.9
+   }
+  ],
+  "wag prelims included": [
+   {
+    "FirstName": "Bailey",
+    "LastName": "Alexander",
+    "Session": "Session - WAG",
+    "Event": "Vault"
+   }
+  ],
+  "wag sv cap": [],
+  "mag aa": [
+   {
+    "FirstName": "Park",
+    "LastName": "McIntosh",
+    "Session": "Session - MAG",
+    "SF AA": 8.8,
+    "Calculated AA": 0
+   }
+  ],
+  "mag prelims included": [
+   {
+    "FirstName": "Joseph",
+    "LastName": "Ceresoli",
+    "Session": "Session - MAG",
+    "Event": "Floor"
+   }
+  ],
+  "mag sv cap": [
+   {
+    "FirstName": "Andrew",
+    "LastName": "Whitlock",
+    "Session": "Session - MAG",
+    "Event": "Floor",
+    "Score": 12.8
+   }
+  ],
+  "syncro levels": [
+   {
+    "Partner 1": "Andrew Davis",
+    "Partner 2": "Jack Warder",
+    "Session 1": "T&T",
+    "Session 2": "T&T",
+    "Level 1": "High Flyers",
+    "Level 2": "Intermediate Flyers"
+   }
+  ],
+  "syncro scores": [],
+  "syncro missing": [],
+  "wag decimal": [],
+  "mag decimal": [],
+  "tnt decimal": []
+ }
+}

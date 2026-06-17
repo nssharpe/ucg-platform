@@ -124,6 +124,41 @@ export interface MeetSession {
   time: string;
   levelIds: string[];
   squads: Squad[];
+  /** Nationals meets only: distinguishes prelim sessions from finals sessions.
+   *  Absent ⇒ a normal (single-phase) session. See NationalsConfig. */
+  phase?: 'prelim' | 'final';
+}
+
+/** Placement category, mirroring the reference tool. "Mixed" is team-only. */
+export type PlacementCategory =
+  | 'Collegiate Women+'
+  | 'Collegiate Men+'
+  | 'Community Women+'
+  | 'Community Men+';
+
+/**
+ * Admin-editable Nationals qualification/awards config on a meet — the in-app
+ * equivalent of the reference tool's per-year config.ini. Cutoffs ("blue
+ * numbers") are keyed by platform levelId. See docs/specs/2026-06-13-nationals-
+ * qual-awards.md and src/nationals/.
+ */
+export interface NationalsConfig {
+  /** Platform level ids that hold finals (awards from finals); all other
+   *  competing levels award straight from prelims. */
+  finalsLevelIds: string[];
+  /** cutoffs[scope][category][levelId] = N. scope: 'event' | 'aa' | 'team'. */
+  cutoffs: {
+    event: Partial<Record<PlacementCategory, Record<string, number>>>;
+    aa: Partial<Record<PlacementCategory, Record<string, number>>>;
+    team: Partial<Record<PlacementCategory, Record<string, number>>>;
+    /** Mixed-team cutoffs keyed by levelId. */
+    teamMixed: Record<string, number>;
+  };
+  /** TNT cutoffs keyed by levelId (one number per level — no category/AA/team,
+   *  mirroring the reference tool's [Levels] section). */
+  tntCutoffs?: Record<string, number>;
+  /** Per-levelId start-value caps (validation). */
+  svCaps?: Record<string, number>;
 }
 
 export interface Meet {
@@ -145,6 +180,11 @@ export interface Meet {
   sessions: MeetSession[];
   privateRegCode?: string;
   banquet?: { price: number; name: string };
+  /** 'nationals' unlocks the prelim/finals + qualification/awards features and is
+   *  creatable only by a UCG admin. Absent ⇒ 'standard'. */
+  kind?: 'standard' | 'nationals';
+  /** Present on Nationals meets: the qualification/awards configuration. */
+  nationalsConfig?: NationalsConfig;
 }
 
 export interface Registration {
@@ -187,6 +227,9 @@ export interface Score {
   enteredBy: string;
   enteredAt: string;
   flashed: boolean;
+  /** Athlete withdrew from this apparatus (reference-tool "Scratched"). Excluded
+   *  from placement/team scoring; distinct from a 0.0 score. Nationals scoring. */
+  scratched?: boolean;
 }
 
 export interface InvoiceItem {

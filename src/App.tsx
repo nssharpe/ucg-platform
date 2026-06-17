@@ -22,6 +22,7 @@ const loaders = {
   ScoreDetail: () => import('./pages/ScoreDetail'),
   Results: () => import('./pages/Results'),
   Admin: () => import('./pages/Admin'),
+  Nationals: () => import('./pages/Nationals'),
 };
 
 const Membership = lazy(() => loaders.Membership().then((m) => ({ default: m.Membership })));
@@ -32,6 +33,7 @@ const ClubCart = lazy(() => loaders.Club().then((m) => ({ default: m.ClubCart })
 const Meets = lazy(() => loaders.Meets().then((m) => ({ default: m.Meets })));
 const MeetDetail = lazy(() => loaders.Meets().then((m) => ({ default: m.MeetDetail })));
 const MeetManage = lazy(() => loaders.Meets().then((m) => ({ default: m.MeetManage })));
+const Nationals = lazy(() => loaders.Nationals().then((m) => ({ default: m.Nationals })));
 const Judge = lazy(() => loaders.Judge().then((m) => ({ default: m.Judge })));
 const ScoreDetail = lazy(() => loaders.ScoreDetail().then((m) => ({ default: m.ScoreDetail })));
 const ResultsIndex = lazy(() => loaders.Results().then((m) => ({ default: m.ResultsIndex })));
@@ -124,6 +126,7 @@ export default function App() {
               <Route path="/club/:clubId" element={<RequireAccount><ClubPage /></RequireAccount>} />
               <Route path="/club/:clubId/cart" element={<RequireAccount><ClubCart /></RequireAccount>} />
               <Route path="/meets/:slug/manage" element={<RequireAccount><MeetManage /></RequireAccount>} />
+              <Route path="/meets/:slug/nationals" element={<RequireAccount><Nationals /></RequireAccount>} />
               <Route path="/judge" element={<RequireAccount><Judge /></RequireAccount>} />
               <Route path="/scores/:scoreId" element={<RequireAccount><ScoreDetail /></RequireAccount>} />
               <Route path="/admin/members" element={<RequireAdmin><AdminMembers /></RequireAdmin>} />

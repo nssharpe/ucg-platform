@@ -2,6 +2,8 @@ import { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { mutate, useDB } from '../lib/store';
 import { pushMeet } from '../lib/supabase';
+import { useCapabilities } from '../lib/capabilities';
+import { scaffoldNationalsConfig } from '../lib/nationals-adapter';
 import { Combo, Field, Modal, useToast } from './ui';
 import { DISCIPLINES, STATE_REGIONS } from '../lib/types';
 import type { Discipline, Level, Meet, MeetSession, MeetStatus } from '../lib/types';
@@ -35,6 +37,7 @@ interface SessionDraft {
   date: string;
   time: string;
   levelIds: string[];
+  phase: 'prelim' | 'final';
 }
 
 const discLabel = (d: Discipline) => (d === 'TNT' ? 'T&T' : d);
@@ -51,16 +54,21 @@ function defaultSessions(allLevels: Level[], d: Discipline, date: string, nextKe
   const groups = d === 'WAG' && ls.length > 2 ? [ls.slice(0, 2), ls.slice(2)] : [ls];
   return groups.map((g, i) => ({
     key: nextKey(), discipline: d, label: sessionLabel(d, g, ls.length),
-    date, time: i === 0 ? '09:00' : '14:00', levelIds: g.map((l) => l.id),
+    date, time: i === 0 ? '09:00' : '14:00', levelIds: g.map((l) => l.id), phase: 'prelim' as const,
   }));
 }
 
 export function MeetWizard({ onClose }: { onClose: () => void }) {
   const db = useDB();
+  const caps = useCapabilities();
   const toast = useToast();
   const navigate = useNavigate();
   const keyRef = useRef(1);
   const nextKey = () => keyRef.current++;
+
+  // Nationals (admin only): adds prelim/finals phases + qualification config.
+  const [kind, setKind] = useState<'standard' | 'nationals'>('standard');
+  const [finalsLevelIds, setFinalsLevelIds] = useState<string[]>([]);
 
   // Basics
   const [name, setName] = useState('');
@@ -89,6 +97,15 @@ export function MeetWizard({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState('');
 
   const slug = useMemo(() => uniqueSlug(name, db.meets.map((m) => m.slug)), [name, db.meets]);
+
+  const allCompetingLevelIds = useMemo(() => [...new Set(sessions.flatMap((s) => s.levelIds))], [sessions]);
+  // Finals apply to artistic (WAG/MAG) levels; TNT awards from prelims only.
+  const finalsEligibleLevels = useMemo(
+    () => db.levels
+      .filter((l) => (l.discipline === 'WAG' || l.discipline === 'MAG') && allCompetingLevelIds.includes(l.id))
+      .sort((a, b) => a.discipline.localeCompare(b.discipline) || a.order - b.order),
+    [db.levels, allCompetingLevelIds],
+  );
 
   const changeStart = (v: string) => {
     if (!v) return;
@@ -127,21 +144,32 @@ export function MeetWizard({ onClose }: { onClose: () => void }) {
     if (!Number.isFinite(fee) || fee < 0 || !Number.isFinite(fee2) || fee2 < 0) return setError('Fees must be valid dollar amounts.');
     if (hasBanquet && (!banquetName.trim() || !Number.isFinite(bPrice) || bPrice < 0)) return setError('Banquet needs a name and a valid price.');
 
+    const nationals = kind === 'nationals';
+    if (nationals && !sessions.some((s) => s.phase === 'prelim')) return setError('A Nationals meet needs at least one prelim session.');
+
     const meetId = `meet-${Date.now()}`;
     const meetSessions: MeetSession[] = sessions.map((s, i) => ({
       id: `${meetId}-s${i + 1}`,
       name: `Session ${i + 1} — ${s.label.trim()}`,
       discipline: s.discipline, date: s.date, time: s.time, levelIds: s.levelIds,
       squads: [], // matches seed: holding = unplaced regs, no explicit holding squad
+      ...(nationals ? { phase: s.phase } : {}),
     }));
+    const orderedDisciplines = DISCIPLINES.filter((d) => disciplines.includes(d));
     const meet: Meet = {
       id: meetId, slug, name: name.trim(), hostClubId,
       city: city.trim(), state, timezone,
       startDate, endDate, status, regOpens, regCloses,
       entryFee: fee, secondDisciplineFee: fee2,
-      disciplines: DISCIPLINES.filter((d) => disciplines.includes(d)),
+      disciplines: orderedDisciplines,
       sessions: meetSessions,
       ...(hasBanquet ? { banquet: { name: banquetName.trim(), price: bPrice } } : {}),
+      ...(nationals
+        ? {
+            kind: 'nationals' as const,
+            nationalsConfig: scaffoldNationalsConfig(db.levels, orderedDisciplines, finalsLevelIds.filter((id) => allCompetingLevelIds.includes(id))),
+          }
+        : {}),
     };
     mutate((d) => { d.meets.push(meet); pushMeet(meet); });
     toast(`${meet.name} sanctioned — #/meets/${slug}`);
@@ -155,6 +183,17 @@ export function MeetWizard({ onClose }: { onClose: () => void }) {
 
   return (
     <Modal title="Sanction a new meet" onClose={onClose}>
+      {caps.isAdmin && (
+        <div className="card card-pad" style={{ marginBottom: 12, background: 'var(--ice)', borderColor: 'var(--line)' }}>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, fontWeight: 600 }}>
+            <input type="checkbox" checked={kind === 'nationals'} onChange={(e) => setKind(e.target.checked ? 'nationals' : 'standard')} />
+            Nationals meet
+          </label>
+          <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '6px 0 0' }}>
+            Unlocks prelim/finals sessions and automatic finals qualification &amp; awards. UCG-admin only.
+          </p>
+        </div>
+      )}
       <h3 className="card-title" style={{ marginBottom: 8 }}>Basics</h3>
       <Field label="Meet name" hint={name.trim() ? `URL: ucg.org/#/meets/${slug}` : 'The URL slug is derived automatically.'}>
         <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Southeast Open 2027" autoFocus />
@@ -222,7 +261,15 @@ export function MeetWizard({ onClose }: { onClose: () => void }) {
           <div key={s.key} className="card card-pad" style={{ marginBottom: 10 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
               <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--ink-soft)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Session {i + 1} · {discLabel(s.discipline)}</span>
-              <button className="btn small ghost" onClick={() => setSessions(sessions.filter((x) => x.key !== s.key))}>Remove</button>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                {kind === 'nationals' && (
+                  <select className="input" style={{ width: 'auto', padding: '2px 8px', fontSize: 12.5 }} value={s.phase} onChange={(e) => updateSession(s.key, { phase: e.target.value as 'prelim' | 'final' })}>
+                    <option value="prelim">Prelims</option>
+                    <option value="final">Finals</option>
+                  </select>
+                )}
+                <button className="btn small ghost" onClick={() => setSessions(sessions.filter((x) => x.key !== s.key))}>Remove</button>
+              </div>
             </div>
             <Field label="Name" hint={`Saved as “Session ${i + 1} — ${s.label.trim() || '…'}”`}>
               <input className="input" value={s.label} onChange={(e) => updateSession(s.key, { label: e.target.value })} />
@@ -252,11 +299,34 @@ export function MeetWizard({ onClose }: { onClose: () => void }) {
       {disciplines.length > 0 && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
           {disciplines.map((d) => (
-            <button key={d} className="btn small ghost" onClick={() => setSessions([...sessions, { key: nextKey(), discipline: d, label: `${discLabel(d)} `, date: startDate, time: '09:00', levelIds: [] }])}>
+            <button key={d} className="btn small ghost" onClick={() => setSessions([...sessions, { key: nextKey(), discipline: d, label: `${discLabel(d)} `, date: startDate, time: '09:00', levelIds: [], phase: 'prelim' }])}>
               + Add {discLabel(d)} session
             </button>
           ))}
         </div>
+      )}
+
+      {kind === 'nationals' && (
+        <>
+          {sectionTitle('Finals & qualification')}
+          <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '0 0 8px' }}>
+            Pick the levels that hold finals (awards come from finals results); every other level awards
+            straight from prelims. Set the qualification cutoffs (&ldquo;blue numbers&rdquo;) on the meet
+            page after creating it.
+          </p>
+          {finalsEligibleLevels.length === 0 && <p style={{ fontSize: 13, color: 'var(--ink-soft)' }}>Add WAG/MAG sessions with levels first.</p>}
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            {finalsEligibleLevels.map((l) => (
+              <label key={l.id} style={{ display: 'flex', gap: 5, alignItems: 'center', fontSize: 13.5 }}>
+                <input
+                  type="checkbox"
+                  checked={finalsLevelIds.includes(l.id)}
+                  onChange={(e) => setFinalsLevelIds(e.target.checked ? [...finalsLevelIds, l.id] : finalsLevelIds.filter((id) => id !== l.id))}
+                /> {discLabel(l.discipline)} {l.name}
+              </label>
+            ))}
+          </div>
+        </>
       )}
 
       {sectionTitle('Status')}
