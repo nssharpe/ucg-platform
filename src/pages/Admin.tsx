@@ -1205,6 +1205,14 @@ function DemoTools() {
 }
 
 // ---------- Communicate ----------
+
+interface SendRecord {
+  sentAt: Date;
+  channel: 'email' | 'sms';
+  recipientCount: number;
+  recipients: { name: string; contact: string }[];
+}
+
 export function Communicate() {
   const db = useDB();
   const toast = useToast();
@@ -1223,6 +1231,10 @@ export function Communicate() {
   const [previewMode, setPreviewMode] = useState(false);
   // Recipient list expanded
   const [listExpanded, setListExpanded] = useState(false);
+
+  // Send log
+  const [lastSend, setLastSend] = useState<SendRecord | null>(null);
+  const [sendLogExpanded, setSendLogExpanded] = useState(false);
 
   // Test send
   const [testPersonId, setTestPersonId] = useState<string | null>(null);
@@ -1257,9 +1269,24 @@ export function Communicate() {
     // body is already kept in sync via onRichInput
   };
 
+  // Derive the set of manager person IDs from live db.clubs — this picks up
+  // managers added/removed during the session without requiring a page reload.
+  const managerIdSet = useMemo(
+    () => new Set(db.clubs.flatMap((c) => c.managerIds)),
+    [db.clubs],
+  );
+
   const recipients = useMemo(() => db.people.filter((p) => {
+    const isManager = managerIdSet.has(p.id);
     if (p.kind === 'athlete' && !aud.athletes) return false;
-    if (p.kind === 'coach' && !aud.coaches && !aud.managers) return false;
+    // Coaches pass if coaches checkbox is on; managers (any person in club.managerIds) pass if managers checkbox is on
+    if (p.kind === 'coach') {
+      if (!aud.coaches && !(aud.managers && isManager)) return false;
+    }
+    // Athletes who are also managers (edge case) still pass when managers is checked
+    if (p.kind === 'athlete' && aud.managers && isManager) return true;
+    // Manager-only filter: if managers is checked but athletes is off, exclude non-manager athletes
+    if (!aud.athletes && p.kind === 'athlete' && !isManager) return false;
     const has = p.memberships.some((m) => m.seasonId === season.id && m.status === 'active');
     if (aud.withMembership === 'with' && !has) return false;
     if (aud.withMembership === 'without' && has) return false;
@@ -1269,7 +1296,7 @@ export function Communicate() {
       if (!regions.includes(r)) return false;
     }
     return true;
-  }), [db, aud, regions, season.id]);
+  }), [db.people, db.clubs, managerIdSet, aud, regions, season.id]);
 
   // Club emails for the recipient list
   const clubEmailRows = useMemo(() => {
@@ -1352,12 +1379,15 @@ export function Communicate() {
                 {recipients.length === 0 && clubEmailRows.length === 0 && (
                   <div style={{ padding: '10px 12px', color: 'var(--ink-soft)' }}>No recipients match the current filters.</div>
                 )}
-                {recipients.map((p) => (
-                  <div key={p.id} style={{ padding: '4px 12px', borderBottom: '1px solid var(--line)', display: 'flex', gap: 8, justifyContent: 'space-between' }}>
-                    <span>{p.firstName} {p.lastName}</span>
-                    <span style={{ color: 'var(--ink-soft)' }}>{p.email}</span>
-                  </div>
-                ))}
+                {recipients.map((p) => {
+                  const contact = channel === 'sms' ? ((p as Athlete).phone ?? p.email) : p.email;
+                  return (
+                    <div key={p.id} style={{ padding: '4px 12px', borderBottom: '1px solid var(--line)', display: 'flex', gap: 8, justifyContent: 'space-between' }}>
+                      <span>{p.firstName} {p.lastName}</span>
+                      <span style={{ color: 'var(--ink-soft)' }}>{contact || <em style={{ opacity: 0.5 }}>no {channel === 'sms' ? 'phone' : 'email'}</em>}</span>
+                    </div>
+                  );
+                })}
                 {clubEmailRows.map((c) => (
                   <div key={c.email} style={{ padding: '4px 12px', borderBottom: '1px solid var(--line)', display: 'flex', gap: 8, justifyContent: 'space-between', background: 'var(--surface-1)' }}>
                     <span style={{ fontStyle: 'italic' }}>{c.name} (club email)</span>
@@ -1513,16 +1543,68 @@ export function Communicate() {
           <button
             className="btn primary"
             style={{ marginTop: 8 }}
-            disabled={channel === 'sms'}
-            onClick={() => toast(`Email queued to ${recipients.length + clubEmailRows.length} recipients (demo — nothing actually sent).`)}
+            onClick={() => {
+              const total = recipients.length + clubEmailRows.length;
+              const personRows = recipients.map((p) => ({
+                name: `${p.firstName} ${p.lastName}`,
+                contact: channel === 'sms' ? ((p as Athlete).phone ?? p.email) : p.email,
+              }));
+              const clubRows = clubEmailRows.map((c) => ({ name: `${c.name} (club email)`, contact: c.email ?? '' }));
+              const record: SendRecord = {
+                sentAt: new Date(),
+                channel,
+                recipientCount: total,
+                recipients: [...personRows, ...clubRows],
+              };
+              setLastSend(record);
+              setSendLogExpanded(false);
+              toast(`${channel === 'sms' ? 'Text' : 'Email'} queued to ${total} recipient${total !== 1 ? 's' : ''} (demo — nothing actually sent).`);
+            }}
           >
             Send to {recipients.length + clubEmailRows.length} →
           </button>
           {channel === 'sms' && (
-            <p style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 4 }}>SMS sending is not yet wired.</p>
+            <p style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 4 }}>SMS delivery is not yet wired to a provider.</p>
           )}
         </div>
       </div>
+
+      {/* ---- Last send summary ---- */}
+      {lastSend && (
+        <div className="card card-pad" style={{ marginTop: 16, borderLeft: '3px solid var(--accent)' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+            <span style={{ fontWeight: 600, fontSize: 14 }}>
+              Last send — {lastSend.channel === 'sms' ? 'Text' : 'Email'} sent to{' '}
+              <span style={{ color: 'var(--accent)' }}>{lastSend.recipientCount} recipient{lastSend.recipientCount !== 1 ? 's' : ''}</span>
+            </span>
+            <span style={{ fontSize: 12, color: 'var(--ink-soft)' }}>
+              {lastSend.sentAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{' '}
+              {lastSend.sentAt.toLocaleDateString()}
+            </span>
+            <button
+              className="btn small ghost"
+              style={{ marginLeft: 'auto' }}
+              onClick={() => setSendLogExpanded((v) => !v)}
+            >
+              {sendLogExpanded ? 'Hide' : 'Show list'}
+            </button>
+          </div>
+          {sendLogExpanded && (
+            <div style={{
+              marginTop: 8, maxHeight: 240, overflowY: 'auto',
+              border: '1px solid var(--line)', borderRadius: 6,
+              fontSize: 12.5, background: 'var(--surface-0)',
+            }}>
+              {lastSend.recipients.map((r, i) => (
+                <div key={i} style={{ padding: '4px 12px', borderBottom: '1px solid var(--line)', display: 'flex', gap: 8, justifyContent: 'space-between' }}>
+                  <span>{r.name}</span>
+                  <span style={{ color: 'var(--ink-soft)' }}>{r.contact || <em style={{ opacity: 0.5 }}>—</em>}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ---- Test send section ---- */}
       <div className="card card-pad" style={{ marginTop: 16, maxWidth: 560 }}>

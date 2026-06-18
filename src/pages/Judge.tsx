@@ -77,7 +77,9 @@ export function Judge() {
   const usingCalcFull = !!calcCfg && calcCfg.produces === 'full' && !override;
   const usingCalcSv = !!calcCfg && calcCfg.produces === 'd' && !override;
 
-  /** Neutral deductions already baked into the start value by the calculator.
+  /** Neutral option deductions from the calculator panel (OOB, floor time, etc.).
+   *  These do NOT reduce the displayed start value — they are added to execution
+   *  deductions to form total deductions.
    *  Derived from the 'Neutral deductions' breakdown row (negative value → abs). */
   const neutralFromCalc = usingCalcSv && outcome
     ? Math.abs(outcome.breakdown.find((b) => b.label === 'Neutral deductions')?.value ?? 0)
@@ -243,7 +245,7 @@ export function Judge() {
                 {usingCalcSv ? (
                   <Field
                     label="Execution deductions"
-                    hint="Judge-assessed execution deductions only. Neutral deductions are already applied by the calculator above."
+                    hint="Judge-assessed execution deductions only. Neutral deductions from the calculator are added automatically below."
                   >
                     <input
                       type="number" inputMode="decimal" step="0.05"
@@ -260,7 +262,7 @@ export function Judge() {
                     />
                   </Field>
                 ) : (
-                  <Field label="Total deductions" hint="Execution + neutral deductions, summed.">
+                  <Field label="Total deductions (execution + neutral)" hint="Execution + neutral deductions, summed.">
                     <input type="number" inputMode="decimal" step="0.05" style={{ fontSize: 22, fontWeight: 700 }} value={ded} onChange={(e) => setDed(e.target.value)} placeholder="0.00" />
                   </Field>
                 )}
@@ -287,8 +289,15 @@ export function Judge() {
                 </div>
               )}
               <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-                <div style={{ fontFamily: 'var(--font-display)', fontSize: 44 }}>
-                  {finalScore != null ? finalScore.toFixed(3) : '—'}
+                <div>
+                  <div style={{ fontFamily: 'var(--font-display)', fontSize: 44 }}>
+                    {finalScore != null ? finalScore.toFixed(3) : '—'}
+                  </div>
+                  {finalScore != null && !isNaN(svNum) && !isNaN(dedNum) && (
+                    <div style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 2 }}>
+                      {svNum.toFixed(3)} (SV) − {dedNum.toFixed(3)} (total deductions)
+                    </div>
+                  )}
                 </div>
                 <button className="btn primary" style={{ fontSize: 16, padding: '12px 28px' }} disabled={finalScore == null || svError} onClick={submit}>
                   Post & flash score →

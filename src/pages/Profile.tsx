@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { useParams } from 'react-router-dom';
+import { useState, useMemo, type CSSProperties } from 'react';
+import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { Combo, Field, Modal, useToast, Badge } from '../components/ui';
@@ -61,11 +61,16 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   const params = useParams();
   const toast = useToast();
   const caps = useCapabilities();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const personId = adminView ? params.personId! : caps.personId;
   const person = db.people.find((p) => p.id === personId);
 
-  // Determine if we should auto-open edit mode
-  const returnToMembership = typeof window !== 'undefined' && window.location.hash.includes('return=membership');
+  // Determine if we should auto-open edit mode and return to membership after save
+  const returnParam = searchParams.get('return');
+  const returnToMembership = returnParam === 'membership';
+  // Preserve any season param when returning
+  const seasonParam = searchParams.get('season');
 
   const [draft, setDraft] = useState<Athlete | null>(null);
   const [editMode, setEditMode] = useState<boolean>(() => {
@@ -74,6 +79,8 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
     const errs = validateProfile(person);
     return errs.length > 0;
   });
+  // When arriving from membership, track which fields were empty on arrival so we can highlight them
+  const [highlightMissing] = useState<boolean>(() => returnToMembership);
   const [clubReqOpen, setClubReqOpen] = useState(false);
   const [revokeSeasonId, setRevokeSeasonId] = useState<string | null>(null);
 
@@ -85,6 +92,16 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   const states = Object.keys(STATE_REGIONS);
 
   const validationErrors = useMemo(() => validateProfile(p), [p]);
+
+  // When arriving from membership, highlight still-empty required fields in red
+  const missingFieldKeys = useMemo(
+    () => highlightMissing ? new Set(validationErrors.map((e) => e.field)) : new Set<string>(),
+    [highlightMissing, validationErrors]
+  );
+
+  /** Returns inline border style if this field is currently missing and we're highlighting */
+  const missingStyle = (field: string): CSSProperties =>
+    missingFieldKeys.has(field) ? { outline: '2px solid var(--coral-600)', borderRadius: 4 } : {};
 
   // Phone validation (main)
   const mainPhoneInvalid = p.phone && !phoneValid(p.phone);
@@ -118,11 +135,10 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
     });
     setDraft(null);
     setEditMode(false);
+    toast('Profile saved.');
     if (returnToMembership) {
-      toast('Profile saved.');
-      window.location.hash = '#/membership';
-    } else {
-      toast('Profile saved.');
+      const dest = seasonParam ? `/membership?season=${seasonParam}` : '/membership';
+      navigate(dest);
     }
   };
 
@@ -132,7 +148,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
     <div style={{ maxWidth: 760 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', marginBottom: 4 }}>
         <h1 className="page-title display" style={{ margin: 0 }}>
-          {adminView ? `${p.firstName} ${p.lastName}` : 'My profile'}
+          {adminView ? `${p.firstName} ${p.lastName}` : 'Profile'}
         </h1>
         {!editMode && (
           <button className="btn primary small" onClick={enterEdit}>Edit profile</button>
@@ -159,14 +175,20 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
         // EDIT MODE
         // ----------------------------------------------------------------
         <>
+          {highlightMissing && missingFieldKeys.size > 0 && (
+            <div className="badge err" style={{ display: 'block', marginBottom: 12, padding: '8px 12px', borderRadius: 6 }}>
+              Complete the highlighted fields below to continue to membership.
+            </div>
+          )}
           <div className="card card-pad" style={{ marginBottom: 16 }}>
             <h3 className="card-title">Identity</h3>
             <div className="grid cols-2">
-              <Field label="First name"><input type="text" value={p.firstName} onChange={(e) => set({ firstName: e.target.value })} /></Field>
-              <Field label="Last name"><input type="text" value={p.lastName} onChange={(e) => set({ lastName: e.target.value })} /></Field>
+              <Field label="First name"><input type="text" value={p.firstName} onChange={(e) => set({ firstName: e.target.value })} style={missingStyle('firstName')} /></Field>
+              <Field label="Last name"><input type="text" value={p.lastName} onChange={(e) => set({ lastName: e.target.value })} style={missingStyle('lastName')} /></Field>
               <Field label="Date of birth" hint="Athletes must be 15+, coaches 18+.">
-                <input type="date" value={p.dob} onChange={(e) => set({ dob: e.target.value })} />
+                <input type="date" value={p.dob} onChange={(e) => set({ dob: e.target.value })} style={missingStyle('dob')} />
                 {ageError && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>{ageError}</div>}
+                {missingFieldKeys.has('dob') && !p.dob && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Required</div>}
               </Field>
               <Field label="Gender">
                 <select className="input" value={p.gender} onChange={(e) => set({ gender: e.target.value as Gender })}>
@@ -189,14 +211,16 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                 <input type="number" value={p.gradYear} onChange={(e) => set({ gradYear: +e.target.value })} />
               </Field>
               <Field label="Student status" hint="Full-time student for ≥1 semester this season (Jul–Jun)? Grad students may pick either.">
-                <select className="input" value={p.studentStatus} onChange={(e) => set({ studentStatus: e.target.value as 'Student' | 'Non-Student' })}>
+                <select className="input" value={p.studentStatus} onChange={(e) => set({ studentStatus: e.target.value as 'Student' | 'Non-Student' })} style={missingStyle('studentStatus')}>
                   <option>Student</option><option>Non-Student</option>
                 </select>
               </Field>
               <Field label="T-shirt size">
-                <select className="input" value={p.shirt} onChange={(e) => set({ shirt: e.target.value })}>
+                <select className="input" value={p.shirt} onChange={(e) => set({ shirt: e.target.value })} style={missingStyle('shirt')}>
+                  <option value="">Select a size…</option>
                   {SHIRT_SIZES.map((s) => <option key={s}>{s}</option>)}
                 </select>
+                {missingFieldKeys.has('shirt') && !p.shirt && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Required</div>}
               </Field>
               <Field label="Training state">
                 <Combo options={states.map((s) => ({ value: s, label: s, sub: STATE_REGIONS[s] }))} value={p.state} onChange={(v) => set({ state: v })} />
@@ -207,8 +231,10 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                   value={p.phone}
                   onChange={(e) => set({ phone: formatPhone(e.target.value) })}
                   placeholder="(555) 123-4567"
+                  style={missingStyle('phone')}
                 />
                 {mainPhoneInvalid && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Must be a 10-digit US phone number.</div>}
+                {missingFieldKeys.has('phone') && !p.phone && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Required</div>}
               </Field>
             </div>
           </div>
@@ -268,7 +294,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
           <div className="card card-pad" style={{ marginBottom: 16 }}>
             <h3 className="card-title">Meet-day</h3>
             <div className="grid cols-2">
-              <Field label="Emergency contact"><input type="text" value={p.emergency.contact} onChange={(e) => set({ emergency: { ...p.emergency, contact: e.target.value } })} /></Field>
+              <Field label="Emergency contact"><input type="text" value={p.emergency.contact} onChange={(e) => set({ emergency: { ...p.emergency, contact: e.target.value } })} style={missingStyle('emergency.contact')} /></Field>
               <Field label="Relation"><input type="text" value={p.emergency.relation} onChange={(e) => set({ emergency: { ...p.emergency, relation: e.target.value } })} /></Field>
               <Field label="Emergency phone">
                 <input
@@ -276,8 +302,10 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                   value={p.emergency.phone}
                   onChange={(e) => set({ emergency: { ...p.emergency, phone: formatPhone(e.target.value) } })}
                   placeholder="(555) 123-4567"
+                  style={missingStyle('emergency.phone')}
                 />
                 {emergPhoneInvalid && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Must be a 10-digit US phone number.</div>}
+                {missingFieldKeys.has('emergency.phone') && !p.emergency.phone && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Required</div>}
               </Field>
             </div>
             <Field label="Dietary restrictions">

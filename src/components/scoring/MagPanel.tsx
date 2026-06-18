@@ -123,7 +123,15 @@ export function MagPanel({ levelId, eventCode, value, onChange }: {
       )}
 
       <WarnBox warnings={outcome.warnings} />
-      <BreakdownLine breakdown={outcome.breakdown} />
+      {/* SV breakdown: base value + skills + EG bonus only. Neutral option deductions
+          (OOB, floor time, etc.) appear separately — they go into total deductions
+          alongside execution deductions, not into the start value. */}
+      <BreakdownLine breakdown={outcome.breakdown.filter((b) => b.label !== 'Neutral deductions')} />
+      {outcome.breakdown.some((b) => b.label === 'Neutral deductions') && (
+        <div className="sp-breakdown" style={{ color: 'var(--ink-soft)', marginTop: 4 }}>
+          Neutral deductions: {Math.abs(outcome.breakdown.find((b) => b.label === 'Neutral deductions')!.value).toFixed(2)} (added to total deductions in score form)
+        </div>
+      )}
     </div>
   );
 }
