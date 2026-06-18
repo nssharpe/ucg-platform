@@ -17,6 +17,7 @@ const loaders = {
   Membership: () => import('./pages/Membership'),
   Profile: () => import('./pages/Profile'),
   Club: () => import('./pages/Club'),
+  Clubs: () => import('./pages/Clubs'),
   Meets: () => import('./pages/Meets'),
   Judge: () => import('./pages/Judge'),
   ScoreDetail: () => import('./pages/ScoreDetail'),
@@ -30,6 +31,7 @@ const Profile = lazy(() => loaders.Profile().then((m) => ({ default: m.Profile }
 const AdminProfile = lazy(() => loaders.Profile().then((m) => ({ default: () => <m.Profile adminView /> })));
 const ClubPage = lazy(() => loaders.Club().then((m) => ({ default: m.ClubPage })));
 const ClubCart = lazy(() => loaders.Club().then((m) => ({ default: m.ClubCart })));
+const Clubs = lazy(() => loaders.Clubs().then((m) => ({ default: m.Clubs })));
 const Meets = lazy(() => loaders.Meets().then((m) => ({ default: m.Meets })));
 const MeetDetail = lazy(() => loaders.Meets().then((m) => ({ default: m.MeetDetail })));
 const MeetManage = lazy(() => loaders.Meets().then((m) => ({ default: m.MeetManage })));
@@ -123,6 +125,7 @@ export default function App() {
               {/* Account required */}
               <Route path="/me" element={<RequireAccount><Profile /></RequireAccount>} />
               <Route path="/membership" element={<RequireAccount><Membership /></RequireAccount>} />
+              <Route path="/clubs" element={<RequireAccount><Clubs /></RequireAccount>} />
               <Route path="/club/:clubId" element={<RequireAccount><ClubPage /></RequireAccount>} />
               <Route path="/club/:clubId/cart" element={<RequireAccount><ClubCart /></RequireAccount>} />
               <Route path="/meets/:slug/manage" element={<RequireAccount><MeetManage /></RequireAccount>} />
