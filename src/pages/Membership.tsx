@@ -70,9 +70,10 @@ function MembershipInner({ me }: { me: Athlete }) {
   const complete = (via: 'card' | 'club') => {
     mutate((d) => {
       const p = d.people.find((x) => x.id === me.id)!;
-      p.memberships = p.memberships.filter((m) => m.seasonId !== seasonId);
+      p.memberships = p.memberships.filter((m) => !(m.seasonId === seasonId && m.type === 'athlete'));
       const membership: Membership = {
         seasonId,
+        type: 'athlete',
         status: via === 'card' ? 'active' : 'pending-club-payment',
         waiverSignedAt: new Date().toISOString(),
         waiverSignedBy: waiverSig,

@@ -7,7 +7,7 @@
 // block the UI) and are no-ops when `isSupabaseConfigured` is false.
 import { createClient, type SupabaseClient, type RealtimePostgresChangesPayload, type PostgrestError } from '@supabase/supabase-js';
 import type {
-  Athlete, Club, ClubRequest, Coupon, DB, Invoice, Level, Meet, Membership, Registration, Score, Season,
+  AccountInvite, Athlete, Club, ClubRequest, Coupon, DB, Invoice, Level, Meet, Membership, Region, Registration, Score, Season,
 } from './types';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
@@ -89,40 +89,52 @@ function remoteReplace(table: string, match: Record<string, unknown>, rows: Reco
 // ---------------------------------------------------------------------------
 const seasonToRow = (s: Season) => ({
   id: s.id, name: s.name, starts_on: s.startsOn, ends_on: s.endsOn,
-  athlete_fee: s.athleteFee, coach_fee: s.coachFee, active: s.active, current: s.current,
+  athlete_fee: s.athleteFee, coach_fee: s.coachFee, club_fee: s.clubFee,
+  active: s.active, current: s.current,
 });
 const rowToSeason = (r: any): Season => ({
   id: r.id, name: r.name, startsOn: r.starts_on, endsOn: r.ends_on,
-  athleteFee: Number(r.athlete_fee), coachFee: Number(r.coach_fee), active: r.active, current: r.current,
+  athleteFee: Number(r.athlete_fee), coachFee: Number(r.coach_fee),
+  clubFee: r.club_fee == null ? 109 : Number(r.club_fee),
+  active: r.active, current: r.current,
 });
 
 const levelToRow = (l: Level) => ({
-  id: l.id, discipline: l.discipline, name: l.name, sv_max: l.svMax, vaults: l.vaults, sort_order: l.order,
+  id: l.id, discipline: l.discipline, name: l.name, sv_max: l.svMax, vaults: l.vaults,
+  sort_order: l.order, retired: l.retired ?? false,
 });
 const rowToLevel = (r: any): Level => ({
   id: r.id, discipline: r.discipline, name: r.name,
   svMax: r.sv_max == null ? null : Number(r.sv_max), vaults: r.vaults, order: r.sort_order,
+  ...(r.retired ? { retired: true } : {}),
 });
 
 const clubToRow = (c: Club) => ({
   id: c.id, name: c.name, short_name: c.shortName, state: c.state, region: c.region,
-  email: c.email, allow_club_pay: c.allowClubPay,
+  email: c.email, allow_club_pay: c.allowClubPay, access: c.access ?? 'open',
 });
 const rowToClub = (r: any): Club => ({
   id: r.id, name: r.name, shortName: r.short_name, state: r.state ?? '', region: r.region ?? 'Other',
-  managerIds: [], email: r.email ?? '', allowClubPay: r.allow_club_pay,
+  managerIds: [], email: r.email ?? '', allowClubPay: r.allow_club_pay, access: r.access ?? 'open',
 });
 
 const couponToRow = (c: Coupon) => ({
   code: c.code, pct_off: c.pctOff ?? null, amount_off: c.amountOff ?? null, applies_to: c.appliesTo,
+  starts_at: c.startsAt ?? null, ends_at: c.endsAt ?? null,
+  max_uses: c.maxUses ?? null, used_count: c.usedCount ?? 0,
 });
 const rowToCoupon = (r: any): Coupon => ({
   code: r.code, pctOff: r.pct_off == null ? undefined : Number(r.pct_off),
   amountOff: r.amount_off == null ? undefined : Number(r.amount_off), appliesTo: r.applies_to,
+  startsAt: r.starts_at ?? null, endsAt: r.ends_at ?? null,
+  maxUses: r.max_uses == null ? null : Number(r.max_uses),
+  usedCount: r.used_count == null ? 0 : Number(r.used_count),
 });
 
 const personToRow = (p: Athlete) => ({
-  id: p.id, kind: p.kind, first_name: p.firstName, last_name: p.lastName, email: p.email,
+  id: p.id, kind: p.kind,
+  roles: p.roles ?? { athlete: p.kind !== 'coach', coach: p.kind === 'coach' },
+  first_name: p.firstName, last_name: p.lastName, email: p.email,
   dob: p.dob || null, gender: p.gender, placement: p.placement ?? {}, grad_year: p.gradYear,
   student_status: p.studentStatus, shirt: p.shirt, country: p.country, state: p.state,
   phone: p.phone, main_club_id: p.mainClubId, levels: p.levels ?? {},
@@ -131,14 +143,15 @@ const personToRow = (p: Athlete) => ({
 });
 
 const membershipToRow = (personId: string, m: Membership) => ({
-  // Membership has no TS id; derive a stable one (0004 dropped the uuid default)
-  id: `${personId}:${m.seasonId}`,
-  person_id: personId, season_id: m.seasonId, status: m.status,
+  // Membership has no TS id; derive a stable one (0004 dropped the uuid default).
+  // Includes type so a person can hold athlete + coach in the same season.
+  id: `${personId}:${m.seasonId}:${m.type ?? 'athlete'}`,
+  person_id: personId, season_id: m.seasonId, type: m.type ?? 'athlete', status: m.status,
   waiver_signed_at: m.waiverSignedAt, waiver_signed_by: m.waiverSignedBy,
   paid_via: m.paidVia, activated_by_admin: m.activatedByAdmin ?? false,
 });
 const rowToMembership = (r: any): Membership => ({
-  seasonId: r.season_id, status: r.status, waiverSignedAt: r.waiver_signed_at,
+  seasonId: r.season_id, type: r.type ?? 'athlete', status: r.status, waiverSignedAt: r.waiver_signed_at,
   waiverSignedBy: r.waiver_signed_by, paidVia: r.paid_via, activatedByAdmin: r.activated_by_admin,
 });
 
@@ -148,6 +161,8 @@ const meetToRow = (m: Meet) => ({
   reg_opens: m.regOpens || null, reg_closes: m.regCloses || null, entry_fee: m.entryFee,
   second_discipline_fee: m.secondDisciplineFee, disciplines: m.disciplines,
   private_reg_code: m.privateRegCode ?? null, banquet: m.banquet ?? null,
+  tshirt_addon: m.tshirtAddon ?? null, banner_addon: m.bannerAddon ?? null,
+  change_fee: m.changeFee ?? null,
   kind: m.kind ?? 'standard', nationals_config: m.nationalsConfig ?? null,
 });
 
@@ -165,7 +180,9 @@ const squadToRow = (sessionId: string, q: Meet['sessions'][number]['squads'][num
 const registrationToRow = (r: Registration, squadId: string | null = null) => ({
   id: r.id, meet_id: r.meetId, athlete_id: r.athleteId, club_id: r.clubId, discipline: r.discipline,
   level_id: r.levelId, events: r.events, session_id: r.sessionId, squad_id: squadId,
-  refunded: r.refunded ?? false, keep_listed: r.keepListed ?? false,
+  refunded: r.refunded ?? false, refund_requested: r.refundRequested ?? false,
+  keep_listed: r.keepListed ?? false,
+  partner_athlete_id: r.partnerAthleteId ?? null, event_levels: r.eventLevels ?? null,
 });
 
 /** squad_id for every registration, derived from session.squads[].athleteRegIds. */
@@ -178,6 +195,9 @@ const rowToRegistration = (r: any): Registration => ({
   id: r.id, meetId: r.meet_id, athleteId: r.athlete_id, clubId: r.club_id, discipline: r.discipline,
   levelId: r.level_id, events: r.events ?? [], sessionId: r.session_id,
   refunded: r.refunded, keepListed: r.keep_listed,
+  ...(r.refund_requested ? { refundRequested: true } : {}),
+  ...(r.partner_athlete_id ? { partnerAthleteId: r.partner_athlete_id } : {}),
+  ...(r.event_levels ? { eventLevels: r.event_levels } : {}),
 });
 
 const scoreToRow = (s: Score) => ({
@@ -252,7 +272,7 @@ export function pushPerson(p: Athlete) {
 
 /** Upsert just one season's membership row for a person (no replace of others). */
 export function pushMembership(personId: string, m: Membership) {
-  remoteUpsert('memberships', [membershipToRow(personId, m)], 'person_id,season_id');
+  remoteUpsert('memberships', [membershipToRow(personId, m)], 'person_id,season_id,type');
 }
 
 export function pushMeet(m: Meet) {
@@ -294,6 +314,19 @@ export function pushInvoice(inv: Invoice) {
 }
 
 export function pushClubRequest(r: ClubRequest) { remoteUpsert('club_requests', [clubRequestToRow(r)]); }
+
+/** Persist the admin-edited state→region overrides (0007 app_settings). */
+export function pushRegionOverrides(overrides: Record<string, Region>) {
+  remoteUpsert('app_settings', [{ key: 'region_overrides', value: overrides, updated_at: new Date().toISOString() }], 'key');
+}
+
+/** Persist an account-setup invite (0007 account_invites). */
+export function pushAccountInvite(inv: AccountInvite) {
+  remoteUpsert('account_invites', [{
+    id: inv.id, person_id: inv.personId, email: inv.email, token: inv.token,
+    status: inv.status, created_at: inv.createdAt, accepted_at: inv.acceptedAt ?? null,
+  }]);
+}
 
 /** Add or remove a single person↔club manager link. */
 export function pushClubManager(clubId: string, personId: string, add: boolean) {
@@ -362,7 +395,7 @@ export async function loadAll(): Promise<DB | null> {
     const [
       seasonsR, levelsR, clubsR, clubManagersR, peopleR, altClubsR, membershipsR,
       meetsR, sessionsR, squadsR, registrationsR, scoresR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
-      clubRequestsR,
+      clubRequestsR, appSettingsR, accountInvitesR,
     ] = await Promise.all([
       supabase.from('seasons').select('*'),
       supabase.from('levels').select('*'),
@@ -381,6 +414,8 @@ export async function loadAll(): Promise<DB | null> {
       supabase.from('invoices').select('*'),
       supabase.from('invoice_items').select('*'),
       supabase.from('club_requests').select('*'),
+      supabase.from('app_settings').select('*'),       // 0007; tolerated if absent
+      supabase.from('account_invites').select('*'),     // 0007; tolerated if absent
     ]);
 
     // club_requests may not exist on a pre-0005 DB — tolerate its error, fail on the rest.
@@ -415,7 +450,9 @@ export async function loadAll(): Promise<DB | null> {
       membershipsByPerson.set(r.person_id, arr);
     }
     const people: Athlete[] = (peopleR.data ?? []).map((r: any) => ({
-      id: r.id, authUserId: r.auth_user_id ?? null, kind: r.kind, firstName: r.first_name, lastName: r.last_name, email: r.email,
+      id: r.id, authUserId: r.auth_user_id ?? null, kind: r.kind,
+      roles: r.roles ?? { athlete: r.kind !== 'coach', coach: r.kind === 'coach' },
+      firstName: r.first_name, lastName: r.last_name, email: r.email,
       dob: r.dob ?? '', gender: r.gender, placement: r.placement ?? {}, gradYear: r.grad_year,
       studentStatus: r.student_status, shirt: r.shirt ?? '', country: r.country ?? '', state: r.state ?? '',
       phone: r.phone ?? '', mainClubId: r.main_club_id, altClubIds: altClubsByPerson.get(r.id) ?? [],
@@ -456,6 +493,9 @@ export async function loadAll(): Promise<DB | null> {
       disciplines: r.disciplines ?? [], sessions: sessionsByMeet.get(r.id) ?? [],
       ...(r.private_reg_code ? { privateRegCode: r.private_reg_code } : {}),
       ...(r.banquet ? { banquet: r.banquet } : {}),
+      ...(r.tshirt_addon ? { tshirtAddon: r.tshirt_addon } : {}),
+      ...(r.banner_addon ? { bannerAddon: r.banner_addon } : {}),
+      ...(r.change_fee ? { changeFee: r.change_fee } : {}),
       ...(r.kind && r.kind !== 'standard' ? { kind: r.kind } : {}),
       ...(r.nationals_config ? { nationalsConfig: r.nationals_config } : {}),
     }));
@@ -485,7 +525,22 @@ export async function loadAll(): Promise<DB | null> {
 
     const clubRequests: ClubRequest[] = (clubRequestsR.error ? [] : clubRequestsR.data ?? []).map(rowToClubRequest);
 
-    return { seasons, levels, clubs, people, meets, registrations, scores, invoices, coupons, carts, clubRequests };
+    // 0007 tables — tolerate absence (pre-migration) by checking .error.
+    const regionOverridesRow = (appSettingsR.error ? [] : appSettingsR.data ?? [])
+      .find((r: any) => r.key === 'region_overrides');
+    const regionOverrides = (regionOverridesRow?.value ?? undefined) as DB['regionOverrides'];
+    const accountInvites: AccountInvite[] = (accountInvitesR.error ? [] : accountInvitesR.data ?? [])
+      .map((r: any): AccountInvite => ({
+        id: r.id, personId: r.person_id ?? null, email: r.email, token: r.token,
+        status: r.status, createdAt: r.created_at, acceptedAt: r.accepted_at ?? null,
+      }));
+
+    return {
+      seasons, levels, clubs, people, meets, registrations, scores, invoices, coupons,
+      carts, clubRequests,
+      ...(regionOverrides ? { regionOverrides } : {}),
+      ...(accountInvites.length ? { accountInvites } : {}),
+    };
   } catch (e) {
     console.error('[supabase] loadAll threw:', e);
     return null;

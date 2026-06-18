@@ -16,7 +16,7 @@ export function nextId(items: { id: string }[], prefix: string): string {
 
 const BLANK: Omit<Club, 'id'> = {
   name: '', shortName: '', state: '', region: 'Other',
-  managerIds: [], email: '', allowClubPay: true,
+  managerIds: [], email: '', allowClubPay: true, access: 'open',
 };
 
 /** Create (club undefined) or edit a club in a modal. */

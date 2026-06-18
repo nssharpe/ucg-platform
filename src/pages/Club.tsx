@@ -140,7 +140,7 @@ function ClubManagers({ club }: { club: Club }) {
     const id = crypto.randomUUID();
     const local = addr.split('@')[0];
     const person: Athlete = {
-      id, kind: 'coach', firstName: local, lastName: '(invited)', email: addr,
+      id, kind: 'coach', roles: { athlete: false, coach: true }, firstName: local, lastName: '(invited)', email: addr,
       dob: '', gender: 'Other', gradYear: 1900, studentStatus: 'Non-Student', shirt: '',
       country: 'USA', state: club.state ?? '', phone: '', mainClubId: club.id, altClubIds: [],
       levels: {}, emergency: { contact: '', relation: '', phone: '' }, dietary: [], dietaryNotes: '',

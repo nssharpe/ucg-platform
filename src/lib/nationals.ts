@@ -80,13 +80,13 @@ export async function loadNationals(): Promise<{ athletes: number; scores: numbe
       db.clubs.push({
         id: c.id, name: c.name, shortName: c.shortName,
         state: 'Other', region: STATE_REGIONS[c.name] ?? 'Other',
-        managerIds: [], email: '', allowClubPay: false,
+        managerIds: [], email: '', allowClubPay: false, access: 'open',
       } as Club);
     }
 
     for (const p of data.people) {
       db.people.push({
-        id: p.id, kind: 'athlete',
+        id: p.id, kind: 'athlete', roles: { athlete: true, coach: false },
         firstName: p.f, lastName: p.l, email: p.e,
         dob: '', gender: (p.g === 'Female' || p.g === 'Male' ? p.g : 'Other'),
         gradYear: 1900, studentStatus: p.student ? 'Student' : 'Non-Student',

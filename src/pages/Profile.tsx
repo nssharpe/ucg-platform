@@ -554,7 +554,7 @@ function AdminMembershipControls({
                       if (em) {
                         em.status = 'active'; em.activatedByAdmin = true;
                       } else {
-                        em = { seasonId: s.id, status: 'active', waiverSignedAt: null, waiverSignedBy: null, paidVia: 'comp', activatedByAdmin: true };
+                        em = { seasonId: s.id, type: 'athlete', status: 'active', waiverSignedAt: null, waiverSignedBy: null, paidVia: 'comp', activatedByAdmin: true };
                         personInDraft.memberships.push(em);
                       }
                       pushMembership(personInDraft.id, em);

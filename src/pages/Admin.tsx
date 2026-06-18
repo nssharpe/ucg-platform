@@ -304,7 +304,7 @@ export function AdminClubs() {
       id, name: req.proposedName, shortName: req.shortName || req.proposedName.slice(0, 12),
       state: req.state, region: (req.region || STATE_REGIONS[req.state] || 'Other') as Region,
       managerIds: req.requesterPersonId ? [req.requesterPersonId] : [],
-      email: '', allowClubPay: true,
+      email: '', allowClubPay: true, access: 'open',
     };
     mutate((d) => {
       d.clubs.push(club);
