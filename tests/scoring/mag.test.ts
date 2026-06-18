@@ -30,7 +30,8 @@ describe('mag scoring engine — Developmental FX', () => {
     expect(outcome.breakdown.find((b) => b.label === 'Base value')?.value).toBe(10.0);
     expect(outcome.breakdown.find((b) => b.label === 'Skills')?.value).toBe(0);
     expect(outcome.breakdown.find((b) => b.label === 'EG bonus')?.value).toBe(0);
-    expect(outcome.breakdown.find((b) => b.label === 'Neutral deductions')?.value).toBe(-3.0);
+    // Short-exercise deduction reduces SV; surfaced as 'Short exercise deduction' in breakdown.
+    expect(outcome.breakdown.find((b) => b.label === 'Short exercise deduction')?.value).toBe(-3.0);
   });
 
   it('Ground truth 2: skills value (C+B=0.5) + EG bonus (I + II = 1.0) before deductions', () => {
@@ -56,7 +57,7 @@ describe('mag scoring engine — Developmental FX', () => {
     // d = 11.5 - 2.0 = 9.5 (with the engine's default neutral-deduction options
     // left at zero, i.e. without reproducing the original's 1.444 typed value).
     expect(outcome.d).toBe(9.5);
-    expect(outcome.breakdown.find((b) => b.label === 'Neutral deductions')?.value).toBe(-2.0);
+    expect(outcome.breakdown.find((b) => b.label === 'Short exercise deduction')?.value).toBe(-2.0);
   });
 
   it('Ground truth 3: 4-per-EG fix — only 4 of 6 same-EG J skills count, SV is capped, 2 rows excluded', () => {
@@ -88,7 +89,7 @@ describe('mag scoring engine — FIG short-exercise fix', () => {
     const outcome = compute(state, 'fig', 'FX');
 
     // raw = 10 + 0 (skills) + 0 (EG) = 10; shortExerciseDeduction('FIG', 0) = 10
-    expect(outcome.breakdown.find((b) => b.label === 'Neutral deductions')?.value).toBe(-10);
+    expect(outcome.breakdown.find((b) => b.label === 'Short exercise deduction')?.value).toBe(-10);
     expect(outcome.d).toBe(0);
   });
 });
@@ -118,5 +119,33 @@ describe('mag scoring engine — Vault (VT) intentional fixes', () => {
     expect(outcome.d).toBe(13.4);
     expect(outcome.warnings).not.toContain('No credit — vault SV 0.0');
     expect(outcome.warnings.some((w) => w.includes('Start Value Cap implemented'))).toBe(false);
+  });
+});
+
+describe('mag scoring engine — neutral deductions do not reduce start value', () => {
+  it('Neutral option deductions (OOB, floor time) appear in breakdown but do NOT reduce d', () => {
+    // Use MAG Advanced FX: has OOB and floor-time neutral options.
+    const state = init('mag-adv', 'FX');
+    // Fill 8 skills so there is no short-exercise deduction.
+    for (let i = 0; i < 8; i++) {
+      state.skills[i] = 'A';
+      state.egs[i] = 'I';
+    }
+    const baseline = compute(state, 'mag-adv', 'FX');
+
+    // Now add neutral option deductions: 2 × OOB −0.1 = −0.2.
+    state.deductions['oob-01'] = 2;
+    const withNeutral = compute(state, 'mag-adv', 'FX');
+
+    // d must be unchanged — neutral deductions do NOT reduce start value.
+    expect(withNeutral.d).toBe(baseline.d);
+
+    // Neutral deductions must appear in the breakdown as a negative value.
+    const neutralLine = withNeutral.breakdown.find((b) => b.label === 'Neutral deductions');
+    expect(neutralLine).toBeDefined();
+    expect(neutralLine!.value).toBe(-0.2);
+
+    // No 'Short exercise deduction' line since 8 skills are present.
+    expect(withNeutral.breakdown.find((b) => b.label === 'Short exercise deduction')).toBeUndefined();
   });
 });

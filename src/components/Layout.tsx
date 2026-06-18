@@ -5,6 +5,7 @@ import { useCapabilities } from '../lib/capabilities';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { useSession } from '../lib/auth';
 import { Combo } from './ui';
+import { useNavHistory, useGoBack, labelFor } from '../lib/navHistory';
 
 interface NavGroup { group: string; items: { to: string; label: string }[] }
 
@@ -46,6 +47,8 @@ export function Layout({ children }: { children: ReactNode }) {
   const loc = useLocation();
   const viewPersonId = useViewPersonId();
   const session = useSession();
+  useNavHistory(); // record each page visit into the module-level stack
+  const goBack = useGoBack(); // null when no prior history
 
   const me = caps.person;
   const season = db.seasons.find((s) => s.current)!;
@@ -72,7 +75,7 @@ export function Layout({ children }: { children: ReactNode }) {
               <NavLink
                 key={it.to}
                 to={it.to}
-                end={it.to === '/'}
+                end
                 className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
               >
                 {it.label}
@@ -86,7 +89,22 @@ export function Layout({ children }: { children: ReactNode }) {
             <>
               <label>View as (admin)</label>
               <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                {/* Wrapper overrides combo-list to open upward so it stays on-screen,
+                    and darkens combo-item text for readability. */}
                 <div style={{ flex: 1, minWidth: 0 }}>
+                  <style>{`
+                    .role-card .combo .combo-list {
+                      top: auto;
+                      bottom: calc(100% + 4px);
+                      max-height: min(240px, 60vh);
+                    }
+                    .role-card .combo .combo-item {
+                      color: var(--navy-800);
+                    }
+                    .role-card .combo .combo-item .sub {
+                      color: var(--navy-600);
+                    }
+                  `}</style>
                   <Combo
                     options={personOptions}
                     value={viewPersonId}
@@ -128,7 +146,27 @@ export function Layout({ children }: { children: ReactNode }) {
       </aside>
       <div className="main">
         <header className="topbar">
-          <span className="crumb">{loc.pathname === '/' ? 'Home' : loc.pathname.replace(/^\//, '').split('/').join(' / ')}</span>
+          {goBack ? (
+            <button
+              type="button"
+              onClick={goBack}
+              style={{
+                background: 'none',
+                border: 'none',
+                padding: '4px 8px 4px 0',
+                cursor: 'pointer',
+                fontSize: 13,
+                color: 'var(--ink-soft)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
+                flexShrink: 0,
+              }}
+            >
+              ← Back
+            </button>
+          ) : null}
+          <span className="crumb">{labelFor(loc.pathname)}</span>
           <div style={{ flex: 1 }} />
           {me && (
             myMembership?.status === 'active' ? (

@@ -351,7 +351,6 @@ export function compute(state: MagState, levelId: string, eventCode: string): Sc
 
   const otherBonus = optionTotal(bonusOptions(ruleset, apparatus), state.bonus);
   const optionDeductions = state.hideNeutral ? 0 : optionTotal(deductionOptions(ruleset, apparatus), state.deductions);
-  const neutral = round3(optionDeductions + short);
 
   const raw = round3(10.0 + skillsValue + egBonus + otherBonus);
   let capped: number | null = null;
@@ -359,7 +358,10 @@ export function compute(state: MagState, levelId: string, eventCode: string): Sc
   else if (ruleset === 'NAIGC Intermediate' && raw > 13.2) capped = 13.2;
   if (capped !== null) warnings.push(`Start Value Cap implemented, SV reduced to ${capped.toFixed(1)} from ${raw.toFixed(1)}`);
 
-  let sv = round3((capped ?? raw) - neutral);
+  // Short-exercise deduction reduces the start value (SV rule).
+  // Neutral option deductions (OOB, floor time, etc.) belong in total deductions
+  // alongside execution deductions — they do NOT reduce start value.
+  let sv = round3((capped ?? raw) - short);
   if (apparatus === 'VT' && !state.hideNeutral && state.deductions['no-credit']) {
     sv = 0;
     warnings.push('No credit — vault SV 0.0');
@@ -370,7 +372,10 @@ export function compute(state: MagState, levelId: string, eventCode: string): Sc
     { label: 'Skills', value: skillsValue },
     { label: 'EG bonus', value: egBonus },
     { label: 'Other bonus', value: otherBonus },
-    { label: 'Neutral deductions', value: -neutral },
+    ...(short > 0 ? [{ label: 'Short exercise deduction', value: -short }] : []),
+    // Neutral option deductions are surfaced here for the judge form to pick up
+    // and add to total deductions — they are NOT subtracted from start value.
+    ...(optionDeductions > 0 ? [{ label: 'Neutral deductions', value: -optionDeductions }] : []),
   ];
 
   return { d: sv, e: null, final: null, produces: 'd', breakdown, warnings };
