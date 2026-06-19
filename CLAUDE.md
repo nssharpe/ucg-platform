@@ -3,6 +3,24 @@
 React + TypeScript + Vite. Live: https://nssharpe.github.io/ucg-platform/
 Supabase backend (env-gated). Deploys via GitHub Actions on push to `main`.
 
+## Working style (Nate = PM, not hands-on)
+Do as much as possible directly. When a step is technically doable but blocked only
+on a one-time setup or a permission grant, ask for *just that unblock*, then execute
+the step yourself — don't hand the whole step back to Nate as instructions. Nate has
+standing authorization to run `supabase db push` / apply migrations to the live DB
+(granted 2026-06-18). Still confirm genuinely destructive prod actions and show what
+will apply first.
+
+## Supabase / migrations
+- Project ref `wkyerxlgricfphopocoz` (org NAIGC). Migrations in `supabase/migrations/`.
+- Apply via `supabase db push` (the shell sandbox blocks network — run with the
+  sandbox disabled). Earlier migrations were applied out-of-band via the dashboard
+  SQL editor, so the CLI's migration-history table may be out of sync; check
+  `supabase migration list` and `migration repair` before a blind push.
+- **Enum gotcha:** `ALTER TYPE ... ADD VALUE` cannot be used in the same transaction
+  that then references the new value. Put each such change in its OWN migration file
+  (e.g. `0007b_sanctioning_role.sql`) so it commits before any file that uses it.
+
 ## Build / tooling gotchas
 - The repo path contains spaces **and** an `&`, which breaks npm/npx cmd shims on
   Windows. Invoke binaries directly: `node node_modules/<pkg>/bin/...`.
