@@ -26,8 +26,9 @@ function phoneValid(raw: string): boolean {
 // ---------------------------------------------------------------------------
 
 const blank = (): Omit<Athlete, 'id'> => ({
-  kind: 'athlete', firstName: '', lastName: '', email: '', dob: '', gender: 'Female',
-  gradYear: 1900, studentStatus: 'Student', shirt: 'Adult M', country: 'United States',
+  kind: 'athlete', roles: { athlete: true, coach: false },
+  firstName: '', lastName: '', email: '', dob: '', gender: 'Female',
+  gradYear: 1900, studentStatus: 'Student', shirt: '', country: 'United States',
   state: '', phone: '', mainClubId: null, altClubIds: [], levels: {},
   emergency: { contact: '', relation: '', phone: '' },
   dietary: [], dietaryNotes: '', memberships: [], achievements: [],

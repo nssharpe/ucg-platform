@@ -20,9 +20,9 @@ const LAST = ['Chen', 'Patel', 'Garcia', 'Kim', 'Nguyen', 'Brooks', 'Rivera', 'T
 
 export function buildSeed(): DB {
   const seasons: Season[] = [
-    { id: 's25', name: '2024–25', startsOn: '2024-07-01', endsOn: '2025-06-30', athleteFee: 35, coachFee: 20, active: false, current: false },
-    { id: 's26', name: '2025–26', startsOn: '2025-07-01', endsOn: '2026-06-30', athleteFee: 35, coachFee: 20, active: true, current: true },
-    { id: 's27', name: '2026–27', startsOn: '2026-07-01', endsOn: '2027-06-30', athleteFee: 40, coachFee: 20, active: true, current: false },
+    { id: 's25', name: '2024–25', startsOn: '2024-07-01', endsOn: '2025-06-30', athleteFee: 35, coachFee: 20, clubFee: 100, active: false, current: false },
+    { id: 's26', name: '2025–26', startsOn: '2025-07-01', endsOn: '2026-06-30', athleteFee: 35, coachFee: 20, clubFee: 109, active: true, current: true },
+    { id: 's27', name: '2026–27', startsOn: '2026-07-01', endsOn: '2027-06-30', athleteFee: 40, coachFee: 20, clubFee: 109, active: true, current: false },
   ];
 
   const levels: Level[] = [
@@ -59,6 +59,7 @@ export function buildSeed(): DB {
     managerIds: [],
     email: `${shortName.toLowerCase().replace(/[^a-z]/g, '')}@clubs.ucg.org`,
     allowClubPay: i % 3 !== 2,
+    access: 'open',
   }));
 
   const people: Athlete[] = [];
@@ -81,6 +82,7 @@ export function buildSeed(): DB {
     return {
       id: `p-${pid}`,
       kind,
+      roles: { athlete: kind !== 'coach', coach: kind === 'coach' },
       firstName, lastName,
       email: `${firstName.toLowerCase()}.${lastName.toLowerCase()}${pid}@example.com`,
       dob: `${kind === 'coach' ? 1985 + (pid % 12) : 1998 + (pid % 9)}-0${1 + (pid % 9)}-1${pid % 9}`,
@@ -99,9 +101,9 @@ export function buildSeed(): DB {
       dietary: rnd() < 0.25 ? [pick(['Vegetarian', 'Vegan', 'Gluten-free', 'Peanut Allergy'])] : [],
       dietaryNotes: '',
       memberships: hasMembership
-        ? [{ seasonId: 's26', status: 'active', waiverSignedAt: '2025-08-1' + (pid % 9) + 'T12:00:00Z', waiverSignedBy: `${firstName} ${lastName}`, paidVia: rnd() < 0.6 ? 'card' : 'club' }]
+        ? [{ seasonId: 's26', type: 'athlete', status: 'active', waiverSignedAt: '2025-08-1' + (pid % 9) + 'T12:00:00Z', waiverSignedBy: `${firstName} ${lastName}`, paidVia: rnd() < 0.6 ? 'card' : 'club' }]
         : pendingClub
-          ? [{ seasonId: 's26', status: 'pending-club-payment', waiverSignedAt: '2025-09-01T12:00:00Z', waiverSignedBy: `${firstName} ${lastName}`, paidVia: null }]
+          ? [{ seasonId: 's26', type: 'athlete', status: 'pending-club-payment', waiverSignedAt: '2025-09-01T12:00:00Z', waiverSignedBy: `${firstName} ${lastName}`, paidVia: null }]
           : [],
       achievements: rnd() < 0.3 ? [pick(['First kip', 'Giants', 'Salto on floor', 'Placed at Nationals', 'Omnithon finisher'])] : [],
     };
@@ -123,7 +125,7 @@ export function buildSeed(): DB {
   // Name the personas we feature in the role switcher
   people[0].firstName = 'Maya'; people[0].lastName = 'Okafor'; people[0].kind = 'athlete';
   people[0].levels = { WAG: 'wag-plat' };
-  people[0].memberships = [{ seasonId: 's26', status: 'active', waiverSignedAt: '2025-08-02T12:00:00Z', waiverSignedBy: 'Maya Okafor', paidVia: 'card' }];
+  people[0].memberships = [{ seasonId: 's26', type: 'athlete', status: 'active', waiverSignedAt: '2025-08-02T12:00:00Z', waiverSignedBy: 'Maya Okafor', paidVia: 'card' }];
 
   // ---- Meets ----
   const tz = 'America/Chicago';

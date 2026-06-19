@@ -1,0 +1,368 @@
+/**
+ * RegistrationEditor — reusable registration editor for a single athlete at a meet.
+ *
+ * CONTRACT
+ * --------
+ * Props:
+ *   meet        — the Meet being registered for
+ *   athlete     — the Athlete being registered
+ *   clubId      — the club they are competing for
+ *   existing    — current Registration[] for this athlete+meet (may be [])
+ *   allAthletes — full athlete list (for synchro partner combo)
+ *   levels      — full Level[] from the DB
+ *   season      — current Season (to check active memberships for partner search)
+ *   onSave(regs: Registration[]) — called with the complete set of new/updated
+ *                                  registrations (one per selected discipline).
+ *                                  The parent is responsible for mutate+push.
+ *   onCancel()  — called on cancel / close without changes
+ *   changeFeeApplies — if true the save button label says "Add change to cart"
+ *                      and the parent may charge a change fee; the editor itself
+ *                      does not add the fee — that is the parent's job.
+ *
+ * The component is fully presentational + callback-driven.
+ * It does NOT call mutate() or push*() directly.
+ */
+
+import { useState, useMemo } from 'react';
+import { Combo, Field } from './ui';
+import { EVENTS } from '../lib/types';
+import type { Athlete, Discipline, Level, Meet, Registration, Season } from '../lib/types';
+
+// ---- per-discipline section -------------------------------------------------
+
+interface DiscSectionProps {
+  disc: Discipline;
+  meet: Meet;
+  athlete: Athlete;
+  levels: Level[];
+  existing: Registration | undefined; // existing reg for this disc, if any
+  draft: DraftReg;
+  onChange: (d: DraftReg) => void;
+  allAthletes: Athlete[];
+  season: Season;
+}
+
+/** Draft shape for one discipline */
+export interface DraftReg {
+  enabled: boolean;
+  levelId: string;
+  events: string[];
+  eventLevels: Record<string, string>; // T&T per-event levels
+  partnerAthleteId: string | null; // synchro
+  partnerUnknown: boolean;
+}
+
+function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, season }: DiscSectionProps) {
+  const discLevels = levels.filter((l) => l.discipline === disc && !l.retired);
+  const events = EVENTS[disc];
+  const isTNT = disc === 'TNT';
+
+  // SY (Synchro) is an event within TNT, not its own discipline
+  const synchroSelected = isTNT && draft.events.includes('SY');
+
+  // Athletes with active memberships for the partner combo
+  const partnerOptions = useMemo(() => {
+    return allAthletes
+      .filter((a) => a.id !== athlete.id && a.memberships.some((m) => m.seasonId === season.id && m.status === 'active'))
+      .map((a) => ({ value: a.id, label: `${a.firstName} ${a.lastName}`, sub: a.email }));
+  }, [allAthletes, athlete.id, season.id]);
+
+  const toggleEvent = (code: string) => {
+    const next = draft.events.includes(code)
+      ? draft.events.filter((e) => e !== code)
+      : [...draft.events, code];
+
+    // Update eventLevels for T&T — add/remove the key
+    let nextEventLevels = { ...draft.eventLevels };
+    if (isTNT) {
+      if (next.includes(code) && !nextEventLevels[code]) {
+        nextEventLevels[code] = draft.levelId;
+      } else if (!next.includes(code)) {
+        delete nextEventLevels[code];
+      }
+    }
+    onChange({ ...draft, events: next, eventLevels: nextEventLevels });
+  };
+
+  const selectAllAround = () => {
+    const allCodes = events.map((e) => e.code);
+    const nextEventLevels: Record<string, string> = {};
+    if (isTNT) {
+      for (const code of allCodes) nextEventLevels[code] = draft.eventLevels[code] ?? draft.levelId;
+    }
+    onChange({ ...draft, events: allCodes, eventLevels: nextEventLevels });
+  };
+
+  const clearAll = () => {
+    onChange({ ...draft, events: [], eventLevels: {} });
+  };
+
+  const isAA = draft.events.length === events.length && events.every((e) => draft.events.includes(e.code));
+
+  const setMainLevel = (levelId: string) => {
+    // When the main level changes, update any eventLevels that were still at the
+    // previous main level (i.e. not individually overridden).
+    const nextEventLevels: Record<string, string> = {};
+    for (const [ev, lvl] of Object.entries(draft.eventLevels)) {
+      nextEventLevels[ev] = lvl === draft.levelId ? levelId : lvl;
+    }
+    onChange({ ...draft, levelId, eventLevels: nextEventLevels });
+  };
+
+  return (
+    <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, marginTop: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+        <label className="checkrow" style={{ fontWeight: 700, fontSize: 15 }}>
+          <input
+            type="checkbox"
+            checked={draft.enabled}
+            onChange={(e) => onChange({ ...draft, enabled: e.target.checked })}
+          />
+          {disc === 'TNT' ? 'T&T' : disc}
+        </label>
+      </div>
+
+      {draft.enabled && (
+        <div style={{ paddingLeft: 24 }}>
+          {/* Level selector */}
+          <div className="grid cols-2" style={{ gap: 10, marginBottom: 10 }}>
+            <Field label={isTNT ? 'Default T&T level' : `${disc} level`}>
+              <select
+                className="input"
+                value={draft.levelId}
+                onChange={(e) => setMainLevel(e.target.value)}
+              >
+                <option value="" disabled>— select —</option>
+                {discLevels.map((l) => (
+                  <option key={l.id} value={l.id}>{l.name}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
+
+          {/* Event checkboxes */}
+          <div style={{ marginBottom: 8 }}>
+            <div style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 6 }}>
+              Events
+              <button
+                type="button"
+                className="btn ghost small"
+                style={{ marginLeft: 8 }}
+                onClick={isAA ? clearAll : selectAllAround}
+              >
+                {isAA ? 'Clear all' : 'All-Around'}
+              </button>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 16px' }}>
+              {events.map((ev) => (
+                <label className="checkrow" key={ev.code} style={{ minWidth: 120 }}>
+                  <input
+                    type="checkbox"
+                    checked={draft.events.includes(ev.code)}
+                    onChange={() => toggleEvent(ev.code)}
+                  />
+                  <span title={ev.name}>{ev.code} — {ev.name}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* T&T per-event level overrides */}
+          {isTNT && draft.events.length > 0 && (
+            <div style={{ marginTop: 10, marginBottom: 8 }}>
+              <div style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 6 }}>
+                Per-event level (T&T — defaults to main level above)
+              </div>
+              <div className="grid cols-2" style={{ gap: 8 }}>
+                {draft.events.map((code) => {
+                  const evDef = events.find((e) => e.code === code);
+                  return (
+                    <Field key={code} label={`${code} — ${evDef?.name ?? code}`}>
+                      <select
+                        className="input"
+                        value={draft.eventLevels[code] ?? draft.levelId}
+                        onChange={(e) => {
+                          onChange({
+                            ...draft,
+                            eventLevels: { ...draft.eventLevels, [code]: e.target.value },
+                          });
+                        }}
+                      >
+                        <option value="" disabled>— select —</option>
+                        {discLevels.map((l) => (
+                          <option key={l.id} value={l.id}>{l.name}</option>
+                        ))}
+                      </select>
+                    </Field>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Synchro partner (TNT SY event) */}
+          {synchroSelected && (
+            <div style={{ marginTop: 10, padding: '10px 12px', background: 'var(--surface-raised, var(--surface))', borderRadius: 8, border: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Synchro partner</div>
+              <label className="checkrow" style={{ marginBottom: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={draft.partnerUnknown}
+                  onChange={(e) => onChange({ ...draft, partnerUnknown: e.target.checked, partnerAthleteId: e.target.checked ? null : draft.partnerAthleteId })}
+                />
+                Partner unknown / to be assigned later
+              </label>
+              {!draft.partnerUnknown && (
+                <Field label="Partner athlete">
+                  <Combo
+                    options={partnerOptions}
+                    value={draft.partnerAthleteId}
+                    onChange={(v) => onChange({ ...draft, partnerAthleteId: v })}
+                    placeholder="Search by name…"
+                  />
+                </Field>
+              )}
+              {!draft.partnerUnknown && !draft.partnerAthleteId && (
+                <p style={{ fontSize: 12, color: 'var(--warn-600, #a16207)', marginTop: 4 }}>
+                  A synchro meet can't go live until all entries have partners assigned.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- main component ---------------------------------------------------------
+
+export interface RegistrationEditorProps {
+  meet: Meet;
+  athlete: Athlete;
+  clubId: string;
+  existing: Registration[]; // all regs for this athlete+meet (may be [])
+  allAthletes: Athlete[];
+  levels: Level[];
+  season: Season;
+  onSave: (regs: Registration[]) => void;
+  onCancel: () => void;
+  /** When true, save button says "Add change to cart" — the parent handles the fee */
+  changeFeeApplies?: boolean;
+}
+
+export function RegistrationEditor({
+  meet,
+  athlete,
+  clubId,
+  existing,
+  allAthletes,
+  levels,
+  season,
+  onSave,
+  onCancel,
+  changeFeeApplies = false,
+}: RegistrationEditorProps) {
+  // Build initial draft state from existing regs (or defaults from athlete.levels)
+  const initDrafts = (): Record<Discipline, DraftReg> => {
+    const out = {} as Record<Discipline, DraftReg>;
+    for (const disc of meet.disciplines as Discipline[]) {
+      const reg = existing.find((r) => r.discipline === disc && !r.refunded);
+      const discLevels = levels.filter((l) => l.discipline === disc && !l.retired);
+      const defaultLevelId = athlete.levels[disc] ?? discLevels[0]?.id ?? '';
+      if (reg) {
+        out[disc] = {
+          enabled: true,
+          levelId: reg.levelId,
+          events: [...reg.events],
+          eventLevels: { ...(reg.eventLevels ?? {}) },
+          partnerAthleteId: reg.partnerAthleteId ?? null,
+          partnerUnknown: reg.partnerAthleteId === null && reg.events.includes('SY'),
+        };
+      } else {
+        out[disc] = {
+          enabled: false,
+          levelId: defaultLevelId,
+          events: [],
+          eventLevels: {},
+          partnerAthleteId: null,
+          partnerUnknown: false,
+        };
+      }
+    }
+    return out;
+  };
+
+  const [drafts, setDrafts] = useState<Record<Discipline, DraftReg>>(initDrafts);
+
+  const updateDisc = (disc: Discipline, d: DraftReg) =>
+    setDrafts((prev) => ({ ...prev, [disc]: d }));
+
+  const handleSave = () => {
+    const regs: Registration[] = [];
+    for (const disc of meet.disciplines as Discipline[]) {
+      const d = drafts[disc];
+      if (!d.enabled || d.events.length === 0) continue;
+      const existing_ = existing.find((r) => r.discipline === disc && !r.refunded);
+      const session = meet.sessions.find((s) => s.discipline === disc && s.levelIds.includes(d.levelId))
+        ?? meet.sessions.find((s) => s.discipline === disc);
+
+      const reg: Registration = {
+        id: existing_?.id ?? `reg-${Date.now()}-${athlete.id}-${disc}`,
+        meetId: meet.id,
+        athleteId: athlete.id,
+        clubId,
+        discipline: disc,
+        levelId: d.levelId,
+        events: [...d.events],
+        sessionId: existing_?.sessionId ?? session?.id ?? null,
+        ...(Object.keys(d.eventLevels).length > 0 ? { eventLevels: d.eventLevels } : {}),
+        ...(d.events.includes('SY') ? { partnerAthleteId: d.partnerUnknown ? null : d.partnerAthleteId } : {}),
+        ...(existing_?.refunded !== undefined ? { refunded: existing_.refunded } : {}),
+        ...(existing_?.refundRequested !== undefined ? { refundRequested: existing_.refundRequested } : {}),
+        ...(existing_?.keepListed !== undefined ? { keepListed: existing_.keepListed } : {}),
+        ...(existing_?.category !== undefined ? { category: existing_.category } : {}),
+        ...(existing_?.quals !== undefined ? { quals: existing_.quals } : {}),
+      };
+      regs.push(reg);
+    }
+    onSave(regs);
+  };
+
+  const anyEnabled = (meet.disciplines as Discipline[]).some((d) => drafts[d]?.enabled && drafts[d].events.length > 0);
+
+  return (
+    <div>
+      <div style={{ marginBottom: 8 }}>
+        <strong style={{ fontSize: 16 }}>{athlete.firstName} {athlete.lastName}</strong>
+        <span style={{ fontSize: 13, color: 'var(--ink-soft)', marginLeft: 8 }}>{meet.name}</span>
+      </div>
+
+      {(meet.disciplines as Discipline[]).map((disc) => (
+        <DiscSection
+          key={disc}
+          disc={disc}
+          meet={meet}
+          athlete={athlete}
+          levels={levels}
+          existing={existing.find((r) => r.discipline === disc && !r.refunded)}
+          draft={drafts[disc] ?? { enabled: false, levelId: '', events: [], eventLevels: {}, partnerAthleteId: null, partnerUnknown: false }}
+          onChange={(d) => updateDisc(disc, d)}
+          allAthletes={allAthletes}
+          season={season}
+        />
+      ))}
+
+      <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
+        <button
+          className="btn primary"
+          disabled={!anyEnabled}
+          onClick={handleSave}
+        >
+          {changeFeeApplies ? 'Add change to cart' : 'Save registration'}
+        </button>
+        <button className="btn ghost" onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
+  );
+}

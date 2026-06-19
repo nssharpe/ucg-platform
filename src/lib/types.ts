@@ -21,6 +21,7 @@ export const EVENTS: Record<Discipline, { code: string; name: string }[]> = {
     { code: 'TR', name: 'Trampoline' },
     { code: 'DM', name: 'Double Mini' },
     { code: 'TU', name: 'Tumbling' },
+    { code: 'SY', name: 'Synchro Trampoline' },
   ],
 };
 
@@ -41,6 +42,7 @@ export interface Season {
   endsOn: string; // ISO date (Jun 30)
   athleteFee: number;
   coachFee: number;
+  clubFee: number; // club membership fee for the season (e.g. 109)
   active: boolean; // purchasable now
   current: boolean;
 }
@@ -52,7 +54,27 @@ export interface Level {
   svMax: number | null; // null = open / FIG
   vaults: number;
   order: number;
+  /** Soft-deleted: hidden from new meets but preserved on past meets/results. */
+  retired?: boolean;
 }
+
+/** Who may register with / compete for a club. */
+export type ClubAccess =
+  | 'open' // anyone
+  | 'affiliates' // affiliates only
+  | 'any-student' // any student
+  | 'any-undergrad' // any undergraduate
+  | 'any-affiliated-student' // any affiliated student
+  | 'any-affiliated-undergrad'; // any affiliated undergraduate
+
+export const CLUB_ACCESS_LABELS: Record<ClubAccess, string> = {
+  open: 'Open to anyone',
+  affiliates: 'Affiliates only',
+  'any-student': 'Any student',
+  'any-undergrad': 'Any undergraduate',
+  'any-affiliated-student': 'Any affiliated student',
+  'any-affiliated-undergrad': 'Any affiliated undergraduate',
+};
 
 export interface Club {
   id: string;
@@ -63,6 +85,7 @@ export interface Club {
   managerIds: string[];
   email: string;
   allowClubPay: boolean; // athletes may push membership fee to club cart
+  access: ClubAccess; // eligibility for registering with this club
 }
 
 export type Gender = 'Male' | 'Female' | 'Non-binary' | 'Genderfluid' | 'Agender' | 'Other';
@@ -70,8 +93,12 @@ export type Placement = 'men+' | 'women+';
 
 export type MembershipStatus = 'active' | 'pending-club-payment' | 'none';
 
+export type MembershipType = 'athlete' | 'coach';
+
 export interface Membership {
   seasonId: string;
+  /** A person may hold one athlete AND one coach membership per season. */
+  type: MembershipType;
   status: MembershipStatus;
   waiverSignedAt: string | null;
   waiverSignedBy: string | null; // self or guardian name
@@ -83,7 +110,11 @@ export interface Athlete {
   id: string;
   /** The linked Supabase auth user, if this person has claimed an account. */
   authUserId?: string | null;
+  /** Legacy single role; retained for back-compat. Prefer `roles`. */
   kind: 'athlete' | 'coach';
+  /** A single person can be an athlete, a coach, or both. Drives which
+   *  membership types are offered. Backfilled from `kind` (see 0007). */
+  roles: { athlete: boolean; coach: boolean };
   firstName: string;
   lastName: string;
   email: string;
@@ -180,6 +211,11 @@ export interface Meet {
   sessions: MeetSession[];
   privateRegCode?: string;
   banquet?: { price: number; name: string };
+  /** Optional add-ons offered at registration. */
+  tshirtAddon?: { price: number; sizes: string[] };
+  bannerAddon?: { price: number }; // club enters banner text at registration
+  /** Fee to modify an existing registration; effective from `startsAt`. */
+  changeFee?: { amount: number; startsAt: string };
   /** 'nationals' unlocks the prelim/finals + qualification/awards features and is
    *  creatable only by a UCG admin. Absent ⇒ 'standard'. */
   kind?: 'standard' | 'nationals';
@@ -203,7 +239,15 @@ export interface Registration {
    *  highlighting on results, mirroring the Nationals results viewer. */
   quals?: Record<string, boolean>;
   refunded?: boolean;
+  refundRequested?: boolean; // athlete/club asked for a refund; admin reviews
   keepListed?: boolean; // refunded but keep for shirt/gift
+  /** Synchro trampoline partner (any athlete w/ membership). A synchro meet
+   *  cannot go live until every synchro entry has a partner assigned. */
+  partnerAthleteId?: string | null;
+  /** Per-event level override (event code → levelId). T&T uses this now;
+   *  shape future-proofs per-apparatus levels for MAG/WAG. Absent ⇒ use
+   *  `levelId` for all events. */
+  eventLevels?: Record<string, string>;
 }
 
 export interface Score {
@@ -259,6 +303,10 @@ export interface Coupon {
   pctOff?: number;
   amountOff?: number;
   appliesTo: 'membership' | 'meet-entry' | 'any';
+  startsAt?: string | null; // ISO; null/absent = no start bound
+  endsAt?: string | null; // ISO; null/absent = no end bound
+  maxUses?: number | null; // null/absent = unlimited
+  usedCount?: number; // times redeemed
 }
 
 /** A member's request to create a new club (admins approve → real club). */
@@ -276,6 +324,18 @@ export interface ClubRequest {
   createdClubId?: string | null;
 }
 
+/** Admin "create account for this athlete" — emails a setup link. The real
+ *  email send is stubbed until a transactional-email provider is wired. */
+export interface AccountInvite {
+  id: string;
+  personId: string | null;
+  email: string;
+  token: string;
+  status: 'pending' | 'accepted' | 'revoked';
+  createdAt: string;
+  acceptedAt?: string | null;
+}
+
 export interface DB {
   seasons: Season[];
   levels: Level[];
@@ -288,6 +348,11 @@ export interface DB {
   coupons: Coupon[];
   carts: Record<string, CartItem[]>; // key: clubId or athleteId
   clubRequests: ClubRequest[];
+  /** Admin-editable state→region overrides (drag states between regions).
+   *  Absent ⇒ use the hardcoded STATE_REGIONS map. */
+  regionOverrides?: Record<string, Region>;
+  /** Pending/handled account-setup invites created by admins. */
+  accountInvites?: AccountInvite[];
 }
 
 export const STATE_REGIONS: Record<string, Region> = {

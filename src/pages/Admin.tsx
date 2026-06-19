@@ -4,10 +4,12 @@ import { useDB, mutate, resetDemo } from '../lib/store';
 import { Badge, Combo, Field, Modal, Tabs, useToast } from '../components/ui';
 import { ClubForm } from '../components/ClubForm';
 import { PersonForm } from '../components/PersonForm';
+import { RegionEditor } from '../components/RegionEditor';
 import { DISCIPLINES, STATE_REGIONS } from '../lib/types';
-import type { Athlete, Club, ClubRequest, Coupon, Level, Region, Season } from '../lib/types';
+import type { AccountInvite, Athlete, Club, ClubRequest, Coupon, Level, Region, Season } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
-import { fetchAllRoles, isSupabaseConfigured, pushAll, pushClub, pushClubManager, pushClubRequest, pushCoupon, pushLevel, pushMembership, pushRegistration, pushSeason, pushUserRole, deleteLevel, deleteCoupon, deleteRegistration } from '../lib/supabase';
+import { randomPromoCode, couponValid } from '../lib/pricing';
+import { fetchAllRoles, isSupabaseConfigured, pushAll, pushClub, pushClubManager, pushClubRequest, pushCoupon, pushLevel, pushMembership, pushRegistration, pushSeason, pushUserRole, pushAccountInvite, deleteCoupon, deleteRegistration } from '../lib/supabase';
 import { useCapabilities } from '../lib/capabilities';
 
 // ---------- Merge Athletes modal ----------
@@ -186,6 +188,48 @@ function MergeAthletesModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+// ---------- Revoke membership confirmation modal (W13 task 6) ----------
+function RevokeMembershipModal({ person, seasonId, onClose }: { person: Athlete; seasonId: string; onClose: () => void }) {
+  const toast = useToast();
+  const [confirmed, setConfirmed] = useState(false);
+
+  const doRevoke = () => {
+    mutate((d) => {
+      const dp = d.people.find((x) => x.id === person.id);
+      if (!dp) return;
+      const m = dp.memberships.find((x) => x.seasonId === seasonId);
+      if (m) {
+        // Remove the membership — revoke means remove, not just mark inactive.
+        dp.memberships = dp.memberships.filter((x) => x.seasonId !== seasonId);
+        // Push the updated person (removes membership server-side via replace).
+        pushMembership(person.id, { ...m, status: 'none' });
+      }
+    });
+    toast(`Membership revoked for ${person.firstName} ${person.lastName}.`);
+    onClose();
+  };
+
+  return (
+    <Modal title="Revoke membership" onClose={onClose}>
+      <p style={{ fontSize: 14, color: 'var(--ink-soft)', marginTop: 0 }}>
+        <strong>Warning:</strong> This removes <strong>{person.firstName} {person.lastName}</strong>'s
+        membership for this season. They will be removed from all future registered competitions
+        in this season. This action cannot be easily undone — the member would need to re-register.
+      </p>
+      <label className="checkrow" style={{ margin: '12px 0' }}>
+        <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
+        I understand this removes them from all future competitions this season.
+      </label>
+      <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+        <button className="btn danger" disabled={!confirmed} onClick={doRevoke}>
+          Revoke membership
+        </button>
+        <button className="btn ghost" onClick={onClose}>Cancel</button>
+      </div>
+    </Modal>
+  );
+}
+
 // ---------- Members ----------
 export function AdminMembers() {
   const db = useDB();
@@ -195,6 +239,8 @@ export function AdminMembers() {
   const [filter, setFilter] = useState<'all' | 'active' | 'pending' | 'none'>('all');
   const [editing, setEditing] = useState<Athlete | 'new' | null>(null);
   const [showMerge, setShowMerge] = useState(false);
+  // W13 task 6: revoke confirmation
+  const [revoking, setRevoking] = useState<{ person: Athlete; seasonId: string } | null>(null);
   const season = db.seasons.find((s) => s.current)!;
 
   // Admin grants: which auth users hold the 'admin' role (admin reads all rows).
@@ -217,6 +263,33 @@ export function AdminMembers() {
       return next;
     });
     toast(grant ? `${p.firstName} is now a league admin.` : `Removed admin from ${p.firstName}.`);
+  };
+
+  // W13 task 5: create account invite for person with no authUserId.
+  const createAccountInvite = (p: Athlete) => {
+    if (!p.email) { toast('Person has no email address on file — add an email first.'); return; }
+    // Guard against duplicate pending invites.
+    const existing = (db.accountInvites ?? []).find(
+      (inv) => inv.personId === p.id && inv.status === 'pending',
+    );
+    if (existing) {
+      toast(`A pending setup invite already exists for ${p.firstName} (created ${new Date(existing.createdAt).toLocaleDateString()}).`);
+      return;
+    }
+    const invite: AccountInvite = {
+      id: `inv-${Date.now()}-${p.id.slice(0, 8)}`,
+      personId: p.id,
+      email: p.email,
+      token: randomPromoCode(24), // random secure-enough token
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    };
+    mutate((d) => {
+      d.accountInvites = [...(d.accountInvites ?? []), invite];
+      pushAccountInvite(invite);
+      // TODO: send setup email to invite.email with link containing invite.token
+    });
+    toast(`Setup invite created for ${p.firstName} ${p.lastName} — setup email queued to ${p.email}.`);
   };
 
   const rows = useMemo(() => db.people
@@ -251,21 +324,66 @@ export function AdminMembers() {
       </div>
       <div className="card" style={{ overflow: 'hidden' }}>
         <table className="tbl">
-          <thead><tr><th>Name</th><th>Type</th><th>Club</th><th>Region</th><th>Membership</th><th>Account</th><th /></tr></thead>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Club</th>
+              <th>Region</th>
+              <th>Membership</th>
+              <th>Account</th>
+              <th />
+            </tr>
+          </thead>
           <tbody>
             {rows.slice(0, 120).map((p) => {
               const m = p.memberships.find((x) => x.seasonId === season.id);
               const club = db.clubs.find((c) => c.id === p.mainClubId);
               const isAdminUser = !!p.authUserId && adminUserIds.has(p.authUserId);
+              const hasPendingInvite = (db.accountInvites ?? []).some(
+                (inv) => inv.personId === p.id && inv.status === 'pending',
+              );
               return (
                 <tr key={p.id}>
                   <td><Link to={`/admin/members/${p.id}`} style={{ fontWeight: 600 }}>{p.lastName}, {p.firstName}</Link></td>
                   <td>{p.kind === 'coach' ? <Badge tone="navy">Coach</Badge> : 'Athlete'}</td>
                   <td style={{ fontSize: 13.5 }}>{club?.name ?? <em>Independent</em>}</td>
                   <td>{club?.region ?? STATE_REGIONS[p.state] ?? 'Other'}</td>
-                  <td>{m?.status === 'active' ? <Badge tone="ok">Active</Badge> : m?.status === 'pending-club-payment' ? <Badge tone="warn">Pending</Badge> : <Badge tone="err">None</Badge>}</td>
+                  <td>
+                    {m?.status === 'active' ? (
+                      <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                        <Badge tone="ok">Active</Badge>
+                        {/* W13 task 6: revoke via confirmation modal */}
+                        <button
+                          className="btn small ghost"
+                          style={{ fontSize: 11, padding: '1px 6px' }}
+                          onClick={() => setRevoking({ person: p, seasonId: season.id })}
+                        >
+                          Revoke
+                        </button>
+                      </span>
+                    ) : m?.status === 'pending-club-payment' ? (
+                      <Badge tone="warn">Pending</Badge>
+                    ) : (
+                      <Badge tone="err">None</Badge>
+                    )}
+                  </td>
                   <td style={{ fontSize: 12.5 }}>
-                    {!p.authUserId ? <span style={{ color: 'var(--ink-soft)' }}>No account</span> : (
+                    {!p.authUserId ? (
+                      <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                        <span style={{ color: 'var(--ink-soft)' }}>No account</span>
+                        {/* W13 task 5: create account invite */}
+                        <button
+                          className="btn small ghost"
+                          style={{ fontSize: 11, padding: '1px 6px' }}
+                          disabled={hasPendingInvite}
+                          title={hasPendingInvite ? 'Pending invite already sent' : 'Create account & email setup link'}
+                          onClick={() => createAccountInvite(p)}
+                        >
+                          {hasPendingInvite ? 'Invite sent' : 'Invite'}
+                        </button>
+                      </span>
+                    ) : (
                       <label className="checkrow" style={{ margin: 0 }} data-tip="Grant or revoke league admin">
                         <input type="checkbox" checked={isAdminUser} onChange={() => toggleAdmin(p)} /> Admin
                       </label>
@@ -280,6 +398,14 @@ export function AdminMembers() {
       </div>
       {editing && <PersonForm person={editing === 'new' ? undefined : editing} onClose={() => setEditing(null)} />}
       {showMerge && <MergeAthletesModal onClose={() => setShowMerge(false)} />}
+      {/* W13 task 6: revoke confirmation modal */}
+      {revoking && (
+        <RevokeMembershipModal
+          person={revoking.person}
+          seasonId={revoking.seasonId}
+          onClose={() => setRevoking(null)}
+        />
+      )}
     </div>
   );
 }
@@ -304,7 +430,7 @@ export function AdminClubs() {
       id, name: req.proposedName, shortName: req.shortName || req.proposedName.slice(0, 12),
       state: req.state, region: (req.region || STATE_REGIONS[req.state] || 'Other') as Region,
       managerIds: req.requesterPersonId ? [req.requesterPersonId] : [],
-      email: '', allowClubPay: true,
+      email: '', allowClubPay: true, access: 'open',
     };
     mutate((d) => {
       d.clubs.push(club);
@@ -409,11 +535,11 @@ export function AdminClubs() {
 
 // ---------- League Controls ----------
 export function AdminLeague() {
-  const [tab, setTab] = useState<'seasons' | 'levels' | 'regions' | 'waivers' | 'promos' | 'demo'>('seasons');
+  const [tab, setTab] = useState<'seasons' | 'levels' | 'regions' | 'waivers' | 'promos' | 'roles' | 'demo'>('seasons');
   return (
     <div>
       <h1 className="page-title display">League controls</h1>
-      <p className="page-sub">Seasons, fees, levels, waivers, regions, and promo codes — the knobs that drive everything else.</p>
+      <p className="page-sub">Seasons, fees, levels, waivers, regions, roles, and promo codes — the knobs that drive everything else.</p>
       <Tabs
         tabs={[
           { id: 'seasons' as const, label: 'Seasons & fees' },
@@ -421,6 +547,7 @@ export function AdminLeague() {
           { id: 'regions' as const, label: 'Regions' },
           { id: 'waivers' as const, label: 'Waivers' },
           { id: 'promos' as const, label: 'Promo codes' },
+          { id: 'roles' as const, label: 'User roles' },
           { id: 'demo' as const, label: 'Demo tools' },
         ]}
         active={tab}
@@ -428,9 +555,10 @@ export function AdminLeague() {
       />
       {tab === 'seasons' && <Seasons />}
       {tab === 'levels' && <Levels />}
-      {tab === 'regions' && <Regions />}
+      {tab === 'regions' && <RegionsTab />}
       {tab === 'waivers' && <Waivers />}
       {tab === 'promos' && <Promos />}
+      {tab === 'roles' && <UserRoles />}
       {tab === 'demo' && <DemoTools />}
     </div>
   );
@@ -443,23 +571,29 @@ type SeasonEditState = {
   endsOn: string;
   athleteFee: string;
   coachFee: string;
+  clubFee: string;
 };
 
 function Seasons() {
   const db = useDB();
   const toast = useToast();
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<SeasonEditState>({ name: '', startsOn: '', endsOn: '', athleteFee: '', coachFee: '' });
+  const [draft, setDraft] = useState<SeasonEditState>({ name: '', startsOn: '', endsOn: '', athleteFee: '', coachFee: '', clubFee: '' });
 
   const startEdit = (s: Season) => {
     setEditingId(s.id);
-    setDraft({ name: s.name, startsOn: s.startsOn, endsOn: s.endsOn, athleteFee: String(s.athleteFee), coachFee: String(s.coachFee) });
+    setDraft({
+      name: s.name, startsOn: s.startsOn, endsOn: s.endsOn,
+      athleteFee: String(s.athleteFee), coachFee: String(s.coachFee),
+      clubFee: String(s.clubFee ?? 109),  // W12 task 2: clubFee
+    });
   };
 
   const saveEdit = (s: Season) => {
     const athleteFee = parseFloat(draft.athleteFee);
     const coachFee = parseFloat(draft.coachFee);
-    if (isNaN(athleteFee) || isNaN(coachFee)) { toast('Fees must be numbers.'); return; }
+    const clubFee = parseFloat(draft.clubFee);  // W12 task 2
+    if (isNaN(athleteFee) || isNaN(coachFee) || isNaN(clubFee)) { toast('Fees must be numbers.'); return; }
     mutate((d) => {
       const x = d.seasons.find((y) => y.id === s.id)!;
       x.name = draft.name.trim() || x.name;
@@ -467,6 +601,7 @@ function Seasons() {
       x.endsOn = draft.endsOn || x.endsOn;
       x.athleteFee = athleteFee;
       x.coachFee = coachFee;
+      x.clubFee = clubFee;  // W12 task 2
       pushSeason(x);
     });
     setEditingId(null);
@@ -482,6 +617,8 @@ function Seasons() {
             <th>Valid</th>
             <th className="num">Athlete fee</th>
             <th className="num">Coach fee</th>
+            {/* W12 task 2: Club fee column */}
+            <th className="num">Club fee</th>
             <th>Purchasable</th>
             <th>Current</th>
             <th />
@@ -541,6 +678,18 @@ function Seasons() {
                         onChange={(e) => setDraft({ ...draft, coachFee: e.target.value })}
                       />
                     </td>
+                    {/* W12 task 2: club fee inline edit */}
+                    <td className="num">
+                      <input
+                        className="input"
+                        type="number"
+                        min={0}
+                        step={1}
+                        style={{ width: 80 }}
+                        value={draft.clubFee}
+                        onChange={(e) => setDraft({ ...draft, clubFee: e.target.value })}
+                      />
+                    </td>
                     <td>
                       <label className="checkrow" style={{ margin: 0 }}>
                         <input type="checkbox" checked={s.active} onChange={() => mutate((d) => {
@@ -571,6 +720,8 @@ function Seasons() {
                     <td style={{ fontSize: 13 }}>{s.startsOn} → {s.endsOn}</td>
                     <td className="num">{fmtMoney(s.athleteFee)}</td>
                     <td className="num">{fmtMoney(s.coachFee)}</td>
+                    {/* W12 task 2: club fee display */}
+                    <td className="num">{fmtMoney(s.clubFee ?? 109)}</td>
                     <td>
                       <label className="checkrow" style={{ margin: 0 }}>
                         <input type="checkbox" checked={s.active} onChange={() => mutate((d) => {
@@ -655,13 +806,24 @@ function Levels() {
     toast('Level saved.');
   };
 
-  const removeLevel = (l: Level) => {
-    const inUse = db.registrations.some((r) => r.levelId === l.id);
-    if (inUse) { toast(`Cannot delete "${l.name}" — ${db.registrations.filter((r) => r.levelId === l.id).length} registration(s) reference it.`); return; }
-    if (!window.confirm(`Delete level "${l.name}"? This cannot be undone.`)) return;
-    mutate((d) => { d.levels = d.levels.filter((x) => x.id !== l.id); });
-    deleteLevel(l.id);
-    toast(`Deleted "${l.name}".`);
+  // W12 task 4: soft-delete (retire) instead of hard delete — preserves past meets.
+  const retireLevel = (l: Level) => {
+    if (!window.confirm(`Retire level "${l.name}"? It will be hidden from new meets but preserved on past meets and results.`)) return;
+    mutate((d) => {
+      const x = d.levels.find((y) => y.id === l.id)!;
+      x.retired = true;
+      pushLevel(x);
+    });
+    toast(`"${l.name}" retired — won't appear in new meets. Unretire it to restore.`);
+  };
+
+  const unretireLevel = (l: Level) => {
+    mutate((d) => {
+      const x = d.levels.find((y) => y.id === l.id)!;
+      x.retired = false;
+      pushLevel(x);
+    });
+    toast(`"${l.name}" restored.`);
   };
 
   const startAdd = (disc: string) => {
@@ -694,7 +856,12 @@ function Levels() {
   return (
     <div className="grid cols-3">
       {DISCIPLINES.map((disc) => {
-        const discLevels = db.levels.filter((l) => l.discipline === disc).sort((a, b) => a.order - b.order);
+        // W12 task 4: show ALL levels including retired (retired shown last, struck through)
+        const discLevels = db.levels.filter((l) => l.discipline === disc).sort((a, b) => {
+          if (a.retired && !b.retired) return 1;
+          if (!a.retired && b.retired) return -1;
+          return a.order - b.order;
+        });
         return (
           <div className="card card-pad" key={disc}>
             <h3 className="card-title">{disc}</h3>
@@ -710,8 +877,9 @@ function Levels() {
               <tbody>
                 {discLevels.map((l) => {
                   const isEditing = editingId === l.id;
+                  const isRetired = !!l.retired;
                   return (
-                    <tr key={l.id}>
+                    <tr key={l.id} style={isRetired ? { opacity: 0.55 } : undefined}>
                       {isEditing ? (
                         <>
                           <td>
@@ -748,12 +916,23 @@ function Levels() {
                         </>
                       ) : (
                         <>
-                          <td>{l.name}</td>
+                          <td style={isRetired ? { textDecoration: 'line-through', color: 'var(--ink-soft)' } : undefined}>
+                            {l.name}
+                            {isRetired && <span style={{ fontSize: 11, marginLeft: 5, color: 'var(--ink-soft)', textDecoration: 'none', display: 'inline-block' }}>retired</span>}
+                          </td>
                           <td className="num">{l.svMax?.toFixed(1) ?? 'Open'}</td>
                           <td className="num">{l.vaults}</td>
                           <td style={{ whiteSpace: 'nowrap' }}>
-                            <button className="btn small ghost" onClick={() => startEdit(l)}>Edit</button>{' '}
-                            <button className="btn small danger" onClick={() => removeLevel(l)}>✕</button>
+                            {isRetired ? (
+                              // W12 task 4: Unretire action for retired levels
+                              <button className="btn small ghost" onClick={() => unretireLevel(l)}>Unretire</button>
+                            ) : (
+                              <>
+                                <button className="btn small ghost" onClick={() => startEdit(l)}>Edit</button>{' '}
+                                {/* W12 task 4: soft-delete (retire) instead of hard delete */}
+                                <button className="btn small danger" onClick={() => retireLevel(l)}>Retire</button>
+                              </>
+                            )}
                           </td>
                         </>
                       )}
@@ -809,32 +988,22 @@ function Levels() {
   );
 }
 
-// ---------- Regions ----------
-function Regions() {
-  const regions = [...new Set(Object.values(STATE_REGIONS))] as Region[];
+// ---------- Regions tab (W12 task 3) ----------
+// Renamed RegionsTab so AdminLeague can reference the new name without conflict.
+function RegionsTab() {
+  const db = useDB();
   return (
     <div>
-      <div className="card card-pad" style={{ marginBottom: 16, borderLeft: '4px solid var(--coral-300)' }}>
+      <div className="card card-pad" style={{ marginBottom: 16, borderLeft: '4px solid var(--accent)' }}>
         <p style={{ margin: 0, fontSize: 13.5 }}>
-          <strong>Regions are derived from each athlete's training state</strong> via a compile-time state→region map (<code>STATE_REGIONS</code> in <code>src/lib/types.ts</code>).
-          {' '}Changing which region a state belongs to is a league-config change that requires editing that constant and redeploying.
-          {/* TODO: when regions need to be runtime-editable, move STATE_REGIONS into the DB (a `state_regions` table), add a pushStateRegion helper, and replace the static import here with db.stateRegions. */}
+          <strong>Edit state→region assignments below.</strong> Changes are persisted via{' '}
+          <code>db.regionOverrides</code> and override the built-in <code>STATE_REGIONS</code> map
+          everywhere — meet filtering, athlete grouping, and communications. Resetting returns to
+          the compiled defaults.
         </p>
       </div>
-      <div className="grid cols-4">
-        {regions.map((r) => (
-          <div className="card card-pad" key={r}>
-            <h3 className="card-title">{r}</h3>
-            <div style={{ fontSize: 13.5, lineHeight: 1.7 }}>
-              {Object.entries(STATE_REGIONS).filter(([, reg]) => reg === r).map(([st]) => st).join(', ')}
-            </div>
-          </div>
-        ))}
-        <div className="card card-pad" style={{ borderStyle: 'dashed' }}>
-          <h3 className="card-title">Other</h3>
-          <p style={{ fontSize: 13.5, color: 'var(--ink-soft)' }}>Athletes training outside the US. Independent athletes are auto-introduced to their region's team based on training state.</p>
-        </div>
-      </div>
+      {/* W12 task 3: RegionEditor component */}
+      <RegionEditor regionOverrides={db.regionOverrides} />
     </div>
   );
 }
@@ -1017,14 +1186,54 @@ function Waivers() {
   );
 }
 
-// ---------- Promo codes ----------
-type CouponDraft = { code: string; discountType: 'pct' | 'amt'; value: string; appliesTo: Coupon['appliesTo'] };
+// ---------- Promo codes (W14) ----------
+type CouponDraft = {
+  code: string;
+  discountType: 'pct' | 'amt';
+  value: string;
+  appliesTo: Coupon['appliesTo'];
+  // W14 task 9: new fields
+  startsAt: string;
+  endsAt: string;
+  maxUses: string; // blank = unlimited
+};
+
+// W14 task 11: inline validity indicator using couponValid()
+function CouponStatusBadge({ coupon }: { coupon: Coupon }) {
+  const now = new Date().toISOString();
+  const valid = couponValid(coupon, now);
+  if (!valid) {
+    if (coupon.maxUses != null && (coupon.usedCount ?? 0) >= coupon.maxUses) {
+      return <Badge tone="err">Limit reached</Badge>;
+    }
+    if (coupon.endsAt && Date.parse(coupon.endsAt) < Date.parse(now)) {
+      return <Badge tone="err">Expired</Badge>;
+    }
+    if (coupon.startsAt && Date.parse(coupon.startsAt) > Date.parse(now)) {
+      return <Badge tone="warn">Not yet active</Badge>;
+    }
+    return <Badge tone="err">Invalid</Badge>;
+  }
+  return <Badge tone="ok">Active</Badge>;
+}
+
+type CouponEditDraft = {
+  startsAt: string;
+  endsAt: string;
+  maxUses: string;
+};
 
 function Promos() {
   const db = useDB();
   const toast = useToast();
-  const [draft, setDraft] = useState<CouponDraft>({ code: '', discountType: 'pct', value: '', appliesTo: 'any' });
+  const [draft, setDraft] = useState<CouponDraft>({
+    code: '', discountType: 'pct', value: '', appliesTo: 'any',
+    startsAt: '', endsAt: '', maxUses: '',
+  });
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  // W14 task 9: inline edit state per coupon (code → draft)
+  const [editingCode, setEditingCode] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<CouponEditDraft>({ startsAt: '', endsAt: '', maxUses: '' });
 
   const addCoupon = () => {
     const code = draft.code.trim().toUpperCase();
@@ -1032,13 +1241,21 @@ function Promos() {
     if (db.coupons.some((c) => c.code.toUpperCase() === code)) { toast(`Code "${code}" already exists.`); return; }
     const value = parseFloat(draft.value);
     if (isNaN(value) || value <= 0) { toast('Discount value must be a positive number.'); return; }
+    const maxUses = draft.maxUses.trim() === '' ? null : parseInt(draft.maxUses, 10);
+    if (draft.maxUses.trim() !== '' && (isNaN(maxUses as number) || (maxUses as number) < 1)) {
+      toast('Max uses must be a positive integer or blank for unlimited.'); return;
+    }
     const coupon: Coupon = {
       code,
       ...(draft.discountType === 'pct' ? { pctOff: value } : { amountOff: value }),
       appliesTo: draft.appliesTo,
+      startsAt: draft.startsAt || null,
+      endsAt: draft.endsAt || null,
+      maxUses: maxUses ?? null,
+      usedCount: 0,
     };
     mutate((d) => { d.coupons.push(coupon); pushCoupon(coupon); });
-    setDraft({ code: '', discountType: 'pct', value: '', appliesTo: 'any' });
+    setDraft({ code: '', discountType: 'pct', value: '', appliesTo: 'any', startsAt: '', endsAt: '', maxUses: '' });
     toast(`Promo code "${code}" created.`);
   };
 
@@ -1049,18 +1266,57 @@ function Promos() {
     toast(`Deleted promo code "${code}".`);
   };
 
+  const startEdit = (c: Coupon) => {
+    setEditingCode(c.code);
+    setEditDraft({
+      startsAt: c.startsAt ?? '',
+      endsAt: c.endsAt ?? '',
+      maxUses: c.maxUses == null ? '' : String(c.maxUses),
+    });
+  };
+
+  const saveEdit = (c: Coupon) => {
+    const maxUses = editDraft.maxUses.trim() === '' ? null : parseInt(editDraft.maxUses, 10);
+    if (editDraft.maxUses.trim() !== '' && (isNaN(maxUses as number) || (maxUses as number) < 1)) {
+      toast('Max uses must be a positive integer or blank for unlimited.'); return;
+    }
+    mutate((d) => {
+      const x = d.coupons.find((x) => x.code === c.code);
+      if (!x) return;
+      x.startsAt = editDraft.startsAt || null;
+      x.endsAt = editDraft.endsAt || null;
+      x.maxUses = maxUses ?? null;
+      pushCoupon(x);
+    });
+    setEditingCode(null);
+    toast(`Promo code "${c.code}" updated.`);
+  };
+
   return (
     <div>
-      <div className="card card-pad" style={{ maxWidth: 480, marginBottom: 20 }}>
+      <div className="card card-pad" style={{ maxWidth: 560, marginBottom: 20 }}>
         <h3 className="card-title">Create promo code</h3>
-        <Field label="Code">
-          <input
-            className="input"
-            placeholder="e.g. SAVE20"
-            value={draft.code}
-            onChange={(e) => setDraft({ ...draft, code: e.target.value.toUpperCase() })}
-          />
-        </Field>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginBottom: 4 }}>
+          <div style={{ flex: 1 }}>
+            <Field label="Code">
+              <input
+                className="input"
+                placeholder="e.g. SAVE20"
+                value={draft.code}
+                onChange={(e) => setDraft({ ...draft, code: e.target.value.toUpperCase() })}
+              />
+            </Field>
+          </div>
+          {/* W14 task 10: Generate random code button */}
+          <button
+            className="btn ghost"
+            style={{ marginBottom: 16 }}
+            onClick={() => setDraft({ ...draft, code: randomPromoCode() })}
+            title="Generate a random 8-character code"
+          >
+            Random code
+          </button>
+        </div>
         <Field label="Discount type">
           <select
             className="input"
@@ -1094,6 +1350,36 @@ function Promos() {
             <option value="meet-entry">Meet entries only</option>
           </select>
         </Field>
+        {/* W14 task 9: start/end dates and max uses on creation */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <Field label="Active from (optional)">
+            <input
+              className="input"
+              type="datetime-local"
+              value={draft.startsAt}
+              onChange={(e) => setDraft({ ...draft, startsAt: e.target.value })}
+            />
+          </Field>
+          <Field label="Expires at (optional)">
+            <input
+              className="input"
+              type="datetime-local"
+              value={draft.endsAt}
+              onChange={(e) => setDraft({ ...draft, endsAt: e.target.value })}
+            />
+          </Field>
+        </div>
+        <Field label="Max uses (blank = unlimited)">
+          <input
+            className="input"
+            type="number"
+            min={1}
+            step={1}
+            placeholder="Unlimited"
+            value={draft.maxUses}
+            onChange={(e) => setDraft({ ...draft, maxUses: e.target.value })}
+          />
+        </Field>
         <button className="btn primary" onClick={addCoupon}>Create code</button>
       </div>
 
@@ -1104,38 +1390,262 @@ function Promos() {
               <th>Code</th>
               <th>Discount</th>
               <th>Applies to</th>
+              {/* W14 task 9: new columns */}
+              <th>Active from</th>
+              <th>Expires</th>
+              <th className="num">Uses</th>
+              <th>Status</th>
               <th />
             </tr>
           </thead>
           <tbody>
             {db.coupons.length === 0 && (
-              <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--ink-soft)', padding: '20px 0' }}>No promo codes yet.</td></tr>
+              <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--ink-soft)', padding: '20px 0' }}>No promo codes yet.</td></tr>
             )}
-            {db.coupons.map((c) => (
-              <tr key={c.code}>
-                <td><strong style={{ fontFamily: 'monospace' }}>{c.code}</strong></td>
-                <td>
-                  {c.pctOff != null ? `${c.pctOff}% off` : c.amountOff != null ? `${fmtMoney(c.amountOff)} off` : '—'}
-                </td>
-                <td>
-                  {c.appliesTo === 'any' ? 'Any purchase' : c.appliesTo === 'membership' ? 'Membership' : 'Meet entries'}
-                </td>
-                <td>
-                  {confirmDelete === c.code ? (
+            {db.coupons.map((c) => {
+              const isEditing = editingCode === c.code;
+              return (
+                <tr key={c.code}>
+                  <td><strong style={{ fontFamily: 'monospace' }}>{c.code}</strong></td>
+                  <td>
+                    {c.pctOff != null ? `${c.pctOff}% off` : c.amountOff != null ? `${fmtMoney(c.amountOff)} off` : '—'}
+                  </td>
+                  <td>
+                    {c.appliesTo === 'any' ? 'Any purchase' : c.appliesTo === 'membership' ? 'Membership' : 'Meet entries'}
+                  </td>
+                  {/* W14 task 9: editable start/end/maxUses */}
+                  {isEditing ? (
                     <>
-                      <span style={{ fontSize: 13, marginRight: 8 }}>Delete?</span>
-                      <button className="btn small danger" onClick={() => removeCoupon(c.code)}>Yes</button>{' '}
-                      <button className="btn small ghost" onClick={() => setConfirmDelete(null)}>No</button>
+                      <td>
+                        <input
+                          className="input"
+                          type="datetime-local"
+                          style={{ fontSize: 12, width: 160 }}
+                          value={editDraft.startsAt}
+                          onChange={(e) => setEditDraft({ ...editDraft, startsAt: e.target.value })}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          className="input"
+                          type="datetime-local"
+                          style={{ fontSize: 12, width: 160 }}
+                          value={editDraft.endsAt}
+                          onChange={(e) => setEditDraft({ ...editDraft, endsAt: e.target.value })}
+                        />
+                      </td>
+                      <td className="num">
+                        <input
+                          className="input"
+                          type="number"
+                          min={1}
+                          step={1}
+                          placeholder="∞"
+                          style={{ width: 60 }}
+                          value={editDraft.maxUses}
+                          onChange={(e) => setEditDraft({ ...editDraft, maxUses: e.target.value })}
+                        />
+                      </td>
+                      <td><CouponStatusBadge coupon={c} /></td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <button className="btn small primary" onClick={() => saveEdit(c)}>Save</button>{' '}
+                        <button className="btn small ghost" onClick={() => setEditingCode(null)}>Cancel</button>
+                      </td>
                     </>
                   ) : (
-                    <button className="btn small ghost" onClick={() => setConfirmDelete(c.code)}>Delete</button>
+                    <>
+                      <td style={{ fontSize: 12.5 }}>{c.startsAt ? new Date(c.startsAt).toLocaleString() : <em style={{ color: 'var(--ink-soft)' }}>—</em>}</td>
+                      <td style={{ fontSize: 12.5 }}>{c.endsAt ? new Date(c.endsAt).toLocaleString() : <em style={{ color: 'var(--ink-soft)' }}>—</em>}</td>
+                      {/* W14 task 9: show used count / max */}
+                      <td className="num" style={{ fontSize: 13 }}>
+                        {c.usedCount ?? 0}{c.maxUses != null ? ` / ${c.maxUses}` : ''}
+                      </td>
+                      {/* W14 task 11: validity status via couponValid() */}
+                      <td><CouponStatusBadge coupon={c} /></td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <button className="btn small ghost" onClick={() => startEdit(c)}>Edit</button>{' '}
+                        {confirmDelete === c.code ? (
+                          <>
+                            <span style={{ fontSize: 13, marginRight: 4 }}>Delete?</span>
+                            <button className="btn small danger" onClick={() => removeCoupon(c.code)}>Yes</button>{' '}
+                            <button className="btn small ghost" onClick={() => setConfirmDelete(null)}>No</button>
+                          </>
+                        ) : (
+                          <button className="btn small ghost" onClick={() => setConfirmDelete(c.code)}>Delete</button>
+                        )}
+                      </td>
+                    </>
                   )}
-                </td>
-              </tr>
-            ))}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ---------- User Roles (W12 task 1) ----------
+// 'admin' = Full League Admin (only role that can emulate users / access all admin features).
+// 'sanctioning' = Sanctioning Team (will see meets to vote on — voting UI is a later wave).
+const ROLE_DEFS = [
+  { role: 'admin', label: 'Full League Admin', desc: 'Full admin access, including user emulation.' },
+  { role: 'sanctioning', label: 'Sanctioning Team', desc: 'Will see meets to vote on (voting UI coming in a later wave).' },
+] as const;
+
+function UserRoles() {
+  const db = useDB();
+  const toast = useToast();
+  // Load all role assignments from Supabase on mount.
+  const [roleMap, setRoleMap] = useState<Map<string, Set<string>>>(new Map()); // userId → Set<role>
+  const [loading, setLoading] = useState(true);
+  const [addingRole, setAddingRole] = useState<string | null>(null); // role being added
+  const [addPersonId, setAddPersonId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    setLoading(true);
+    fetchAllRoles().then((rows) => {
+      if (!live) return;
+      const map = new Map<string, Set<string>>();
+      for (const { userId, role } of rows) {
+        if (!map.has(userId)) map.set(userId, new Set());
+        map.get(userId)!.add(role);
+      }
+      setRoleMap(map);
+      setLoading(false);
+    });
+    return () => { live = false; };
+  }, []);
+
+  const grantRole = (userId: string, role: string) => {
+    pushUserRole(userId, role, true);
+    setRoleMap((prev) => {
+      const next = new Map(prev);
+      if (!next.has(userId)) next.set(userId, new Set());
+      next.get(userId)!.add(role);
+      return next;
+    });
+  };
+
+  const revokeRole = (userId: string, role: string) => {
+    pushUserRole(userId, role, false);
+    setRoleMap((prev) => {
+      const next = new Map(prev);
+      next.get(userId)?.delete(role);
+      return next;
+    });
+  };
+
+  // Find person by authUserId.
+  const personByAuthId = useMemo(() => {
+    const m = new Map<string, Athlete>();
+    for (const p of db.people) { if (p.authUserId) m.set(p.authUserId, p); }
+    return m;
+  }, [db.people]);
+
+  const peopleWithAccount = useMemo(() =>
+    db.people.filter((p) => p.authUserId)
+      .map((p) => ({ value: p.id, label: `${p.firstName} ${p.lastName}`, sub: p.email }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
+    [db.people]
+  );
+
+  const doAddRole = (role: string) => {
+    if (!addPersonId) { toast('Select a person first.'); return; }
+    const person = db.people.find((p) => p.id === addPersonId);
+    if (!person?.authUserId) { toast('That person has no linked account — they need an account before they can hold a role.'); return; }
+    if (roleMap.get(person.authUserId)?.has(role)) { toast(`${person.firstName} already has the ${role} role.`); return; }
+    grantRole(person.authUserId, role);
+    setAddingRole(null);
+    setAddPersonId(null);
+    const roleDef = ROLE_DEFS.find((r) => r.role === role);
+    toast(`${person.firstName} ${person.lastName} granted ${roleDef?.label ?? role}.`);
+  };
+
+  return (
+    <div>
+      {loading && <p style={{ color: 'var(--ink-soft)', fontSize: 13.5 }}>Loading role assignments…</p>}
+      {ROLE_DEFS.map(({ role, label, desc }) => {
+        // Holders: people whose authUserId has this role.
+        const holders: { userId: string; person: Athlete | undefined }[] = [];
+        for (const [userId, roles] of roleMap.entries()) {
+          if (roles.has(role)) holders.push({ userId, person: personByAuthId.get(userId) });
+        }
+        holders.sort((a, b) => {
+          const an = a.person ? `${a.person.lastName} ${a.person.firstName}` : a.userId;
+          const bn = b.person ? `${b.person.lastName} ${b.person.firstName}` : b.userId;
+          return an.localeCompare(bn);
+        });
+        const isAdding = addingRole === role;
+        return (
+          <div className="card card-pad" key={role} style={{ marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+              <div>
+                <h3 className="card-title" style={{ marginBottom: 2 }}>{label}</h3>
+                <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '0 0 10px' }}>{desc}</p>
+              </div>
+              <button className="btn small ghost" onClick={() => { setAddingRole(isAdding ? null : role); setAddPersonId(null); }}>
+                {isAdding ? 'Cancel' : '+ Add'}
+              </button>
+            </div>
+
+            {isAdding && (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginBottom: 12, flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: 220 }}>
+                  <Field label="Person with account">
+                    <Combo
+                      options={peopleWithAccount}
+                      value={addPersonId}
+                      onChange={setAddPersonId}
+                      placeholder="Search by name or email…"
+                    />
+                  </Field>
+                </div>
+                <button className="btn primary" onClick={() => doAddRole(role)}>Grant role</button>
+              </div>
+            )}
+
+            {holders.length === 0 ? (
+              <p style={{ fontSize: 13.5, color: 'var(--ink-soft)', margin: 0 }}>No one currently holds this role.</p>
+            ) : (
+              <table className="tbl">
+                <thead><tr><th>Person</th><th>Email</th><th>Auth user ID</th><th /></tr></thead>
+                <tbody>
+                  {holders.map(({ userId, person }) => (
+                    <tr key={userId}>
+                      <td style={{ fontWeight: 600 }}>
+                        {person ? (
+                          <Link to={`/admin/members/${person.id}`}>{person.lastName}, {person.firstName}</Link>
+                        ) : (
+                          <em style={{ color: 'var(--ink-soft)' }}>Unknown person</em>
+                        )}
+                      </td>
+                      <td style={{ fontSize: 13 }}>{person?.email ?? '—'}</td>
+                      <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--ink-soft)' }}>{userId.slice(0, 12)}…</td>
+                      <td>
+                        <button
+                          className="btn small ghost"
+                          onClick={() => {
+                            const name = person ? `${person.firstName} ${person.lastName}` : userId;
+                            if (window.confirm(`Remove ${name} from ${label}?`)) {
+                              revokeRole(userId, role);
+                              toast(`Removed ${name} from ${label}.`);
+                            }
+                          }}
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

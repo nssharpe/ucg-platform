@@ -53,6 +53,14 @@ function validateProfile(p: Athlete): ValidationErrors {
 }
 
 // ---------------------------------------------------------------------------
+// Derive effective roles, falling back to kind for back-compat
+// ---------------------------------------------------------------------------
+function effectiveRoles(p: Athlete): { athlete: boolean; coach: boolean } {
+  if (p.roles) return p.roles;
+  return { athlete: p.kind !== 'coach', coach: p.kind === 'coach' };
+}
+
+// ---------------------------------------------------------------------------
 // Main Profile component
 // ---------------------------------------------------------------------------
 
@@ -91,6 +99,10 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   const clubOptions = db.clubs.map((c) => ({ value: c.id, label: c.name, sub: `${c.state} · ${c.region}` }));
   const states = Object.keys(STATE_REGIONS);
 
+  const roles = effectiveRoles(p);
+  const isAthlete = roles.athlete;
+  const isCoach = roles.coach;
+
   const validationErrors = useMemo(() => validateProfile(p), [p]);
 
   // When arriving from membership, highlight still-empty required fields in red
@@ -107,10 +119,10 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   const mainPhoneInvalid = p.phone && !phoneValid(p.phone);
   const emergPhoneInvalid = p.emergency.phone && !phoneValid(p.emergency.phone);
 
-  // Age validation
+  // Age validation — use minimum age based on roles
   const age = p.dob ? ageFromDob(p.dob) : null;
-  const minAge = p.kind === 'coach' ? 18 : 15;
-  const ageError = age !== null && p.dob ? (age < minAge ? `${p.kind === 'coach' ? 'Coaches' : 'Athletes'} must be ${minAge}+.` : null) : null;
+  const minAge = isAthlete ? 15 : 18; // coaches-only must be 18
+  const ageError = age !== null && p.dob ? (age < minAge ? `${isAthlete ? 'Athletes' : 'Coaches'} must be ${minAge}+.` : null) : null;
 
   const canSave = draft !== null
     && validationErrors.length === 0
@@ -142,7 +154,16 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
     }
   };
 
-  const isCoach = p.kind === 'coach';
+  /** Update roles and keep legacy `kind` consistent */
+  const setRoles = (newRoles: { athlete: boolean; coach: boolean }) => {
+    // Ensure at least one role is selected — keep previous if both would be false
+    const safe = (newRoles.athlete || newRoles.coach) ? newRoles : roles;
+    const kind = (safe.coach && !safe.athlete) ? 'coach' : 'athlete';
+    set({ roles: safe, kind });
+  };
+
+  // Waivers: collect all memberships that have a signed waiver
+  const waivers = person.memberships.filter((m) => m.waiverSignedAt);
 
   return (
     <div style={{ maxWidth: 760 }}>
@@ -182,10 +203,39 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
           )}
           <div className="card card-pad" style={{ marginBottom: 16 }}>
             <h3 className="card-title">Identity</h3>
+
+            {/* Role selector */}
+            <div style={{ marginBottom: 12 }}>
+              <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-soft)', marginBottom: 6, marginTop: 0 }}>Role</p>
+              <div style={{ display: 'flex', gap: 16 }}>
+                <label className="checkrow">
+                  <input
+                    type="checkbox"
+                    checked={roles.athlete}
+                    onChange={(e) => setRoles({ ...roles, athlete: e.target.checked })}
+                  />
+                  Athlete
+                </label>
+                <label className="checkrow">
+                  <input
+                    type="checkbox"
+                    checked={roles.coach}
+                    onChange={(e) => setRoles({ ...roles, coach: e.target.checked })}
+                  />
+                  Coach
+                </label>
+              </div>
+              {isAthlete && isCoach && (
+                <p style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 4 }}>
+                  Both roles — you'll be offered athlete and coach memberships.
+                </p>
+              )}
+            </div>
+
             <div className="grid cols-2">
               <Field label="First name"><input type="text" value={p.firstName} onChange={(e) => set({ firstName: e.target.value })} style={missingStyle('firstName')} /></Field>
               <Field label="Last name"><input type="text" value={p.lastName} onChange={(e) => set({ lastName: e.target.value })} style={missingStyle('lastName')} /></Field>
-              <Field label="Date of birth" hint="Athletes must be 15+, coaches 18+.">
+              <Field label="Date of birth" hint={isAthlete ? 'Athletes must be 15+, coaches 18+.' : 'Coaches must be 18+.'}>
                 <input type="date" value={p.dob} onChange={(e) => set({ dob: e.target.value })} style={missingStyle('dob')} />
                 {ageError && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>{ageError}</div>}
                 {missingFieldKeys.has('dob') && !p.dob && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Required</div>}
@@ -195,7 +245,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                   {['Male', 'Female', 'Non-binary', 'Genderfluid', 'Agender', 'Other'].map((g) => <option key={g}>{g}</option>)}
                 </select>
               </Field>
-              {!isCoach && p.gender !== 'Male' && p.gender !== 'Female' && (
+              {isAthlete && p.gender !== 'Male' && p.gender !== 'Female' && (
                 <>
                   {DISCIPLINES.map((d) => (
                     <Field key={d} label={`${d} placement category`} tip="Determines which division you place in for this discipline">
@@ -240,15 +290,23 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
           </div>
 
           <div className="card card-pad" style={{ marginBottom: 16 }}>
-            <h3 className="card-title">Competition</h3>
+            <h3 className="card-title">
+              {isAthlete && isCoach ? 'Competition & Coaching' : isCoach ? 'Coaching' : 'Competition'}
+            </h3>
             <div className="grid cols-2">
-              <Field label="Main club" hint="The only club that can pay your membership fee.">
+              <Field
+                label={isCoach ? 'Primary club' : 'Main club'}
+                hint={isCoach ? 'The club you primarily coach for.' : 'The only club that can pay your membership fee.'}
+              >
                 <Combo options={clubOptions} value={p.mainClubId} onChange={(v) => set({ mainClubId: v })} />
               </Field>
               <Field label="Region" hint="Derived from training state.">
                 <input type="text" disabled value={STATE_REGIONS[p.state] ?? 'Other'} />
               </Field>
-              <Field label="Other clubs" hint="Clubs you also belong to — choose which one you compete for per meet at registration.">
+              <Field
+                label={isCoach ? 'Other clubs you coach for' : 'Other clubs'}
+                hint={isCoach ? 'Additional clubs you coach or affiliate with.' : 'Clubs you also belong to — choose which one you compete for per meet at registration.'}
+              >
                 <Combo
                   options={clubOptions.filter((c) => c.value !== p.mainClubId && !p.altClubIds.includes(c.value))}
                   value={null}
@@ -274,7 +332,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                 )}
               </Field>
             </div>
-            {!isCoach && (
+            {isAthlete && (
               <div style={{ marginTop: 12 }}>
                 <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-soft)', marginBottom: 6, marginTop: 0 }}>Competition levels</p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -344,12 +402,19 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
         <>
           <div className="card card-pad" style={{ marginBottom: 16 }}>
             <h3 className="card-title">Identity</h3>
+            <div style={{ marginBottom: 10 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink-soft)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Role</span>
+              <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+                {isAthlete && <Badge tone="navy">Athlete</Badge>}
+                {isCoach && <Badge tone="info">Coach</Badge>}
+              </div>
+            </div>
             <div className="grid cols-2">
               <ViewRow label="First name" value={person.firstName} />
               <ViewRow label="Last name" value={person.lastName} />
               <ViewRow label="Date of birth" value={person.dob} />
               <ViewRow label="Gender" value={person.gender} />
-              {!isCoach && person.gender !== 'Male' && person.gender !== 'Female' && DISCIPLINES.map((d) => (
+              {isAthlete && person.gender !== 'Male' && person.gender !== 'Female' && DISCIPLINES.map((d) => (
                 <ViewRow key={d} label={`${d} placement`} value={person.placement?.[d] ?? 'women+'} />
               ))}
               <ViewRow label="Grad year" value={person.gradYear === 1900 ? 'N/A' : String(person.gradYear)} />
@@ -361,12 +426,16 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
           </div>
 
           <div className="card card-pad" style={{ marginBottom: 16 }}>
-            <h3 className="card-title">Competition</h3>
+            <h3 className="card-title">
+              {isAthlete && isCoach ? 'Competition & Coaching' : isCoach ? 'Coaching' : 'Competition'}
+            </h3>
             <div className="grid cols-2">
-              <ViewRow label="Main club" value={db.clubs.find((c) => c.id === person.mainClubId)?.name ?? '—'} />
+              <ViewRow label={isCoach ? 'Primary club' : 'Main club'} value={db.clubs.find((c) => c.id === person.mainClubId)?.name ?? '—'} />
               <ViewRow label="Region" value={STATE_REGIONS[person.state] ?? 'Other'} />
               <div style={{ gridColumn: '1 / -1' }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-soft)' }}>Other clubs</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-soft)' }}>
+                  {isCoach ? 'Other clubs coached' : 'Other clubs'}
+                </span>
                 <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {person.altClubIds.length > 0
                     ? person.altClubIds.map((cid) => (
@@ -376,7 +445,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                 </div>
               </div>
             </div>
-            {!isCoach && (
+            {isAthlete && (
               <div style={{ marginTop: 12 }}>
                 <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-soft)', marginBottom: 6, marginTop: 0 }}>Competition levels</p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -425,11 +494,137 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
               </div>
             </div>
           )}
+
+          {/* Waivers on file */}
+          <WaiversSection
+            personId={pid}
+            waivers={waivers}
+            adminView={adminView}
+            memberships={person.memberships}
+            seasons={db.seasons}
+          />
         </>
       )}
 
       {clubReqOpen && <ClubRequestForm requesterPersonId={pid} onClose={() => setClubReqOpen(false)} />}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Waivers on file section
+// ---------------------------------------------------------------------------
+import type { Membership, Season } from '../lib/types';
+
+interface WaiversSectionProps {
+  personId: string;
+  waivers: Membership[];
+  adminView: boolean;
+  memberships: Membership[];
+  seasons: Season[];
+}
+
+function WaiversSection({ waivers, adminView, memberships, seasons }: WaiversSectionProps) {
+  const toast = useToast();
+  const [emailModalOpen, setEmailModalOpen] = useState(false);
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+        <h3 className="card-title" style={{ margin: 0 }}>Waivers on file</h3>
+        {adminView && (
+          <button className="btn small ghost" onClick={() => setEmailModalOpen(true)}>
+            ✉ Email waiver
+          </button>
+        )}
+      </div>
+
+      {waivers.length === 0 ? (
+        <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: 0 }}>No waivers on file.</p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {waivers.map((m) => {
+            const season = seasons.find((s) => s.id === m.seasonId);
+            const seasonLabel = season?.name ?? m.seasonId;
+            const typeLabel = m.type === 'coach' ? 'Coach' : 'Athlete';
+            const signedDate = m.waiverSignedAt ? m.waiverSignedAt.slice(0, 10) : '';
+            const signedBy = m.waiverSignedBy ?? '';
+            return (
+              <div key={`${m.seasonId}-${m.type}`} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                <Badge tone="ok">Signed</Badge>
+                <span style={{ fontSize: 13, fontWeight: 500 }}>{seasonLabel} · {typeLabel}</span>
+                <span style={{ fontSize: 12, color: 'var(--ink-soft)' }}>
+                  {signedDate}{signedBy ? ` · by ${signedBy}` : ''}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {adminView && emailModalOpen && (
+        <EmailWaiverModal
+          memberships={memberships}
+          seasons={seasons}
+          onClose={() => setEmailModalOpen(false)}
+          onSend={(seasonId, type) => {
+            const season = seasons.find((s) => s.id === seasonId);
+            const typeLabel = type === 'coach' ? 'Coach' : 'Athlete';
+            // TODO: send waiver email
+            toast(`Waiver email queued for ${season?.name ?? seasonId} · ${typeLabel} membership.`);
+            setEmailModalOpen(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+interface EmailWaiverModalProps {
+  memberships: Membership[];
+  seasons: Season[];
+  onClose: () => void;
+  onSend: (seasonId: string, type: 'athlete' | 'coach') => void;
+}
+
+function EmailWaiverModal({ memberships, seasons, onClose, onSend }: EmailWaiverModalProps) {
+  // Build options: one per (season, type) combination, defaulting to all active seasons
+  const options: { seasonId: string; type: 'athlete' | 'coach'; label: string }[] = [];
+  for (const s of seasons) {
+    // Offer for each membership type the person has (or both if no memberships yet)
+    const personTypes = new Set(memberships.map((m) => m.type));
+    const types: Array<'athlete' | 'coach'> = personTypes.size > 0 ? Array.from(personTypes) : ['athlete'];
+    for (const t of types) {
+      options.push({ seasonId: s.id, type: t, label: `${s.name} · ${t === 'coach' ? 'Coach' : 'Athlete'}` });
+    }
+  }
+
+  const [selected, setSelected] = useState(options[0]?.label ?? '');
+  const chosen = options.find((o) => o.label === selected);
+
+  return (
+    <Modal title="Email waiver" onClose={onClose}>
+      <p style={{ marginTop: 0, fontSize: 13 }}>
+        Choose the waiver (season + type) to send to this person.
+      </p>
+      <Field label="Waiver">
+        <select className="input" value={selected} onChange={(e) => setSelected(e.target.value)}>
+          {options.map((o) => (
+            <option key={o.label} value={o.label}>{o.label}</option>
+          ))}
+        </select>
+      </Field>
+      <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+        <button
+          className="btn primary"
+          disabled={!chosen}
+          onClick={() => chosen && onSend(chosen.seasonId, chosen.type)}
+        >
+          Send waiver
+        </button>
+        <button className="btn ghost" onClick={onClose}>Cancel</button>
+      </div>
+    </Modal>
   );
 }
 
@@ -505,6 +700,7 @@ function AdminMembershipControls({
   const toast = useToast();
   const caps = useCapabilities();
   const person = db.people.find((x) => x.id === personId)!;
+  const roles = effectiveRoles(person);
 
   const confirmRevoke = () => {
     if (!revokeSeasonId) return;
@@ -531,12 +727,16 @@ function AdminMembershipControls({
 
   return (
     <>
-      {db.seasons.map((s) => {
+      {[...db.seasons].sort((a, b) => {
+        if (a.current && !b.current) return -1;
+        if (!a.current && b.current) return 1;
+        return b.startsOn.localeCompare(a.startsOn); // newest → oldest
+      }).map((s) => {
         const m = person.memberships.find((x) => x.seasonId === s.id);
         const isActive = m?.status === 'active';
         return (
           <div key={s.id} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <strong style={{ fontSize: 13 }}>{s.name}:</strong>
+            <strong style={{ fontSize: 13 }}>{s.name}{s.current ? ' (Current)' : ''}:</strong>
             {isActive ? <Badge tone="ok">Active{m?.activatedByAdmin ? ' (admin)' : ''}</Badge>
               : m?.status === 'pending-club-payment' ? <Badge tone="warn">Pending club</Badge>
               : <Badge tone="err">None</Badge>}
@@ -548,13 +748,15 @@ function AdminMembershipControls({
                   if (isActive) {
                     setRevokeSeasonId(s.id);
                   } else {
+                    // Default new grant type: coach if coach-only, else athlete
+                    const defaultType: 'athlete' | 'coach' = (roles.coach && !roles.athlete) ? 'coach' : 'athlete';
                     mutate((d) => {
                       const personInDraft = d.people.find((x) => x.id === personId)!;
                       let em = personInDraft.memberships.find((x) => x.seasonId === s.id);
                       if (em) {
                         em.status = 'active'; em.activatedByAdmin = true;
                       } else {
-                        em = { seasonId: s.id, status: 'active', waiverSignedAt: null, waiverSignedBy: null, paidVia: 'comp', activatedByAdmin: true };
+                        em = { seasonId: s.id, type: defaultType, status: 'active', waiverSignedAt: null, waiverSignedBy: null, paidVia: 'comp', activatedByAdmin: true };
                         personInDraft.memberships.push(em);
                       }
                       pushMembership(personInDraft.id, em);
@@ -569,7 +771,6 @@ function AdminMembershipControls({
           </div>
         );
       })}
-      <button className="btn small" onClick={() => toast(`Waiver signing link emailed to ${person.email}. You'll be notified when signed.`)}>✉ Email waiver</button>
 
       {revokeSeasonId && (
         <Modal title="Revoke membership?" onClose={() => setRevokeSeasonId(null)}>
