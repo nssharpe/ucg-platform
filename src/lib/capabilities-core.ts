@@ -9,6 +9,9 @@ export interface Capabilities {
   /** True when the real signed-in user holds the 'admin' role, regardless of
    *  impersonation. Use this to show the impersonation ("View as") control. */
   isAdmin: boolean;
+  /** True when the user is on the Sanctioning Team (or an admin). Gates the
+   *  Sanctioning queue / vote pages. Admins are implicitly on the team. */
+  isSanctioning: boolean;
   /** True only when the user is a real admin AND not currently impersonating
    *  anyone. Use this to gate admin POWERS in the UI (admin nav, edit buttons,
    *  grant/revoke) so that "View as (person)" faithfully shows what that
@@ -41,6 +44,7 @@ export function deriveCapabilities(
   seasonId: string | null,
 ): Capabilities {
   const isAdmin = roles.includes('admin');
+  const isSanctioning = isAdmin || roles.includes('sanctioning');
   const impersonating = isAdmin && !!viewPersonId && viewPersonId !== authPersonId;
   const personId = impersonating ? viewPersonId : authPersonId;
   const person = personId ? db.people.find((p) => p.id === personId) ?? null : null;
@@ -54,6 +58,7 @@ export function deriveCapabilities(
   return {
     signedIn,
     isAdmin,
+    isSanctioning,
     actingAsAdmin: isAdmin && !impersonating,
     personId,
     person,

@@ -29,6 +29,12 @@ function navFor(caps: ReturnType<typeof useCapabilities>): NavGroup[] {
     groups.push({ group: 'My Club', items: [
       { to: `/club/${cid}`, label: 'Roster & meet reg' },
       { to: `/club/${cid}/cart`, label: 'Club Cart & Invoices' },
+      { to: '/sanction', label: 'Request a Sanction' },
+    ]});
+  }
+  if (caps.isSanctioning) {
+    groups.push({ group: 'Sanctioning', items: [
+      { to: '/sanctioning', label: 'Sanctioning Queue' },
     ]});
   }
   if (caps.actingAsAdmin) {

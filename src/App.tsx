@@ -18,6 +18,7 @@ const loaders = {
   Profile: () => import('./pages/Profile'),
   Club: () => import('./pages/Club'),
   Clubs: () => import('./pages/Clubs'),
+  Sanction: () => import('./pages/Sanction'),
   Meets: () => import('./pages/Meets'),
   Judge: () => import('./pages/Judge'),
   ScoreDetail: () => import('./pages/ScoreDetail'),
@@ -32,6 +33,9 @@ const AdminProfile = lazy(() => loaders.Profile().then((m) => ({ default: () => 
 const ClubPage = lazy(() => loaders.Club().then((m) => ({ default: m.ClubPage })));
 const ClubCart = lazy(() => loaders.Club().then((m) => ({ default: m.ClubCart })));
 const Clubs = lazy(() => loaders.Clubs().then((m) => ({ default: m.Clubs })));
+const SanctionRequestForm = lazy(() => loaders.Sanction().then((m) => ({ default: m.SanctionRequestForm })));
+const SanctioningQueue = lazy(() => loaders.Sanction().then((m) => ({ default: m.SanctioningQueue })));
+const SanctionVotePage = lazy(() => loaders.Sanction().then((m) => ({ default: m.SanctionVotePage })));
 const Meets = lazy(() => loaders.Meets().then((m) => ({ default: m.Meets })));
 const MeetDetail = lazy(() => loaders.Meets().then((m) => ({ default: m.MeetDetail })));
 const MeetManage = lazy(() => loaders.Meets().then((m) => ({ default: m.MeetManage })));
@@ -126,6 +130,9 @@ export default function App() {
               <Route path="/me" element={<RequireAccount><Profile /></RequireAccount>} />
               <Route path="/membership" element={<RequireAccount><Membership /></RequireAccount>} />
               <Route path="/clubs" element={<RequireAccount><Clubs /></RequireAccount>} />
+              <Route path="/sanction" element={<RequireAccount><SanctionRequestForm /></RequireAccount>} />
+              <Route path="/sanctioning" element={<RequireAccount><SanctioningQueue /></RequireAccount>} />
+              <Route path="/sanctioning/:requestId" element={<RequireAccount><SanctionVotePage /></RequireAccount>} />
               <Route path="/club/:clubId" element={<RequireAccount><ClubPage /></RequireAccount>} />
               <Route path="/club/:clubId/cart" element={<RequireAccount><ClubCart /></RequireAccount>} />
               <Route path="/meets/:slug/manage" element={<RequireAccount><MeetManage /></RequireAccount>} />

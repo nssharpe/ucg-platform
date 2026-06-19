@@ -152,6 +152,12 @@ describe('deriveCapabilities', () => {
     expect(caps.isMeetHost('meet-1')).toBe(true); // admins host any meet
   });
 
+  it('1b. sanctioning role (and admin) are on the sanctioning team', () => {
+    expect(deriveCapabilities(db, true, ['sanctioning'], 'p-x', null, 's1').isSanctioning).toBe(true);
+    expect(deriveCapabilities(db, true, ['admin'], 'p-admin', null, 's1').isSanctioning).toBe(true);
+    expect(deriveCapabilities(db, true, [], 'p-athlete-active', null, 's1').isSanctioning).toBe(false);
+  });
+
   it('2. plain signed-in athlete with an active membership can register', () => {
     const caps = deriveCapabilities(db, true, [], 'p-athlete-active', null, 's1');
 
