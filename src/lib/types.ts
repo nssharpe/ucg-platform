@@ -221,6 +221,47 @@ export interface Meet {
   kind?: 'standard' | 'nationals';
   /** Present on Nationals meets: the qualification/awards configuration. */
   nationalsConfig?: NationalsConfig;
+  /** Competition (default) or a camp (NAIGC-hosted, individual-only reg). */
+  eventType?: 'competition' | 'camp';
+  /** Auto-assigned on sanction approval: `YYYY_ST_###`. */
+  sanctionId?: string;
+  /** Camp-only configuration (overnight survey, director cc, leo add-on, etc.). */
+  campConfig?: {
+    overnightSurvey?: boolean;
+    directorName?: string;
+    directorEmail?: string;
+    directorCcOnConfirmation?: boolean;
+    leoAddon?: { price: number; sizes: string[] };
+    ageCalcAt?: string; // ISO datetime
+  };
+}
+
+export type SanctionStatus =
+  | 'draft' | 'submitted' | 'voting' | 'approved' | 'rejected' | 'withdrawn';
+
+/** A club manager's request to sanction an event. The full form lives in
+ *  `payload` (see docs/specs/2026-06-18-event-management.md). */
+export interface SanctionRequest {
+  id: string;
+  hostClubId: string;
+  requesterPersonId: string | null;
+  eventKind: 'competition' | 'camp';
+  status: SanctionStatus;
+  payload: Record<string, unknown>; // the full sanction form
+  submittedAt?: string | null;
+  deadlineAt?: string | null; // submittedAt + 7 days
+  decidedAt?: string | null;
+  createdMeetId?: string | null;
+  sanctionId?: string | null;
+}
+
+export interface SanctionVote {
+  id: string;
+  requestId: string;
+  voterUserId: string;
+  vote: 'approve' | 'reject' | 'abstain';
+  comment?: string;
+  votedAt: string;
 }
 
 export interface Registration {
@@ -353,6 +394,9 @@ export interface DB {
   regionOverrides?: Record<string, Region>;
   /** Pending/handled account-setup invites created by admins. */
   accountInvites?: AccountInvite[];
+  /** Event-Management sanction requests + their votes. */
+  sanctionRequests?: SanctionRequest[];
+  sanctionVotes?: SanctionVote[];
 }
 
 export const STATE_REGIONS: Record<string, Region> = {

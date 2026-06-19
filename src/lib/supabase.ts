@@ -7,7 +7,7 @@
 // block the UI) and are no-ops when `isSupabaseConfigured` is false.
 import { createClient, type SupabaseClient, type RealtimePostgresChangesPayload, type PostgrestError } from '@supabase/supabase-js';
 import type {
-  AccountInvite, Athlete, Club, ClubRequest, Coupon, DB, Invoice, Level, Meet, Membership, Region, Registration, Score, Season,
+  AccountInvite, Athlete, Club, ClubRequest, Coupon, DB, Invoice, Level, Meet, Membership, Region, Registration, SanctionRequest, SanctionVote, Score, Season,
 } from './types';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
@@ -163,6 +163,8 @@ const meetToRow = (m: Meet) => ({
   private_reg_code: m.privateRegCode ?? null, banquet: m.banquet ?? null,
   tshirt_addon: m.tshirtAddon ?? null, banner_addon: m.bannerAddon ?? null,
   change_fee: m.changeFee ?? null,
+  event_type: m.eventType ?? 'competition', sanction_id: m.sanctionId ?? null,
+  camp_config: m.campConfig ?? null,
   kind: m.kind ?? 'standard', nationals_config: m.nationalsConfig ?? null,
 });
 
@@ -328,6 +330,25 @@ export function pushAccountInvite(inv: AccountInvite) {
   }]);
 }
 
+/** Persist a sanction request (0008 sanction_requests). */
+export function pushSanctionRequest(r: SanctionRequest) {
+  remoteUpsert('sanction_requests', [{
+    id: r.id, host_club_id: r.hostClubId, requester_person_id: r.requesterPersonId,
+    event_kind: r.eventKind, status: r.status, payload: r.payload,
+    submitted_at: r.submittedAt ?? null, deadline_at: r.deadlineAt ?? null,
+    decided_at: r.decidedAt ?? null, created_meet_id: r.createdMeetId ?? null,
+    sanction_id: r.sanctionId ?? null,
+  }]);
+}
+
+/** Persist a sanction vote (0008 sanction_votes). */
+export function pushSanctionVote(v: SanctionVote) {
+  remoteUpsert('sanction_votes', [{
+    id: v.id, request_id: v.requestId, voter_user_id: v.voterUserId, vote: v.vote,
+    comment: v.comment ?? null, voted_at: v.votedAt,
+  }], 'request_id,voter_user_id');
+}
+
 /** Add or remove a single person↔club manager link. */
 export function pushClubManager(clubId: string, personId: string, add: boolean) {
   if (!supabase) return;
@@ -395,7 +416,7 @@ export async function loadAll(): Promise<DB | null> {
     const [
       seasonsR, levelsR, clubsR, clubManagersR, peopleR, altClubsR, membershipsR,
       meetsR, sessionsR, squadsR, registrationsR, scoresR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
-      clubRequestsR, appSettingsR, accountInvitesR,
+      clubRequestsR, appSettingsR, accountInvitesR, sanctionRequestsR, sanctionVotesR,
     ] = await Promise.all([
       supabase.from('seasons').select('*'),
       supabase.from('levels').select('*'),
@@ -416,6 +437,8 @@ export async function loadAll(): Promise<DB | null> {
       supabase.from('club_requests').select('*'),
       supabase.from('app_settings').select('*'),       // 0007; tolerated if absent
       supabase.from('account_invites').select('*'),     // 0007; tolerated if absent
+      supabase.from('sanction_requests').select('*'),   // 0008; tolerated if absent
+      supabase.from('sanction_votes').select('*'),      // 0008; tolerated if absent
     ]);
 
     // club_requests may not exist on a pre-0005 DB — tolerate its error, fail on the rest.
@@ -496,6 +519,9 @@ export async function loadAll(): Promise<DB | null> {
       ...(r.tshirt_addon ? { tshirtAddon: r.tshirt_addon } : {}),
       ...(r.banner_addon ? { bannerAddon: r.banner_addon } : {}),
       ...(r.change_fee ? { changeFee: r.change_fee } : {}),
+      ...(r.event_type && r.event_type !== 'competition' ? { eventType: r.event_type } : {}),
+      ...(r.sanction_id ? { sanctionId: r.sanction_id } : {}),
+      ...(r.camp_config ? { campConfig: r.camp_config } : {}),
       ...(r.kind && r.kind !== 'standard' ? { kind: r.kind } : {}),
       ...(r.nationals_config ? { nationalsConfig: r.nationals_config } : {}),
     }));
@@ -535,11 +561,27 @@ export async function loadAll(): Promise<DB | null> {
         status: r.status, createdAt: r.created_at, acceptedAt: r.accepted_at ?? null,
       }));
 
+    const sanctionRequests: SanctionRequest[] = (sanctionRequestsR.error ? [] : sanctionRequestsR.data ?? [])
+      .map((r: any): SanctionRequest => ({
+        id: r.id, hostClubId: r.host_club_id, requesterPersonId: r.requester_person_id ?? null,
+        eventKind: r.event_kind ?? 'competition', status: r.status, payload: r.payload ?? {},
+        submittedAt: r.submitted_at ?? null, deadlineAt: r.deadline_at ?? null,
+        decidedAt: r.decided_at ?? null, createdMeetId: r.created_meet_id ?? null,
+        sanctionId: r.sanction_id ?? null,
+      }));
+    const sanctionVotes: SanctionVote[] = (sanctionVotesR.error ? [] : sanctionVotesR.data ?? [])
+      .map((r: any): SanctionVote => ({
+        id: r.id, requestId: r.request_id, voterUserId: r.voter_user_id, vote: r.vote,
+        comment: r.comment ?? undefined, votedAt: r.voted_at,
+      }));
+
     return {
       seasons, levels, clubs, people, meets, registrations, scores, invoices, coupons,
       carts, clubRequests,
       ...(regionOverrides ? { regionOverrides } : {}),
       ...(accountInvites.length ? { accountInvites } : {}),
+      ...(sanctionRequests.length ? { sanctionRequests } : {}),
+      ...(sanctionVotes.length ? { sanctionVotes } : {}),
     };
   } catch (e) {
     console.error('[supabase] loadAll threw:', e);
