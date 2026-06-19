@@ -1,6 +1,9 @@
 -- 0008_event_management.sql
--- Event Management subsystem (Wave 4). Idempotent. Apply AFTER 0007.
--- See docs/specs/2026-06-18-event-management.md.
+-- Event Management subsystem (Wave 4). Idempotent. Apply AFTER 0007 AND 0007b.
+-- PREREQUISITE: 0007b_sanctioning_role.sql must be applied FIRST (its own commit) —
+-- the RLS policies below reference role 'sanctioning', which must already exist in
+-- the app_role enum or this script errors with "invalid input value for enum
+-- app_role: sanctioning". See docs/specs/2026-06-18-event-management.md.
 
 -- ── Meets: event type, sanction id, camp config ────────────────────────────
 alter table meets add column if not exists event_type text not null default 'competition';
