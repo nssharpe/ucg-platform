@@ -69,6 +69,22 @@ create policy waiver_docs_write  on waiver_documents for all    using (is_admin(
 create policy waiver_sigs_read   on waiver_signatures for select
   using (is_admin() or person_id = my_person_id()::text);
 
--- Sign requests: token-based lookup is unauthenticated (a single pending row is
--- not sensitive); writes go through the service-role Edge Functions.
-create policy waiver_reqs_read   on waiver_sign_requests for select using (true);
+-- Sign requests: NOT publicly enumerable. Anonymous guardians look up a single
+-- row by its secret token via the security-definer function below; admins may
+-- read all rows; the service-role Edge Functions bypass RLS for writes.
+create policy waiver_reqs_read on waiver_sign_requests for select using (is_admin());
+
+-- Token lookup for the public guardian signing page. SECURITY DEFINER so it can
+-- read the table without exposing it to enumeration; returns only the single
+-- pending row whose token exactly matches. set search_path pins schema resolution.
+create or replace function get_waiver_sign_request(p_token text)
+returns table (
+  person_id text, season_id text, waiver_type text,
+  membership_type text, guardian_email text, status text
+) as $$
+  select person_id, season_id, waiver_type, membership_type, guardian_email, status
+  from waiver_sign_requests
+  where token = p_token and status = 'pending';
+$$ language sql stable security definer set search_path = public;
+
+grant execute on function get_waiver_sign_request(text) to anon, authenticated;

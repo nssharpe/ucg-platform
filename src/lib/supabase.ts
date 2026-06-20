@@ -499,13 +499,13 @@ export async function requestGuardianWaiver(args: {
   return data as { ok: boolean; error?: string };
 }
 
-/** Public token lookup for the guardian signing page (RLS: select=true). */
+/** Token lookup for the guardian signing page via SECURITY DEFINER RPC
+ *  (the table itself is not publicly readable). */
 export async function fetchSignRequest(token: string) {
   if (!supabase) return null;
-  const { data, error } = await supabase.from('waiver_sign_requests')
-    .select('*').eq('token', token).maybeSingle();
+  const { data, error } = await supabase.rpc('get_waiver_sign_request', { p_token: token });
   if (error) { console.error('[supabase] fetchSignRequest failed:', error); return null; }
-  return data;
+  return (data as any[] | null)?.[0] ?? null;
 }
 
 /** The published waiver doc for a season+type (latest published version). */
