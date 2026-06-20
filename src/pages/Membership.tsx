@@ -1,11 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { Badge, Field, useToast } from '../components/ui';
 import { fmtMoney } from '../lib/scoring';
-import { pushCart, pushCoupon, pushInvoice, pushMembership } from '../lib/supabase';
-import type { Athlete, Membership, MembershipType } from '../lib/types';
+import { pushCart, pushCoupon, pushInvoice, pushMembership, fetchPublishedWaiver, recordWaiverSignature, requestGuardianWaiver } from '../lib/supabase';
+import type { Athlete, Membership, MembershipType, WaiverDocument } from '../lib/types';
+import { isMinorAt } from '../lib/waivers-core';
 import {
   offeredMembershipTypes,
   priceForAdding,
@@ -97,19 +98,28 @@ function MembershipInner({ me }: { me: Athlete }) {
   // Task 6: save card on file (disabled/coming-soon)
   const [saveCard, _setSaveCard] = useState(false);
 
+  // Task 9/10: waiver signing state
+  const [consent, setConsent] = useState(false);
+  const [waiverDoc, setWaiverDoc] = useState<WaiverDocument | null>(null);
+  const [signing, setSigning] = useState(false);
+  const [guardianName, setGuardianName] = useState('');
+  const [guardianEmail, setGuardianEmail] = useState('');
+  const [sentGuardian, setSentGuardian] = useState(false);
+
+  useEffect(() => {
+    const wt = selectedTypes.includes('coach') ? 'Coach' : 'Athlete';
+    void fetchPublishedWaiver(season.id, wt).then(setWaiverDoc);
+  }, [season.id, selectedTypes]);
+
   const missingFields = missingProfileFields(me);
   const profileComplete = missingFields.length === 0;
 
-  const isMinor = (() => {
-    if (!me.dob) return false;
-    const age = (Date.now() - new Date(me.dob).getTime()) / (365.25 * 24 * 3600 * 1000);
-    return age < 18;
-  })();
+  const isMinor = isMinorAt(me.dob ?? '', new Date());
 
   const expectedSig = `${me.firstName ?? ''} ${me.lastName ?? ''}`.replace(/\s+/g, ' ').trim();
   const normalise = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
   const sigMatchesName = normalise(waiverSig) === normalise(expectedSig);
-  const waiverValid = isMinor ? waiverSig.trim().length >= 2 : sigMatchesName;
+  const waiverValid = !!waiverDoc && consent && !isMinor && sigMatchesName;
 
   // Task 7: coupon validation via pricing helpers
   const nowISO = new Date().toISOString();
@@ -167,9 +177,9 @@ function MembershipInner({ me }: { me: Athlete }) {
         const membership: Membership = {
           seasonId,
           type: t,
-          status: via === 'club' ? 'pending-club-payment' : 'active',
-          waiverSignedAt: new Date().toISOString(),
-          waiverSignedBy: waiverSig,
+          status: isMinor ? 'pending-waiver' : (via === 'club' ? 'pending-club-payment' : 'active'),
+          waiverSignedAt: isMinor ? null : new Date().toISOString(),
+          waiverSignedBy: isMinor ? null : waiverSig,
           paidVia: via === 'comp' ? 'comp' : via === 'card' ? 'card' : 'club',
           ...(via === 'comp' ? { activatedByAdmin: true } : {}),
         };
@@ -246,6 +256,39 @@ function MembershipInner({ me }: { me: Athlete }) {
   // Type label helper
   const typeLabel = (t: MembershipType) => t === 'coach' ? 'Coach' : 'Athlete';
 
+  // Task 9: adult self-sign via Edge Function
+  const signSelf = async () => {
+    if (!waiverDoc) return;
+    setSigning(true);
+    const res = await recordWaiverSignature({
+      personId: me.id, seasonId: season.id, waiverType: waiverDoc.waiverType,
+      membershipType: selectedTypes.includes('coach') ? 'coach' : 'athlete',
+      waiverDocumentId: waiverDoc.id, contentHash: waiverDoc.contentHash,
+      signerName: waiverSig.trim(), signerEmail: me.email, signerRole: 'self', consent,
+    });
+    setSigning(false);
+    if (!res.ok) { toast(res.error ?? 'Could not record signature.'); return; }
+    setStep('pay');
+  };
+
+  // Task 10: guardian waiver request
+  const sendGuardian = async () => {
+    if (!waiverDoc) return;
+    if (guardianName.trim().length < 2 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guardianEmail)) {
+      toast('Enter the guardian name and a valid email.'); return;
+    }
+    setSigning(true);
+    const res = await requestGuardianWaiver({
+      personId: me.id, seasonId: season.id, waiverType: waiverDoc.waiverType,
+      membershipType: selectedTypes.includes('coach') ? 'coach' : 'athlete',
+      guardianName: guardianName.trim(), guardianEmail: guardianEmail.trim(),
+    });
+    setSigning(false);
+    if (!res.ok) { toast(res.error ?? 'Could not send the guardian link.'); return; }
+    setSentGuardian(true);
+    toast('Signing link sent to the guardian.');
+  };
+
   return (
     <div style={{ maxWidth: 660 }}>
       {/* Back button (task 2) — shown when inside the flow */}
@@ -307,6 +350,13 @@ function MembershipInner({ me }: { me: Athlete }) {
                     Your {season.name} {m.type} membership is active.
                     Waiver signed by {m.waiverSignedBy} on {m.waiverSignedAt?.slice(0, 10)}.
                     {m.activatedByAdmin && <span style={{ color: 'var(--ink-soft)', fontSize: 13 }}> (Admin override)</span>}
+                  </p>
+                </>
+              ) : m.status === 'pending-waiver' ? (
+                <>
+                  <Badge tone="warn">Pending guardian waiver ({typeLabel(m.type)})</Badge>
+                  <p style={{ margin: '4px 0 0' }}>
+                    A guardian signing link has been sent. Your {m.type} membership activates once the guardian signs the waiver.
                   </p>
                 </>
               ) : (
@@ -428,22 +478,16 @@ function MembershipInner({ me }: { me: Athlete }) {
                   {selectedTypes.length > 1 ? 's' : ''} for {season.name}
                 </p>
               )}
-              <div style={{ background: 'var(--ice-100)', border: '1px solid var(--line)', borderRadius: 8, padding: 14, fontSize: 13, maxHeight: 160, overflowY: 'auto', marginBottom: 14 }}>
-                <strong>UCG ASSUMPTION OF RISK, WAIVER & RELEASE — {season.name}</strong>
-                <p>I acknowledge that gymnastics carries inherent risk of serious injury. In consideration of being
-                permitted to participate in United Club Gymnastics events, I release UCG, host clubs, venues, and their
-                officers from liability to the fullest extent permitted by law… (waiver text is set per-season in League Controls).</p>
+
+              <div style={{ background: 'var(--ice-100)', border: '1px solid var(--line)', borderRadius: 8,
+                padding: 14, fontSize: 13, maxHeight: 200, overflowY: 'auto', marginBottom: 14, whiteSpace: 'pre-wrap' }}>
+                {waiverDoc ? waiverDoc.body : 'Loading the current waiver…'}
               </div>
-              {isMinor ? (
+
+              {!isMinor && (
                 <>
-                  <Badge tone="warn">Under 18</Badge>
-                  <p style={{ fontSize: 14 }}>A parent or guardian must sign. We'll email them a signing link; your membership completes once they sign.</p>
-                  <Field label="Guardian name"><input type="text" value={waiverSig} onChange={(e) => setWaiverSig(e.target.value)} /></Field>
-                  <Field label="Guardian email"><input type="email" placeholder="guardian@example.com" /></Field>
-                </>
-              ) : (
-                <>
-                  <Field label="Type your full legal name to sign" hint="This constitutes a legal electronic signature with timestamp and IP recorded.">
+                  <Field label="Type your full legal name to sign"
+                    hint="This is a legal electronic signature; timestamp and IP are recorded.">
                     <input type="text" value={waiverSig} onChange={(e) => setWaiverSig(e.target.value)} placeholder={expectedSig} />
                   </Field>
                   {waiverSig.trim().length > 0 && !sigMatchesName && (
@@ -451,11 +495,39 @@ function MembershipInner({ me }: { me: Athlete }) {
                       Your signature must match your name on file: <strong>{expectedSig}</strong>.
                     </p>
                   )}
+                  <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 13.5, marginBottom: 12 }}>
+                    <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
+                    <span>I have read the waiver above and agree to sign it electronically.</span>
+                  </label>
+                  <button className="btn primary" disabled={!waiverValid || signing} onClick={signSelf}>
+                    {signing ? 'Signing…' : 'Sign & continue →'}
+                  </button>
                 </>
               )}
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button className="btn primary" disabled={!waiverValid} onClick={() => setStep('pay')}>Sign & continue →</button>
-              </div>
+
+              {isMinor && (
+                <>
+                  <Badge tone="warn">Under 18</Badge>
+                  <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 13.5, margin: '8px 0 12px' }}>
+                    <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
+                    <span>I confirm a parent/guardian will sign this waiver electronically on the athlete's behalf.</span>
+                  </label>
+                  {sentGuardian ? (
+                    <>
+                      <p style={{ fontSize: 14 }}>Signing link sent to {guardianEmail}. The membership activates once the guardian signs.</p>
+                      <button className="btn primary" onClick={() => setStep('pay')}>Continue to payment →</button>
+                    </>
+                  ) : (
+                    <>
+                      <Field label="Guardian name"><input type="text" value={guardianName} onChange={(e) => setGuardianName(e.target.value)} /></Field>
+                      <Field label="Guardian email"><input type="email" placeholder="guardian@example.com" value={guardianEmail} onChange={(e) => setGuardianEmail(e.target.value)} /></Field>
+                      <button className="btn primary" disabled={!waiverDoc || !consent || signing} onClick={sendGuardian}>
+                        {signing ? 'Sending…' : 'Email guardian a signing link'}
+                      </button>
+                    </>
+                  )}
+                </>
+              )}
             </div>
           )}
 
