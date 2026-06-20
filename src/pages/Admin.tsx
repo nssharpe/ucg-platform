@@ -9,7 +9,7 @@ import { DISCIPLINES, STATE_REGIONS } from '../lib/types';
 import type { AccountInvite, Athlete, Club, ClubRequest, Coupon, Level, Region, Season } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
 import { randomPromoCode, couponValid } from '../lib/pricing';
-import { fetchAllRoles, isSupabaseConfigured, pushAll, pushClub, pushClubManager, pushClubRequest, pushCoupon, pushLevel, pushMembership, pushRegistration, pushSeason, pushUserRole, pushAccountInvite, deleteCoupon, deleteRegistration } from '../lib/supabase';
+import { fetchAllRoles, isSupabaseConfigured, pushAll, pushClub, pushClubManager, pushClubRequest, pushCoupon, pushLevel, pushMembership, pushRegistration, pushSeason, pushUserRole, pushAccountInvite, deleteCoupon, deleteRegistration, sendEmail } from '../lib/supabase';
 import { useCapabilities } from '../lib/capabilities';
 
 // ---------- Merge Athletes modal ----------
@@ -1749,6 +1749,34 @@ export function Communicate() {
   // Test send
   const [testPersonId, setTestPersonId] = useState<string | null>(null);
   const [testGroup, setTestGroup] = useState<Athlete[]>([]);
+  const [sending, setSending] = useState(false);
+
+  // Send the current subject/body to an explicit recipient list via the
+  // send-email Edge Function (Gmail SMTP). Used by both the test and main sends.
+  const doSend = async (people: { email: string; name?: string }[], label: string) => {
+    if (channel === 'sms') { toast('SMS sending is not wired up yet (demo).'); return; }
+    if (!isSupabaseConfigured) { toast('Email needs Supabase configured to send.'); return; }
+    const subj = subject.trim();
+    if (!subj) { toast('Add a subject before sending.'); return; }
+    if (!body.trim()) { toast('Add an email body before sending.'); return; }
+    const valid = people.filter((p) => p.email);
+    if (valid.length === 0) { toast('No recipients have an email address.'); return; }
+    setSending(true);
+    try {
+      const res = await sendEmail(subj, body, valid);
+      if (res.ok) {
+        toast(`${label}: sent to ${res.sentCount} recipient${res.sentCount !== 1 ? 's' : ''}.`);
+      } else if (res.sentCount > 0) {
+        toast(`${label}: ${res.sentCount} sent, ${res.failedCount} failed${res.error ? ` — ${res.error}` : ''}.`);
+      } else {
+        toast(`${label} failed: ${res.error ?? 'unknown error'}`);
+      }
+    } catch (e) {
+      toast(`${label} failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSending(false);
+    }
+  };
 
   // Rich-text editor ref
   const richRef = useRef<HTMLDivElement>(null);
@@ -2045,15 +2073,16 @@ export function Communicate() {
 
           {/* From sender info */}
           <div style={{ margin: '12px 0 8px', padding: '8px 12px', background: 'var(--surface-1)', borderRadius: 4, fontSize: 12.5, color: 'var(--ink-soft)' }}>
-            <strong style={{ color: 'var(--ink)' }}>From:</strong> UCG &lt;noreply@naigc.org&gt;
-            <span style={{ marginLeft: 8 }}>— sender address is configured in Supabase/SMTP settings.</span>
+            <strong style={{ color: 'var(--ink)' }}>From:</strong> United Club Gymnastics &lt;nate.sharpe@naigc.org&gt;
+            <span style={{ marginLeft: 8 }}>— test sender (Gmail SMTP). Production sender (Resend/Workspace) TBD.</span>
           </div>
 
           {/* Send button */}
           <button
             className="btn primary"
             style={{ marginTop: 8 }}
-            onClick={() => {
+            disabled={sending}
+            onClick={async () => {
               const total = recipients.length + clubEmailRows.length;
               const personRows = recipients.map((p) => ({
                 name: `${p.firstName} ${p.lastName}`,
@@ -2068,10 +2097,14 @@ export function Communicate() {
               };
               setLastSend(record);
               setSendLogExpanded(false);
-              toast(`${channel === 'sms' ? 'Text' : 'Email'} queued to ${total} recipient${total !== 1 ? 's' : ''} (demo — nothing actually sent).`);
+              const emailRows = [
+                ...recipients.map((p) => ({ email: p.email, name: `${p.firstName} ${p.lastName}` })),
+                ...clubEmailRows.map((c) => ({ email: c.email ?? '', name: c.name })),
+              ];
+              await doSend(emailRows, channel === 'sms' ? 'Text' : 'Email');
             }}
           >
-            Send to {recipients.length + clubEmailRows.length} →
+            {sending ? 'Sending…' : `Send to ${recipients.length + clubEmailRows.length} →`}
           </button>
           {channel === 'sms' && (
             <p style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 4 }}>SMS delivery is not yet wired to a provider.</p>
@@ -2144,10 +2177,13 @@ export function Communicate() {
 
         <button
           className="btn ghost"
-          disabled={testGroup.length === 0}
-          onClick={() => toast(`Test email queued to ${testGroup.length} selected person(s): ${testGroup.map((p) => p.firstName).join(', ')} (demo — nothing actually sent).`)}
+          disabled={testGroup.length === 0 || sending}
+          onClick={() => doSend(
+            testGroup.map((p) => ({ email: p.email, name: `${p.firstName} ${p.lastName}` })),
+            'Test email',
+          )}
         >
-          Send test to {testGroup.length} selected
+          {sending ? 'Sending…' : `Send test to ${testGroup.length} selected`}
         </button>
       </div>
     </div>

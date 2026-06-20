@@ -408,6 +408,44 @@ export async function linkOrCreatePerson(first: string, last: string): Promise<s
 }
 
 // ---------------------------------------------------------------------------
+// Email — invoke the send-email Edge Function (Gmail SMTP for now)
+// ---------------------------------------------------------------------------
+export interface SendEmailResult {
+  ok: boolean;
+  sentCount: number;
+  failedCount: number;
+  failed?: { email: string; error: string }[];
+  error?: string;
+}
+
+/** Send an HTML email to the given recipients via the send-email Edge Function.
+ *  Caller must be a signed-in admin (the function re-checks the `admin` role).
+ *  Returns `{ ok: false, error }` when unconfigured or on any failure. */
+export async function sendEmail(
+  subject: string,
+  html: string,
+  recipients: { email: string; name?: string }[],
+): Promise<SendEmailResult> {
+  if (!supabase) return { ok: false, sentCount: 0, failedCount: recipients.length, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('send-email', {
+    body: { subject, html, recipients },
+  });
+  if (error) {
+    // Edge errors carry the JSON body on the context response.
+    let msg = error.message;
+    try {
+      const ctx = (error as { context?: Response }).context;
+      if (ctx && typeof ctx.json === 'function') {
+        const body = await ctx.json();
+        if (body?.error) msg = body.error;
+      }
+    } catch { /* fall back to error.message */ }
+    return { ok: false, sentCount: 0, failedCount: recipients.length, error: msg };
+  }
+  return data as SendEmailResult;
+}
+
+// ---------------------------------------------------------------------------
 // loadAll — hydrate the in-memory DB shape from Supabase on boot
 // ---------------------------------------------------------------------------
 export async function loadAll(): Promise<DB | null> {
