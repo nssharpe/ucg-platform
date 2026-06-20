@@ -1,7 +1,8 @@
 import type {
   DB, Athlete, Club, Level, Meet, Registration, Score, Season, Discipline, Invoice,
+  WaiverDocument,
 } from './types';
-import { EVENTS, STATE_REGIONS } from './types';
+import { EVENTS, STATE_REGIONS, WAIVER_TYPES } from './types';
 
 // Deterministic PRNG so every visitor sees the same demo data
 let _s = 42;
@@ -252,8 +253,25 @@ export function buildSeed(): DB {
     });
   }
 
+  const waiverDocuments: WaiverDocument[] = WAIVER_TYPES.map((t, i) => ({
+    id: `seed-waiver-${i}`,
+    seasonId: 's26',
+    waiverType: t,
+    version: 1,
+    body: `UCG ${t.toUpperCase()} ASSUMPTION OF RISK, WAIVER & RELEASE.\n\n` +
+      `I acknowledge that gymnastics carries inherent risk of serious injury. ` +
+      `In consideration of being permitted to participate in United Club Gymnastics ` +
+      `events, I release UCG, host clubs, venues, and their officers from liability ` +
+      `to the fullest extent permitted by law. (Placeholder text — replace in Admin → Waivers.)`,
+    contentHash: 'seed',
+    published: true,
+    createdAt: new Date().toISOString(),
+  }));
+
   return {
     seasons, levels, clubs, people, meets, registrations, scores, invoices,
+    waiverDocuments,
+    waiverSignatures: [],
     coupons: [
       { code: 'EARLYBIRD', pctOff: 10, appliesTo: 'meet-entry' },
       { code: 'NEWCLUB26', amountOff: 10, appliesTo: 'membership' },

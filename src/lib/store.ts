@@ -6,7 +6,7 @@ import { buildSeed } from './seed';
 import { isSupabaseConfigured, loadAll } from './supabase';
 
 const LS_KEY = 'ucg-db-v1';
-const SEED_VERSION = 3;
+const SEED_VERSION = 4;
 
 let db: DB = load();
 const listeners = new Set<() => void>();
