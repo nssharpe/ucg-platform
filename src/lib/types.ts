@@ -91,7 +91,7 @@ export interface Club {
 export type Gender = 'Male' | 'Female' | 'Non-binary' | 'Genderfluid' | 'Agender' | 'Other';
 export type Placement = 'men+' | 'women+';
 
-export type MembershipStatus = 'active' | 'pending-club-payment' | 'none';
+export type MembershipStatus = 'active' | 'pending-club-payment' | 'pending-waiver' | 'none';
 
 export type MembershipType = 'athlete' | 'coach';
 
@@ -377,6 +377,37 @@ export interface AccountInvite {
   acceptedAt?: string | null;
 }
 
+export type WaiverType = 'Athlete' | 'Coach' | 'Judge' | 'Other Floor Access';
+export const WAIVER_TYPES: WaiverType[] = ['Athlete', 'Coach', 'Judge', 'Other Floor Access'];
+
+export interface WaiverDocument {
+  id: string;
+  seasonId: string;
+  waiverType: WaiverType;
+  version: number;
+  body: string;
+  contentHash: string;
+  published: boolean;
+  createdAt: string;
+}
+
+export interface WaiverSignature {
+  id: string;
+  personId: string;
+  seasonId: string;
+  waiverType: WaiverType;
+  waiverDocumentId: string;
+  contentHash: string;
+  signerName: string;
+  signerEmail: string;
+  signerRole: 'self' | 'guardian';
+  signerRelationship?: string | null;
+  consent: boolean;
+  signedAt: string;
+  ip?: string | null;
+  userAgent?: string | null;
+}
+
 export interface DB {
   seasons: Season[];
   levels: Level[];
@@ -397,6 +428,10 @@ export interface DB {
   /** Event-Management sanction requests + their votes. */
   sanctionRequests?: SanctionRequest[];
   sanctionVotes?: SanctionVote[];
+  /** Versioned waiver text (all versions retained). */
+  waiverDocuments?: WaiverDocument[];
+  /** Recorded e-signatures (the legal evidence records). */
+  waiverSignatures?: WaiverSignature[];
 }
 
 export const STATE_REGIONS: Record<string, Region> = {
