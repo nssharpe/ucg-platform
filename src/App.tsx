@@ -48,6 +48,7 @@ const AdminMembers = lazy(() => loaders.Admin().then((m) => ({ default: m.AdminM
 const AdminClubs = lazy(() => loaders.Admin().then((m) => ({ default: m.AdminClubs })));
 const AdminLeague = lazy(() => loaders.Admin().then((m) => ({ default: m.AdminLeague })));
 const Communicate = lazy(() => loaders.Admin().then((m) => ({ default: m.Communicate })));
+const WaiverSign = lazy(() => import('./pages/WaiverSign'));
 
 /** Prefetch all route chunks once the browser is idle after first paint. */
 function usePrefetchRoutes() {
@@ -144,6 +145,7 @@ export default function App() {
               <Route path="/admin/clubs" element={<RequireAdmin><AdminClubs /></RequireAdmin>} />
               <Route path="/admin/league" element={<RequireAdmin><AdminLeague /></RequireAdmin>} />
               <Route path="/admin/communicate" element={<RequireAdmin><Communicate /></RequireAdmin>} />
+              <Route path="/waiver/sign/:token" element={<WaiverSign />} />
               <Route path="*" element={<Home />} />
             </Routes>
           </Suspense>
