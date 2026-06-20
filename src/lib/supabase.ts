@@ -8,6 +8,7 @@
 import { createClient, type SupabaseClient, type RealtimePostgresChangesPayload, type PostgrestError } from '@supabase/supabase-js';
 import type {
   AccountInvite, Athlete, Club, ClubRequest, Coupon, DB, Invoice, Level, Meet, Membership, Region, Registration, SanctionRequest, SanctionVote, Score, Season,
+  WaiverDocument, WaiverSignature,
 } from './types';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
@@ -252,6 +253,18 @@ const rowToClubRequest = (r: any): ClubRequest => ({
   status: r.status, createdAt: r.created_at, decidedAt: r.decided_at, createdClubId: r.created_club_id,
 });
 
+const rowToWaiverDocument = (r: any): WaiverDocument => ({
+  id: r.id, seasonId: r.season_id, waiverType: r.waiver_type, version: r.version,
+  body: r.body, contentHash: r.content_hash, published: r.published, createdAt: r.created_at,
+});
+const rowToWaiverSignature = (r: any): WaiverSignature => ({
+  id: r.id, personId: r.person_id, seasonId: r.season_id, waiverType: r.waiver_type,
+  waiverDocumentId: r.waiver_document_id, contentHash: r.content_hash,
+  signerName: r.signer_name, signerEmail: r.signer_email, signerRole: r.signer_role,
+  signerRelationship: r.signer_relationship, consent: r.consent, signedAt: r.signed_at,
+  ip: r.ip, userAgent: r.user_agent,
+});
+
 // ---------------------------------------------------------------------------
 // Domain push helpers — call from mutation sites alongside local mutate()
 // ---------------------------------------------------------------------------
@@ -316,6 +329,14 @@ export function pushInvoice(inv: Invoice) {
 }
 
 export function pushClubRequest(r: ClubRequest) { remoteUpsert('club_requests', [clubRequestToRow(r)]); }
+
+/** Insert a new immutable waiver document version (admin only via RLS). */
+export function pushWaiverDocument(d: WaiverDocument) {
+  remoteUpsert('waiver_documents', [{
+    id: d.id, season_id: d.seasonId, waiver_type: d.waiverType, version: d.version,
+    body: d.body, content_hash: d.contentHash, published: d.published, created_at: d.createdAt,
+  }]);
+}
 
 /** Persist the admin-edited state→region overrides (0007 app_settings). */
 export function pushRegionOverrides(overrides: Record<string, Region>) {
@@ -446,6 +467,58 @@ export async function sendEmail(
 }
 
 // ---------------------------------------------------------------------------
+// Waiver — Edge Function invokers + public reads
+// ---------------------------------------------------------------------------
+export interface RecordSignatureArgs {
+  personId: string; seasonId: string; waiverType: string; membershipType: string;
+  waiverDocumentId: string; contentHash: string;
+  signerName: string; signerEmail: string;
+  signerRole: 'self' | 'guardian'; signerRelationship?: string;
+  consent: boolean; token?: string;        // present for guardian path
+}
+
+/** Record a signature server-side (stamps real IP) + activate membership.
+ *  Returns { ok } or { ok:false, error }. */
+export async function recordWaiverSignature(
+  args: RecordSignatureArgs,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('record-waiver-signature', { body: args });
+  if (error) return { ok: false, error: error.message };
+  return data as { ok: boolean; error?: string };
+}
+
+/** Create a guardian signing token and email the link. */
+export async function requestGuardianWaiver(args: {
+  personId: string; seasonId: string; waiverType: string; membershipType: string;
+  guardianName: string; guardianEmail: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('request-guardian-waiver', { body: args });
+  if (error) return { ok: false, error: error.message };
+  return data as { ok: boolean; error?: string };
+}
+
+/** Public token lookup for the guardian signing page (RLS: select=true). */
+export async function fetchSignRequest(token: string) {
+  if (!supabase) return null;
+  const { data, error } = await supabase.from('waiver_sign_requests')
+    .select('*').eq('token', token).maybeSingle();
+  if (error) { console.error('[supabase] fetchSignRequest failed:', error); return null; }
+  return data;
+}
+
+/** The published waiver doc for a season+type (latest published version). */
+export async function fetchPublishedWaiver(seasonId: string, waiverType: string) {
+  if (!supabase) return null;
+  const { data, error } = await supabase.from('waiver_documents')
+    .select('*').eq('season_id', seasonId).eq('waiver_type', waiverType)
+    .eq('published', true).order('version', { ascending: false }).limit(1).maybeSingle();
+  if (error) { console.error('[supabase] fetchPublishedWaiver failed:', error); return null; }
+  return data ? rowToWaiverDocument(data) : null;
+}
+
+// ---------------------------------------------------------------------------
 // loadAll — hydrate the in-memory DB shape from Supabase on boot
 // ---------------------------------------------------------------------------
 export async function loadAll(): Promise<DB | null> {
@@ -455,6 +528,7 @@ export async function loadAll(): Promise<DB | null> {
       seasonsR, levelsR, clubsR, clubManagersR, peopleR, altClubsR, membershipsR,
       meetsR, sessionsR, squadsR, registrationsR, scoresR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
       clubRequestsR, appSettingsR, accountInvitesR, sanctionRequestsR, sanctionVotesR,
+      waiverDocsR, waiverSigsR,
     ] = await Promise.all([
       supabase.from('seasons').select('*'),
       supabase.from('levels').select('*'),
@@ -477,6 +551,8 @@ export async function loadAll(): Promise<DB | null> {
       supabase.from('account_invites').select('*'),     // 0007; tolerated if absent
       supabase.from('sanction_requests').select('*'),   // 0008; tolerated if absent
       supabase.from('sanction_votes').select('*'),      // 0008; tolerated if absent
+      supabase.from('waiver_documents').select('*'),    // tolerated if absent
+      supabase.from('waiver_signatures').select('*'),   // tolerated if absent
     ]);
 
     // club_requests may not exist on a pre-0005 DB — tolerate its error, fail on the rest.
@@ -613,6 +689,11 @@ export async function loadAll(): Promise<DB | null> {
         comment: r.comment ?? undefined, votedAt: r.voted_at,
       }));
 
+    const waiverDocuments: WaiverDocument[] = (waiverDocsR.error ? [] : waiverDocsR.data ?? [])
+      .map(rowToWaiverDocument);
+    const waiverSignatures: WaiverSignature[] = (waiverSigsR.error ? [] : waiverSigsR.data ?? [])
+      .map(rowToWaiverSignature);
+
     return {
       seasons, levels, clubs, people, meets, registrations, scores, invoices, coupons,
       carts, clubRequests,
@@ -620,6 +701,8 @@ export async function loadAll(): Promise<DB | null> {
       ...(accountInvites.length ? { accountInvites } : {}),
       ...(sanctionRequests.length ? { sanctionRequests } : {}),
       ...(sanctionVotes.length ? { sanctionVotes } : {}),
+      ...(waiverDocuments.length ? { waiverDocuments } : {}),
+      ...(waiverSignatures.length ? { waiverSignatures } : {}),
     };
   } catch (e) {
     console.error('[supabase] loadAll threw:', e);
