@@ -5,11 +5,12 @@ import { Badge, Combo, Field, Modal, Tabs, useToast } from '../components/ui';
 import { ClubForm } from '../components/ClubForm';
 import { PersonForm } from '../components/PersonForm';
 import { RegionEditor } from '../components/RegionEditor';
-import { DISCIPLINES, STATE_REGIONS } from '../lib/types';
-import type { AccountInvite, Athlete, Club, ClubRequest, Coupon, Level, Region, Season } from '../lib/types';
+import { DISCIPLINES, STATE_REGIONS, WAIVER_TYPES } from '../lib/types';
+import type { AccountInvite, Athlete, Club, ClubRequest, Coupon, Level, Region, Season, WaiverType, WaiverDocument } from '../lib/types';
+import { sha256Hex, nextVersion, certificateText } from '../lib/waivers-core';
 import { fmtMoney } from '../lib/scoring';
 import { randomPromoCode, couponValid } from '../lib/pricing';
-import { fetchAllRoles, isSupabaseConfigured, pushAll, pushClub, pushClubManager, pushClubRequest, pushCoupon, pushLevel, pushMembership, pushRegistration, pushSeason, pushUserRole, pushAccountInvite, deleteCoupon, deleteRegistration, sendEmail } from '../lib/supabase';
+import { fetchAllRoles, isSupabaseConfigured, pushAll, pushClub, pushClubManager, pushClubRequest, pushCoupon, pushLevel, pushMembership, pushRegistration, pushSeason, pushUserRole, pushAccountInvite, deleteCoupon, deleteRegistration, sendEmail, pushWaiverDocument } from '../lib/supabase';
 import { useCapabilities } from '../lib/capabilities';
 
 // ---------- Merge Athletes modal ----------
@@ -1009,74 +1010,60 @@ function RegionsTab() {
 }
 
 // ---------- Waivers ----------
-type WaiverVersion = { fileName: string; uploadedAt: string; version: number };
-type WaiverHistory = Record<string, WaiverVersion[]>; // key: `${seasonId}:${waiverType}`
-
-const WAIVER_TYPES = ['Athlete', 'Coach', 'Judge', 'Other Floor Access'] as const;
-
 function Waivers() {
   const db = useDB();
   const toast = useToast();
   const currentSeason = db.seasons.find((s) => s.current) ?? db.seasons[0];
   const [selectedSeasonId, setSelectedSeasonId] = useState(currentSeason?.id ?? '');
-  const [history, setHistory] = useState<WaiverHistory>({});
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [signedQ, setSignedQ] = useState('');
-
   const selectedSeason = db.seasons.find((s) => s.id === selectedSeasonId) ?? currentSeason;
 
-  const histKey = (type: string) => `${selectedSeasonId}:${type}`;
+  const docsFor = (t: WaiverType): WaiverDocument[] =>
+    (db.waiverDocuments ?? [])
+      .filter((d) => d.seasonId === selectedSeasonId && d.waiverType === t)
+      .sort((a, b) => a.version - b.version);
+  const publishedFor = (t: WaiverType) => {
+    const pubs = docsFor(t).filter((d) => d.published);
+    return pubs[pubs.length - 1];
+  };
 
-  const getVersions = (type: string): WaiverVersion[] => history[histKey(type)] ?? [];
-
-  const handleUpload = (type: string, files: FileList | null) => {
-    if (!files || !files[0]) return;
-    const file = files[0];
-    const existing = getVersions(type);
-    const newVersion: WaiverVersion = {
-      fileName: file.name,
-      uploadedAt: new Date().toISOString(),
-      version: existing.length + 1,
+  const saveVersion = async (t: WaiverType) => {
+    const key = `${selectedSeasonId}:${t}`;
+    const body = (drafts[key] ?? publishedFor(t)?.body ?? '').trim();
+    if (body.length < 20) { toast('Waiver text is too short to publish.'); return; }
+    const existing = docsFor(t);
+    const doc: WaiverDocument = {
+      id: crypto.randomUUID(), seasonId: selectedSeasonId, waiverType: t,
+      version: nextVersion(existing), body, contentHash: await sha256Hex(body),
+      published: true, createdAt: new Date().toISOString(),
     };
-    setHistory((prev) => ({
-      ...prev,
-      [histKey(type)]: [...existing, newVersion],
-    }));
-    toast(`Version ${newVersion.version} of the ${type} waiver uploaded (prototype — stored in memory only).`);
+    mutate((d) => { (d.waiverDocuments ??= []).push(doc); });
+    pushWaiverDocument(doc);
+    setDrafts((p) => ({ ...p, [key]: doc.body }));
+    toast(`${t} waiver v${doc.version} published.`);
   };
 
-  const emailWaiverLink = (type: string) => {
-    const link = `${window.location.origin}/waiver/${selectedSeasonId}/${type.toLowerCase().replace(/\s+/g, '-')}?standalone=1`;
-    navigator.clipboard.writeText(link).then(() => {
-      toast(`Signing link copied to clipboard: ${link}`);
-    }).catch(() => {
-      toast(`Signing link: ${link}`);
-    });
-  };
-
-  // Signed waivers: people with waiverSignedAt in the selected season
-  const signedWaivers = useMemo(() => {
+  const signed = useMemo(() => {
     const lq = signedQ.toLowerCase();
-    return db.people
-      .flatMap((p) => {
-        const m = p.memberships.find((x) => x.seasonId === selectedSeasonId && x.waiverSignedAt);
-        if (!m) return [];
-        const fullName = `${p.firstName} ${p.lastName}`;
-        if (lq && !fullName.toLowerCase().includes(lq)) return [];
-        return [{ person: p, signedAt: m.waiverSignedAt!, signedBy: m.waiverSignedBy ?? 'Self' }];
+    return (db.waiverSignatures ?? [])
+      .filter((s) => s.seasonId === selectedSeasonId)
+      .map((s) => {
+        const p = db.people.find((x) => x.id === s.personId);
+        const name = p ? `${p.firstName} ${p.lastName}` : s.personId;
+        const v = (db.waiverDocuments ?? []).find((d) => d.id === s.waiverDocumentId)?.version ?? 0;
+        return { sig: s, name, version: v };
       })
-      .sort((a, b) => a.person.lastName.localeCompare(b.person.lastName));
-  }, [db.people, selectedSeasonId, signedQ]);
+      .filter((r) => !lq || r.name.toLowerCase().includes(lq))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [db.waiverSignatures, db.waiverDocuments, db.people, selectedSeasonId, signedQ]);
 
   return (
     <div>
       <div style={{ marginBottom: 16 }}>
         <Field label="Season">
-          <select
-            className="input"
-            style={{ maxWidth: 200 }}
-            value={selectedSeasonId}
-            onChange={(e) => setSelectedSeasonId(e.target.value)}
-          >
+          <select className="input" style={{ maxWidth: 200 }} value={selectedSeasonId}
+            onChange={(e) => setSelectedSeasonId(e.target.value)}>
             {db.seasons.map((s) => (
               <option key={s.id} value={s.id}>{s.name}{s.current ? ' (current)' : ''}</option>
             ))}
@@ -1085,59 +1072,31 @@ function Waivers() {
       </div>
 
       <div className="grid cols-2" style={{ marginBottom: 24 }}>
-        {WAIVER_TYPES.map((w) => {
-          const versions = getVersions(w);
-          const latest = versions[versions.length - 1];
+        {WAIVER_TYPES.map((t) => {
+          const key = `${selectedSeasonId}:${t}`;
+          const pub = publishedFor(t);
+          const value = drafts[key] ?? pub?.body ?? '';
           return (
-            <div className="card card-pad" key={w}>
-              <h3 className="card-title">{w} waiver — {selectedSeason?.name ?? '—'}</h3>
+            <div className="card card-pad" key={t}>
+              <h3 className="card-title">{t} waiver — {selectedSeason?.name ?? '—'}</h3>
               <p style={{ fontSize: 13.5, color: 'var(--ink-soft)', marginTop: 0 }}>
-                E-signed with timestamp + signer recorded; minors route to a guardian.
+                {pub ? `Published v${pub.version}` : 'Not published yet'} · e-signed with timestamp, IP & consent recorded.
               </p>
-
-              {latest ? (
-                <div style={{ marginBottom: 8, fontSize: 13.5 }}>
-                  <strong>Current:</strong> {latest.fileName}{' '}
-                  <span style={{ color: 'var(--ink-soft)' }}>
-                    (v{latest.version}, uploaded {new Date(latest.uploadedAt).toLocaleDateString()})
-                  </span>
-                  {' '}
-                  <a
-                    href="#"
-                    style={{ color: 'var(--accent)' }}
-                    onClick={(e) => { e.preventDefault(); toast(`Viewing "${latest.fileName}" (prototype — no real file stored).`); }}
-                  >
-                    View
-                  </a>
-                </div>
-              ) : (
-                <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 8 }}>No file uploaded yet for this season.</p>
-              )}
-
-              {versions.length > 1 && (
-                <details style={{ marginBottom: 8 }}>
-                  <summary style={{ fontSize: 12.5, color: 'var(--ink-soft)', cursor: 'pointer' }}>
-                    Version history ({versions.length} versions)
-                  </summary>
-                  <ul style={{ margin: '4px 0 0 16px', fontSize: 12.5, color: 'var(--ink-soft)' }}>
-                    {[...versions].reverse().map((v) => (
-                      <li key={v.version}>v{v.version}: {v.fileName} — {new Date(v.uploadedAt).toLocaleString()}</li>
-                    ))}
-                  </ul>
-                </details>
-              )}
-
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                <label className="btn small ghost" style={{ cursor: 'pointer' }}>
-                  {latest ? 'Upload new version' : 'Upload file'}
-                  <input
-                    type="file"
-                    accept=".pdf,.docx"
-                    style={{ display: 'none' }}
-                    onChange={(e) => handleUpload(w, e.target.files)}
-                  />
-                </label>
-                <button className="btn small" onClick={() => emailWaiverLink(w)}>✉ Copy signing link</button>
+              <textarea className="input" rows={8} value={value}
+                onChange={(e) => setDrafts((p) => ({ ...p, [key]: e.target.value }))}
+                placeholder="Enter the waiver text members will agree to…" />
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <button className="btn small primary" onClick={() => saveVersion(t)}>Save new version</button>
+                {docsFor(t).length > 1 && (
+                  <details><summary style={{ fontSize: 12.5, color: 'var(--ink-soft)', cursor: 'pointer' }}>
+                    History ({docsFor(t).length})</summary>
+                    <ul style={{ margin: '4px 0 0 16px', fontSize: 12.5, color: 'var(--ink-soft)' }}>
+                      {[...docsFor(t)].reverse().map((d) => (
+                        <li key={d.id}>v{d.version} — {new Date(d.createdAt).toLocaleString()} (hash {d.contentHash.slice(0, 8)}…)</li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
               </div>
             </div>
           );
@@ -1146,40 +1105,24 @@ function Waivers() {
 
       <div className="card card-pad">
         <h3 className="card-title">Signed waivers — {selectedSeason?.name ?? '—'}</h3>
-        <p style={{ fontSize: 13.5, color: 'var(--ink-soft)', marginTop: 0 }}>
-          People who have a waiver signature on record for this season (from their membership record).
-        </p>
-        <div style={{ display: 'flex', gap: 10, marginBottom: 12, alignItems: 'center' }}>
-          <input
-            className="input"
-            style={{ maxWidth: 280 }}
-            placeholder="Search by athlete name…"
-            value={signedQ}
-            onChange={(e) => setSignedQ(e.target.value)}
-          />
-          <span style={{ fontSize: 13, color: 'var(--ink-soft)' }}>{signedWaivers.length} signed</span>
-        </div>
-        {signedWaivers.length === 0 ? (
-          <p style={{ fontSize: 13.5, color: 'var(--ink-soft)' }}>No signed waivers found{signedQ ? ' matching your search' : ' for this season'}.</p>
+        <input className="input" style={{ maxWidth: 280, marginBottom: 12 }} placeholder="Search by name"
+          value={signedQ} onChange={(e) => setSignedQ(e.target.value)} />
+        {signed.length === 0 ? (
+          <p style={{ fontSize: 13.5, color: 'var(--ink-soft)' }}>No signatures recorded for this season.</p>
         ) : (
-          <table className="tbl">
-            <thead>
-              <tr><th>Athlete</th><th>Signed by</th><th>Date</th></tr>
-            </thead>
-            <tbody>
-              {signedWaivers.slice(0, 200).map(({ person, signedAt, signedBy }) => (
-                <tr key={person.id}>
-                  <td>
-                    <Link to={`/admin/members/${person.id}`} style={{ fontWeight: 600 }}>
-                      {person.lastName}, {person.firstName}
-                    </Link>
-                  </td>
-                  <td style={{ fontSize: 13 }}>{signedBy}</td>
-                  <td style={{ fontSize: 13 }}>{new Date(signedAt).toLocaleDateString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+            {signed.slice(0, 300).map(({ sig, name, version }) => (
+              <li key={sig.id} style={{ borderBottom: '1px solid var(--line)', padding: '8px 0' }}>
+                <strong>{name}</strong> — {sig.waiverType} ({sig.signerRole})
+                <details>
+                  <summary style={{ fontSize: 12.5, color: 'var(--accent)', cursor: 'pointer' }}>Certificate</summary>
+                  <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '4px 0 0' }}>
+                    {certificateText(sig, version, name)}
+                  </p>
+                </details>
+              </li>
+            ))}
+          </ul>
         )}
       </div>
     </div>
