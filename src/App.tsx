@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { HashRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { WriteStatus } from './components/WriteStatus';
 import { ToastProvider } from './components/ui';
 import { isUnlocked } from './lib/store';
 import { useCapabilities } from './lib/capabilities';
@@ -165,6 +166,7 @@ export default function App() {
           </RouteErrorBoundary>
         </Layout>
       </HashRouter>
+      <WriteStatus />
     </ToastProvider>
   );
 }

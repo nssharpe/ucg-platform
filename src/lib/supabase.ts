@@ -10,6 +10,7 @@ import type {
   AccountInvite, Athlete, Club, ClubRequest, Coupon, DB, Invoice, Level, Meet, Membership, Region, Registration, SanctionRequest, SanctionVote, Score, Season,
   WaiverDocument, WaiverSignature,
 } from './types';
+import { writeQueue, type WriteOp, type ExecResult } from './write-queue';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
@@ -50,39 +51,66 @@ async function fetchAllRows(table: string): Promise<{ data: any[]; error: Postgr
   return { data: out, error: null };
 }
 
-/** Fire-and-forget upsert, chunked for arrays >500 rows. */
+// All write-through goes through the outbound queue (src/lib/write-queue.ts):
+// each op is retried with backoff, persisted so it survives a reload, and a
+// terminal failure is surfaced to the user (components/WriteStatus.tsx) instead
+// of being silently lost. The queue's executor — registered below — performs
+// the actual chunked Supabase calls.
+
+/** Run one queued WriteOp against Supabase. Chunks large arrays; on any error
+ *  returns it so the queue retries the whole op (every op is idempotent: upsert,
+ *  or delete-then-insert). */
+async function executeWriteOp(op: WriteOp): Promise<ExecResult> {
+  if (!supabase) return { error: null };
+  if (op.kind === 'upsert') {
+    for (const part of chunk(op.rows)) {
+      const q = op.onConflict ? { onConflict: op.onConflict } : undefined;
+      const { error } = await supabase.from(op.table).upsert(part, q);
+      if (error) return { error };
+    }
+    return { error: null };
+  }
+  if (op.kind === 'delete') {
+    let del = supabase.from(op.table).delete();
+    for (const [k, v] of Object.entries(op.match)) del = del.eq(k, v);
+    const { error } = await del;
+    return { error };
+  }
+  // replace: delete the matched set, then insert the new rows.
+  let del = supabase.from(op.table).delete();
+  for (const [k, v] of Object.entries(op.match)) del = del.eq(k, v);
+  const { error: delErr } = await del;
+  if (delErr) return { error: delErr };
+  for (const part of chunk(op.rows)) {
+    const { error } = await supabase.from(op.table).insert(part);
+    if (error) return { error };
+  }
+  return { error: null };
+}
+
+if (supabase) writeQueue.setExecutor(executeWriteOp);
+
+/** Queue an upsert (chunked at execution time for arrays >500 rows). */
 function remoteUpsert(table: string, rows: Record<string, unknown>[], onConflict?: string) {
   if (!supabase || rows.length === 0) return;
-  for (const part of chunk(rows)) {
-    const q = onConflict ? { onConflict } : undefined;
-    supabase.from(table).upsert(part, q).then(({ error }) => {
-      if (error) console.error(`[supabase] upsert ${table} failed:`, error);
-    });
-  }
+  writeQueue.enqueue({ kind: 'upsert', table, rows, onConflict }, table);
 }
 
-/** Fire-and-forget delete by primary key. */
-function remoteDelete(table: string, id: string, column = 'id') {
+/** Queue a delete by the given equality match (defaults to primary key). */
+function remoteDeleteWhere(table: string, match: Record<string, unknown>) {
   if (!supabase) return;
-  supabase.from(table).delete().eq(column, id).then(({ error }) => {
-    if (error) console.error(`[supabase] delete ${table} failed:`, error);
-  });
+  writeQueue.enqueue({ kind: 'delete', table, match }, table);
 }
 
-/** Fire-and-forget delete-all-then-insert for a small child collection. */
+/** Queue a delete by primary key. */
+function remoteDelete(table: string, id: string, column = 'id') {
+  remoteDeleteWhere(table, { [column]: id });
+}
+
+/** Queue a delete-all-then-insert for a small child collection. */
 function remoteReplace(table: string, match: Record<string, unknown>, rows: Record<string, unknown>[]) {
   if (!supabase) return;
-  (async () => {
-    let del = supabase!.from(table).delete();
-    for (const [k, v] of Object.entries(match)) del = del.eq(k, v);
-    const { error: delErr } = await del;
-    if (delErr) { console.error(`[supabase] replace(delete) ${table} failed:`, delErr); return; }
-    if (rows.length === 0) return;
-    for (const part of chunk(rows)) {
-      const { error } = await supabase!.from(table).insert(part);
-      if (error) console.error(`[supabase] replace(insert) ${table} failed:`, error);
-    }
-  })();
+  writeQueue.enqueue({ kind: 'replace', table, match, rows }, table);
 }
 
 // ---------------------------------------------------------------------------
@@ -372,26 +400,20 @@ export function pushSanctionVote(v: SanctionVote) {
 
 /** Add or remove a single person↔club manager link. */
 export function pushClubManager(clubId: string, personId: string, add: boolean) {
-  if (!supabase) return;
   if (add) remoteUpsert('club_managers', [{ club_id: clubId, person_id: personId }], 'club_id,person_id');
-  else supabase.from('club_managers').delete().eq('club_id', clubId).eq('person_id', personId)
-    .then(({ error }) => { if (error) console.error('[supabase] delete club_managers failed:', error); });
+  else remoteDeleteWhere('club_managers', { club_id: clubId, person_id: personId });
 }
 
 /** Add or remove a single person↔alternate-club link. */
 export function pushAltClub(personId: string, clubId: string, add: boolean) {
-  if (!supabase) return;
   if (add) remoteUpsert('person_alt_clubs', [{ person_id: personId, club_id: clubId }], 'person_id,club_id');
-  else supabase.from('person_alt_clubs').delete().eq('person_id', personId).eq('club_id', clubId)
-    .then(({ error }) => { if (error) console.error('[supabase] delete person_alt_clubs failed:', error); });
+  else remoteDeleteWhere('person_alt_clubs', { person_id: personId, club_id: clubId });
 }
 
 /** Grant or revoke an app role for an auth user (user_roles). */
 export function pushUserRole(userId: string, role: string, grant: boolean) {
-  if (!supabase) return;
   if (grant) remoteUpsert('user_roles', [{ user_id: userId, role }], 'user_id,role');
-  else supabase.from('user_roles').delete().eq('user_id', userId).eq('role', role)
-    .then(({ error }) => { if (error) console.error('[supabase] delete user_roles failed:', error); });
+  else remoteDeleteWhere('user_roles', { user_id: userId, role });
 }
 
 /** All user_roles rows — RLS returns every row for an admin, own rows otherwise.
