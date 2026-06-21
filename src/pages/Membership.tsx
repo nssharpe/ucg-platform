@@ -4,7 +4,7 @@ import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { Badge, Field, useToast } from '../components/ui';
 import { fmtMoney } from '../lib/scoring';
-import { pushCart, pushCoupon, pushInvoice, pushMembership, fetchPublishedWaiver, recordWaiverSignature, requestGuardianWaiver } from '../lib/supabase';
+import { pushCart, pushCoupon, pushInvoice, pushMembership, fetchPublishedWaiver, recordWaiverSignature, requestGuardianWaiver, notifyClubCart } from '../lib/supabase';
 import type { Athlete, Membership, MembershipType, WaiverDocument } from '../lib/types';
 import { GENERAL_WAIVER_TYPE } from '../lib/types';
 import { isMinorAt } from '../lib/waivers-core';
@@ -208,18 +208,22 @@ function MembershipInner({ me }: { me: Athlete }) {
       if (via === 'club' && club) {
         const adderName = `${me.firstName} ${me.lastName}`;
         const cart = d.carts[club.id] ?? (d.carts[club.id] = []);
+        const addedItems: { label: string; amount: number }[] = [];
         for (const t of selectedTypes) {
           const labelType = t === 'coach' ? 'Coach' : 'Athlete';
+          const label = `${labelType} Membership ${season.name} — ${adderName} (added by ${adderName})`;
           cart.push({
             id: `ci-${Date.now()}-${t}`,
-            label: `${labelType} Membership ${season.name} — ${adderName} (added by ${adderName})`,
+            label,
             amount: pricePerType(t),
             kind: 'membership',
             refUserId: me.id,
           });
+          addedItems.push({ label, amount: pricePerType(t) });
         }
         pushCart(club.id, cart, true);
-        // TODO: notify club managers by email
+        // Email the club's managers (best-effort; cart item already shows on their dashboard).
+        void notifyClubCart({ clubId: club.id, items: addedItems, addedByName: adderName });
       } else {
         const invoice = {
           id: `inv-${Date.now()}`,

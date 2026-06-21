@@ -466,6 +466,20 @@ export async function sendEmail(
   return data as SendEmailResult;
 }
 
+/** Notify a club's managers that items were pushed to their cart. Fire-and-forget
+ *  from the caller's perspective — failures are non-fatal (the cart item still
+ *  exists and shows on the managers' dashboard). Returns the function result. */
+export async function notifyClubCart(args: {
+  clubId: string;
+  items: { label: string; amount: number }[];
+  addedByName?: string;
+}): Promise<{ ok: boolean; sentCount?: number; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('notify-club-cart', { body: args });
+  if (error) return { ok: false, error: error.message };
+  return data as { ok: boolean; sentCount?: number; error?: string };
+}
+
 // ---------------------------------------------------------------------------
 // Waiver — Edge Function invokers + public reads
 // ---------------------------------------------------------------------------
