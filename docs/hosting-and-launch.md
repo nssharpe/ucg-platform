@@ -3,6 +3,10 @@
 How this app is hosted today, where it goes for production, and what to harden
 before taking real registrations and payments. Written 2026-06-13.
 
+> This doc is the **hosting/infra slice**. For the full production-readiness picture
+> (UX, security, reliability, observability, bug reporting, legal — with a phased plan
+> and owner split), see [`production-readiness.md`](production-readiness.md).
+
 ## The shape of the app (why hosting is easy)
 
 The platform is **two independent halves**:

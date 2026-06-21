@@ -11,6 +11,9 @@ in [`../CLAUDE.md`](../CLAUDE.md).
 > Last reconciled with the codebase: **2026-06-21**.
 
 ## Reference docs
+- [`production-readiness.md`](production-readiness.md) — **gap analysis + phased plan**
+  to reach production gold standards (UX, security, reliability, observability, legal),
+  with steps split between Nate and Claude. Start here for "what's left to launch."
 - [`hosting-and-launch.md`](hosting-and-launch.md) — hosting model, production target
   (`registration.unitedgymnastics.org`), pre-launch hardening checklist.
 - [`../supabase/README.md`](../supabase/README.md) — backend schema, RLS model, and

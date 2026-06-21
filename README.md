@@ -92,4 +92,8 @@ club-based registration multi-club picker (C) → codeless judge access (D) → 
 tickets, production email transport (Resend / Workspace relay), external API, finals
 rosters. Full status in [`CLAUDE.md`](CLAUDE.md); docs index in [`docs/`](docs).
 
+**Path to launch:** [`docs/production-readiness.md`](docs/production-readiness.md) is the
+gap analysis + phased plan for reaching production gold standards (UX, security,
+reliability, observability, legal), with steps split between Nate and Claude.
+
 Spec: `../Reg & Scoring Platform Specification.md`.
