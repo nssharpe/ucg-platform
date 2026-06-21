@@ -204,6 +204,38 @@ option { color: var(--ink); background: #fff; }
 .member-banner.warn { background: var(--coral-100); color: var(--coral-600); }
 .member-banner a { color: inherit; }
 
+/* signed-in identity chip in the top bar */
+.topbar-user {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  text-decoration: none;
+  padding: 4px 10px 4px 4px;
+  border-radius: 99px;
+  border: 1px solid var(--line);
+  background: var(--surface, #fff);
+  flex-shrink: 0;
+}
+.topbar-user:hover { border-color: var(--ink-soft); }
+.topbar-user-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 99px;
+  background: var(--navy-800);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+.topbar-user-name { white-space: nowrap; }
+.topbar-user-guest { padding: 5px 12px; color: var(--ink-soft); }
+
 /* ---------- primitives ---------- */
 .page-title { font-size: clamp(28px, 4vw, 42px); margin-bottom: 4px; }
 .page-sub { color: var(--ink-soft); margin: 0 0 24px; max-width: 70ch; }

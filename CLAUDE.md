@@ -13,13 +13,15 @@ will apply first.
 
 ## Supabase / migrations
 - Project ref `wkyerxlgricfphopocoz` (org NAIGC). Migrations in `supabase/migrations/`.
+  CLI is linked (`supabase link` done 2026-06-19). All migrations through 0008
+  (event management) are applied and tracked by the CLI.
+- Migration filenames use Supabase's required timestamp format:
+  `<YYYYMMDDHHmmss>_name.sql`. Create new ones with `supabase migration new <name>`.
 - Apply via `supabase db push` (the shell sandbox blocks network — run with the
-  sandbox disabled). Earlier migrations were applied out-of-band via the dashboard
-  SQL editor, so the CLI's migration-history table may be out of sync; check
-  `supabase migration list` and `migration repair` before a blind push.
+  sandbox disabled).
 - **Enum gotcha:** `ALTER TYPE ... ADD VALUE` cannot be used in the same transaction
   that then references the new value. Put each such change in its OWN migration file
-  (e.g. `0007b_sanctioning_role.sql`) so it commits before any file that uses it.
+  so it commits before any file that uses it.
 
 ## Build / tooling gotchas
 - The repo path contains spaces **and** an `&`, which breaks npm/npx cmd shims on

@@ -1,4 +1,4 @@
-import { NavLink, Link, useLocation, useNavigate } from 'react-router-dom';
+import { NavLink, Link, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { useDB, useViewPersonId, setViewPersonId } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
@@ -52,7 +52,6 @@ export function Layout({ children }: { children: ReactNode }) {
   const caps = useCapabilities();
   const db = useDB();
   const loc = useLocation();
-  const navigate = useNavigate();
   const viewPersonId = useViewPersonId();
   const session = useSession();
   useNavHistory(); // record each page visit into the module-level stack
@@ -91,29 +90,6 @@ export function Layout({ children }: { children: ReactNode }) {
             ))}
           </nav>
         ))}
-
-        {/* Club switcher — jump to any club's roster/cart. Shown to admins (all
-            clubs) and multi-club managers (their clubs). Type to search. */}
-        {(caps.actingAsAdmin || caps.managedClubIds.length > 1) && (() => {
-          const pool = caps.actingAsAdmin
-            ? db.clubs
-            : db.clubs.filter((c) => caps.managedClubIds.includes(c.id));
-          const m = loc.pathname.match(/^\/club\/([^/]+)/);
-          const current = m ? m[1] : null;
-          return (
-            <nav className="nav-group">
-              <div className="nav-group-label">Go to club</div>
-              <Combo
-                options={[...pool]
-                  .sort((a, b) => a.name.localeCompare(b.name))
-                  .map((c) => ({ value: c.id, label: c.name, sub: `${c.shortName} · ${c.state}` }))}
-                value={current}
-                onChange={(id) => navigate(`/club/${id}`)}
-                placeholder="Search clubs…"
-              />
-            </nav>
-          );
-        })()}
 
         <div className="role-card">
           {caps.isAdmin && (
@@ -199,6 +175,18 @@ export function Layout({ children }: { children: ReactNode }) {
           ) : null}
           <span className="crumb">{labelFor(loc.pathname)}</span>
           <div style={{ flex: 1 }} />
+          {me ? (
+            <Link to="/me" className="topbar-user" title="View your profile">
+              <span className="topbar-user-avatar" aria-hidden="true">
+                {(me.firstName?.[0] ?? '').toUpperCase()}{(me.lastName?.[0] ?? '').toUpperCase()}
+              </span>
+              <span className="topbar-user-name">
+                {caps.impersonating ? 'Viewing as ' : ''}{me.firstName} {me.lastName}
+              </span>
+            </Link>
+          ) : isSupabaseConfigured && !session ? (
+            <Link to="/me" className="topbar-user topbar-user-guest">Sign in</Link>
+          ) : null}
           {me && (
             myMembership?.status === 'active' ? (
               <span className="member-banner ok">✓ {season.name} membership active</span>
