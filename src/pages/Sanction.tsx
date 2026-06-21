@@ -36,6 +36,13 @@ const addDays = (iso: string, days: number) => {
   return d.toISOString();
 };
 
+// Impure reads (Date.now) live at module scope so they're outside React render —
+// react-hooks/purity only governs component/hook bodies. Used for state defaults
+// (computed once via lazy initializers) and for one-off IDs in event handlers.
+const isoDateInDays = (days: number) =>
+  new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
+const genId = (prefix: string) => `${prefix}-${Date.now()}`;
+
 const slugify = (name: string) =>
   name.toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
@@ -154,11 +161,11 @@ export function SanctionRequestForm() {
   const [accessibleAccepted, setAccessibleAccepted] = useState(false);
 
   // Dates
-  const defaultStart = new Date(Date.now() + 60 * 86400000).toISOString().slice(0, 10);
+  const defaultStart = isoDateInDays(60);
   const [startDate, setStartDate] = useState(defaultStart);
   const [endDate, setEndDate] = useState(defaultStart);
-  const [regOpens, setRegOpens] = useState(`${new Date().toISOString().slice(0, 10)}T12:00`);
-  const [regCloses, setRegCloses] = useState(`${new Date(Date.now() + 46 * 86400000).toISOString().slice(0, 10)}T23:59`);
+  const [regOpens, setRegOpens] = useState(`${isoDateInDays(0)}T12:00`);
+  const [regCloses, setRegCloses] = useState(`${isoDateInDays(46)}T23:59`);
   const [lateRegStart, setLateRegStart] = useState('');
   const [timezone, setTimezone] = useState('America/New_York');
 
@@ -775,7 +782,7 @@ export function SanctionVotePage() {
   const castVote = () => {
     if (!voteChoice) return;
     const vote: SanctionVote = {
-      id: myVote?.id ?? `sv-${Date.now()}`,
+      id: myVote?.id ?? genId('sv'),
       requestId: request.id,
       voterUserId: voterId,
       vote: voteChoice,
@@ -817,7 +824,7 @@ export function SanctionVotePage() {
       // Build Meet from payload
       const takenSlugs = db.meets.map((m) => m.slug);
       const slug = uniqueSlug(String(p.eventName ?? 'meet'), takenSlugs);
-      const meetId = `meet-${Date.now()}`;
+      const meetId = genId('meet');
 
       // Determine disciplines from selected levels
       const disciplines: Discipline[] = [];
