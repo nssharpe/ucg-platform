@@ -15,7 +15,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Quality gate — must pass before we build or deploy. tsc + tests are hard
+  # gates (both clean). Lint is advisory for now: src/lib/supabase.ts carries
+  # pre-existing no-explicit-any debt (see CLAUDE.md) that would otherwise block
+  # every deploy; it still runs so regressions are visible. Make it a hard gate
+  # (drop continue-on-error) once that debt is cleared.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Type check
+        run: npm run typecheck
+      - name: Lint (advisory)
+        run: npm run lint
+        continue-on-error: true
+      - name: Unit tests
+        run: npm test
+
   build:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
