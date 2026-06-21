@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useDB } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
@@ -62,8 +62,15 @@ export function MeetResults() {
   // `subscribeMeetScores` postgres_changes events, overlaid on the store's
   // scores at render time so store refreshes stay reconciled.
   const [livePatches, setLivePatches] = useState<ReadonlyMap<string, Score | null>>(new Map());
+  // Reset the overlay when the meet changes. Done during render (the documented
+  // "adjusting state on prop change" pattern) rather than in the effect below, so
+  // it doesn't trigger a cascading render every time the subscription re-runs.
+  const patchedMeetId = useRef(meet?.id);
+  if (patchedMeetId.current !== meet?.id) {
+    patchedMeetId.current = meet?.id;
+    setLivePatches(new Map());
+  }
   useEffect(() => {
-    setLivePatches(new Map()); // reset overlay when the meet changes
     if (!isSupabaseConfigured || !meet) return;
     const unsubscribe = subscribeMeetScores(meet.id, (payload) => {
       setLivePatches((prev) => applyScorePatch(prev, payload));
@@ -86,6 +93,30 @@ export function MeetResults() {
     [effectiveDb, meet, session],
   );
 
+  // Tie-aware places (1,2,2,4) per (level, category) group — the viewer's
+  // recomputePlaces. Returns rank maps for AA and each event. Computed before the
+  // early return below so the hook always runs; no-ops to empty maps when there's
+  // nothing to rank yet.
+  const places = useMemo(() => {
+    const aa = new Map<string, number>();
+    const ev = new Map<string, number>(); // key `${regId}|${event}`
+    if (!computed || !session) return { aa, ev };
+    const sessionEvents = EVENTS[session.discipline];
+    for (const [levelId, rows] of computed.byLevel.entries()) {
+      const cats = [...new Set(rows.map((r) => r.reg.category ?? ''))];
+      for (const cat of cats) {
+        const group = rows.filter((r) => (r.reg.category ?? '') === cat);
+        rank(group.filter((r) => r.aa > 0), (r) => r.aa).forEach((p, r) => aa.set(r.reg.id, p));
+        for (const e of sessionEvents) {
+          const scored = group.filter((r) => r.events[e.code]?.final != null);
+          rank(scored, (r) => r.events[e.code]!.final!).forEach((p, r) => ev.set(`${r.reg.id}|${e.code}`, p));
+        }
+      }
+      void levelId;
+    }
+    return { aa, ev };
+  }, [computed, session]);
+
   if (!meet || !session || !computed) return <p>Meet not found.</p>;
   const { byLevel, eventRankings, teamScores } = computed;
   const events = EVENTS[session.discipline];
@@ -97,26 +128,6 @@ export function MeetResults() {
 
   // Categories present in this session (drives badge column + filter).
   const categories = [...new Set([...byLevel.values()].flat().map((r) => r.reg.category).filter(Boolean))] as string[];
-
-  // Tie-aware places (1,2,2,4) per (level, category) group — the viewer's
-  // recomputePlaces. Returns rank maps for AA and each event.
-  const places = useMemo(() => {
-    const aa = new Map<string, number>();
-    const ev = new Map<string, number>(); // key `${regId}|${event}`
-    for (const [levelId, rows] of byLevel.entries()) {
-      const cats = [...new Set(rows.map((r) => r.reg.category ?? ''))];
-      for (const cat of cats) {
-        const group = rows.filter((r) => (r.reg.category ?? '') === cat);
-        rank(group.filter((r) => r.aa > 0), (r) => r.aa).forEach((p, r) => aa.set(r.reg.id, p));
-        for (const e of events) {
-          const scored = group.filter((r) => r.events[e.code]?.final != null);
-          rank(scored, (r) => r.events[e.code]!.final!).forEach((p, r) => ev.set(`${r.reg.id}|${e.code}`, p));
-        }
-      }
-      void levelId;
-    }
-    return { aa, ev };
-  }, [byLevel, events]);
 
   const canOpenScore = (athleteId: string) =>
     caps.isAdmin || caps.isMeetHost(meet?.id ?? '') || caps.personId === athleteId;

@@ -92,6 +92,17 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   const [clubReqOpen, setClubReqOpen] = useState(false);
   const [revokeSeasonId, setRevokeSeasonId] = useState<string | null>(null);
 
+  // Hooks must run unconditionally, so derive these before the early return below.
+  // `current` is null only when `person` is missing (the not-found path).
+  const current = draft ?? person ?? null;
+  const validationErrors = useMemo(() => (current ? validateProfile(current) : []), [current]);
+
+  // When arriving from membership, highlight still-empty required fields in red
+  const missingFieldKeys = useMemo(
+    () => highlightMissing ? new Set(validationErrors.map((e) => e.field)) : new Set<string>(),
+    [highlightMissing, validationErrors]
+  );
+
   if (!person) return <p>Person not found.</p>;
   const pid: string = person.id;
   const p = draft ?? person;
@@ -102,14 +113,6 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   const roles = effectiveRoles(p);
   const isAthlete = roles.athlete;
   const isCoach = roles.coach;
-
-  const validationErrors = useMemo(() => validateProfile(p), [p]);
-
-  // When arriving from membership, highlight still-empty required fields in red
-  const missingFieldKeys = useMemo(
-    () => highlightMissing ? new Set(validationErrors.map((e) => e.field)) : new Set<string>(),
-    [highlightMissing, validationErrors]
-  );
 
   /** Returns inline border style if this field is currently missing and we're highlighting */
   const missingStyle = (field: string): CSSProperties =>
