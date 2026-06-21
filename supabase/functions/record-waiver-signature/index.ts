@@ -70,19 +70,25 @@ Deno.serve(async (req) => {
   });
   if (insErr) return json({ ok: false, error: insErr.message }, 500);
 
-  // --- Activate the membership + set convenience pointers ---
-  // MEMBERSHIP STATUS NUANCE: read the existing row first. If it exists and
-  // paid_via === 'club', the next state is 'pending-club-payment' (the club still
-  // owes the fee); otherwise 'active'. (For the self path the membership row may
-  // not exist yet — the wizard creates it at the pay step — so a 0-row update is
-  // a harmless no-op.)
-  const { data: existing } = await db.from('memberships').select('paid_via')
-    .eq('person_id', a.personId).eq('season_id', a.seasonId).eq('type', a.membershipType).maybeSingle();
-  const nextStatus = existing?.paid_via === 'club' ? 'pending-club-payment' : 'active';
+  // --- Activate the membership(s) + set convenience pointers ---
+  // A single waiver covers ALL of a person's memberships for the season, so this
+  // clears every pending-waiver row for (person, season) — not just one type.
+  // MEMBERSHIP STATUS NUANCE: club-pay rows go to 'pending-club-payment' (the club
+  // still owes the fee); everything else becomes 'active'. (On the self path the
+  // membership rows don't exist yet — the wizard creates them at the pay step — so
+  // these updates match 0 rows and are a harmless no-op.)
+  const now = new Date().toISOString();
+  const ptrs = { waiver_signed_at: now, waiver_signed_by: a.signerName };
   const { error: upErr } = await db.from('memberships')
-    .update({ status: nextStatus, waiver_signed_at: new Date().toISOString(), waiver_signed_by: a.signerName })
-    .eq('person_id', a.personId).eq('season_id', a.seasonId).eq('type', a.membershipType);
+    .update({ status: 'active', ...ptrs })
+    .eq('person_id', a.personId).eq('season_id', a.seasonId).eq('status', 'pending-waiver')
+    .neq('paid_via', 'club');
   if (upErr) return json({ ok: false, error: upErr.message }, 500);
+  const { error: upClubErr } = await db.from('memberships')
+    .update({ status: 'pending-club-payment', ...ptrs })
+    .eq('person_id', a.personId).eq('season_id', a.seasonId).eq('status', 'pending-waiver')
+    .eq('paid_via', 'club');
+  if (upClubErr) return json({ ok: false, error: upClubErr.message }, 500);
 
   if (a.signerRole === 'guardian') {
     await db.from('waiver_sign_requests')

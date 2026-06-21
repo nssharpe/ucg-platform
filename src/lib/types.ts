@@ -377,8 +377,10 @@ export interface AccountInvite {
   acceptedAt?: string | null;
 }
 
-export type WaiverType = 'Athlete' | 'Coach' | 'Judge' | 'Other Floor Access';
-export const WAIVER_TYPES: WaiverType[] = ['Athlete', 'Coach', 'Judge', 'Other Floor Access'];
+// A single waiver covers all members regardless of membership type. 'General' is
+// the canonical waiver_type stored in the DB.
+export type WaiverType = 'General';
+export const GENERAL_WAIVER_TYPE: WaiverType = 'General';
 
 export interface WaiverDocument {
   id: string;

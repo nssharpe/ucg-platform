@@ -5,8 +5,10 @@ import { useCapabilities } from '../lib/capabilities';
 import { Badge, Field, useToast } from '../components/ui';
 import { fmtMoney } from '../lib/scoring';
 import { pushCart, pushCoupon, pushInvoice, pushMembership, fetchPublishedWaiver, recordWaiverSignature, requestGuardianWaiver } from '../lib/supabase';
-import type { Athlete, Membership, MembershipType, WaiverType, WaiverDocument } from '../lib/types';
+import type { Athlete, Membership, MembershipType, WaiverDocument } from '../lib/types';
+import { GENERAL_WAIVER_TYPE } from '../lib/types';
 import { isMinorAt } from '../lib/waivers-core';
+import { sanitizeWaiverHtml } from '../lib/sanitize-html';
 import {
   offeredMembershipTypes,
   priceForAdding,
@@ -40,10 +42,6 @@ function missingProfileFields(me: Athlete): string[] {
   if (!me.emergency?.phone?.trim()) missing.push('Emergency contact phone');
   return missing;
 }
-
-const WAIVER_FOR: Record<MembershipType, WaiverType> = { athlete: 'Athlete', coach: 'Coach' };
-
-type LoadedWaiver = { type: MembershipType; waiverType: WaiverType; doc: WaiverDocument | null };
 
 function MembershipInner({ me }: { me: Athlete }) {
   const db = useDB();
@@ -102,9 +100,9 @@ function MembershipInner({ me }: { me: Athlete }) {
   // Task 6: save card on file (disabled/coming-soon)
   const [saveCard, _setSaveCard] = useState(false);
 
-  // Task 9/10: waiver signing state
+  // Waiver signing state — a single waiver covers all members regardless of type.
   const [consent, setConsent] = useState(false);
-  const [waiverDocs, setWaiverDocs] = useState<LoadedWaiver[]>([]);
+  const [waiverDoc, setWaiverDoc] = useState<WaiverDocument | null>(null);
   const [signing, setSigning] = useState(false);
   const [guardianName, setGuardianName] = useState('');
   const [guardianEmail, setGuardianEmail] = useState('');
@@ -112,16 +110,9 @@ function MembershipInner({ me }: { me: Athlete }) {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      const entries = await Promise.all(selectedTypes.map(async (t) => {
-        const waiverType = WAIVER_FOR[t];
-        const doc = await fetchPublishedWaiver(season.id, waiverType);
-        return { type: t, waiverType, doc } as LoadedWaiver;
-      }));
-      if (!cancelled) setWaiverDocs(entries);
-    })();
+    void fetchPublishedWaiver(season.id, GENERAL_WAIVER_TYPE).then((d) => { if (!cancelled) setWaiverDoc(d); });
     return () => { cancelled = true; };
-  }, [season.id, selectedTypes]);
+  }, [season.id]);
 
   const missingFields = missingProfileFields(me);
   const profileComplete = missingFields.length === 0;
@@ -130,9 +121,8 @@ function MembershipInner({ me }: { me: Athlete }) {
 
   const expectedSig = `${me.firstName ?? ''} ${me.lastName ?? ''}`.replace(/\s+/g, ' ').trim();
   const normalise = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
-  const allDocsLoaded = waiverDocs.length === selectedTypes.length && waiverDocs.every((e) => e.doc);
   const sigMatchesName = normalise(waiverSig) === normalise(expectedSig);
-  const waiverValid = allDocsLoaded && consent && !isMinor && sigMatchesName;
+  const waiverValid = !!waiverDoc && consent && !isMinor && sigMatchesName;
 
   // Task 7: coupon validation via pricing helpers
   const nowISO = new Date().toISOString();
@@ -269,39 +259,35 @@ function MembershipInner({ me }: { me: Athlete }) {
   // Type label helper
   const typeLabel = (t: MembershipType) => t === 'coach' ? 'Coach' : 'Athlete';
 
-  // Task 9: adult self-sign via Edge Function — one signature per selected type
+  // Adult self-sign via Edge Function — one signature covers all memberships.
   const signSelf = async () => {
-    if (!allDocsLoaded) return;
+    if (!waiverDoc) return;
     setSigning(true);
-    for (const e of waiverDocs) {
-      const res = await recordWaiverSignature({
-        personId: me.id, seasonId: season.id, waiverType: e.waiverType,
-        membershipType: e.type, waiverDocumentId: e.doc!.id, contentHash: e.doc!.contentHash,
-        signerName: waiverSig.trim(), signerEmail: me.email, signerRole: 'self', consent,
-      });
-      if (!res.ok) { setSigning(false); toast(res.error ?? 'Could not record signature.'); return; }
-    }
+    const res = await recordWaiverSignature({
+      personId: me.id, seasonId: season.id, waiverType: waiverDoc.waiverType,
+      membershipType: 'all', waiverDocumentId: waiverDoc.id, contentHash: waiverDoc.contentHash,
+      signerName: waiverSig.trim(), signerEmail: me.email, signerRole: 'self', consent,
+    });
     setSigning(false);
+    if (!res.ok) { toast(res.error ?? 'Could not record signature.'); return; }
     setStep('pay');
   };
 
-  // Task 10: guardian waiver request — one request per selected type
+  // Guardian waiver request — one link covers all of the minor's memberships.
   const sendGuardian = async () => {
-    if (!allDocsLoaded) return;
+    if (!waiverDoc) return;
     if (guardianName.trim().length < 2 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guardianEmail)) {
       toast('Enter the guardian name and a valid email.'); return;
     }
     setSigning(true);
-    for (const e of waiverDocs) {
-      const res = await requestGuardianWaiver({
-        personId: me.id, seasonId: season.id, waiverType: e.waiverType,
-        membershipType: e.type, guardianName: guardianName.trim(), guardianEmail: guardianEmail.trim(),
-      });
-      if (!res.ok) { setSigning(false); toast(res.error ?? 'Could not send the guardian link.'); return; }
-    }
+    const res = await requestGuardianWaiver({
+      personId: me.id, seasonId: season.id, waiverType: waiverDoc.waiverType,
+      membershipType: 'all', guardianName: guardianName.trim(), guardianEmail: guardianEmail.trim(),
+    });
     setSigning(false);
+    if (!res.ok) { toast(res.error ?? 'Could not send the guardian link.'); return; }
     setSentGuardian(true);
-    toast(waiverDocs.length > 1 ? 'Signing links sent to the guardian.' : 'Signing link sent to the guardian.');
+    toast('Signing link sent to the guardian.');
   };
 
   return (
@@ -494,17 +480,16 @@ function MembershipInner({ me }: { me: Athlete }) {
                 </p>
               )}
 
-              <div style={{ background: 'var(--ice-100)', border: '1px solid var(--line)', borderRadius: 8,
-                padding: 14, fontSize: 13, maxHeight: 220, overflowY: 'auto', marginBottom: 14 }}>
-                {waiverDocs.length === 0 ? 'Loading the current waiver…' : waiverDocs.map((e) => (
-                  <div key={e.type} style={{ marginBottom: 12 }}>
-                    {selectedTypes.length > 1 && <strong>{e.waiverType} waiver</strong>}
-                    <div style={{ whiteSpace: 'pre-wrap' }}>
-                      {e.doc ? e.doc.body : `No published ${e.waiverType} waiver yet — please contact an admin.`}
-                    </div>
-                  </div>
-                ))}
-              </div>
+              {waiverDoc ? (
+                <div style={{ background: 'var(--ice-100)', border: '1px solid var(--line)', borderRadius: 8,
+                  padding: 14, fontSize: 13, maxHeight: 280, overflowY: 'auto', marginBottom: 14 }}
+                  dangerouslySetInnerHTML={{ __html: sanitizeWaiverHtml(waiverDoc.body) }} />
+              ) : (
+                <div style={{ background: 'var(--ice-100)', border: '1px solid var(--line)', borderRadius: 8,
+                  padding: 14, fontSize: 13, marginBottom: 14, color: 'var(--ink-soft)' }}>
+                  Loading the current waiver…
+                </div>
+              )}
 
               {!isMinor && (
                 <>
@@ -543,7 +528,7 @@ function MembershipInner({ me }: { me: Athlete }) {
                     <>
                       <Field label="Guardian name"><input type="text" value={guardianName} onChange={(e) => setGuardianName(e.target.value)} /></Field>
                       <Field label="Guardian email"><input type="email" placeholder="guardian@example.com" value={guardianEmail} onChange={(e) => setGuardianEmail(e.target.value)} /></Field>
-                      <button className="btn primary" disabled={!allDocsLoaded || !consent || signing} onClick={sendGuardian}>
+                      <button className="btn primary" disabled={!waiverDoc || !consent || signing} onClick={sendGuardian}>
                         {signing ? 'Sending…' : 'Email guardian a signing link'}
                       </button>
                     </>

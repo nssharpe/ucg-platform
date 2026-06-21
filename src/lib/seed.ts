@@ -2,7 +2,8 @@ import type {
   DB, Athlete, Club, Level, Meet, Registration, Score, Season, Discipline, Invoice,
   WaiverDocument,
 } from './types';
-import { EVENTS, STATE_REGIONS, WAIVER_TYPES } from './types';
+import { EVENTS, STATE_REGIONS, GENERAL_WAIVER_TYPE } from './types';
+import { DEFAULT_WAIVER_HTML, DEFAULT_WAIVER_HASH } from './waiver-default';
 
 // Deterministic PRNG so every visitor sees the same demo data
 let _s = 42;
@@ -253,20 +254,17 @@ export function buildSeed(): DB {
     });
   }
 
-  const waiverDocuments: WaiverDocument[] = WAIVER_TYPES.map((t, i) => ({
-    id: `seed-waiver-${i}`,
+  // A single waiver covers all members; seeded from the official NAIGC waiver HTML.
+  const waiverDocuments: WaiverDocument[] = [{
+    id: 'seed-waiver-general',
     seasonId: 's26',
-    waiverType: t,
+    waiverType: GENERAL_WAIVER_TYPE,
     version: 1,
-    body: `UCG ${t.toUpperCase()} ASSUMPTION OF RISK, WAIVER & RELEASE.\n\n` +
-      `I acknowledge that gymnastics carries inherent risk of serious injury. ` +
-      `In consideration of being permitted to participate in United Club Gymnastics ` +
-      `events, I release UCG, host clubs, venues, and their officers from liability ` +
-      `to the fullest extent permitted by law. (Placeholder text — replace in Admin → Waivers.)`,
-    contentHash: 'seed',
+    body: DEFAULT_WAIVER_HTML,
+    contentHash: DEFAULT_WAIVER_HASH,
     published: true,
     createdAt: new Date().toISOString(),
-  }));
+  }];
 
   return {
     seasons, levels, clubs, people, meets, registrations, scores, invoices,

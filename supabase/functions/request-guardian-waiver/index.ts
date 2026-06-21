@@ -95,7 +95,7 @@ Deno.serve(async (req) => {
   const athlete = `${person.first_name} ${person.last_name}`;
   const html = `<p>Hello ${body.guardianName ?? ''},</p>
 <p>${athlete} has requested that you, as parent/guardian, sign the
-${body.waiverType} waiver for United Club Gymnastics.</p>
+NAIGC waiver for United Club Gymnastics.</p>
 <p><a href="${link}">Click here to review and sign the waiver</a>.</p>
 <p>This is an electronic signature with timestamp and IP recorded.</p>`;
 
@@ -112,7 +112,7 @@ ${body.waiverType} waiver for United Club Gymnastics.</p>
     await client.send({
       from: `${fromName} <${gmailUser}>`,
       to: guardianEmail,
-      subject: `Sign the ${body.waiverType} waiver for ${athlete}`,
+      subject: `Sign the NAIGC waiver for ${athlete}`,
       html,
     });
   } catch (e) {

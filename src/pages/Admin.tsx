@@ -5,9 +5,10 @@ import { Badge, Combo, Field, Modal, Tabs, useToast } from '../components/ui';
 import { ClubForm } from '../components/ClubForm';
 import { PersonForm } from '../components/PersonForm';
 import { RegionEditor } from '../components/RegionEditor';
-import { DISCIPLINES, STATE_REGIONS, WAIVER_TYPES } from '../lib/types';
+import { DISCIPLINES, STATE_REGIONS, GENERAL_WAIVER_TYPE } from '../lib/types';
 import type { AccountInvite, Athlete, Club, ClubRequest, Coupon, Level, Region, Season, WaiverType, WaiverDocument } from '../lib/types';
 import { sha256Hex, nextVersion, certificateText } from '../lib/waivers-core';
+import { sanitizeWaiverHtml } from '../lib/sanitize-html';
 import { fmtMoney } from '../lib/scoring';
 import { randomPromoCode, couponValid } from '../lib/pricing';
 import { fetchAllRoles, isSupabaseConfigured, pushAll, pushClub, pushClubManager, pushClubRequest, pushCoupon, pushLevel, pushMembership, pushRegistration, pushSeason, pushUserRole, pushAccountInvite, deleteCoupon, deleteRegistration, sendEmail, pushWaiverDocument } from '../lib/supabase';
@@ -1071,37 +1072,47 @@ function Waivers() {
         </Field>
       </div>
 
-      <div className="grid cols-2" style={{ marginBottom: 24 }}>
-        {WAIVER_TYPES.map((t) => {
-          const key = `${selectedSeasonId}:${t}`;
-          const pub = publishedFor(t);
-          const value = drafts[key] ?? pub?.body ?? '';
-          return (
-            <div className="card card-pad" key={t}>
-              <h3 className="card-title">{t} waiver — {selectedSeason?.name ?? '—'}</h3>
-              <p style={{ fontSize: 13.5, color: 'var(--ink-soft)', marginTop: 0 }}>
-                {pub ? `Published v${pub.version}` : 'Not published yet'} · e-signed with timestamp, IP & consent recorded.
-              </p>
-              <textarea className="input" rows={8} value={value}
-                onChange={(e) => setDrafts((p) => ({ ...p, [key]: e.target.value }))}
-                placeholder="Enter the waiver text members will agree to…" />
-              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                <button className="btn small primary" onClick={() => saveVersion(t)}>Save new version</button>
-                {docsFor(t).length > 1 && (
-                  <details><summary style={{ fontSize: 12.5, color: 'var(--ink-soft)', cursor: 'pointer' }}>
-                    History ({docsFor(t).length})</summary>
-                    <ul style={{ margin: '4px 0 0 16px', fontSize: 12.5, color: 'var(--ink-soft)' }}>
-                      {[...docsFor(t)].reverse().map((d) => (
-                        <li key={d.id}>v{d.version} — {new Date(d.createdAt).toLocaleString()} (hash {d.contentHash.slice(0, 8)}…)</li>
-                      ))}
-                    </ul>
-                  </details>
-                )}
+      {(() => {
+        const t = GENERAL_WAIVER_TYPE;
+        const key = `${selectedSeasonId}:${t}`;
+        const pub = publishedFor(t);
+        const value = drafts[key] ?? pub?.body ?? '';
+        return (
+          <div className="card card-pad" style={{ marginBottom: 24 }}>
+            <h3 className="card-title">Member waiver — {selectedSeason?.name ?? '—'}</h3>
+            <p style={{ fontSize: 13.5, color: 'var(--ink-soft)', marginTop: 0 }}>
+              A single waiver applies to all members. Enter <strong>HTML</strong> — it renders as shown in the preview when members sign.
+              {' '}{pub ? `Published v${pub.version}.` : 'Not published yet.'} E-signed with timestamp, IP &amp; consent recorded.
+            </p>
+            <div className="grid cols-2" style={{ gap: 16, alignItems: 'start' }}>
+              <div>
+                <label style={{ fontSize: 12.5, color: 'var(--ink-soft)', display: 'block', marginBottom: 4 }}>HTML source</label>
+                <textarea className="input" rows={18} style={{ fontFamily: 'monospace', fontSize: 12 }} value={value}
+                  onChange={(e) => setDrafts((p) => ({ ...p, [key]: e.target.value }))}
+                  placeholder="<h1>Waiver…</h1>" />
+              </div>
+              <div>
+                <label style={{ fontSize: 12.5, color: 'var(--ink-soft)', display: 'block', marginBottom: 4 }}>Preview</label>
+                <div style={{ border: '1px solid var(--line)', borderRadius: 8, padding: 14, fontSize: 13, maxHeight: 400, overflowY: 'auto', background: 'var(--ice-100)' }}
+                  dangerouslySetInnerHTML={{ __html: sanitizeWaiverHtml(value) || '<p>Nothing to preview yet.</p>' }} />
               </div>
             </div>
-          );
-        })}
-      </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center' }}>
+              <button className="btn small primary" onClick={() => saveVersion(t)}>Save new version</button>
+              {docsFor(t).length >= 1 && (
+                <details><summary style={{ fontSize: 12.5, color: 'var(--ink-soft)', cursor: 'pointer' }}>
+                  History ({docsFor(t).length})</summary>
+                  <ul style={{ margin: '4px 0 0 16px', fontSize: 12.5, color: 'var(--ink-soft)' }}>
+                    {[...docsFor(t)].reverse().map((d) => (
+                      <li key={d.id}>v{d.version} — {new Date(d.createdAt).toLocaleString()} (hash {d.contentHash.slice(0, 8)}…)</li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       <div className="card card-pad">
         <h3 className="card-title">Signed waivers — {selectedSeason?.name ?? '—'}</h3>
@@ -1113,7 +1124,7 @@ function Waivers() {
           <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
             {signed.slice(0, 300).map(({ sig, name, version }) => (
               <li key={sig.id} style={{ borderBottom: '1px solid var(--line)', padding: '8px 0' }}>
-                <strong>{name}</strong> — {sig.waiverType} ({sig.signerRole})
+                <strong>{name}</strong> <span style={{ color: 'var(--ink-soft)' }}>({sig.signerRole})</span>
                 <details>
                   <summary style={{ fontSize: 12.5, color: 'var(--accent)', cursor: 'pointer' }}>Certificate</summary>
                   <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '4px 0 0' }}>

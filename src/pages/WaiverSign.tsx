@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { fetchSignRequest, fetchPublishedWaiver, recordWaiverSignature } from '../lib/supabase';
 import type { WaiverDocument } from '../lib/types';
+import { sanitizeWaiverHtml } from '../lib/sanitize-html';
 
 export default function WaiverSign() {
   const { token = '' } = useParams();
@@ -54,13 +55,12 @@ export default function WaiverSign() {
 
   return (
     <div className="card card-pad" style={{ maxWidth: 640, margin: '40px auto' }}>
-      <h2>{req.waiver_type} waiver — guardian signature</h2>
+      <h2>NAIGC waiver — guardian signature</h2>
       <div style={{
         background: 'var(--ice-100)', border: '1px solid var(--line)', borderRadius: 8,
-        padding: 14, fontSize: 13, maxHeight: 240, overflowY: 'auto', margin: '12px 0', whiteSpace: 'pre-wrap',
-      }}>
-        {doc?.body}
-      </div>
+        padding: 14, fontSize: 13, maxHeight: 280, overflowY: 'auto', margin: '12px 0',
+      }}
+        dangerouslySetInnerHTML={{ __html: sanitizeWaiverHtml(doc?.body ?? '') }} />
       <label style={{ display: 'block', marginBottom: 8 }}>Your full legal name
         <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
       </label>
