@@ -597,43 +597,31 @@ function MembershipInner({ me }: { me: Athlete }) {
               <Field label="Payment method">
                 <select className="input" value={payMethod} onChange={(e) => setPayMethod(e.target.value as 'card' | 'club')}>
                   <option value="card">Pay now — credit / debit card</option>
-                  {club?.allowClubPay && <option value="club">Send to {club.shortName} club cart (club pays later)</option>}
                 </select>
               </Field>
 
-              {payMethod === 'card' && (
-                <>
-                  <div className="grid cols-2">
-                    <Field label="Card number"><input type="text" placeholder="4242 4242 4242 4242" /></Field>
-                    <div className="grid cols-2">
-                      <Field label="Exp"><input type="text" placeholder="MM/YY" /></Field>
-                      <Field label="CVC"><input type="text" placeholder="123" /></Field>
-                    </div>
-                  </div>
-                  {/* Task 6: Save card on file — disabled/coming soon */}
-                  <label className="checkrow" style={{ opacity: 0.55, cursor: 'not-allowed', marginBottom: 12 }}>
-                    <input
-                      type="checkbox"
-                      checked={saveCard}
-                      disabled
-                      style={{ cursor: 'not-allowed' }}
-                      readOnly
-                    />
-                    Save this card for future use <span style={{ fontSize: 12, color: 'var(--ink-soft)', marginLeft: 4 }}>(coming soon)</span>
-                  </label>
-                </>
-              )}
-
-              {payMethod === 'club' && (
-                <div style={{ background: 'var(--ice-100)', border: '1px solid var(--line)', borderRadius: 8, padding: 12, marginBottom: 14, fontSize: 13.5 }}>
-                  Your membership will be <strong>pending</strong> until {club?.name} processes their club cart.
-                  The club will see your name on the cart item so they know who it's for.
+              <div className="grid cols-2">
+                <Field label="Card number"><input type="text" placeholder="4242 4242 4242 4242" /></Field>
+                <div className="grid cols-2">
+                  <Field label="Exp"><input type="text" placeholder="MM/YY" /></Field>
+                  <Field label="CVC"><input type="text" placeholder="123" /></Field>
                 </div>
-              )}
+              </div>
+              {/* Task 6: Save card on file — disabled/coming soon */}
+              <label className="checkrow" style={{ opacity: 0.55, cursor: 'not-allowed', marginBottom: 12 }}>
+                <input
+                  type="checkbox"
+                  checked={saveCard}
+                  disabled
+                  style={{ cursor: 'not-allowed' }}
+                  readOnly
+                />
+                Save this card for future use <span style={{ fontSize: 12, color: 'var(--ink-soft)', marginLeft: 4 }}>(coming soon)</span>
+              </label>
 
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button className="btn primary" onClick={() => complete(payMethod)}>
-                  {payMethod === 'card' ? `Pay ${fmtMoney(discounted)}` : 'Send to club cart →'}
+                <button className="btn primary" onClick={() => complete('card')}>
+                  Pay {fmtMoney(discounted)}
                 </button>
 
                 {/* Task 4: Admin Payment Override */}
@@ -647,7 +635,27 @@ function MembershipInner({ me }: { me: Athlete }) {
                     Admin Payment Override ($0)
                   </button>
                 )}
+
+                {/* Send to club cart — only when the club allows members to push fees to its cart */}
+                {club?.allowClubPay && (
+                  <button
+                    className="btn ghost"
+                    style={{ borderColor: 'var(--coral-400)', color: 'var(--coral-600)' }}
+                    onClick={() => complete('club')}
+                    title={`Add this membership fee to ${club.name}'s club cart instead of paying now. Your membership stays pending until a club manager pays.`}
+                  >
+                    Send to Club Cart
+                  </button>
+                )}
               </div>
+
+              {club?.allowClubPay && (
+                <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginTop: 10, marginBottom: 0 }}>
+                  <strong>Send to Club Cart</strong> adds this {fmtMoney(discounted)} fee to {club.name}'s
+                  cart instead of paying now. Your membership stays <strong>pending</strong> until a club
+                  manager settles the cart — they'll see the item on their dashboard with your name on it.
+                </p>
+              )}
 
               <p style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 10 }}>
                 Demo prototype — no real payment is processed. Production will use a PCI-compliant processor (Stripe).
