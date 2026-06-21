@@ -1459,7 +1459,9 @@ function UserRoles() {
 
   useEffect(() => {
     let live = true;
-    setLoading(true);
+    // `loading` already initializes to true and this effect runs once on mount,
+    // so no synchronous setLoading(true) is needed (it would only cause a
+    // cascading render). setLoading(false) happens in the async .then below.
     fetchAllRoles().then((rows) => {
       if (!live) return;
       const map = new Map<string, Set<string>>();
@@ -1740,11 +1742,11 @@ export function Communicate() {
     if (richRef.current) {
       setBody(richRef.current.innerHTML);
     }
-  }, []);
+  }, [setBody]);
 
   const onRichInput = useCallback(() => {
     if (richRef.current) setBody(richRef.current.innerHTML);
-  }, []);
+  }, [setBody]);
 
   // When switching to rich mode, seed the contentEditable with current body
   const switchToRich = () => {

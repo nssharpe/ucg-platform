@@ -58,13 +58,18 @@ function defaultSessions(allLevels: Level[], d: Discipline, date: string, nextKe
   }));
 }
 
-/** Derive SessionDraft[] from existing MeetSession[] for editing. */
-function sessionsTodrafts(sessions: MeetSession[], nextKey: () => number): SessionDraft[] {
-  return sessions.map((s) => {
+/**
+ * Derive SessionDraft[] from existing MeetSession[] for editing. Keys are
+ * assigned by index (1..N) rather than from the component's keyRef, so this can
+ * run as initial state without reading a ref during render; the caller seeds the
+ * key counter to N+1 so later nextKey() calls don't collide.
+ */
+function sessionsTodrafts(sessions: MeetSession[]): SessionDraft[] {
+  return sessions.map((s, i) => {
     // Strip the "Session N — " prefix from the stored name
     const label = s.name.replace(/^Session \d+ — /, '');
     return {
-      key: nextKey(),
+      key: i + 1,
       discipline: s.discipline,
       label,
       date: s.date,
@@ -86,7 +91,10 @@ export function MeetWizard({ onClose, editMeet }: MeetWizardProps) {
   const caps = useCapabilities();
   const toast = useToast();
   const navigate = useNavigate();
-  const keyRef = useRef(1);
+  // Initial sessions get keys 1..N (no ref read during render); the key counter
+  // starts at N+1 so subsequently-added sessions get fresh, non-colliding keys.
+  const initialSessions = editMeet ? sessionsTodrafts(editMeet.sessions) : [];
+  const keyRef = useRef(initialSessions.length + 1);
   const nextKey = () => keyRef.current++;
 
   const isEdit = !!editMeet;
@@ -130,9 +138,7 @@ export function MeetWizard({ onClose, editMeet }: MeetWizardProps) {
   );
   // Disciplines & sessions
   const [disciplines, setDisciplines] = useState<Discipline[]>(editMeet?.disciplines ?? []);
-  const [sessions, setSessions] = useState<SessionDraft[]>(
-    editMeet ? sessionsTodrafts(editMeet.sessions, nextKey) : [],
-  );
+  const [sessions, setSessions] = useState<SessionDraft[]>(initialSessions);
   // Status — edit shows all statuses; create shows a subset
   const [status, setStatus] = useState<MeetStatus>(editMeet?.status ?? 'reg-open');
   const [error, setError] = useState('');
