@@ -24,8 +24,8 @@ in [`../CLAUDE.md`](../CLAUDE.md).
 | [account-role-foundation-design](specs/2026-06-12-account-role-foundation-design.md) | Sub-project A: capability-driven auth, account↔person claim, club management | ✅ shipped |
 | [nationals-qual-awards](specs/2026-06-13-nationals-qual-awards.md) | Authoritative finals-qualification & awards ruleset for the TS port | 📘 reference |
 | [auth-email-setup](specs/2026-06-16-auth-email-setup.md) | Supabase Auth + email dashboard configuration steps | 📘 ops runbook (auth live) |
-| [event-management](specs/2026-06-18-event-management.md) | Net-new event/sanctioning subsystem (Wave 4 of the 6/18 batch) | 🟡 migration + sanctioning routes on `main`; full subsystem on `feature/event-mgmt-2026-06-18` |
-| [feedback-batch-decomposition](specs/2026-06-18-feedback-batch-decomposition.md) | Decomposition of the 6/18 feedback batch into waves | 🟡 Waves 1–3 shipped; Wave 4 on the event-mgmt branch |
+| [event-management](specs/2026-06-18-event-management.md) | Net-new event/sanctioning subsystem (Wave 4 of the 6/18 batch) | ✅ shipped (merged to `main`) |
+| [feedback-batch-decomposition](specs/2026-06-18-feedback-batch-decomposition.md) | Decomposition of the 6/18 feedback batch into waves | ✅ shipped (all waves merged) |
 | [digital-waiver-esign-design](specs/2026-06-20-digital-waiver-esign-design.md) | Clickwrap e-signature: versioned text, signature evidence, guardian path | ✅ shipped |
 
 ## Plans (`plans/`) — step-by-step implementation records
@@ -53,7 +53,6 @@ D codeless judge access (URL / 6-digit / QR) → E meet scoring config (1-vs-2 p
 calculator vs. simple entry). Further out: PDF certs, banquet tickets, finals rosters,
 external API. Live status is tracked in [`../CLAUDE.md`](../CLAUDE.md).
 
-## Unmerged branches (work-in-progress, not on `main`)
-- `feature/event-mgmt-2026-06-18` — full Event Management subsystem (spec above). Its
-  DB migration and the sanctioning routes are already on `main`; the rest awaits review.
-- `feature/feedback-2026-06-18` — remainder of the 6/18 feedback batch.
+## Branches
+All feature work is merged to `main` — there are no outstanding feature branches. (The
+6/18 event-management and feedback branches were fully merged and have been deleted.)
