@@ -337,7 +337,7 @@ export interface Invoice {
   couponCode?: string;
 }
 
-export interface CartItem extends InvoiceItem {}
+export type CartItem = InvoiceItem;
 
 export interface Coupon {
   code: string;

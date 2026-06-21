@@ -7,7 +7,7 @@ import { sanitizeWaiverHtml } from '../lib/sanitize-html';
 export default function WaiverSign() {
   const { token = '' } = useParams();
   const [state, setState] = useState<'loading' | 'ready' | 'invalid' | 'done'>('loading');
-  const [req, setReq] = useState<any>(null);
+  const [req, setReq] = useState<Awaited<ReturnType<typeof fetchSignRequest>>>(null);
   const [doc, setDoc] = useState<WaiverDocument | null>(null);
   const [name, setName] = useState('');
   const [relationship, setRelationship] = useState('parent');
@@ -26,7 +26,7 @@ export default function WaiverSign() {
   }, [token]);
 
   const submit = async () => {
-    if (!doc) return;
+    if (!doc || !req) return;
     setBusy(true); setErr('');
     const res = await recordWaiverSignature({
       personId: req.person_id, seasonId: req.season_id, waiverType: req.waiver_type,

@@ -14,6 +14,21 @@ const cors = {
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
 
+interface SignaturePayload {
+  signerRole?: string;
+  token?: string;
+  personId?: string;
+  seasonId?: string;
+  waiverType?: string;
+  membershipType?: string;
+  waiverDocumentId?: string;
+  contentHash?: string;
+  consent?: boolean;
+  signerName?: string;
+  signerEmail?: string;
+  signerRelationship?: string;
+}
+
 function clientIp(req: Request): string {
   const xff = req.headers.get('x-forwarded-for');
   if (xff) return xff.split(',')[0].trim();
@@ -28,7 +43,7 @@ Deno.serve(async (req) => {
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const db = createClient(url, serviceKey, { auth: { persistSession: false } });
 
-  let a: any;
+  let a: SignaturePayload;
   try { a = await req.json(); } catch { return json({ ok: false, error: 'Invalid JSON' }, 400); }
 
   // --- Authorize ---

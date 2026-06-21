@@ -98,7 +98,7 @@ function MembershipInner({ me }: { me: Athlete }) {
   const [coupon, setCoupon] = useState('');
   const [payMethod, setPayMethod] = useState<'card' | 'club'>('card');
   // Task 6: save card on file (disabled/coming-soon)
-  const [saveCard, _setSaveCard] = useState(false);
+  const [saveCard] = useState(false);
 
   // Waiver signing state — a single waiver covers all members regardless of type.
   const [consent, setConsent] = useState(false);

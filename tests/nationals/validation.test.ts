@@ -8,7 +8,7 @@ import {
 } from '../../src/nationals/validation';
 import { computeArtistic } from '../../src/nationals/artistic';
 import { buildConfig } from '../../src/nationals/config';
-import { WAG, MAG, TNT, type QualFlag } from '../../src/nationals/types';
+import { WAG, MAG, type QualFlag } from '../../src/nationals/types';
 import { loadFixture, entriesFrom, tntRowToEntry } from './helpers';
 
 const NAME: Record<string, string> = { VT: 'Vault', UB: 'Bars', BB: 'Beam', FX: 'Floor', PH: 'PH', SR: 'Rings', PB: 'PB', HB: 'HB', AA: 'AA' };

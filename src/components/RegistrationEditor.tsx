@@ -73,7 +73,7 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
       : [...draft.events, code];
 
     // Update eventLevels for T&T — add/remove the key
-    let nextEventLevels = { ...draft.eventLevels };
+    const nextEventLevels = { ...draft.eventLevels };
     if (isTNT) {
       if (next.includes(code) && !nextEventLevels[code]) {
         nextEventLevels[code] = draft.levelId;

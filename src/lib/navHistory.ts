@@ -16,7 +16,7 @@ export interface HistoryEntry {
 }
 
 // Module-level stack — survives React re-renders, cleared on hard reload.
-let stack: HistoryEntry[] = [];
+const stack: HistoryEntry[] = [];
 
 /** Derive a human-readable label from a pathname. */
 export function labelFor(pathname: string): string {
