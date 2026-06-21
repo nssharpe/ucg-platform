@@ -1,7 +1,8 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { HashRouter, Routes, Route } from 'react-router-dom';
+import { HashRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { Layout } from './components/Layout';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { ToastProvider } from './components/ui';
 import { isUnlocked } from './lib/store';
 import { useCapabilities } from './lib/capabilities';
@@ -63,6 +64,17 @@ function PageFallback() {
   return <div style={{ padding: 40, textAlign: 'center', color: 'var(--ink-soft)' }}>Loading…</div>;
 }
 
+/** Per-route error boundary that resets on navigation, so one broken page shows
+ *  an inline error while the layout/nav stay alive. */
+function RouteErrorBoundary({ children }: { children: ReactNode }) {
+  const { pathname } = useLocation();
+  return (
+    <ErrorBoundary variant="route" context={pathname} resetKeys={[pathname]}>
+      {children}
+    </ErrorBoundary>
+  );
+}
+
 /** Gate account-only pages: guests can browse public routes (results, meets),
  *  but reaching a member page shows the sign-in screen. In the unconfigured
  *  prototype `signedIn` is always true, so this is a no-op there. */
@@ -119,6 +131,7 @@ export default function App() {
     <ToastProvider>
       <HashRouter>
         <Layout>
+          <RouteErrorBoundary>
           <Suspense fallback={<PageFallback />}>
             <Routes>
               {/* Public — no account required */}
@@ -149,6 +162,7 @@ export default function App() {
               <Route path="*" element={<Home />} />
             </Routes>
           </Suspense>
+          </RouteErrorBoundary>
         </Layout>
       </HashRouter>
     </ToastProvider>
