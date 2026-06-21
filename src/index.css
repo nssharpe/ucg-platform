@@ -531,7 +531,6 @@ option { color: var(--ink); background: #fff; }
 
 /* ---------- gate ---------- */
 .gate {
-.gate {
   min-height: 100vh;
   display: grid;
   place-items: center;
