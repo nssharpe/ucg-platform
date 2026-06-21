@@ -28,16 +28,42 @@ PostgREST API is automatic, and Edge Functions cover custom endpoints.
 
 ## Files
 
-| File | Purpose |
-|------|---------|
-| `migrations/0001_schema.sql` | All tables + enums, mirroring `src/lib/types.ts`. |
-| `migrations/0002_rls.sql` | Row-level security: helper functions + public read for results. |
-| `migrations/0003_score_source_calcs.sql` | Adds `wag-sv-calc` / `tnt-calc` to the `score_source` enum. |
-| `migrations/0004_text_ids_score_extras.sql` | Converts app-generated id columns to `text` and adds score calc-state columns. |
-| `migrations/0005_account_foundation.sql` | `club_requests` table + RLS, widened `club_managers` RLS (managers co-manage their own club), and the `link_or_create_person` claim-by-email RPC. |
+Migration filenames use Supabase's required timestamp format
+(`<YYYYMMDDHHmmss>_name.sql`); the leading `NNNN_` labels below are the historical
+sequence numbers used in conversation. In order:
 
-All five migrations are applied to the live project. Migrations are append-only;
-add new ones rather than editing applied files.
+| Migration | Purpose |
+|------|---------|
+| `…000001_schema.sql` (0001) | All tables + enums, mirroring `src/lib/types.ts`. |
+| `…000002_rls.sql` (0002) | Row-level security: helper functions + public read for results. |
+| `…000003_score_source_calcs.sql` (0003) | Adds `wag-sv-calc` / `tnt-calc` to the `score_source` enum. |
+| `…000004_text_ids_score_extras.sql` (0004) | App-generated id columns → `text`; adds score calc-state columns + `scores` replica identity. |
+| `…000005_account_foundation.sql` (0005) | `club_requests` table + RLS, widened `club_managers` RLS, `link_or_create_person` claim-by-email RPC. |
+| `…000006_nationals.sql` (0006) | Nationals finals-qualification / awards config + supporting columns. |
+| `20260618000007_feedback_2026_06_18.sql` (0007) | 6/18 feedback batch, Waves 1–3. |
+| `20260618100000_sanctioning_role.sql` | Adds the `sanctioning` app role (own file — enum-add must commit before use). |
+| `20260618200000_event_management.sql` (0008) | Event/sanctioning subsystem schema (meets event type, sanction id, camp config). |
+| `20260620000010_membership_status_pending_waiver.sql` | Adds the `pending-waiver` membership status. |
+| `20260620000020_waiver_esign.sql` | `waiver_documents`, `waiver_signatures`, `waiver_sign_requests` + RLS. |
+| `20260620000030_seed_general_waiver.sql` | Seeds the default general waiver document. |
+
+All migrations are applied to the live project and tracked by the linked CLI
+(`supabase db push`). Migrations are append-only — add new ones rather than editing
+applied files. See `../CLAUDE.md` for the enum-add transaction gotcha.
+
+## Edge Functions (`functions/`)
+
+Deno functions deployed with `supabase functions deploy <name> --project-ref <ref>`.
+All email goes through Gmail SMTP (denomailer) using project secrets `GMAIL_USER` /
+`GMAIL_APP_PASSWORD` — **test-grade**; swap to Resend / Workspace relay before
+production. Front-end invokers live in `src/lib/supabase.ts`.
+
+| Function | Purpose | Caller |
+|----------|---------|--------|
+| `send-email` | Communicate broadcast / test sender (50-recipient cap). | admin only |
+| `record-waiver-signature` | Server-stamps real IP into `waiver_signatures`, activates membership. | signed-in owner |
+| `request-guardian-waiver` | Creates a signing token + emails a minor's guardian the link. | signed-in owner |
+| `notify-club-cart` | Emails a club's managers when a member pushes fees to the cart. | any signed-in member |
 
 ## Stand it up
 
@@ -132,6 +158,8 @@ and `src/lib/auth.ts` handle Supabase Auth when it is.
 
 ## Not covered yet (future migrations)
 
-Payments (Stripe via an Edge Function + `invoices`/`cart_items`), waiver PDF
-storage + e-sign audit trail, the membership-expiry notification cron, scheduled
-database backups, and the public API surface for other leagues.
+Payments (Stripe via an Edge Function — `invoices`/`cart_items` tables already exist),
+the membership-expiry notification cron, scheduled database backups, and the public API
+surface for other leagues. (Waiver e-signature **is** built — see migrations 0010–0030
+and the `record-waiver-signature` / `request-guardian-waiver` functions; it stores a
+structured signature evidence record, no PDFs by design.)

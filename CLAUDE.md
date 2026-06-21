@@ -13,8 +13,10 @@ will apply first.
 
 ## Supabase / migrations
 - Project ref `wkyerxlgricfphopocoz` (org NAIGC). Migrations in `supabase/migrations/`.
-  CLI is linked (`supabase link` done 2026-06-19). All migrations through 0008
-  (event management) are applied and tracked by the CLI.
+  CLI is linked (`supabase link` done 2026-06-19). All migrations are applied and
+  tracked by the CLI — through the waiver-e-sign set (`20260620000010/0020/0030`,
+  the latest as of 2026-06-21). `supabase functions deploy <name>` deploys Edge
+  Functions (see [Email infra] below).
 - Migration filenames use Supabase's required timestamp format:
   `<YYYYMMDDHHmmss>_name.sql`. Create new ones with `supabase migration new <name>`.
 - Apply via `supabase db push` (the shell sandbox blocks network — run with the
@@ -56,12 +58,22 @@ will apply first.
   (overrides the brainstorming/writing-plans skill defaults — do NOT recreate
   `docs/superpowers/`).
 
+## Email infra (test-grade, working)
+- Transactional email works via **Gmail SMTP** Edge Functions (denomailer). Secrets are
+  project-wide: `GMAIL_USER` (= nate.sharpe@naigc.org), `GMAIL_APP_PASSWORD`, optional
+  `GMAIL_FROM_NAME`, `APP_PUBLIC_URL`. This is **test-grade** (personal Gmail, recipient
+  caps) — swap to Resend / Workspace SMTP relay before real production sends.
+- Functions in `supabase/functions/`: `send-email` (Communicate broadcast, admin-only),
+  `request-guardian-waiver` (minor waiver link), `record-waiver-signature`,
+  `notify-club-cart` (emails a club's managers when a member pushes fees to the cart).
+- Front-end invokers live in `src/lib/supabase.ts` (`sendEmail`, `requestGuardianWaiver`,
+  `notifyClubCart`). Deploy a function: `supabase functions deploy <name> --project-ref
+  wkyerxlgricfphopocoz` (sandbox disabled; Docker NOT required).
+
 ## Deferred / TODO (not yet built)
-- **Transactional email** — the new-club-request flow (and any future notifications)
-  should email `newclubinquiries@naigc.org`, but no email provider/Edge Function
-  exists yet. For now the in-app `club_requests` queue is the source of truth; wire a
-  provider (e.g. Resend via a Supabase Edge Function) when the Stripe Edge Functions
-  land, then make the request flow fire a best-effort email.
+- **New-club-request email** — the new-club-request flow should email
+  `newclubinquiries@naigc.org`. The email transport now exists (above); the request flow
+  just doesn't fire it yet. Wire a best-effort send via the same path.
 - Stripe payments (memberships, meet entries, banquet), typed membership purchase +
   per-season waiver, codeless judge access (URL / 6-digit / QR), multi-judge + score-
   entry-mode meet config, PDF certs, finals rosters. See `docs/specs/` + `docs/plans/`,
