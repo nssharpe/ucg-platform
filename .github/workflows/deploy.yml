@@ -16,10 +16,12 @@ concurrency:
 
 jobs:
   # Quality gate — must pass before we build or deploy. tsc + tests are hard
-  # gates (both clean). Lint is advisory for now: src/lib/supabase.ts carries
-  # pre-existing no-explicit-any debt (see CLAUDE.md) that would otherwise block
-  # every deploy; it still runs so regressions are visible. Make it a hard gate
-  # (drop continue-on-error) once that debt is cleared.
+  # gates (both clean). Lint is advisory for now: there's still pre-existing
+  # debt in a handful of pages/components (mostly react-hooks rules, plus a few
+  # stray any/unused-var) that would otherwise block every deploy; it still runs
+  # so regressions are visible. (supabase.ts's old no-explicit-any debt is now
+  # cleared via generated DB types.) Make it a hard gate — drop
+  # continue-on-error — once the remaining debt is fixed.
   test:
     runs-on: ubuntu-latest
     steps:

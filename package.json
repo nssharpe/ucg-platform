@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
+    "gen:types": "supabase gen types typescript --linked --schema public > src/lib/database.types.ts",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",

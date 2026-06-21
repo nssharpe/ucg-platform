@@ -11,6 +11,13 @@ import type {
   WaiverDocument, WaiverSignature,
 } from './types';
 import { writeQueue, type WriteOp, type ExecResult } from './write-queue';
+import type { Database } from './database.types';
+
+/** A table's Row type — the shape Supabase returns, used to type the DB→app
+ *  row mappers so a schema change (renamed/dropped column) fails the build. */
+type Row<T extends keyof Database['public']['Tables']> = Database['public']['Tables'][T]['Row'];
+/** A database function's row return shape (for `.rpc()` results). */
+type FnReturns<T extends keyof Database['public']['Functions']> = Database['public']['Functions'][T]['Returns'];
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
@@ -38,8 +45,8 @@ const PAGE_SIZE = 1000;
 /** Fetch every row from a table, paging past PostgREST's default row cap
  *  (1000) — needed for `people`, which now exceeds that with the full
  *  ScoreFlippers import. */
-async function fetchAllRows(table: string): Promise<{ data: any[]; error: PostgrestError | null }> {
-  const out: any[] = [];
+async function fetchAllRows<T>(table: string): Promise<{ data: T[]; error: PostgrestError | null }> {
+  const out: T[] = [];
   let from = 0;
   for (;;) {
     const { data, error } = await supabase!.from(table).select('*').range(from, from + PAGE_SIZE - 1);
@@ -121,7 +128,7 @@ const seasonToRow = (s: Season) => ({
   athlete_fee: s.athleteFee, coach_fee: s.coachFee, club_fee: s.clubFee,
   active: s.active, current: s.current,
 });
-const rowToSeason = (r: any): Season => ({
+const rowToSeason = (r: Row<'seasons'>): Season => ({
   id: r.id, name: r.name, startsOn: r.starts_on, endsOn: r.ends_on,
   athleteFee: Number(r.athlete_fee), coachFee: Number(r.coach_fee),
   clubFee: r.club_fee == null ? 109 : Number(r.club_fee),
@@ -132,7 +139,7 @@ const levelToRow = (l: Level) => ({
   id: l.id, discipline: l.discipline, name: l.name, sv_max: l.svMax, vaults: l.vaults,
   sort_order: l.order, retired: l.retired ?? false,
 });
-const rowToLevel = (r: any): Level => ({
+const rowToLevel = (r: Row<'levels'>): Level => ({
   id: r.id, discipline: r.discipline, name: r.name,
   svMax: r.sv_max == null ? null : Number(r.sv_max), vaults: r.vaults, order: r.sort_order,
   ...(r.retired ? { retired: true } : {}),
@@ -142,9 +149,9 @@ const clubToRow = (c: Club) => ({
   id: c.id, name: c.name, short_name: c.shortName, state: c.state, region: c.region,
   email: c.email, allow_club_pay: c.allowClubPay, access: c.access ?? 'open',
 });
-const rowToClub = (r: any): Club => ({
-  id: r.id, name: r.name, shortName: r.short_name, state: r.state ?? '', region: r.region ?? 'Other',
-  managerIds: [], email: r.email ?? '', allowClubPay: r.allow_club_pay, access: r.access ?? 'open',
+const rowToClub = (r: Row<'clubs'>): Club => ({
+  id: r.id, name: r.name, shortName: r.short_name ?? '', state: r.state ?? '', region: (r.region ?? 'Other') as Club['region'],
+  managerIds: [], email: r.email ?? '', allowClubPay: r.allow_club_pay, access: (r.access ?? 'open') as Club['access'],
 });
 
 const couponToRow = (c: Coupon) => ({
@@ -152,9 +159,9 @@ const couponToRow = (c: Coupon) => ({
   starts_at: c.startsAt ?? null, ends_at: c.endsAt ?? null,
   max_uses: c.maxUses ?? null, used_count: c.usedCount ?? 0,
 });
-const rowToCoupon = (r: any): Coupon => ({
+const rowToCoupon = (r: Row<'coupons'>): Coupon => ({
   code: r.code, pctOff: r.pct_off == null ? undefined : Number(r.pct_off),
-  amountOff: r.amount_off == null ? undefined : Number(r.amount_off), appliesTo: r.applies_to,
+  amountOff: r.amount_off == null ? undefined : Number(r.amount_off), appliesTo: r.applies_to as Coupon['appliesTo'],
   startsAt: r.starts_at ?? null, endsAt: r.ends_at ?? null,
   maxUses: r.max_uses == null ? null : Number(r.max_uses),
   usedCount: r.used_count == null ? 0 : Number(r.used_count),
@@ -179,8 +186,8 @@ const membershipToRow = (personId: string, m: Membership) => ({
   waiver_signed_at: m.waiverSignedAt, waiver_signed_by: m.waiverSignedBy,
   paid_via: m.paidVia, activated_by_admin: m.activatedByAdmin ?? false,
 });
-const rowToMembership = (r: any): Membership => ({
-  seasonId: r.season_id, type: r.type ?? 'athlete', status: r.status, waiverSignedAt: r.waiver_signed_at,
+const rowToMembership = (r: Row<'memberships'>): Membership => ({
+  seasonId: r.season_id, type: (r.type ?? 'athlete') as Membership['type'], status: r.status as Membership['status'], waiverSignedAt: r.waiver_signed_at,
   waiverSignedBy: r.waiver_signed_by, paidVia: r.paid_via, activatedByAdmin: r.activated_by_admin,
 });
 
@@ -222,13 +229,13 @@ function squadIdsByReg(meet: Meet): Map<string, string> {
   for (const s of meet.sessions) for (const q of s.squads) for (const regId of q.athleteRegIds) map.set(regId, q.id);
   return map;
 }
-const rowToRegistration = (r: any): Registration => ({
-  id: r.id, meetId: r.meet_id, athleteId: r.athlete_id, clubId: r.club_id, discipline: r.discipline,
-  levelId: r.level_id, events: r.events ?? [], sessionId: r.session_id,
+const rowToRegistration = (r: Row<'registrations'>): Registration => ({
+  id: r.id, meetId: r.meet_id, athleteId: r.athlete_id, clubId: r.club_id ?? '', discipline: r.discipline as Registration['discipline'],
+  levelId: r.level_id ?? '', events: (r.events ?? []) as Registration['events'], sessionId: r.session_id ?? '',
   refunded: r.refunded, keepListed: r.keep_listed,
   ...(r.refund_requested ? { refundRequested: true } : {}),
   ...(r.partner_athlete_id ? { partnerAthleteId: r.partner_athlete_id } : {}),
-  ...(r.event_levels ? { eventLevels: r.event_levels } : {}),
+  ...(r.event_levels ? { eventLevels: r.event_levels as Registration['eventLevels'] } : {}),
 });
 
 const scoreToRow = (s: Score) => ({
@@ -240,11 +247,11 @@ const scoreToRow = (s: Score) => ({
   entered_by: s.enteredBy, entered_at: s.enteredAt, flashed: s.flashed,
   scratched: s.scratched ?? false,
 });
-export const rowToScore = (r: any): Score => ({
-  id: r.id, meetId: r.meet_id, sessionId: r.session_id, regId: r.reg_id, event: r.event,
+export const rowToScore = (r: Row<'scores'>): Score => ({
+  id: r.id, meetId: r.meet_id, sessionId: r.session_id ?? '', regId: r.reg_id ?? '', event: r.event as Score['event'],
   sv: r.sv == null ? null : Number(r.sv), deductions: r.deductions == null ? null : Number(r.deductions),
   eScore: r.e_score == null ? null : Number(r.e_score), final: r.final == null ? null : Number(r.final),
-  source: r.source, enteredBy: r.entered_by, enteredAt: r.entered_at, flashed: r.flashed,
+  source: r.source as Score['source'], enteredBy: r.entered_by ?? '', enteredAt: r.entered_at, flashed: r.flashed,
   ...(r.calc != null ? { calc: r.calc } : {}),
   ...(r.calc_state != null ? { calcState: r.calc_state } : {}),
   ...(r.adjust_note != null ? { adjustNote: r.adjust_note } : {}),
@@ -275,20 +282,20 @@ const clubRequestToRow = (r: ClubRequest) => ({
   status: r.status, created_at: r.createdAt, decided_at: r.decidedAt ?? null,
   created_club_id: r.createdClubId ?? null,
 });
-const rowToClubRequest = (r: any): ClubRequest => ({
+const rowToClubRequest = (r: Row<'club_requests'>): ClubRequest => ({
   id: r.id, requesterPersonId: r.requester_person_id ?? null, proposedName: r.proposed_name,
-  shortName: r.short_name ?? '', state: r.state ?? '', region: r.region ?? '', note: r.note ?? '',
-  status: r.status, createdAt: r.created_at, decidedAt: r.decided_at, createdClubId: r.created_club_id,
+  shortName: r.short_name ?? '', state: r.state ?? '', region: (r.region ?? '') as ClubRequest['region'], note: r.note ?? '',
+  status: r.status as ClubRequest['status'], createdAt: r.created_at, decidedAt: r.decided_at, createdClubId: r.created_club_id,
 });
 
-const rowToWaiverDocument = (r: any): WaiverDocument => ({
-  id: r.id, seasonId: r.season_id, waiverType: r.waiver_type, version: r.version,
+const rowToWaiverDocument = (r: Row<'waiver_documents'>): WaiverDocument => ({
+  id: r.id, seasonId: r.season_id, waiverType: r.waiver_type as WaiverDocument['waiverType'], version: r.version,
   body: r.body, contentHash: r.content_hash, published: r.published, createdAt: r.created_at,
 });
-const rowToWaiverSignature = (r: any): WaiverSignature => ({
-  id: r.id, personId: r.person_id, seasonId: r.season_id, waiverType: r.waiver_type,
+const rowToWaiverSignature = (r: Row<'waiver_signatures'>): WaiverSignature => ({
+  id: r.id, personId: r.person_id, seasonId: r.season_id, waiverType: r.waiver_type as WaiverSignature['waiverType'],
   waiverDocumentId: r.waiver_document_id, contentHash: r.content_hash,
-  signerName: r.signer_name, signerEmail: r.signer_email, signerRole: r.signer_role,
+  signerName: r.signer_name, signerEmail: r.signer_email, signerRole: r.signer_role as WaiverSignature['signerRole'],
   signerRelationship: r.signer_relationship, consent: r.consent, signedAt: r.signed_at,
   ip: r.ip, userAgent: r.user_agent,
 });
@@ -537,11 +544,11 @@ export async function requestGuardianWaiver(args: {
 
 /** Token lookup for the guardian signing page via SECURITY DEFINER RPC
  *  (the table itself is not publicly readable). */
-export async function fetchSignRequest(token: string) {
+export async function fetchSignRequest(token: string): Promise<FnReturns<'get_waiver_sign_request'>[number] | null> {
   if (!supabase) return null;
   const { data, error } = await supabase.rpc('get_waiver_sign_request', { p_token: token });
   if (error) { console.error('[supabase] fetchSignRequest failed:', error); return null; }
-  return (data as any[] | null)?.[0] ?? null;
+  return (data as FnReturns<'get_waiver_sign_request'> | null)?.[0] ?? null;
 }
 
 /** The published waiver doc for a season+type (latest published version). */
@@ -570,7 +577,7 @@ export async function loadAll(): Promise<DB | null> {
       supabase.from('levels').select('*'),
       supabase.from('clubs').select('*'),
       supabase.from('club_managers').select('*'),
-      fetchAllRows('people'),
+      fetchAllRows<Row<'people'>>('people'),
       supabase.from('person_alt_clubs').select('*'),
       supabase.from('memberships').select('*'),
       supabase.from('meets').select('*'),
@@ -622,20 +629,20 @@ export async function loadAll(): Promise<DB | null> {
       arr.push(rowToMembership(r));
       membershipsByPerson.set(r.person_id, arr);
     }
-    const people: Athlete[] = (peopleR.data ?? []).map((r: any) => ({
-      id: r.id, authUserId: r.auth_user_id ?? null, kind: r.kind,
-      roles: r.roles ?? { athlete: r.kind !== 'coach', coach: r.kind === 'coach' },
+    const people: Athlete[] = (peopleR.data ?? []).map((r: Row<'people'>) => ({
+      id: r.id, authUserId: r.auth_user_id ?? null, kind: r.kind as Athlete['kind'],
+      roles: (r.roles ?? { athlete: r.kind !== 'coach', coach: r.kind === 'coach' }) as Athlete['roles'],
       firstName: r.first_name, lastName: r.last_name, email: r.email,
-      dob: r.dob ?? '', gender: r.gender, placement: r.placement ?? {}, gradYear: r.grad_year,
-      studentStatus: r.student_status, shirt: r.shirt ?? '', country: r.country ?? '', state: r.state ?? '',
+      dob: r.dob ?? '', gender: r.gender as Athlete['gender'], placement: (r.placement ?? {}) as Athlete['placement'], gradYear: r.grad_year ?? 1900,
+      studentStatus: r.student_status as Athlete['studentStatus'], shirt: r.shirt ?? '', country: r.country ?? '', state: r.state ?? '',
       phone: r.phone ?? '', mainClubId: r.main_club_id, altClubIds: altClubsByPerson.get(r.id) ?? [],
-      levels: r.levels ?? {}, emergency: r.emergency ?? { contact: '', relation: '', phone: '' },
-      dietary: r.dietary ?? [], dietaryNotes: r.dietary_notes ?? '',
-      memberships: membershipsByPerson.get(r.id) ?? [], achievements: r.achievements ?? [],
+      levels: (r.levels ?? {}) as Athlete['levels'], emergency: (r.emergency ?? { contact: '', relation: '', phone: '' }) as Athlete['emergency'],
+      dietary: (r.dietary ?? []) as Athlete['dietary'], dietaryNotes: r.dietary_notes ?? '',
+      memberships: membershipsByPerson.get(r.id) ?? [], achievements: (r.achievements ?? []) as Athlete['achievements'],
     }));
 
     const squadsBySession = new Map<string, Meet['sessions'][number]['squads']>();
-    for (const r of (squadsR.data ?? []).sort((a: any, b: any) => a.sort_order - b.sort_order)) {
+    for (const r of (squadsR.data ?? []).sort((a: Row<'squads'>, b: Row<'squads'>) => a.sort_order - b.sort_order)) {
       const arr = squadsBySession.get(r.session_id) ?? [];
       arr.push({ id: r.id, name: r.name, startEvent: r.start_event, athleteRegIds: [], holding: r.holding });
       squadsBySession.set(r.session_id, arr);
@@ -648,7 +655,7 @@ export async function loadAll(): Promise<DB | null> {
     }
 
     const sessionsByMeet = new Map<string, Meet['sessions']>();
-    for (const r of (sessionsR.data ?? []).sort((a: any, b: any) => a.sort_order - b.sort_order)) {
+    for (const r of (sessionsR.data ?? []).sort((a: Row<'meet_sessions'>, b: Row<'meet_sessions'>) => a.sort_order - b.sort_order)) {
       const arr = sessionsByMeet.get(r.meet_id) ?? [];
       arr.push({
         id: r.id, name: r.name, discipline: r.discipline, date: r.date ?? '', time: r.time ?? '',
@@ -658,22 +665,22 @@ export async function loadAll(): Promise<DB | null> {
       sessionsByMeet.set(r.meet_id, arr);
     }
 
-    const meets: Meet[] = (meetsR.data ?? []).map((r: any) => ({
+    const meets: Meet[] = (meetsR.data ?? []).map((r: Row<'meets'>) => ({
       id: r.id, slug: r.slug, name: r.name, hostClubId: r.host_club_id ?? '', city: r.city ?? '',
       state: r.state ?? '', timezone: r.timezone, startDate: r.start_date ?? '', endDate: r.end_date ?? '',
-      status: r.status, regOpens: r.reg_opens ?? '', regCloses: r.reg_closes ?? '',
+      status: r.status as Meet['status'], regOpens: r.reg_opens ?? '', regCloses: r.reg_closes ?? '',
       entryFee: Number(r.entry_fee), secondDisciplineFee: Number(r.second_discipline_fee),
-      disciplines: r.disciplines ?? [], sessions: sessionsByMeet.get(r.id) ?? [],
+      disciplines: (r.disciplines ?? []) as Meet['disciplines'], sessions: sessionsByMeet.get(r.id) ?? [],
       ...(r.private_reg_code ? { privateRegCode: r.private_reg_code } : {}),
-      ...(r.banquet ? { banquet: r.banquet } : {}),
-      ...(r.tshirt_addon ? { tshirtAddon: r.tshirt_addon } : {}),
-      ...(r.banner_addon ? { bannerAddon: r.banner_addon } : {}),
-      ...(r.change_fee ? { changeFee: r.change_fee } : {}),
-      ...(r.event_type && r.event_type !== 'competition' ? { eventType: r.event_type } : {}),
+      ...(r.banquet ? { banquet: r.banquet as Meet['banquet'] } : {}),
+      ...(r.tshirt_addon ? { tshirtAddon: r.tshirt_addon as Meet['tshirtAddon'] } : {}),
+      ...(r.banner_addon ? { bannerAddon: r.banner_addon as Meet['bannerAddon'] } : {}),
+      ...(r.change_fee ? { changeFee: r.change_fee as Meet['changeFee'] } : {}),
+      ...(r.event_type && r.event_type !== 'competition' ? { eventType: r.event_type as Meet['eventType'] } : {}),
       ...(r.sanction_id ? { sanctionId: r.sanction_id } : {}),
-      ...(r.camp_config ? { campConfig: r.camp_config } : {}),
-      ...(r.kind && r.kind !== 'standard' ? { kind: r.kind } : {}),
-      ...(r.nationals_config ? { nationalsConfig: r.nationals_config } : {}),
+      ...(r.camp_config ? { campConfig: r.camp_config as Meet['campConfig'] } : {}),
+      ...(r.kind && r.kind !== 'standard' ? { kind: r.kind as Meet['kind'] } : {}),
+      ...(r.nationals_config ? { nationalsConfig: r.nationals_config as unknown as Meet['nationalsConfig'] } : {}),
     }));
 
     const registrations: Registration[] = (registrationsR.data ?? []).map(rowToRegistration);
@@ -685,7 +692,7 @@ export async function loadAll(): Promise<DB | null> {
       arr.push({ id: r.id, label: r.label, amount: Number(r.amount), kind: r.kind, refUserId: r.ref_user_id ?? undefined, refunded: r.refunded });
       itemsByInvoice.set(r.invoice_id, arr);
     }
-    const invoices: Invoice[] = (invoicesR.data ?? []).map((r: any) => ({
+    const invoices: Invoice[] = (invoicesR.data ?? []).map((r: Row<'invoices'>) => ({
       id: r.id, number: r.number, clubId: r.club_id, athleteId: r.athlete_id,
       createdAt: r.created_at, paidAt: r.paid_at, items: itemsByInvoice.get(r.id) ?? [],
       ...(r.coupon_code ? { couponCode: r.coupon_code } : {}),
@@ -703,25 +710,25 @@ export async function loadAll(): Promise<DB | null> {
 
     // 0007 tables — tolerate absence (pre-migration) by checking .error.
     const regionOverridesRow = (appSettingsR.error ? [] : appSettingsR.data ?? [])
-      .find((r: any) => r.key === 'region_overrides');
+      .find((r: Row<'app_settings'>) => r.key === 'region_overrides');
     const regionOverrides = (regionOverridesRow?.value ?? undefined) as DB['regionOverrides'];
     const accountInvites: AccountInvite[] = (accountInvitesR.error ? [] : accountInvitesR.data ?? [])
-      .map((r: any): AccountInvite => ({
+      .map((r: Row<'account_invites'>): AccountInvite => ({
         id: r.id, personId: r.person_id ?? null, email: r.email, token: r.token,
-        status: r.status, createdAt: r.created_at, acceptedAt: r.accepted_at ?? null,
+        status: r.status as AccountInvite['status'], createdAt: r.created_at, acceptedAt: r.accepted_at ?? null,
       }));
 
     const sanctionRequests: SanctionRequest[] = (sanctionRequestsR.error ? [] : sanctionRequestsR.data ?? [])
-      .map((r: any): SanctionRequest => ({
-        id: r.id, hostClubId: r.host_club_id, requesterPersonId: r.requester_person_id ?? null,
-        eventKind: r.event_kind ?? 'competition', status: r.status, payload: r.payload ?? {},
+      .map((r: Row<'sanction_requests'>): SanctionRequest => ({
+        id: r.id, hostClubId: r.host_club_id ?? '', requesterPersonId: r.requester_person_id ?? null,
+        eventKind: (r.event_kind ?? 'competition') as SanctionRequest['eventKind'], status: r.status as SanctionRequest['status'], payload: (r.payload ?? {}) as SanctionRequest['payload'],
         submittedAt: r.submitted_at ?? null, deadlineAt: r.deadline_at ?? null,
         decidedAt: r.decided_at ?? null, createdMeetId: r.created_meet_id ?? null,
         sanctionId: r.sanction_id ?? null,
       }));
     const sanctionVotes: SanctionVote[] = (sanctionVotesR.error ? [] : sanctionVotesR.data ?? [])
-      .map((r: any): SanctionVote => ({
-        id: r.id, requestId: r.request_id, voterUserId: r.voter_user_id, vote: r.vote,
+      .map((r: Row<'sanction_votes'>): SanctionVote => ({
+        id: r.id, requestId: r.request_id, voterUserId: r.voter_user_id, vote: r.vote as SanctionVote['vote'],
         comment: r.comment ?? undefined, votedAt: r.voted_at,
       }));
 
@@ -818,7 +825,7 @@ export async function pushAll(db: DB, onProgress?: (label: string) => void): Pro
  *  `applyScorePatch` to accumulate it into a patch map. */
 export function subscribeMeetScores(
   meetId: string,
-  onChange: (payload: RealtimePostgresChangesPayload<Record<string, any>>) => void,
+  onChange: (payload: RealtimePostgresChangesPayload<Row<'scores'>>) => void,
 ): () => void {
   if (!supabase) return () => {};
   const channel = supabase
@@ -834,15 +841,15 @@ export function subscribeMeetScores(
  *  (loadAll / local mutate) is reconciled automatically. */
 export function applyScorePatch(
   patches: ReadonlyMap<string, Score | null>,
-  payload: RealtimePostgresChangesPayload<Record<string, any>>,
+  payload: RealtimePostgresChangesPayload<Row<'scores'>>,
 ): Map<string, Score | null> {
   const next = new Map(patches);
   if (payload.eventType === 'DELETE') {
-    const oldId = (payload.old as Record<string, any> | null)?.id;
+    const oldId = (payload.old as Partial<Row<'scores'>> | null)?.id;
     if (oldId != null) next.set(oldId, null);
     return next;
   }
-  const updated = rowToScore(payload.new as Record<string, any>);
+  const updated = rowToScore(payload.new as Row<'scores'>);
   next.set(updated.id, updated);
   return next;
 }
