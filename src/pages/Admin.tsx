@@ -12,7 +12,7 @@ import { sha256Hex, nextVersion, certificateText } from '../lib/waivers-core';
 import { sanitizeWaiverHtml } from '../lib/sanitize-html';
 import { fmtMoney } from '../lib/scoring';
 import { randomPromoCode, couponValid } from '../lib/pricing';
-import { fetchAllRoles, isSupabaseConfigured, pushAll, pushClub, pushClubManager, pushClubRequest, pushCoupon, pushLevel, pushMembership, pushRegistration, pushSeason, pushUserRole, pushAccountInvite, deleteCoupon, deleteRegistration, sendEmail, sendSms, pushWaiverDocument } from '../lib/supabase';
+import { fetchAllRoles, isSupabaseConfigured, pushAll, pushClub, pushClubManager, pushClubRequest, pushCoupon, pushLevel, pushMembership, pushRegistration, pushSeason, pushUserRole, pushAccountInvite, deleteCoupon, deleteRegistration, sendEmail, sendSms, pushWaiverDocument, type SendEmailResult } from '../lib/supabase';
 import { analyzeMessage, normalizeToGsm7 } from '../lib/sms-segments';
 import { useCapabilities } from '../lib/capabilities';
 
@@ -269,8 +269,23 @@ export function AdminMembers() {
     toast(grant ? `${p.firstName} is now a league admin.` : `Removed admin from ${p.firstName}.`);
   };
 
+  // Branded account-setup invite. Claiming is by email-match at signup
+  // (link_or_create_person), so the link just routes to signup and the copy
+  // tells them to use THIS email. Admin-only path → reuses sendEmail.
+  const sendInviteEmail = async (p: Athlete): Promise<SendEmailResult> => {
+    const appUrl = window.location.origin + import.meta.env.BASE_URL.replace(/\/$/, '');
+    const link = `${appUrl}/#/?signup=1`;
+    const subject = 'Set up your United Club Gymnastics account';
+    const html = `<p>Hi ${p.firstName},</p>
+<p>An account has been created for you on the United Club Gymnastics platform.
+To activate it, sign up using <strong>this email address</strong> (${p.email}):</p>
+<p><a href="${link}">Create your account &rarr;</a></p>
+<p>Use the same email shown above so your existing record is linked automatically.</p>`;
+    return sendEmail(subject, html, [{ email: p.email, name: `${p.firstName} ${p.lastName}` }]);
+  };
+
   // W13 task 5: create account invite for person with no authUserId.
-  const createAccountInvite = (p: Athlete) => {
+  const createAccountInvite = async (p: Athlete) => {
     if (!p.email) { toast('Person has no email address on file — add an email first.'); return; }
     // Guard against duplicate pending invites.
     const existing = (db.accountInvites ?? []).find(
@@ -284,16 +299,27 @@ export function AdminMembers() {
       id: `inv-${Date.now()}-${p.id.slice(0, 8)}`,
       personId: p.id,
       email: p.email,
-      token: randomPromoCode(24), // random secure-enough token
+      token: randomPromoCode(24),
       status: 'pending',
       createdAt: new Date().toISOString(),
     };
     mutate((d) => {
       d.accountInvites = [...(d.accountInvites ?? []), invite];
       pushAccountInvite(invite);
-      // TODO: send setup email to invite.email with link containing invite.token
     });
-    toast(`Setup invite created for ${p.firstName} ${p.lastName} — setup email queued to ${p.email}.`);
+    const res = await sendInviteEmail(p);
+    if (res.ok && res.sentCount > 0) {
+      toast(`Setup invite emailed to ${p.email}.`);
+    } else {
+      toast(`Invite created, but the email failed: ${res.error ?? 'unknown error'}. Use Resend to retry.`);
+    }
+  };
+
+  const resendAccountInvite = async (p: Athlete) => {
+    const res = await sendInviteEmail(p);
+    toast(res.ok && res.sentCount > 0
+      ? `Setup invite re-sent to ${p.email}.`
+      : `Resend failed: ${res.error ?? 'unknown error'}.`);
   };
 
   const rows = useMemo(() => db.people
@@ -377,15 +403,25 @@ export function AdminMembers() {
                       <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
                         <span style={{ color: 'var(--ink-soft)' }}>No account</span>
                         {/* W13 task 5: create account invite */}
-                        <button
-                          className="btn small ghost"
-                          style={{ fontSize: 11, padding: '1px 6px' }}
-                          disabled={hasPendingInvite}
-                          title={hasPendingInvite ? 'Pending invite already sent' : 'Create account & email setup link'}
-                          onClick={() => createAccountInvite(p)}
-                        >
-                          {hasPendingInvite ? 'Invite sent' : 'Invite'}
-                        </button>
+                        {hasPendingInvite ? (
+                          <button
+                            className="btn small ghost"
+                            style={{ fontSize: 11, padding: '1px 6px' }}
+                            title="Re-send the account setup email"
+                            onClick={() => resendAccountInvite(p)}
+                          >
+                            Resend
+                          </button>
+                        ) : (
+                          <button
+                            className="btn small ghost"
+                            style={{ fontSize: 11, padding: '1px 6px' }}
+                            title="Create account & email setup link"
+                            onClick={() => createAccountInvite(p)}
+                          >
+                            Invite
+                          </button>
+                        )}
                       </span>
                     ) : (
                       <label className="checkrow" style={{ margin: 0 }} data-tip="Grant or revoke league admin">
