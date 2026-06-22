@@ -6,7 +6,7 @@
 import { useState, useMemo } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { mutate, useDB } from '../lib/store';
-import { pushSanctionRequest, pushSanctionVote, pushMeet } from '../lib/supabase';
+import { pushSanctionRequest, pushSanctionVote, pushMeet, notifySanction } from '../lib/supabase';
 import { useCapabilities } from '../lib/capabilities';
 import { useSession } from '../lib/auth';
 import { Combo, Field } from '../components/ui';
@@ -332,7 +332,7 @@ export function SanctionRequestForm() {
       d.sanctionRequests.push(req);
     });
     pushSanctionRequest(req);
-    // TODO: email sanctioning team
+    notifySanction({ requestId: req.id, event: 'submitted' });
     toast('Sanction request submitted; the Sanctioning Team will vote within 7 days.');
     navigate('/');
   };
@@ -871,7 +871,7 @@ export function SanctionVotePage() {
       });
       pushMeet(meet);
       pushSanctionRequest({ ...req, status: 'approved', decidedAt: decidedNow, createdMeetId: meetId, sanctionId: sid });
-      // TODO: email host approval/links
+      notifySanction({ requestId: req.id, event: 'approved' });
       // TODO: reminder emails 3d/1d before deadline (needs scheduler)
       toast(`Approved! Sanction ID: ${sid}. Meet created as draft.`);
     } else {
@@ -887,7 +887,7 @@ export function SanctionVotePage() {
         }
       });
       pushSanctionRequest({ ...req, status: 'rejected', decidedAt: decidedNow });
-      // TODO: email host rejection notification
+      notifySanction({ requestId: req.id, event: 'rejected' });
       toast('Request rejected.');
     }
     navigate('/sanctioning');
