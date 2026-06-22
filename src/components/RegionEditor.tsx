@@ -3,7 +3,7 @@ import { mutate } from '../lib/store';
 import { pushRegionOverrides } from '../lib/supabase';
 import { STATE_REGIONS } from '../lib/types';
 import type { DB, Region } from '../lib/types';
-import { useToast } from './ui';
+import { useToast } from './ui-hooks';
 
 const ALL_REGIONS: Region[] = [
   'Northeast', 'Mid-Atlantic', 'Southeast', 'Mideast',

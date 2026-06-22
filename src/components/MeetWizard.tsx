@@ -4,7 +4,8 @@ import { mutate, useDB } from '../lib/store';
 import { pushMeet } from '../lib/supabase';
 import { useCapabilities } from '../lib/capabilities';
 import { scaffoldNationalsConfig } from '../lib/nationals-adapter';
-import { Combo, Field, Modal, useToast } from './ui';
+import { Combo, Field, Modal } from './ui';
+import { useToast } from './ui-hooks';
 import { DISCIPLINES, SHIRT_SIZES, STATE_REGIONS } from '../lib/types';
 import type { Discipline, Level, Meet, MeetSession, MeetStatus } from '../lib/types';
 

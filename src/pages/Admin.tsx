@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useDB, mutate, resetDemo } from '../lib/store';
-import { Badge, Combo, Field, Modal, Tabs, useToast } from '../components/ui';
+import { Badge, Combo, Field, Modal, Tabs } from '../components/ui';
+import { useToast } from '../components/ui-hooks';
 import { ClubForm } from '../components/ClubForm';
 import { PersonForm } from '../components/PersonForm';
 import { RegionEditor } from '../components/RegionEditor';

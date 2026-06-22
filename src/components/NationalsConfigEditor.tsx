@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { mutate, useDB } from '../lib/store';
 import { pushMeet } from '../lib/supabase';
-import { useToast } from './ui';
+import { useToast } from './ui-hooks';
 import { PLACEMENT_CATEGORIES, scaffoldNationalsConfig } from '../lib/nationals-adapter';
 import type { Level, Meet, NationalsConfig, PlacementCategory } from '../lib/types';
 

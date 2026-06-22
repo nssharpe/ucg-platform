@@ -1,10 +1,8 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { ToastCtx } from './ui-hooks';
 
 // ---- Toasts ----
-const ToastCtx = createContext<(msg: string) => void>(() => {});
-export const useToast = () => useContext(ToastCtx);
-
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<{ id: number; msg: string }[]>([]);
   const nextId = useRef(1);
@@ -130,8 +128,4 @@ export function Field({ label, hint, children, tip }: { label: string; hint?: st
       {hint && <div className="hint">{hint}</div>}
     </div>
   );
-}
-
-export function useFmtDate() {
-  return useMemo(() => (iso: string) => new Date(iso + (iso.length === 10 ? 'T12:00' : '')).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }), []);
 }

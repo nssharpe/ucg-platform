@@ -1,18 +1,11 @@
 import { useState } from 'react';
 import { useDB, mutate } from '../lib/store';
-import { Combo, Field, Modal, useToast } from './ui';
+import { Combo, Field, Modal } from './ui';
+import { useToast } from './ui-hooks';
 import { STATE_REGIONS } from '../lib/types';
 import type { Club } from '../lib/types';
 import { pushClub } from '../lib/supabase';
-
-/** Next seed-style id: max numeric suffix + 1 (e.g. club-9 after club-8). */
-export function nextId(items: { id: string }[], prefix: string): string {
-  const max = items.reduce((m, x) => {
-    const n = x.id.startsWith(prefix) ? +x.id.slice(prefix.length) : NaN;
-    return Number.isFinite(n) ? Math.max(m, n) : m;
-  }, 0);
-  return `${prefix}${max + 1}`;
-}
+import { nextId } from '../lib/ids';
 
 const BLANK: Omit<Club, 'id'> = {
   name: '', shortName: '', state: '', region: 'Other',

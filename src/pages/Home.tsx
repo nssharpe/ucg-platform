@@ -1,7 +1,8 @@
 import { Link } from 'react-router-dom';
 import { useDB } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
-import { Stat, Badge, useFmtDate } from '../components/ui';
+import { Stat, Badge } from '../components/ui';
+import { useFmtDate } from '../components/ui-hooks';
 import { fmtMoney } from '../lib/scoring';
 
 // ── helpers ────────────────────────────────────────────────────────────────

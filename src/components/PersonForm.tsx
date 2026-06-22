@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useDB, mutate } from '../lib/store';
-import { Combo, Field, Modal, useToast } from './ui';
+import { Combo, Field, Modal } from './ui';
+import { useToast } from './ui-hooks';
 import { DIETARY_OPTIONS, DISCIPLINES, SHIRT_SIZES, STATE_REGIONS } from '../lib/types';
 import type { Athlete, Gender, Placement } from '../lib/types';
-import { nextId } from './ClubForm';
+import { nextId } from '../lib/ids';
 import { pushPerson } from '../lib/supabase';
 
 const GENDERS: Gender[] = ['Male', 'Female', 'Non-binary', 'Genderfluid', 'Agender', 'Other'];
