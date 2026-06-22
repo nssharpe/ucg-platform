@@ -5,10 +5,8 @@
 // guardian a link to the signing page (HashRouter: #/waiver/sign/<token>).
 //
 // Auth: any signed-in user who owns the athlete record (people.auth_user_id match).
-// Reuses the same Gmail SMTP transport as send-email.
-
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { SMTPClient } from 'https://deno.land/x/denomailer@1.6.0/mod.ts';
+import { sendOne } from '../_shared/resend.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -30,14 +28,7 @@ Deno.serve(async (req) => {
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-  const gmailUser = Deno.env.get('GMAIL_USER');
-  const gmailPass = Deno.env.get('GMAIL_APP_PASSWORD');
-  const fromName = Deno.env.get('GMAIL_FROM_NAME') ?? 'United Club Gymnastics';
   const appUrl = Deno.env.get('APP_PUBLIC_URL') ?? 'https://nssharpe.github.io/ucg-platform';
-
-  if (!gmailUser || !gmailPass) {
-    return json({ ok: false, error: 'Email not configured: GMAIL_USER / GMAIL_APP_PASSWORD secrets are missing.' }, 500);
-  }
 
   // --- Authenticate (any signed-in user) ---
   const authHeader = req.headers.get('Authorization') ?? '';
@@ -99,26 +90,10 @@ NAIGC waiver for United Club Gymnastics.</p>
 <p><a href="${link}">Click here to review and sign the waiver</a>.</p>
 <p>This is an electronic signature with timestamp and IP recorded.</p>`;
 
-  const client = new SMTPClient({
-    connection: {
-      hostname: 'smtp.gmail.com',
-      port: 465,
-      tls: true,
-      auth: { username: gmailUser, password: gmailPass },
-    },
-  });
-
   try {
-    await client.send({
-      from: `${fromName} <${gmailUser}>`,
-      to: guardianEmail,
-      subject: `Sign the NAIGC waiver for ${athlete}`,
-      html,
-    });
+    await sendOne({ to: guardianEmail, subject: `Sign the NAIGC waiver for ${athlete}`, html });
   } catch (e) {
     return json({ ok: false, error: `Email failed: ${e instanceof Error ? e.message : String(e)}` }, 500);
-  } finally {
-    try { await client.close(); } catch { /* ignore close errors */ }
   }
 
   return json({ ok: true });
