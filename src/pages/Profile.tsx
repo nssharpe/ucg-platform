@@ -7,6 +7,7 @@ import { useToast } from '../components/ui-hooks';
 import { SHIRT_SIZES, DIETARY_OPTIONS, STATE_REGIONS, DISCIPLINES } from '../lib/types';
 import type { Athlete, ClubRequest, Gender, Region } from '../lib/types';
 import { pushClubRequest, pushMembership, pushPerson, deleteRegistration, sendEmail } from '../lib/supabase';
+import { escapeHtml } from '../lib/sanitize-html';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -583,8 +584,8 @@ function WaiversSection({ personFirstName, personLastName, personEmail, waivers,
             const appUrl = window.location.origin + import.meta.env.BASE_URL.replace(/\/$/, '');
             const link = `${appUrl}/#/membership`;
             const subject = `Action needed: sign your ${season?.name ?? ''} ${typeLabel} waiver`;
-            const html = `<p>Hi ${personFirstName},</p>
-<p>Please sign your <strong>${season?.name ?? ''}</strong> ${typeLabel} membership waiver
+            const html = `<p>Hi ${escapeHtml(personFirstName)},</p>
+<p>Please sign your <strong>${escapeHtml(season?.name ?? '')}</strong> ${typeLabel} membership waiver
 for United Club Gymnastics to keep your membership active.</p>
 <p><a href="${link}">Review &amp; sign your waiver &rarr;</a></p>`;
             sendEmail(subject, html, [{ email: personEmail, name: `${personFirstName} ${personLastName}` }])

@@ -9,7 +9,7 @@ import { RegionEditor } from '../components/RegionEditor';
 import { DISCIPLINES, STATE_REGIONS, GENERAL_WAIVER_TYPE } from '../lib/types';
 import type { AccountInvite, Athlete, Club, ClubRequest, Coupon, Level, Region, Season, WaiverType, WaiverDocument } from '../lib/types';
 import { sha256Hex, nextVersion, certificateText } from '../lib/waivers-core';
-import { sanitizeWaiverHtml } from '../lib/sanitize-html';
+import { sanitizeWaiverHtml, escapeHtml } from '../lib/sanitize-html';
 import { fmtMoney } from '../lib/scoring';
 import { randomPromoCode, couponValid } from '../lib/pricing';
 import { fetchAllRoles, isSupabaseConfigured, pushAll, pushClub, pushClubManager, pushClubRequest, pushCoupon, pushLevel, pushMembership, pushRegistration, pushSeason, pushUserRole, pushAccountInvite, deleteCoupon, deleteRegistration, sendEmail, sendSms, pushWaiverDocument, type SendEmailResult } from '../lib/supabase';
@@ -276,9 +276,9 @@ export function AdminMembers() {
     const appUrl = window.location.origin + import.meta.env.BASE_URL.replace(/\/$/, '');
     const link = `${appUrl}/#/?signup=1`;
     const subject = 'Set up your United Club Gymnastics account';
-    const html = `<p>Hi ${p.firstName},</p>
+    const html = `<p>Hi ${escapeHtml(p.firstName)},</p>
 <p>An account has been created for you on the United Club Gymnastics platform.
-To activate it, sign up using <strong>this email address</strong> (${p.email}):</p>
+To activate it, sign up using <strong>this email address</strong> (${escapeHtml(p.email)}):</p>
 <p><a href="${link}">Create your account &rarr;</a></p>
 <p>Use the same email shown above so your existing record is linked automatically.</p>`;
     return sendEmail(subject, html, [{ email: p.email, name: `${p.firstName} ${p.lastName}` }]);

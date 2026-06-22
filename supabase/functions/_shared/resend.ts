@@ -8,7 +8,14 @@ const EMAILS_URL = 'https://api.resend.com/emails';
 const BATCH_URL = 'https://api.resend.com/emails/batch';
 
 export function resendFrom(): string {
-  return Deno.env.get('RESEND_FROM') ?? 'United Club Gymnastics <onboarding@resend.dev>';
+  const from = Deno.env.get('RESEND_FROM');
+  if (!from) {
+    // onboarding@resend.dev only delivers to the Resend account owner — a missing
+    // RESEND_FROM in prod means near-total silent delivery failure. Make it loud.
+    console.warn('RESEND_FROM is not set; falling back to onboarding@resend.dev (test-only sender).');
+    return 'United Club Gymnastics <onboarding@resend.dev>';
+  }
+  return from;
 }
 
 function apiKey(): string {
@@ -47,8 +54,11 @@ export async function sendOne(msg: EmailMessage): Promise<{ id: string }> {
 }
 
 /** Send many distinct messages in one request (≤100). Resend's batch endpoint
- *  keeps each message separate (no leaked recipient list). On a non-2xx the whole
- *  batch is reported failed with the API error (it validates atomically). */
+ *  keeps each message separate (no leaked recipient list). Semantics are
+ *  all-or-nothing at submit time: Resend validates the whole batch, so a 2xx
+ *  marks every message sent and a non-2xx marks every message failed with the
+ *  API error. Like SMTP, this catches submit-time rejection only — asynchronous
+ *  bounces are not reflected here (they'd need Resend webhooks). */
 export async function sendBatch(messages: EmailMessage[]): Promise<BatchResult> {
   if (messages.length === 0) return { ok: true, sentCount: 0, failedCount: 0, sent: [], failed: [] };
   const payload = messages.map((m) => ({ from: resendFrom(), to: m.to, subject: m.subject, html: m.html, text: m.text }));

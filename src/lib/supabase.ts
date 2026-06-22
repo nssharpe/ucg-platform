@@ -531,6 +531,18 @@ export async function sendSms(
   return data as SendSmsResult;
 }
 
+/** Unwrap an Edge Function invocation error: prefer the JSON `error` field the
+ *  function returned (carried on the response context) over the generic
+ *  "non-2xx status" message, so callers can surface the real reason. */
+async function edgeErrorMessage(error: { message: string }): Promise<string> {
+  let msg = error.message;
+  try {
+    const ctx = (error as { context?: Response }).context;
+    if (ctx && typeof ctx.json === 'function') { const b = await ctx.json(); if (b?.error) msg = b.error; }
+  } catch { /* fall back to error.message */ }
+  return msg;
+}
+
 /** Notify a club's managers that items were pushed to their cart. Fire-and-forget
  *  from the caller's perspective — failures are non-fatal (the cart item still
  *  exists and shows on the managers' dashboard). Returns the function result. */
@@ -541,7 +553,7 @@ export async function notifyClubCart(args: {
 }): Promise<{ ok: boolean; sentCount?: number; error?: string }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('notify-club-cart', { body: args });
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
   return data as { ok: boolean; sentCount?: number; error?: string };
 }
 
@@ -555,14 +567,7 @@ export async function sendClubInvite(args: {
 }): Promise<{ ok: boolean; sentCount?: number; error?: string }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('send-club-invite', { body: args });
-  if (error) {
-    let msg = error.message;
-    try {
-      const ctx = (error as { context?: Response }).context;
-      if (ctx && typeof ctx.json === 'function') { const b = await ctx.json(); if (b?.error) msg = b.error; }
-    } catch { /* fall back */ }
-    return { ok: false, error: msg };
-  }
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
   return data as { ok: boolean; sentCount?: number; error?: string };
 }
 
@@ -572,7 +577,7 @@ export async function requestManagerAccess(
 ): Promise<{ ok: boolean; sentCount?: number; error?: string }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('request-manager-access', { body: { clubId } });
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
   return data as { ok: boolean; sentCount?: number; error?: string };
 }
 
@@ -583,7 +588,7 @@ export async function notifySanction(args: {
 }): Promise<{ ok: boolean; sentCount?: number; error?: string }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('notify-sanction', { body: args });
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
   return data as { ok: boolean; sentCount?: number; error?: string };
 }
 

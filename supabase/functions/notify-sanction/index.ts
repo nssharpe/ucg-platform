@@ -82,7 +82,11 @@ Deno.serve(async (req) => {
 
   let subject: string; let html: string;
   if (event === 'approved') {
-    const meetLink = sreq.created_meet_id ? `${appUrl}/#/admin/meets/${sreq.created_meet_id}` : reqLink;
+    // Meet routes are keyed by slug (/meets/:slug/manage), not the meet id we store.
+    const { data: meet } = sreq.created_meet_id
+      ? await db.from('meets').select('slug').eq('id', sreq.created_meet_id).maybeSingle()
+      : { data: null };
+    const meetLink = meet?.slug ? `${appUrl}/#/meets/${meet.slug}/manage` : reqLink;
     subject = `Approved: ${eventName ?? 'your event'} sanction`;
     html = `<p>Hi ${esc(requester?.first_name ?? '')},</p>
 <p>Your sanction request for <strong>${label}</strong> has been <strong>approved</strong>${sreq.sanction_id ? ` (Sanction ID: ${esc(String(sreq.sanction_id))})` : ''}.</p>

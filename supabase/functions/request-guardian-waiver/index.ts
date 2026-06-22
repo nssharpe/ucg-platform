@@ -21,6 +21,7 @@ const json = (body: unknown, status = 200) =>
   });
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -84,8 +85,8 @@ Deno.serve(async (req) => {
   // --- Send email to guardian ---
   const link = `${appUrl}/#/waiver/sign/${signToken}`;
   const athlete = `${person.first_name} ${person.last_name}`;
-  const html = `<p>Hello ${body.guardianName ?? ''},</p>
-<p>${athlete} has requested that you, as parent/guardian, sign the
+  const html = `<p>Hello ${esc(body.guardianName ?? '')},</p>
+<p>${esc(athlete)} has requested that you, as parent/guardian, sign the
 NAIGC waiver for United Club Gymnastics.</p>
 <p><a href="${link}">Click here to review and sign the waiver</a>.</p>
 <p>This is an electronic signature with timestamp and IP recorded.</p>`;
