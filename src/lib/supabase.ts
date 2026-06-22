@@ -545,6 +545,27 @@ export async function notifyClubCart(args: {
   return data as { ok: boolean; sentCount?: number; error?: string };
 }
 
+/** Invite someone to a club by email (coach invite or membership purchase).
+ *  Caller must manage the club (the function re-checks). */
+export async function sendClubInvite(args: {
+  clubId: string;
+  kind: 'coach' | 'membership';
+  email: string;
+  name?: string;
+}): Promise<{ ok: boolean; sentCount?: number; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('send-club-invite', { body: args });
+  if (error) {
+    let msg = error.message;
+    try {
+      const ctx = (error as { context?: Response }).context;
+      if (ctx && typeof ctx.json === 'function') { const b = await ctx.json(); if (b?.error) msg = b.error; }
+    } catch { /* fall back */ }
+    return { ok: false, error: msg };
+  }
+  return data as { ok: boolean; sentCount?: number; error?: string };
+}
+
 // ---------------------------------------------------------------------------
 // Waiver — Edge Function invokers + public reads
 // ---------------------------------------------------------------------------
