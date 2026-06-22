@@ -9,7 +9,7 @@ import type { Athlete, Club, ClubAccess, Registration } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
 import {
   deleteRegistration, pushCart, pushClub, pushClubManager, pushInvoice,
-  pushMembership, pushPerson, pushRegistration, sendClubInvite,
+  pushMembership, pushPerson, pushRegistration, requestManagerAccess, sendClubInvite,
 } from '../lib/supabase';
 import { ClubForm } from '../components/ClubForm';
 import { RegistrationEditor } from '../components/RegistrationEditor';
@@ -105,7 +105,11 @@ export function ClubPage() {
         {!isManager && isMember && caps.personId && (
           <button
             className="btn ghost small"
-            onClick={() => toast("Request sent — the club's managers and league admin have been notified.")}
+            onClick={() => {
+              requestManagerAccess(club.id).then((res) => toast(res.ok
+                ? "Request sent — the club's managers and league admins have been notified."
+                : `Request failed: ${res.error ?? 'unknown error'}.`));
+            }}
           >
             Request manager access
           </button>
