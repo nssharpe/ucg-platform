@@ -12,7 +12,8 @@ import { sha256Hex, nextVersion, certificateText } from '../lib/waivers-core';
 import { sanitizeWaiverHtml } from '../lib/sanitize-html';
 import { fmtMoney } from '../lib/scoring';
 import { randomPromoCode, couponValid } from '../lib/pricing';
-import { fetchAllRoles, isSupabaseConfigured, pushAll, pushClub, pushClubManager, pushClubRequest, pushCoupon, pushLevel, pushMembership, pushRegistration, pushSeason, pushUserRole, pushAccountInvite, deleteCoupon, deleteRegistration, sendEmail, pushWaiverDocument } from '../lib/supabase';
+import { fetchAllRoles, isSupabaseConfigured, pushAll, pushClub, pushClubManager, pushClubRequest, pushCoupon, pushLevel, pushMembership, pushRegistration, pushSeason, pushUserRole, pushAccountInvite, deleteCoupon, deleteRegistration, sendEmail, sendSms, pushWaiverDocument } from '../lib/supabase';
+import { analyzeMessage, normalizeToGsm7 } from '../lib/sms-segments';
 import { useCapabilities } from '../lib/capabilities';
 
 // ---------- Merge Athletes modal ----------
@@ -1709,14 +1710,42 @@ export function Communicate() {
   const [sending, setSending] = useState(false);
 
   // Send the current subject/body to an explicit recipient list via the
-  // send-email Edge Function (Gmail SMTP). Used by both the test and main sends.
-  const doSend = async (people: { email: string; name?: string }[], label: string) => {
-    if (channel === 'sms') { toast('SMS sending is not wired up yet (demo).'); return; }
-    if (!isSupabaseConfigured) { toast('Email needs Supabase configured to send.'); return; }
+  // send-email (Gmail SMTP) or send-sms (Telnyx) Edge Function, per channel.
+  // Used by both the test and main sends.
+  const doSend = async (people: { email?: string; phone?: string; name?: string }[], label: string) => {
+    if (!isSupabaseConfigured) { toast(`${channel === 'sms' ? 'SMS' : 'Email'} needs Supabase configured to send.`); return; }
+    if (!body.trim()) { toast(`Add a ${channel === 'sms' ? 'message' : 'email body'} before sending.`); return; }
+
+    if (channel === 'sms') {
+      const valid = people.filter((p) => p.phone).map((p) => ({ phone: p.phone!, name: p.name }));
+      if (valid.length === 0) { toast('No recipients have a phone number.'); return; }
+      // Confirm before spending on a multi-segment blast (each segment is billed).
+      const seg = analyzeMessage(body);
+      if (seg.segments > 1 && !window.confirm(
+        `This message is ${seg.segments} ${seg.encoding} segments — each recipient is billed ${seg.segments}×. ` +
+        `Send to ${valid.length} recipient${valid.length !== 1 ? 's' : ''} anyway?`,
+      )) return;
+      setSending(true);
+      try {
+        const res = await sendSms(body, valid);
+        if (res.ok) {
+          toast(`${label}: sent to ${res.sentCount} recipient${res.sentCount !== 1 ? 's' : ''}.`);
+        } else if (res.sentCount > 0) {
+          toast(`${label}: ${res.sentCount} sent, ${res.failedCount} failed${res.error ? ` — ${res.error}` : ''}.`);
+        } else {
+          toast(`${label} failed: ${res.error ?? 'unknown error'}`);
+        }
+      } catch (e) {
+        toast(`${label} failed: ${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
+
     const subj = subject.trim();
     if (!subj) { toast('Add a subject before sending.'); return; }
-    if (!body.trim()) { toast('Add an email body before sending.'); return; }
-    const valid = people.filter((p) => p.email);
+    const valid = people.filter((p) => p.email).map((p) => ({ email: p.email!, name: p.name }));
     if (valid.length === 0) { toast('No recipients have an email address.'); return; }
     setSending(true);
     try {
@@ -1907,7 +1936,8 @@ export function Communicate() {
           </Field>
           {channel === 'sms' && (
             <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', marginTop: -4, marginBottom: 8, padding: '6px 10px', background: 'var(--surface-1)', borderRadius: 4, borderLeft: '3px solid var(--line)' }}>
-              SMS coming soon — not yet wired to a sending provider. Email is the active channel.
+              Texts send via Telnyx. Real carrier delivery needs an approved A2P 10DLC campaign —
+              until then, test against your own number below. Recipients must have opted in to texts.
             </p>
           )}
 
@@ -2015,23 +2045,54 @@ export function Communicate() {
             </>
           )}
 
-          {channel === 'sms' && (
-            <Field label="Message (160 chars)">
-              <textarea
-                className="input"
-                rows={4}
-                maxLength={160}
-                placeholder="UCG: Reg closes Friday…"
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
-              />
-            </Field>
-          )}
+          {channel === 'sms' && (() => {
+            const seg = analyzeMessage(body);
+            return (
+              <Field label="Message">
+                <textarea
+                  className="input"
+                  rows={4}
+                  maxLength={612}
+                  placeholder="UCG: Reg closes Friday. Pay at the portal. Reply STOP to opt out."
+                  value={body}
+                  onChange={(e) => setBody(e.target.value)}
+                />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4, fontSize: 12, color: 'var(--ink-soft)' }}>
+                  <span>{seg.length} chars · {seg.encoding}</span>
+                  <span style={{ color: seg.segments > 1 ? 'var(--warn)' : 'var(--ink-soft)' }}>
+                    {seg.segments} segment{seg.segments !== 1 ? 's' : ''}
+                  </span>
+                  {seg.isUnicode && (
+                    <>
+                      <span style={{ color: 'var(--warn)' }}>
+                        ⚠ Unicode — limit drops to 70/segment
+                      </span>
+                      <button
+                        type="button"
+                        className="btn small ghost"
+                        style={{ marginLeft: 'auto' }}
+                        onClick={() => setBody((b) => normalizeToGsm7(b))}
+                      >Normalize</button>
+                    </>
+                  )}
+                </div>
+              </Field>
+            );
+          })()}
 
           {/* From sender info */}
           <div style={{ margin: '12px 0 8px', padding: '8px 12px', background: 'var(--surface-1)', borderRadius: 4, fontSize: 12.5, color: 'var(--ink-soft)' }}>
-            <strong style={{ color: 'var(--ink)' }}>From:</strong> United Club Gymnastics &lt;nate.sharpe@naigc.org&gt;
-            <span style={{ marginLeft: 8 }}>— test sender (Gmail SMTP). Production sender (Resend/Workspace) TBD.</span>
+            {channel === 'sms' ? (
+              <>
+                <strong style={{ color: 'var(--ink)' }}>From:</strong> UCG Telnyx number
+                <span style={{ marginLeft: 8 }}>— test-grade. STOP/HELP handled automatically by the carrier.</span>
+              </>
+            ) : (
+              <>
+                <strong style={{ color: 'var(--ink)' }}>From:</strong> United Club Gymnastics &lt;nate.sharpe@naigc.org&gt;
+                <span style={{ marginLeft: 8 }}>— test sender (Gmail SMTP). Production sender (Resend/Workspace) TBD.</span>
+              </>
+            )}
           </div>
 
           {/* Send button */}
@@ -2054,17 +2115,17 @@ export function Communicate() {
               };
               setLastSend(record);
               setSendLogExpanded(false);
-              const emailRows = [
-                ...recipients.map((p) => ({ email: p.email, name: `${p.firstName} ${p.lastName}` })),
+              const sendRows = [
+                ...recipients.map((p) => ({ email: p.email, phone: (p as Athlete).phone, name: `${p.firstName} ${p.lastName}` })),
                 ...clubEmailRows.map((c) => ({ email: c.email ?? '', name: c.name })),
               ];
-              await doSend(emailRows, channel === 'sms' ? 'Text' : 'Email');
+              await doSend(sendRows, channel === 'sms' ? 'Text' : 'Email');
             }}
           >
             {sending ? 'Sending…' : `Send to ${recipients.length + clubEmailRows.length} →`}
           </button>
           {channel === 'sms' && (
-            <p style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 4 }}>SMS delivery is not yet wired to a provider.</p>
+            <p style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 4 }}>Live delivery requires an approved 10DLC campaign.</p>
           )}
         </div>
       </div>
@@ -2136,8 +2197,8 @@ export function Communicate() {
           className="btn ghost"
           disabled={testGroup.length === 0 || sending}
           onClick={() => doSend(
-            testGroup.map((p) => ({ email: p.email, name: `${p.firstName} ${p.lastName}` })),
-            'Test email',
+            testGroup.map((p) => ({ email: p.email, phone: p.phone, name: `${p.firstName} ${p.lastName}` })),
+            channel === 'sms' ? 'Test text' : 'Test email',
           )}
         >
           {sending ? 'Sending…' : `Send test to ${testGroup.length} selected`}

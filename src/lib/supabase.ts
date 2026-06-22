@@ -495,6 +495,42 @@ export async function sendEmail(
   return data as SendEmailResult;
 }
 
+export interface SendSmsResult {
+  ok: boolean;
+  sentCount: number;
+  failedCount: number;
+  segments?: number;
+  encoding?: 'GSM-7' | 'UCS-2';
+  failed?: { phone: string; error: string }[];
+  error?: string;
+}
+
+/** Send a text message to the given recipients via the send-sms Edge Function.
+ *  Caller must be a signed-in admin (the function re-checks the `admin` role).
+ *  Returns `{ ok: false, error }` when unconfigured or on any failure. */
+export async function sendSms(
+  body: string,
+  recipients: { phone: string; name?: string }[],
+): Promise<SendSmsResult> {
+  if (!supabase) return { ok: false, sentCount: 0, failedCount: recipients.length, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('send-sms', {
+    body: { body, recipients },
+  });
+  if (error) {
+    // Edge errors carry the JSON body on the context response.
+    let msg = error.message;
+    try {
+      const ctx = (error as { context?: Response }).context;
+      if (ctx && typeof ctx.json === 'function') {
+        const errBody = await ctx.json();
+        if (errBody?.error) msg = errBody.error;
+      }
+    } catch { /* fall back to error.message */ }
+    return { ok: false, sentCount: 0, failedCount: recipients.length, error: msg };
+  }
+  return data as SendSmsResult;
+}
+
 /** Notify a club's managers that items were pushed to their cart. Fire-and-forget
  *  from the caller's perspective — failures are non-fatal (the cart item still
  *  exists and shows on the managers' dashboard). Returns the function result. */

@@ -22,6 +22,7 @@
   --surface: var(--white);
   --ink: var(--navy-800);
   --ink-soft: #5a6a78;
+  --warn: #b45309; /* amber warning text — ~4.9:1 on --surface, AA for small text */
   --line: #c8d8db;
   --radius: 10px;
   --radius-sm: 6px;
