@@ -7,10 +7,8 @@
 // Auth: any signed-in user. The "added by" name is derived server-side from the
 // caller's own people record (auth_user_id match) so it can't be spoofed; if the
 // caller has no linked person, we fall back to the addedByName in the payload.
-// Reuses the same Gmail SMTP transport as send-email / request-guardian-waiver.
-
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { SMTPClient } from 'https://deno.land/x/denomailer@1.6.0/mod.ts';
+import { sendBatch, type EmailMessage } from '../_shared/resend.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -41,14 +39,7 @@ Deno.serve(async (req) => {
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-  const gmailUser = Deno.env.get('GMAIL_USER');
-  const gmailPass = Deno.env.get('GMAIL_APP_PASSWORD');
-  const fromName = Deno.env.get('GMAIL_FROM_NAME') ?? 'United Club Gymnastics';
   const appUrl = Deno.env.get('APP_PUBLIC_URL') ?? 'https://nssharpe.github.io/ucg-platform';
-
-  if (!gmailUser || !gmailPass) {
-    return json({ ok: false, error: 'Email not configured: GMAIL_USER / GMAIL_APP_PASSWORD secrets are missing.' }, 500);
-  }
 
   // --- Authenticate (any signed-in user) ---
   const authHeader = req.headers.get('Authorization') ?? '';
@@ -136,30 +127,16 @@ Deno.serve(async (req) => {
 <p style="color:#5b6b7a;font-size:12px;">You're receiving this because you manage ${esc(club.short_name)} on the United Club Gymnastics platform.</p>`;
 
   // --- Send one message per manager (no leaked recipient list) ---
-  const client = new SMTPClient({
-    connection: {
-      hostname: 'smtp.gmail.com',
-      port: 465,
-      tls: true,
-      auth: { username: gmailUser, password: gmailPass },
-    },
-  });
-
-  const sent: string[] = [];
-  const failed: { email: string; error: string }[] = [];
+  const messages: EmailMessage[] = recipients.map((r) => ({
+    to: `${r.first_name} ${r.last_name} <${r.email.trim()}>`,
+    subject,
+    html,
+  }));
+  let result;
   try {
-    for (const r of recipients) {
-      const to = `${r.first_name} ${r.last_name} <${r.email.trim()}>`;
-      try {
-        await client.send({ from: `${fromName} <${gmailUser}>`, to, subject, html });
-        sent.push(r.email.trim());
-      } catch (e) {
-        failed.push({ email: r.email.trim(), error: e instanceof Error ? e.message : String(e) });
-      }
-    }
-  } finally {
-    try { await client.close(); } catch { /* ignore close errors */ }
+    result = await sendBatch(messages);
+  } catch (e) {
+    return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 500);
   }
-
-  return json({ ok: failed.length === 0, sentCount: sent.length, failedCount: failed.length, failed });
+  return json({ ok: result.ok, sentCount: result.sentCount, failedCount: result.failedCount, failed: result.failed });
 });
