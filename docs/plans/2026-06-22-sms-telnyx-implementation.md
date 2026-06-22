@@ -5,15 +5,25 @@ research in [`docs/research/2026-06-18-sms-providers.md`](../research/2026-06-18
 Mirrors the existing `send-email` Edge Function + `sendEmail` invoker pattern.
 
 ## Status of prerequisites (console, done by Nate)
-- [ ] Telnyx messaging profile created (STOP/HELP keywords kept at defaults).
-- [ ] Long-code number purchased and attached to the profile.
-- [ ] Payment method + balance added.
-- [ ] **A2P 10DLC brand + campaign submitted** (non-profit/low-volume tier).
-      ← long pole, ~1–3 wks. **Sending is carrier-filtered until this is approved.**
-- [ ] `TELNYX_API_KEY` and `TELNYX_FROM_NUMBER` (E.164, e.g. `+1512...`) in hand.
+- [x] Telnyx messaging profile created (STOP/HELP keywords kept at defaults).
+- [x] Long-code number purchased: **+1 678 798 8123** (assign to profile + campaign).
+- [x] Payment method + account upgraded off freemium.
+- [x] **A2P 10DLC brand "NAIGC" Verified** (2026-06-22, brand id 4b20019e-f0d3-…).
+- [ ] **10DLC campaign** — see decision below.
+- [x] `TELNYX_API_KEY` + `TELNYX_FROM_NUMBER` set as Supabase secrets; `send-sms` deployed.
 
-Build can proceed in parallel with 10DLC vetting; just don't expect real delivery
-until the campaign is approved.
+### 10DLC campaign decision (2026-06-22)
+Launch is **~6–9 months out**, so we register a **Low Volume Mixed** campaign now
+(cheap, ~$1.5–2/mo, no vetting fee) for development/testing, and **re-register a
+**standard Mixed** campaign ~3–4 weeks before launch** for the 2,000-blast throughput.
+Use case is immutable in TCR, so "switching" = a new campaign + re-vetting + re-pointing
+the number — a planned task, not an edit. Brand stays Verified through the switch.
+Dev campaign use-case types: **2FA + Account Notification + Marketing** (2FA included
+because auth codes get tested during development; samples cover all three).
+**⚠ LAUNCH TODO:** (1) create the standard Mixed campaign and reassign +16787988123 to
+it before going live; (2) strongly consider splitting **2FA into its own campaign** at
+launch — dedicated 2FA gets a higher trust score / better deliverability than sharing
+with Marketing. Campaign content (samples/opt-in) drafted now carries over.
 
 ## Architecture (matches send-email)
 - **Edge Function `send-sms`** — admin-gated (verify_jwt + `admin` role check, same
