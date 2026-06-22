@@ -9,7 +9,7 @@ import type { Athlete, Club, ClubAccess, Registration } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
 import {
   deleteRegistration, pushCart, pushClub, pushClubManager, pushInvoice,
-  pushMembership, pushPerson, pushRegistration,
+  pushMembership, pushPerson, pushRegistration, requestManagerAccess, sendClubInvite,
 } from '../lib/supabase';
 import { ClubForm } from '../components/ClubForm';
 import { RegistrationEditor } from '../components/RegistrationEditor';
@@ -105,7 +105,11 @@ export function ClubPage() {
         {!isManager && isMember && caps.personId && (
           <button
             className="btn ghost small"
-            onClick={() => toast("Request sent — the club's managers and league admin have been notified.")}
+            onClick={() => {
+              requestManagerAccess(club.id).then((res) => toast(res.ok
+                ? "Request sent — the club's managers and league admins have been notified."
+                : `Request failed: ${res.error ?? 'unknown error'}.`));
+            }}
           >
             Request manager access
           </button>
@@ -227,7 +231,10 @@ function ClubManagers({ club }: { club: Club }) {
     mutate((d) => { d.people.push(person); pushPerson(person); });
     addManager(id);
     setEmail('');
-    toast('Invited coach added as a manager — they can claim the account by signing up with this email.');
+    sendClubInvite({ clubId: club.id, kind: 'coach', email: addr, name: `${person.firstName} ${person.lastName}` })
+      .then((res) => toast(res.ok
+        ? `Coach invited — a setup email was sent to ${addr}.`
+        : `Coach added as manager, but the email failed: ${res.error ?? 'unknown error'}.`));
   };
 
   return (
@@ -650,8 +657,10 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
                     <button
                       className="btn small ghost"
                       onClick={() => {
-                        // TODO: send actual email via transactional email provider
-                        toast(`Membership invite sent to ${a.email}.`);
+                        sendClubInvite({ clubId, kind: 'membership', email: a.email, name: `${a.firstName} ${a.lastName}` })
+                          .then((res) => toast(res.ok
+                            ? `Membership invite sent to ${a.email}.`
+                            : `Invite failed: ${res.error ?? 'unknown error'}.`));
                       }}
                     >
                       Invite to purchase membership

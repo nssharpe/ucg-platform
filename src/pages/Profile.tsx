@@ -6,7 +6,8 @@ import { Combo, Field, Modal, Badge } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 import { SHIRT_SIZES, DIETARY_OPTIONS, STATE_REGIONS, DISCIPLINES } from '../lib/types';
 import type { Athlete, ClubRequest, Gender, Region } from '../lib/types';
-import { pushClubRequest, pushMembership, pushPerson, deleteRegistration } from '../lib/supabase';
+import { pushClubRequest, pushMembership, pushPerson, deleteRegistration, sendEmail } from '../lib/supabase';
+import { escapeHtml } from '../lib/sanitize-html';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -502,6 +503,9 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
           {/* Waivers on file */}
           <WaiversSection
             personId={pid}
+            personFirstName={person.firstName}
+            personLastName={person.lastName}
+            personEmail={person.email}
             waivers={waivers}
             adminView={adminView}
             memberships={person.memberships}
@@ -522,13 +526,16 @@ import type { Membership, Season } from '../lib/types';
 
 interface WaiversSectionProps {
   personId: string;
+  personFirstName: string;
+  personLastName: string;
+  personEmail: string;
   waivers: Membership[];
   adminView: boolean;
   memberships: Membership[];
   seasons: Season[];
 }
 
-function WaiversSection({ waivers, adminView, memberships, seasons }: WaiversSectionProps) {
+function WaiversSection({ personFirstName, personLastName, personEmail, waivers, adminView, memberships, seasons }: WaiversSectionProps) {
   const toast = useToast();
   const [emailModalOpen, setEmailModalOpen] = useState(false);
 
@@ -574,8 +581,17 @@ function WaiversSection({ waivers, adminView, memberships, seasons }: WaiversSec
           onSend={(seasonId, type) => {
             const season = seasons.find((s) => s.id === seasonId);
             const typeLabel = type === 'coach' ? 'Coach' : 'Athlete';
-            // TODO: send waiver email
-            toast(`Waiver email queued for ${season?.name ?? seasonId} · ${typeLabel} membership.`);
+            const appUrl = window.location.origin + import.meta.env.BASE_URL.replace(/\/$/, '');
+            const link = `${appUrl}/#/membership`;
+            const subject = `Action needed: sign your ${season?.name ?? ''} ${typeLabel} waiver`;
+            const html = `<p>Hi ${escapeHtml(personFirstName)},</p>
+<p>Please sign your <strong>${escapeHtml(season?.name ?? '')}</strong> ${typeLabel} membership waiver
+for United Club Gymnastics to keep your membership active.</p>
+<p><a href="${link}">Review &amp; sign your waiver &rarr;</a></p>`;
+            sendEmail(subject, html, [{ email: personEmail, name: `${personFirstName} ${personLastName}` }])
+              .then((res) => toast(res.ok && res.sentCount > 0
+                ? `Waiver email sent to ${personEmail}.`
+                : `Waiver email failed: ${res.error ?? 'unknown error'}.`));
             setEmailModalOpen(false);
           }}
         />

@@ -4,6 +4,17 @@
 // new tab with noopener.
 import DOMPurify from 'dompurify';
 
+/** Escape a plain string for safe interpolation into an HTML template (e.g. an
+ *  email body we build by hand). Not for rendering — use sanitizeWaiverHtml for
+ *  authored HTML. */
+export function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 let hooked = false;
 
 export function sanitizeWaiverHtml(html: string): string {
