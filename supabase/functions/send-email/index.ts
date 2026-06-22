@@ -1,22 +1,16 @@
 // send-email — broadcast/test email sender for the Communicate feature.
 //
-// Sends through Gmail SMTP (smtp.gmail.com:465) using an app password, for now.
-// This is test-grade infrastructure: a recipient cap guards against accidentally
-// blasting the full ~2,600-person list through a personal Gmail account (Gmail's
-// daily recipient limits are well under that). Swap the transport for Resend /
-// Workspace SMTP relay before doing real production sends.
+// Sends through the Resend batch API via the shared helper in _shared/resend.ts.
 //
 // Secrets (set via `supabase secrets set`):
-//   GMAIL_USER          e.g. nate.sharpe@naigc.org
-//   GMAIL_APP_PASSWORD  16-char Google app password (requires 2FA on the account)
-//   GMAIL_FROM_NAME     optional display name (default "United Club Gymnastics")
+//   RESEND_API_KEY      Resend API key
 // Auto-provided by the platform: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
 //
 // Auth: requires a signed-in caller (verify_jwt) who holds the `admin` role in
 // public.user_roles — the same gate as the Communicate page (RequireAdmin).
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { SMTPClient } from 'https://deno.land/x/denomailer@1.6.0/mod.ts';
+import { sendBatch, type EmailMessage } from '../_shared/resend.ts';
 
 interface Recipient { email: string; name?: string }
 interface Payload {
@@ -26,7 +20,7 @@ interface Payload {
   recipients?: Recipient[];
 }
 
-// Hard cap for this Gmail test path — keep well under Gmail's daily limits.
+// Hard cap — raise once on a paid Resend plan with a higher daily limit.
 const MAX_RECIPIENTS = 50;
 
 const corsHeaders = {
@@ -49,14 +43,6 @@ Deno.serve(async (req) => {
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-  const gmailUser = Deno.env.get('GMAIL_USER');
-  const gmailPass = Deno.env.get('GMAIL_APP_PASSWORD');
-  const fromName = Deno.env.get('GMAIL_FROM_NAME') ?? 'United Club Gymnastics';
-
-  if (!gmailUser || !gmailPass) {
-    return json({ error: 'Email is not configured: GMAIL_USER / GMAIL_APP_PASSWORD secrets are missing.' }, 500);
-  }
-
   // --- Authenticate + authorize (must be a signed-in admin) ---
   const authHeader = req.headers.get('Authorization') ?? '';
   const token = authHeader.replace(/^Bearer\s+/i, '');
@@ -93,43 +79,30 @@ Deno.serve(async (req) => {
   if (recipients.length === 0) return json({ error: 'No valid recipients.' }, 400);
   if (recipients.length > MAX_RECIPIENTS) {
     return json({
-      error: `This test sender is capped at ${MAX_RECIPIENTS} recipients (got ${recipients.length}). ` +
-        `Switch to Resend or Workspace SMTP relay for full-list sends.`,
+      error: `This sender is capped at ${MAX_RECIPIENTS} recipients (got ${recipients.length}). ` +
+        `Raise MAX_RECIPIENTS once on a paid Resend plan with a higher daily limit.`,
     }, 400);
   }
 
-  // --- Send via Gmail SMTP, one message per recipient (no leaked recipient list) ---
-  const client = new SMTPClient({
-    connection: {
-      hostname: 'smtp.gmail.com',
-      port: 465,
-      tls: true,
-      auth: { username: gmailUser, password: gmailPass },
-    },
-  });
+  // --- Send via Resend batch (one distinct message per recipient) ---
+  const messages: EmailMessage[] = recipients.map((r) => ({
+    to: r.name ? `${r.name} <${r.email.trim()}>` : r.email.trim(),
+    subject,
+    html: html || undefined,
+    text: text || undefined,
+  }));
 
-  const sent: string[] = [];
-  const failed: { email: string; error: string }[] = [];
-
+  let result;
   try {
-    for (const r of recipients) {
-      const to = r.name ? `${r.name} <${r.email.trim()}>` : r.email.trim();
-      try {
-        await client.send({
-          from: `${fromName} <${gmailUser}>`,
-          to,
-          subject,
-          content: text || undefined,
-          html: html || undefined,
-        });
-        sent.push(r.email.trim());
-      } catch (e) {
-        failed.push({ email: r.email.trim(), error: e instanceof Error ? e.message : String(e) });
-      }
-    }
-  } finally {
-    try { await client.close(); } catch { /* ignore close errors */ }
+    result = await sendBatch(messages);
+  } catch (e) {
+    return json({ error: e instanceof Error ? e.message : String(e) }, 500);
   }
-
-  return json({ ok: failed.length === 0, sentCount: sent.length, failedCount: failed.length, sent, failed });
+  return json({
+    ok: result.ok,
+    sentCount: result.sentCount,
+    failedCount: result.failedCount,
+    sent: result.sent,
+    failed: result.failed,
+  });
 });
