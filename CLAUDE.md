@@ -66,17 +66,33 @@ will apply first.
   (overrides the brainstorming/writing-plans skill defaults — do NOT recreate
   `docs/superpowers/`).
 
-## Email infra (test-grade, working)
-- Transactional email works via **Gmail SMTP** Edge Functions (denomailer). Secrets are
-  project-wide: `GMAIL_USER` (= nate.sharpe@naigc.org), `GMAIL_APP_PASSWORD`, optional
-  `GMAIL_FROM_NAME`, `APP_PUBLIC_URL`. This is **test-grade** (personal Gmail, recipient
-  caps) — swap to Resend / Workspace SMTP relay before real production sends.
-- Functions in `supabase/functions/`: `send-email` (Communicate broadcast, admin-only),
-  `request-guardian-waiver` (minor waiver link), `record-waiver-signature`,
-  `notify-club-cart` (emails a club's managers when a member pushes fees to the cart).
-- Front-end invokers live in `src/lib/supabase.ts` (`sendEmail`, `requestGuardianWaiver`,
-  `notifyClubCart`). Deploy a function: `supabase functions deploy <name> --project-ref
-  wkyerxlgricfphopocoz` (sandbox disabled; Docker NOT required).
+## Email infra (Resend, working)
+- Transactional email sends via **Resend** (HTTP API) through a shared helper,
+  `supabase/functions/_shared/resend.ts` (`resendFrom` / `sendOne` / `sendBatch`, plain
+  `fetch`). Secrets: `RESEND_API_KEY` and `RESEND_FROM` (= `United Club Gymnastics
+  <nate.sharpe@naigc.org>`; `naigc.org` is a verified Resend domain). `APP_PUBLIC_URL` is
+  still used for links. The old `GMAIL_*` secrets remain set but UNUSED — the rollback
+  path (revert the functions + redeploy). `RESEND_FROM` flips the sender with no code
+  change/redeploy.
+- Functions in `supabase/functions/`:
+  - `send-email` — Communicate broadcast, **admin-only**, Resend batch (50-recipient cap).
+  - `request-guardian-waiver` — minor waiver signing link. `record-waiver-signature`.
+  - `notify-club-cart` — emails a club's managers when a member pushes fees to the cart.
+  - `send-club-invite` — club manager invites a coach (`kind:'coach'`) or a member to
+    purchase membership (`kind:'membership'`); authorizes the caller manages the club.
+  - `request-manager-access` — any member asks a club's managers + admins for access.
+  - `notify-sanction` — sanction lifecycle (`event:'submitted'` → team+admins;
+    `'approved'`/`'rejected'` → the requester).
+  - The notify-style functions allow any signed-in caller and resolve recipients
+    server-side with the service role (pattern: `notify-club-cart`). `send-email` is the
+    only admin-gated sender.
+- Front-end invokers in `src/lib/supabase.ts`: `sendEmail`, `requestGuardianWaiver`,
+  `notifyClubCart`, `sendClubInvite`, `requestManagerAccess`, `notifySanction`. Deploy:
+  `supabase functions deploy <name> --project-ref wkyerxlgricfphopocoz` (sandbox
+  disabled; Docker NOT required) — the deploy bundles `_shared/resend.ts` automatically.
+- **Still over-claim** (deferred with Stripe — payment is itself a stub): the
+  "Confirmation emailed" toasts in `Membership.tsx` (direct-pay completion) and
+  `Club.tsx` (club-cart pay button) say email but send none. Wire when payments land.
 
 ## Deferred / TODO (not yet built)
 - **New-club-request email** — the new-club-request flow should email
