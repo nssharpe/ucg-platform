@@ -54,9 +54,10 @@ native engines (legacy `calcState`); new entry never uses them.
 
 ## Develop
 
-The repo path contains spaces and an `&`, which breaks npm/npx shims on Windows —
-invoke binaries directly. See [`CLAUDE.md`](CLAUDE.md) for the full gotcha list
-(including the Dropbox `dist/` lock during builds).
+Keep the working copy at a short, space-free path **outside Dropbox** — e.g.
+`C:\dev\ucg-platform`. The old Dropbox path (spaces + `&`) broke npm/npx shims and
+caused `dist/` build locks; cloning to `C:\dev` fixes both, so plain `npm` commands
+work normally. See [`CLAUDE.md`](CLAUDE.md) for the historical context.
 
 ```bash
 npm install
@@ -67,8 +68,8 @@ npm run lint
 ```
 
 Tests live in [`tests/`](tests) (Vitest, node env): ground-truth checks for every
-scoring engine plus the capability logic. Run directly with
-`node node_modules/vitest/vitest.mjs run` if the npm shim misbehaves on this path.
+scoring engine plus the capability logic. `npm test` / `npx vitest` work normally
+from the `C:\dev` path.
 
 Without Supabase env vars the app uses the password gate `fortheloveofthesport`
 (SHA-256 in `src/lib/store.ts` `GATE_HASH`) — obfuscation for private demos, not

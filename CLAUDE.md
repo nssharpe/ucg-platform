@@ -26,13 +26,20 @@ will apply first.
   so it commits before any file that uses it.
 
 ## Build / tooling gotchas
-- The repo path contains spaces **and** an `&`, which breaks npm/npx cmd shims on
-  Windows. Invoke binaries directly: `node node_modules/<pkg>/bin/...`.
-- Dropbox locks `dist/` during `vite build` (EBUSY at prepare-out-dir). Remove
-  `dist` first with retries, then build, then re-set the NTFS ADS
-  `dist:com.dropbox.ignored=1` (write via node `fs.writeFileSync`). Always verify a
-  build by grepping for "files generated" AND confirming `dist/index.html`'s script
-  refs exist under `dist/assets` — never trust the piped exit code alone.
+- **Location:** keep the working copy at `C:\dev\ucg-platform` (short, space-free,
+  outside Dropbox). Plain `npm`/`npx` work normally there. Do **not** move it back
+  under the old Dropbox path (`...\NAIGC Reg & Scoring Platform\`) — the spaces + `&`
+  broke npm/npx cmd shims, and Dropbox sync locked `dist/` during builds. Both
+  problems are gone purely by virtue of the new path; the workarounds below are
+  retired and kept only as history.
+- *(Retired — old Dropbox path only)* The repo path's spaces + `&` broke npm/npx cmd
+  shims; you had to invoke binaries directly (`node node_modules/<pkg>/bin/...`).
+- *(Retired — old Dropbox path only)* Dropbox locked `dist/` during `vite build`
+  (EBUSY at prepare-out-dir); the fix was to remove `dist` with retries, build, then
+  re-set the NTFS ADS `dist:com.dropbox.ignored=1`. Not needed outside Dropbox.
+- Regardless of path: verify a build by grepping for "files generated" AND confirming
+  `dist/index.html`'s script refs exist under `dist/assets` — never trust the piped
+  exit code alone.
 - `ucg-prod-preview` launch config runs `vite preview` only — REBUILD first, and
   clear the service worker (unregister + `caches.delete` + reload) or it serves the
   previous bundle.
@@ -44,8 +51,9 @@ will apply first.
   Tests live in `tests/**/*.test.ts` and cover the **pure** logic: the scoring
   engines (`src/scoring/*`) and capability derivation (`src/lib/capabilities-core.ts`,
   split out from the React hooks in `capabilities.ts` so it imports zero runtime deps).
-- Run: `node node_modules/vitest/vitest.mjs run` (npm script `test`, but the shim is
-  broken on this path — call the binary directly). Watch: drop `run`.
+- Run: `npm test` (or `npx vitest run`). Watch mode: drop `run` (`npx vitest`). The
+  old `node node_modules/vitest/vitest.mjs run` workaround was only for the broken
+  shim on the Dropbox path and is no longer needed.
 - The scoring tests encode ground-truth values verified against the original NAIGC
   calculators, so they lock in the port's correctness. No DOM/React/component tests
   yet — those would need a jsdom environment + @testing-library added later.
