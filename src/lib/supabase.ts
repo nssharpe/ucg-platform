@@ -566,6 +566,16 @@ export async function sendClubInvite(args: {
   return data as { ok: boolean; sentCount?: number; error?: string };
 }
 
+/** Ask a club's managers + league admins for manager access. Email only. */
+export async function requestManagerAccess(
+  clubId: string,
+): Promise<{ ok: boolean; sentCount?: number; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('request-manager-access', { body: { clubId } });
+  if (error) return { ok: false, error: error.message };
+  return data as { ok: boolean; sentCount?: number; error?: string };
+}
+
 // ---------------------------------------------------------------------------
 // Waiver — Edge Function invokers + public reads
 // ---------------------------------------------------------------------------
