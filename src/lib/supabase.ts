@@ -576,6 +576,17 @@ export async function requestManagerAccess(
   return data as { ok: boolean; sentCount?: number; error?: string };
 }
 
+/** Sanction lifecycle email (submitted → team; approved/rejected → host). */
+export async function notifySanction(args: {
+  requestId: string;
+  event: 'submitted' | 'approved' | 'rejected';
+}): Promise<{ ok: boolean; sentCount?: number; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('notify-sanction', { body: args });
+  if (error) return { ok: false, error: error.message };
+  return data as { ok: boolean; sentCount?: number; error?: string };
+}
+
 // ---------------------------------------------------------------------------
 // Waiver — Edge Function invokers + public reads
 // ---------------------------------------------------------------------------
