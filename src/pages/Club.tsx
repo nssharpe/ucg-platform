@@ -9,7 +9,7 @@ import type { Athlete, Club, ClubAccess, Registration } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
 import {
   deleteRegistration, pushCart, pushClub, pushClubManager, pushInvoice,
-  pushMembership, pushPerson, pushRegistration, requestManagerAccess, sendClubInvite,
+  pushMembership, pushRegistration, requestManagerAccess, sendClubInvite,
   inviteAccount,
 } from '../lib/supabase';
 import { ClubForm } from '../components/ClubForm';
