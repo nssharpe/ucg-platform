@@ -1172,7 +1172,7 @@ function Waivers() {
                   <strong>{name}</strong> <span style={{ color: 'var(--ink-soft)' }}>({sig.signerRole})</span>
                   <span style={{ color: 'var(--ink-soft)', fontSize: 12.5 }}>{formatSignedAt(sig.signedAt)}</span>
                   <button className="btn small ghost" style={{ marginLeft: 'auto' }}
-                    onClick={() => downloadWaiverProof(sig, version, name)}>Download proof (PDF)</button>
+                    onClick={() => downloadWaiverProof(sig, version, name, (db.waiverDocuments ?? []).find((d) => d.id === sig.waiverDocumentId)?.body)}>Download proof (PDF)</button>
                 </div>
                 <details>
                   <summary style={{ fontSize: 12.5, color: 'var(--accent)', cursor: 'pointer' }}>Certificate</summary>
@@ -1246,6 +1246,7 @@ function Promos() {
     if (db.coupons.some((c) => c.code.toUpperCase() === code)) { toast(`Code "${code}" already exists.`); return; }
     const value = parseFloat(draft.value);
     if (isNaN(value) || value <= 0) { toast('Discount value must be a positive number.'); return; }
+    if (draft.discountType === 'pct' && value > 100) { toast('Percent off must be between 0 and 100.'); return; }
     const maxUses = draft.maxUses.trim() === '' ? null : parseInt(draft.maxUses, 10);
     if (draft.maxUses.trim() !== '' && (isNaN(maxUses as number) || (maxUses as number) < 1)) {
       toast('Max uses must be a positive integer or blank for unlimited.'); return;

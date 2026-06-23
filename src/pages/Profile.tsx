@@ -794,10 +794,10 @@ function AdminMembershipControls({
             {m?.waiverSignedAt && (() => {
               const sig = (db.waiverSignatures ?? []).find((x) => x.personId === person.id && x.seasonId === s.id);
               if (!sig) return null;
-              const version = (db.waiverDocuments ?? []).find((d) => d.id === sig.waiverDocumentId)?.version ?? 0;
+              const doc = (db.waiverDocuments ?? []).find((d) => d.id === sig.waiverDocumentId);
               return (
                 <button className="btn small ghost" style={{ fontSize: 11 }}
-                  onClick={() => downloadWaiverProof(sig, version, `${person.firstName} ${person.lastName}`)}>
+                  onClick={() => downloadWaiverProof(sig, doc?.version ?? 0, `${person.firstName} ${person.lastName}`, doc?.body)}>
                   Download proof
                 </button>
               );

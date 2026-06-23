@@ -1,58 +1,59 @@
-// Browser-only: render a printable receipt for an invoice and open the print
-// dialog (Save as PDF). Mirrors waiver-proof.ts. A server-generated, emailed PDF
-// receipt is a later addition (Phase 6 email step) once that path is verified;
-// this gives a reliable downloadable/printable receipt now.
+// Browser-only: generate and directly download a PDF receipt for an invoice.
+import { jsPDF } from 'jspdf';
 import type { Invoice } from './types';
 import { fmtMoney } from './scoring';
 
-const esc = (s: string) =>
-  String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-
-/** Net total of an invoice (discount items are negative-style 'discount' kind). */
+/** Net total of an invoice (refunded items don't count). */
 export function invoiceTotal(inv: Invoice): number {
   return inv.items.reduce((sum, i) => sum + (i.refunded ? 0 : i.amount), 0);
 }
 
-/** Open a print-ready receipt for an invoice and trigger print. */
+/** Generate and download a PDF receipt for an invoice. */
 export function downloadReceipt(inv: Invoice, forName: string): void {
-  const total = invoiceTotal(inv);
+  const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+  const margin = 56;
+  const pageW = doc.internal.pageSize.getWidth();
+  const width = pageW - margin * 2;
+  const bottom = doc.internal.pageSize.getHeight() - margin;
+  let y = margin;
+  const ensure = (h: number) => { if (y + h > bottom) { doc.addPage(); y = margin; } };
+
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(17); doc.setTextColor(20);
+  doc.text('United Club Gymnastics', margin, y);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(120);
+  doc.text('Payment receipt', margin, y + 16);
+  doc.text(`Receipt ${inv.number}`, pageW - margin, y, { align: 'right' });
   const created = new Date(inv.createdAt);
   const dateStr = Number.isNaN(created.getTime()) ? inv.createdAt
     : created.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  const rows = inv.items.map((i) =>
-    `<tr><td>${esc(i.label)}${i.refunded ? ' <em>(refunded)</em>' : ''}</td><td class="amt">${esc(fmtMoney(i.refunded ? 0 : i.amount))}</td></tr>`,
-  ).join('');
-  const html = `<!doctype html><html><head><meta charset="utf-8">
-<title>Receipt ${esc(inv.number)}</title>
-<style>
-  body { font-family: Arial, Helvetica, sans-serif; color: #14233a; max-width: 640px; margin: 40px auto; padding: 0 24px; }
-  .head { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #14233a; padding-bottom: 10px; }
-  .brand { font-weight: 700; font-size: 18px; }
-  .muted { color: #5a6b82; font-size: 12.5px; }
-  table { width: 100%; border-collapse: collapse; margin-top: 18px; font-size: 13.5px; }
-  td { padding: 8px 6px; border-bottom: 1px solid #d8e0ea; }
-  td.amt { text-align: right; white-space: nowrap; }
-  .total td { border-top: 2px solid #14233a; border-bottom: none; font-weight: 700; font-size: 15px; padding-top: 10px; }
-  .foot { margin-top: 26px; font-size: 11px; color: #8a98ab; }
-  @media print { body { margin: 0; } }
-</style></head><body>
-  <div class="head">
-    <div><div class="brand">United Club Gymnastics</div><div class="muted">Payment receipt</div></div>
-    <div class="muted" style="text-align:right">Receipt ${esc(inv.number)}<br>${esc(dateStr)}${inv.paidAt ? '<br>Paid' : '<br>Unpaid'}</div>
-  </div>
-  <div class="muted" style="margin-top:12px">Billed to: <strong style="color:#14233a">${esc(forName)}</strong></div>
-  <table><tbody>
-    ${rows}
-    ${inv.couponCode ? `<tr><td class="muted">Promo code applied</td><td class="amt muted">${esc(inv.couponCode)}</td></tr>` : ''}
-    <tr class="total"><td>Total</td><td class="amt">${esc(fmtMoney(total))}</td></tr>
-  </tbody></table>
-  <p class="foot">Thank you. This receipt was generated from your United Club Gymnastics account.
-  Use your browser's “Save as PDF” to keep a copy.</p>
-  <script>window.onload = function () { window.print(); };</script>
-</body></html>`;
-  const w = window.open('', '_blank');
-  if (!w) return;
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
+  doc.text(dateStr, pageW - margin, y + 16, { align: 'right' });
+  doc.text(inv.paidAt ? 'Paid' : 'Unpaid', pageW - margin, y + 30, { align: 'right' });
+  y += 44;
+  doc.setDrawColor(20); doc.line(margin, y, pageW - margin, y); y += 18;
+
+  doc.setTextColor(90); doc.setFontSize(10);
+  doc.text(`Billed to: ${forName}`, margin, y); y += 20;
+
+  doc.setFontSize(10.5);
+  for (const i of inv.items) {
+    ensure(16);
+    doc.setTextColor(30);
+    const label = `${i.label}${i.refunded ? ' (refunded)' : ''}`;
+    const lines = doc.splitTextToSize(label, width - 90);
+    doc.text(lines, margin, y);
+    doc.text(fmtMoney(i.refunded ? 0 : i.amount), pageW - margin, y, { align: 'right' });
+    y += Math.max(16, lines.length * 13);
+  }
+  if (inv.couponCode) {
+    ensure(16); doc.setTextColor(120);
+    doc.text('Promo code applied', margin, y);
+    doc.text(inv.couponCode, pageW - margin, y, { align: 'right' }); y += 16;
+  }
+  y += 6; ensure(24);
+  doc.setDrawColor(20); doc.line(margin, y, pageW - margin, y); y += 18;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(20);
+  doc.text('Total', margin, y);
+  doc.text(fmtMoney(invoiceTotal(inv)), pageW - margin, y, { align: 'right' });
+
+  doc.save(`receipt-${inv.number}.pdf`);
 }

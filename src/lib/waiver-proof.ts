@@ -1,12 +1,9 @@
-// Browser-only: render a printable "proof of electronic signature" for a waiver
-// signature and open the print dialog (Save as PDF). This is the downloadable
-// legal proof (name, signature, full timestamp with timezone, IP, document
-// version + hash). Server-generated, email-attachable PDFs are a later addition
-// (Phase 5/6) once that path is verified; this gives a reliable download now.
+// Browser-only: generate and directly download a PDF "proof of electronic
+// signature" for a waiver signature — the legal artifact (signer, full timestamp
+// with timezone, IP, document version + hash, consent) PLUS the full text of the
+// waiver that was actually signed.
+import { jsPDF } from 'jspdf';
 import type { WaiverSignature } from './types';
-
-const esc = (s: string) =>
-  String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 /** Full local timestamp with timezone, plus the UTC instant for the record. */
 export function formatSignedAt(iso: string): string {
@@ -19,53 +16,78 @@ export function formatSignedAt(iso: string): string {
   return `${local} (${d.toISOString().replace('T', ' ').slice(0, 19)} UTC)`;
 }
 
-/** Open a print-ready proof of signature in a new window and trigger print. */
+/** Crude but dependency-free HTML → plain text: drop tags, turn block elements
+ *  into line breaks, decode the common entities, collapse runs of whitespace. */
+function htmlToText(html: string): string {
+  return html
+    .replace(/<\s*(br|\/p|\/li|\/h[1-6]|\/div|\/tr)\s*>/gi, '\n')
+    .replace(/<\s*li[^>]*>/gi, '\n• ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"').replace(/&#39;|&rsquo;|&lsquo;/gi, "'")
+    .replace(/&ldquo;|&rdquo;/gi, '"').replace(/&mdash;/gi, '—').replace(/&rarr;/gi, '→')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .split('\n').map((l) => l.trim()).join('\n')
+    .trim();
+}
+
+/** Generate and download a PDF proof of signature. `waiverBodyHtml` is the exact
+ *  document text the signer agreed to (rendered into the PDF). */
 export function downloadWaiverProof(
-  sig: WaiverSignature, version: number, athleteName: string,
+  sig: WaiverSignature, version: number, athleteName: string, waiverBodyHtml?: string,
 ): void {
-  const signer = sig.signerRole === 'guardian'
-    ? `${esc(sig.signerName)} — parent/guardian of ${esc(athleteName)}${sig.signerRelationship ? ` (${esc(sig.signerRelationship)})` : ''}`
-    : esc(sig.signerName);
+  const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+  const margin = 56;
+  const width = doc.internal.pageSize.getWidth() - margin * 2;
+  const bottom = doc.internal.pageSize.getHeight() - margin;
+  let y = margin;
+
+  const ensure = (h: number) => { if (y + h > bottom) { doc.addPage(); y = margin; } };
+  const para = (text: string, size = 10, gap = 4, color = 30) => {
+    doc.setFontSize(size); doc.setTextColor(color);
+    for (const line of doc.splitTextToSize(text, width)) {
+      ensure(size + gap); doc.text(line, margin, y); y += size + gap;
+    }
+  };
+
+  doc.setFont('helvetica', 'bold');
+  para('United Club Gymnastics / NAIGC — Proof of Electronic Signature', 15, 6, 20);
+  doc.setFont('helvetica', 'normal');
+  para(`Generated ${formatSignedAt(new Date().toISOString())}`, 9, 8, 120);
+  y += 6;
+
   const rows: [string, string][] = [
-    ['Athlete / member', esc(athleteName)],
-    ['Signed by', signer],
-    ['Signer email', esc(sig.signerEmail ?? '—')],
-    ['Waiver', `${esc(sig.waiverType)} — version ${version}`],
-    ['Document hash (SHA-256)', esc(sig.contentHash)],
-    ['Signed at', esc(formatSignedAt(sig.signedAt))],
-    ['IP address', esc(sig.ip ?? 'unknown')],
+    ['Athlete / member', athleteName],
+    ['Signed by', sig.signerRole === 'guardian'
+      ? `${sig.signerName} — parent/guardian${sig.signerRelationship ? ` (${sig.signerRelationship})` : ''}`
+      : sig.signerName],
+    ['Signer email', sig.signerEmail ?? '—'],
+    ['Waiver', `${sig.waiverType} — version ${version}`],
+    ['Document hash (SHA-256)', sig.contentHash],
+    ['Signed at', formatSignedAt(sig.signedAt)],
+    ['IP address', sig.ip ?? 'unknown'],
     ['Consent given', sig.consent ? 'Yes' : 'No'],
-    ['User agent', esc(sig.userAgent ?? '—')],
+    ['User agent', sig.userAgent ?? '—'],
   ];
-  const html = `<!doctype html><html><head><meta charset="utf-8">
-<title>Waiver proof — ${esc(athleteName)}</title>
-<style>
-  body { font-family: Georgia, 'Times New Roman', serif; color: #14233a; max-width: 720px; margin: 40px auto; padding: 0 24px; }
-  h1 { font-size: 20px; border-bottom: 2px solid #14233a; padding-bottom: 8px; }
-  .sub { color: #5a6b82; font-size: 13px; margin-top: -4px; }
-  table { width: 100%; border-collapse: collapse; margin-top: 18px; font-size: 13.5px; }
-  td { padding: 8px 10px; border-bottom: 1px solid #d8e0ea; vertical-align: top; }
-  td.k { color: #5a6b82; width: 200px; font-family: Arial, sans-serif; font-size: 12.5px; }
-  td.v { word-break: break-word; }
-  .stmt { margin-top: 22px; font-size: 13px; line-height: 1.6; }
-  .foot { margin-top: 28px; font-size: 11px; color: #8a98ab; }
-  @media print { body { margin: 0; } }
-</style></head><body>
-  <h1>NAIGC / United Club Gymnastics — Proof of Electronic Signature</h1>
-  <div class="sub">Generated ${esc(formatSignedAt(new Date().toISOString()))}</div>
-  <table><tbody>
-    ${rows.map(([k, v]) => `<tr><td class="k">${k}</td><td class="v">${v}</td></tr>`).join('')}
-  </tbody></table>
-  <p class="stmt">The signer named above electronically agreed to the waiver identified by the
-  version and SHA-256 document hash above. The timestamp, timezone, and originating IP address
-  were recorded server-side at the time of signing and have not been altered.</p>
-  <p class="foot">This document was generated from the United Club Gymnastics signature record.
-  Use your browser's “Save as PDF” to retain a copy.</p>
-  <script>window.onload = function () { window.print(); };</script>
-</body></html>`;
-  const w = window.open('', '_blank');
-  if (!w) return;
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
+  doc.setFont('helvetica', 'normal');
+  for (const [k, v] of rows) {
+    doc.setFontSize(9); doc.setTextColor(110);
+    ensure(13); doc.text(k, margin, y);
+    doc.setFontSize(10); doc.setTextColor(20);
+    for (const line of doc.splitTextToSize(v, width - 150)) { doc.text(line, margin + 150, y); y += 13; }
+  }
+  y += 8;
+  para('The signer named above electronically agreed to the waiver identified by the version and SHA-256 document hash. The timestamp, timezone, and originating IP address were recorded server-side at signing and have not been altered. The exact text agreed to follows.', 9, 4, 90);
+
+  if (waiverBodyHtml) {
+    y += 10; ensure(20);
+    doc.setFont('helvetica', 'bold'); para('Waiver text as signed', 12, 6, 20);
+    doc.setFont('helvetica', 'normal');
+    para(htmlToText(waiverBodyHtml), 9.5, 3.5, 40);
+  }
+
+  const safe = athleteName.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+  doc.save(`waiver-proof-${safe}-${sig.waiverType.toLowerCase()}.pdf`);
 }

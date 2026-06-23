@@ -3,37 +3,34 @@ import type { ReactNode } from 'react';
 import { ToastCtx, type ToastOptions } from './ui-hooks';
 
 // ---- Toasts ----
-const TOAST_TTL = 6000; // info toasts auto-dismiss after this; errors persist
-
-type ToastItem = { id: number; msg: string; variant: 'info' | 'error'; persist: boolean };
+// Toasts persist until the user dismisses them (✕) — they never auto-expire, so
+// errors and confirmations can be read and screenshotted. `variant: 'error'`
+// adds a coral accent. (The older `persist` option is accepted but now a no-op.)
+type ToastItem = { id: number; msg: string; variant: 'info' | 'error' };
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const nextId = useRef(1);
-  const timers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
 
   const remove = useCallback((id: number) => {
-    const tm = timers.current.get(id);
-    if (tm) { clearTimeout(tm); timers.current.delete(id); }
     setToasts((t) => t.filter((x) => x.id !== id));
   }, []);
 
-  const arm = useCallback((id: number) => {
-    timers.current.set(id, setTimeout(() => remove(id), TOAST_TTL));
-  }, [remove]);
-
   const push = useCallback((msg: string, opts?: ToastOptions) => {
     const id = nextId.current++;
-    const variant = opts?.variant ?? 'info';
-    const persist = opts?.persist ?? variant === 'error';
-    setToasts((t) => [...t, { id, msg, variant, persist }]);
-    if (!persist) arm(id);
-  }, [arm]);
+    setToasts((t) => [...t, { id, msg, variant: opts?.variant ?? 'info' }]);
+  }, []);
 
   return (
     <ToastCtx.Provider value={push}>
       {children}
       <div className="toast-wrap">
+        {toasts.length > 1 && (
+          <button
+            onClick={() => setToasts([])}
+            style={{ alignSelf: 'flex-end', background: 'none', border: 'none', color: 'var(--ink-soft)', cursor: 'pointer', fontSize: 12, padding: '0 2px' }}
+          >Clear all</button>
+        )}
         {toasts.map((t) => (
           <div
             key={t.id}
@@ -43,9 +40,6 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               display: 'flex', alignItems: 'flex-start', gap: 10,
               ...(t.variant === 'error' ? { borderLeft: '4px solid var(--coral-600)' } : {}),
             }}
-            // Pause auto-dismiss while hovered so it can be read / screenshotted.
-            onMouseEnter={() => { const tm = timers.current.get(t.id); if (tm) { clearTimeout(tm); timers.current.delete(t.id); } }}
-            onMouseLeave={() => { if (!t.persist && !timers.current.has(t.id)) arm(t.id); }}
           >
             <span style={{ flex: 1 }}>{t.msg}</span>
             <button

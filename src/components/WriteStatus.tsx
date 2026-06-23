@@ -25,6 +25,11 @@ export function WriteStatus() {
             ? `We couldn’t reach the server${labels ? ` (${labels})` : ''}. Your changes are queued — retry to save them.`
             : 'You appear to be offline. Changes are queued and will retry automatically when you reconnect.'}
         </div>
+        {state.failedErrors.length > 0 && (
+          <div className="writestatus-detail" style={{ marginTop: 4, color: 'var(--coral-600)', wordBreak: 'break-word' }}>
+            {state.failedErrors.join(' · ')}
+          </div>
+        )}
         <div className="writestatus-actions">
           <button className="btn" onClick={() => retryFailedWrites()} disabled={!state.online}>
             Retry now

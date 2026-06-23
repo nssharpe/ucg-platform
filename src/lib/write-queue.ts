@@ -41,6 +41,8 @@ export interface WriteQueueState {
   failed: number;
   /** Distinct labels of failed writes, for the banner copy. */
   failedLabels: string[];
+  /** Distinct underlying error messages of failed writes, for diagnostics. */
+  failedErrors: string[];
   online: boolean;
 }
 
@@ -208,13 +210,14 @@ export class WriteQueue {
 
   private computeSnapshot(): WriteQueueState {
     const failedLabels = new Set<string>();
+    const failedErrors = new Set<string>();
     let pending = 0;
     let failed = 0;
     for (const e of this.entries) {
-      if (e.status === 'failed') { failed++; failedLabels.add(e.label); }
+      if (e.status === 'failed') { failed++; failedLabels.add(e.label); if (e.lastError) failedErrors.add(e.lastError); }
       else pending++;
     }
-    return { pending, failed, failedLabels: [...failedLabels], online: this.isOnline() };
+    return { pending, failed, failedLabels: [...failedLabels], failedErrors: [...failedErrors], online: this.isOnline() };
   }
 
   private notify(): void {

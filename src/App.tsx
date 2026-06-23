@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { HashRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { HashRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { WriteStatus } from './components/WriteStatus';
@@ -120,24 +120,37 @@ function RequireAdmin({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+/**
+ * After clicking an invite / set-password email link, Supabase establishes the
+ * session from the URL token and cleans the hash. The redirect carries ?setpw=1
+ * (which survives that cleanup). This component — mounted INSIDE the router so it
+ * can use useNavigate — routes to /set-password once the session is ready (or
+ * immediately on an expired-link error), which HashRouter actually follows
+ * (history.replaceState alone does not). It then clears the marker.
+ */
+function SetPasswordRedirect() {
+  const navigate = useNavigate();
+  const session = useSession();
+  const location = useLocation();
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('setpw') !== '1') return;
+    if (location.pathname === '/set-password') {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('setpw');
+      window.history.replaceState(null, '', url.toString());
+      return;
+    }
+    navigate('/set-password', { replace: true });
+  }, [session, location.pathname, navigate]);
+  return null;
+}
+
 export default function App() {
   const session = useSession();
   const authLoading = useAuthLoading();
   const [unlockedLocally, setUnlockedLocally] = useState(isUnlocked());
   usePrefetchRoutes();
-
-  // After a set-password / invite link, Supabase strips its token from the URL
-  // hash (detectSessionInUrl), leaving our ?setpw=1 marker. Send the user to the
-  // set-password route and clear the marker so a later refresh doesn't re-trigger.
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('setpw') === '1') {
-      const url = new URL(window.location.href);
-      url.searchParams.delete('setpw');
-      url.hash = '/set-password';
-      window.history.replaceState(null, '', url.toString());
-    }
-  }, []);
 
   if (isSupabaseConfigured) {
     // Avoid flashing the gate for a signed-in user while getSession() resolves
@@ -151,6 +164,7 @@ export default function App() {
   return (
     <ToastProvider>
       <HashRouter>
+        <SetPasswordRedirect />
         <Layout>
           <RouteErrorBoundary>
           <Suspense fallback={<PageFallback />}>

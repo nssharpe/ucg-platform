@@ -21,6 +21,9 @@ export default function SetPassword() {
   // moment before concluding the link is invalid.
   const [grace, setGrace] = useState(true);
   useEffect(() => { const t = setTimeout(() => setGrace(false), 2500); return () => clearTimeout(t); }, []);
+  // Supabase appends an error to the URL for expired/invalid links — detect it so
+  // we can show the "expired" message immediately rather than after the grace wait.
+  const linkError = /error=|otp_expired|access_denied/i.test(window.location.hash + window.location.search);
 
   const tooShort = pw.length > 0 && pw.length < MIN_LEN;
   const mismatch = pw2.length > 0 && pw !== pw2;
@@ -37,7 +40,7 @@ export default function SetPassword() {
     setTimeout(() => navigate('/membership'), 1200);
   };
 
-  if (!session && grace) {
+  if (!session && grace && !linkError) {
     return (
       <div className="card card-pad" style={{ maxWidth: 480, margin: '40px auto' }}>
         <p style={{ color: 'var(--ink-soft)' }}>Verifying your link…</p>
