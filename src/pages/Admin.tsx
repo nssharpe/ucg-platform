@@ -9,6 +9,7 @@ import { RegionEditor } from '../components/RegionEditor';
 import { DISCIPLINES, STATE_REGIONS, GENERAL_WAIVER_TYPE } from '../lib/types';
 import type { AccountInvite, Athlete, Club, ClubRequest, Coupon, Level, Region, Season, WaiverType, WaiverDocument } from '../lib/types';
 import { sha256Hex, nextVersion, certificateText } from '../lib/waivers-core';
+import { downloadWaiverProof, formatSignedAt } from '../lib/waiver-proof';
 import { sanitizeWaiverHtml, escapeHtml } from '../lib/sanitize-html';
 import { fmtMoney } from '../lib/scoring';
 import { randomPromoCode, couponValid } from '../lib/pricing';
@@ -1157,12 +1158,22 @@ function Waivers() {
         <input className="input" style={{ maxWidth: 280, marginBottom: 12 }} placeholder="Search by name"
           value={signedQ} onChange={(e) => setSignedQ(e.target.value)} />
         {signed.length === 0 ? (
-          <p style={{ fontSize: 13.5, color: 'var(--ink-soft)' }}>No signatures recorded for this season.</p>
+          <p style={{ fontSize: 13.5, color: 'var(--ink-soft)' }}>
+            No signatures recorded for {selectedSeason?.name ?? 'this season'}.
+            {(db.waiverSignatures ?? []).length > 0 && (
+              <> {(db.waiverSignatures ?? []).length} signature{(db.waiverSignatures ?? []).length !== 1 ? 's' : ''} exist in other seasons — switch the season above to view them.</>
+            )}
+          </p>
         ) : (
           <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
             {signed.slice(0, 300).map(({ sig, name, version }) => (
               <li key={sig.id} style={{ borderBottom: '1px solid var(--line)', padding: '8px 0' }}>
-                <strong>{name}</strong> <span style={{ color: 'var(--ink-soft)' }}>({sig.signerRole})</span>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                  <strong>{name}</strong> <span style={{ color: 'var(--ink-soft)' }}>({sig.signerRole})</span>
+                  <span style={{ color: 'var(--ink-soft)', fontSize: 12.5 }}>{formatSignedAt(sig.signedAt)}</span>
+                  <button className="btn small ghost" style={{ marginLeft: 'auto' }}
+                    onClick={() => downloadWaiverProof(sig, version, name)}>Download proof (PDF)</button>
+                </div>
                 <details>
                   <summary style={{ fontSize: 12.5, color: 'var(--accent)', cursor: 'pointer' }}>Certificate</summary>
                   <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '4px 0 0' }}>
@@ -1188,6 +1199,8 @@ type CouponDraft = {
   startsAt: string;
   endsAt: string;
   maxUses: string; // blank = unlimited
+  restrictAccount: boolean;
+  restrictedToPersonId: string | null;
 };
 
 // W14 task 11: inline validity indicator using couponValid()
@@ -1220,7 +1233,7 @@ function Promos() {
   const toast = useToast();
   const [draft, setDraft] = useState<CouponDraft>({
     code: '', discountType: 'pct', value: '', appliesTo: 'any',
-    startsAt: '', endsAt: '', maxUses: '',
+    startsAt: '', endsAt: '', maxUses: '', restrictAccount: false, restrictedToPersonId: null,
   });
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   // W14 task 9: inline edit state per coupon (code → draft)
@@ -1237,6 +1250,7 @@ function Promos() {
     if (draft.maxUses.trim() !== '' && (isNaN(maxUses as number) || (maxUses as number) < 1)) {
       toast('Max uses must be a positive integer or blank for unlimited.'); return;
     }
+    if (draft.restrictAccount && !draft.restrictedToPersonId) { toast('Pick the account this code is restricted to, or uncheck the restriction.'); return; }
     const coupon: Coupon = {
       code,
       ...(draft.discountType === 'pct' ? { pctOff: value } : { amountOff: value }),
@@ -1245,9 +1259,10 @@ function Promos() {
       endsAt: draft.endsAt || null,
       maxUses: maxUses ?? null,
       usedCount: 0,
+      restrictedToPersonId: draft.restrictAccount ? draft.restrictedToPersonId : null,
     };
     mutate((d) => { d.coupons.push(coupon); pushCoupon(coupon); });
-    setDraft({ code: '', discountType: 'pct', value: '', appliesTo: 'any', startsAt: '', endsAt: '', maxUses: '' });
+    setDraft({ code: '', discountType: 'pct', value: '', appliesTo: 'any', startsAt: '', endsAt: '', maxUses: '', restrictAccount: false, restrictedToPersonId: null });
     toast(`Promo code "${code}" created.`);
   };
 
@@ -1372,6 +1387,21 @@ function Promos() {
             onChange={(e) => setDraft({ ...draft, maxUses: e.target.value })}
           />
         </Field>
+        <label className="checkrow" style={{ marginTop: 4 }}>
+          <input type="checkbox" checked={draft.restrictAccount}
+            onChange={(e) => setDraft({ ...draft, restrictAccount: e.target.checked, restrictedToPersonId: e.target.checked ? draft.restrictedToPersonId : null })} />
+          Only usable by a specific account?
+        </label>
+        {draft.restrictAccount && (
+          <Field label="Restricted to account">
+            <Combo
+              options={db.people.map((p) => ({ value: p.id, label: `${p.firstName} ${p.lastName}`, sub: p.email })).sort((a, b) => a.label.localeCompare(b.label))}
+              value={draft.restrictedToPersonId}
+              onChange={(v) => setDraft({ ...draft, restrictedToPersonId: v })}
+              placeholder="Search by name or email…"
+            />
+          </Field>
+        )}
         <button className="btn primary" onClick={addCoupon}>Create code</button>
       </div>
 
@@ -1398,7 +1428,13 @@ function Promos() {
               const isEditing = editingCode === c.code;
               return (
                 <tr key={c.code}>
-                  <td><strong style={{ fontFamily: 'monospace' }}>{c.code}</strong></td>
+                  <td>
+                    <strong style={{ fontFamily: 'monospace' }}>{c.code}</strong>
+                    {c.restrictedToPersonId && (() => {
+                      const p = db.people.find((x) => x.id === c.restrictedToPersonId);
+                      return <span style={{ display: 'block', fontSize: 11, color: 'var(--ink-soft)' }} data-tip="Only this account can redeem this code">🔒 {p ? `${p.firstName} ${p.lastName}` : 'specific account'}</span>;
+                    })()}
+                  </td>
                   <td>
                     {c.pctOff != null ? `${c.pctOff}% off` : c.amountOff != null ? `${fmtMoney(c.amountOff)} off` : '—'}
                   </td>

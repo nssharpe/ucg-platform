@@ -22,6 +22,8 @@ function navFor(caps: ReturnType<typeof useCapabilities>): NavGroup[] {
     groups.push({ group: 'My UCG', items: [
       { to: '/me', label: 'Profile' },
       { to: '/membership', label: 'Membership' },
+      { to: '/me/registrations', label: 'My Registrations' },
+      { to: '/me/purchases', label: 'Purchase History' },
     ]});
   }
   if (caps.managedClubIds.length > 0) {

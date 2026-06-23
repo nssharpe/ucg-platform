@@ -8,6 +8,7 @@ import { SHIRT_SIZES, DIETARY_OPTIONS, STATE_REGIONS, DISCIPLINES } from '../lib
 import type { Athlete, ClubRequest, Gender, Region } from '../lib/types';
 import { pushClubRequest, pushMembership, pushPerson, deleteRegistration, sendEmail } from '../lib/supabase';
 import { escapeHtml } from '../lib/sanitize-html';
+import { downloadWaiverProof, formatSignedAt } from '../lib/waiver-proof';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -789,7 +790,18 @@ function AdminMembershipControls({
             {isActive ? <Badge tone="ok">Active{m?.activatedByAdmin ? ' (admin)' : ''}</Badge>
               : m?.status === 'pending-club-payment' ? <Badge tone="warn">Pending club</Badge>
               : <Badge tone="err">None</Badge>}
-            {m?.waiverSignedAt && <span data-tip={`Signed by ${m.waiverSignedBy} · ${m.waiverSignedAt.slice(0, 10)}`} style={{ fontSize: 12, cursor: 'help' }}>📝</span>}
+            {m?.waiverSignedAt && <span data-tip={`Signed by ${m.waiverSignedBy} · ${formatSignedAt(m.waiverSignedAt)}`} style={{ fontSize: 12, cursor: 'help' }}>📝</span>}
+            {m?.waiverSignedAt && (() => {
+              const sig = (db.waiverSignatures ?? []).find((x) => x.personId === person.id && x.seasonId === s.id);
+              if (!sig) return null;
+              const version = (db.waiverDocuments ?? []).find((d) => d.id === sig.waiverDocumentId)?.version ?? 0;
+              return (
+                <button className="btn small ghost" style={{ fontSize: 11 }}
+                  onClick={() => downloadWaiverProof(sig, version, `${person.firstName} ${person.lastName}`)}>
+                  Download proof
+                </button>
+              );
+            })()}
             {caps.actingAsAdmin && (
               <button
                 className="btn small ghost"

@@ -54,6 +54,17 @@
   defaults Adult S, required-field asterisks + note, grad-year already unset. Coach
   "invite by email" now creates a real account via `invite-account` (+ name fields) instead
   of an in-memory placeholder + home-page link. tsc clean; 121/121 tests.
+- **2026-06-23 — overnight batch (branch feat/feedback-2026-06-22-pt2):**
+  7.1 synchro partner auto-link; 7.3 synchro partner in summaries; 5.1/5.2 downloadable
+  proof-of-signature (print-to-PDF, full timestamp+tz) on League list + Profile; 1.3
+  empty-list cross-season hint; 9.1 account-restricted promo codes (+migration applied to
+  live DB); 7.6 My Registrations page; Phase 6 Purchase History page + printable receipts.
+  Production build verified; tsc + 121 tests green.
+  **Deferred (with reasons) — NOT shipped:** server-generated emailed PDF receipts/proofs
+  (need visual verification of a Deno PDF lib); Phase 8 club-membership lifecycle (gates
+  registration — too risky to ship unverified overnight; needs its own spec + live test);
+  7.4 View Cart, 7.5 swap-athlete-on-reg, 4.5 comms log, 10.2 error-log DB, 1.4 merge
+  persistence (each medium/large; queued for a focused session with live verification).
 - **2026-06-22:** Research notes + this plan written; 4 decisions resolved (see below).
 
 ---
