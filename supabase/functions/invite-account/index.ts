@@ -65,8 +65,8 @@ Deno.serve(async (req) => {
 
   // Create the auth user + invite link. If they already exist, fall back to a
   // recovery (set-password) link so existing users aren't blocked.
-  let actionLink: string | null = null;
-  let authUserId: string | null = null;
+  let actionLink: string | null;
+  let authUserId: string | null;
   const invite = await db.auth.admin.generateLink({ type: 'invite', email, options: { redirectTo } });
   if (invite.error) {
     const recovery = await db.auth.admin.generateLink({ type: 'recovery', email, options: { redirectTo } });
