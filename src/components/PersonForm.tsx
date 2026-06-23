@@ -29,7 +29,8 @@ function phoneValid(raw: string): boolean {
 const blank = (): Omit<Athlete, 'id'> => ({
   kind: 'athlete', roles: { athlete: true, coach: false },
   firstName: '', lastName: '', email: '', dob: '', gender: 'Female',
-  gradYear: 1900, studentStatus: 'Student', shirt: '', country: 'United States',
+  // 0 = not yet chosen (forces a year or an explicit N/A); 1900 = N/A sentinel.
+  gradYear: 0, studentStatus: 'Student', shirt: '', country: 'United States',
   state: '', phone: '', mainClubId: null, altClubIds: [], levels: {},
   emergency: { contact: '', relation: '', phone: '' },
   dietary: [], dietaryNotes: '', memberships: [], achievements: [],
@@ -42,19 +43,24 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
   const [draft, setDraft] = useState<Omit<Athlete, 'id'>>(person ? { ...person } : blank());
   const set = (patch: Partial<Athlete>) => setDraft({ ...draft, ...patch });
   const states = Object.keys(STATE_REGIONS);
-  const clubOptions = [
-    { value: '', label: 'Independent (no club)' },
-    ...db.clubs.map((c) => ({ value: c.id, label: c.name, sub: `${c.state} · ${c.region}` })),
-  ];
+  // Club must be an explicit choice: either pick a club, or tick "Independent
+  // Athlete" (which maps to mainClubId = null behind the scenes). No default.
+  const [independent, setIndependent] = useState<boolean>(person ? person.mainClubId === null : false);
+  const clubOptions = db.clubs.map((c) => ({ value: c.id, label: c.name, sub: `${c.state} · ${c.region}` }));
   const altClubOptions = db.clubs.map((c) => ({ value: c.id, label: c.name, sub: `${c.state} · ${c.region}` }));
   const noGradYear = draft.gradYear === 1900;
-  const valid = draft.firstName.trim() && draft.lastName.trim() && draft.email.trim() && draft.dob && draft.state;
+  const unsetGradYear = draft.gradYear === 0;
+  const clubChosen = independent || !!draft.mainClubId;
+  const valid = draft.firstName.trim() && draft.lastName.trim() && draft.email.trim()
+    && draft.dob && draft.state && !unsetGradYear && clubChosen;
   const isCoach = draft.kind === 'coach';
 
   const mainPhoneInvalid = draft.phone && !phoneValid(draft.phone);
   const emergPhoneInvalid = draft.emergency.phone && !phoneValid(draft.emergency.phone);
 
   const save = () => {
+    if (unsetGradYear) { toast('Enter a graduation year or check N/A.'); return; }
+    if (!clubChosen) { toast('Pick a club, or check "Independent Athlete".'); return; }
     if (!valid) { toast('Name, email, date of birth, and state are required.'); return; }
     const data = { ...draft, firstName: draft.firstName.trim(), lastName: draft.lastName.trim(), email: draft.email.trim() };
     mutate((d) => {
@@ -104,14 +110,16 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
         ))}
         <Field label="Undergrad graduation year">
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            <input type="number" disabled={noGradYear} value={noGradYear ? '' : draft.gradYear} placeholder="n/a"
-              onChange={(e) => set({ gradYear: +e.target.value || 1900 })} />
+            <input type="number" disabled={noGradYear} value={noGradYear || unsetGradYear ? '' : draft.gradYear} placeholder="YYYY"
+              onChange={(e) => set({ gradYear: +e.target.value || 0 })} />
             <label className="checkrow" style={{ whiteSpace: 'nowrap', margin: 0 }}>
-              {/* 1900 is the sentinel for "no undergrad grad year" */}
-              <input type="checkbox" checked={noGradYear} onChange={(e) => set({ gradYear: e.target.checked ? 1900 : new Date().getFullYear() })} />
+              {/* 1900 = "no undergrad grad year"; 0 = not yet chosen (unchecking
+                  N/A clears back to unset so a year must be entered). */}
+              <input type="checkbox" checked={noGradYear} onChange={(e) => set({ gradYear: e.target.checked ? 1900 : 0 })} />
               N/A
             </label>
           </div>
+          {unsetGradYear && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Enter a year or check N/A.</div>}
         </Field>
         <Field label="Student status" hint="Full-time student for ≥1 semester this season.">
           <select className="input" value={draft.studentStatus} onChange={(e) => set({ studentStatus: e.target.value as Athlete['studentStatus'] })}>
@@ -141,7 +149,17 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
       <h3 className="card-title" style={{ marginTop: 8 }}>Competition</h3>
       <div className="grid cols-2">
         <Field label="Main club" hint="The only club that can pay their membership fee.">
-          <Combo options={clubOptions} value={draft.mainClubId ?? ''} onChange={(v) => set({ mainClubId: v || null })} />
+          {independent ? (
+            <input type="text" disabled value="Independent Athlete" />
+          ) : (
+            <Combo options={clubOptions} value={draft.mainClubId ?? ''} placeholder="Select a club…"
+              onChange={(v) => set({ mainClubId: v || null })} />
+          )}
+          <label className="checkrow" style={{ margin: '8px 0 0' }}>
+            <input type="checkbox" checked={independent}
+              onChange={(e) => { setIndependent(e.target.checked); if (e.target.checked) set({ mainClubId: null }); }} />
+            No club — I am an Independent Athlete
+          </label>
         </Field>
         <Field label="Region" hint="Derived from training state.">
           <input type="text" disabled value={draft.state ? STATE_REGIONS[draft.state] ?? 'Other' : '—'} />

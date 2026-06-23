@@ -12,7 +12,8 @@ import { isMinorAt } from '../lib/waivers-core';
 import { sanitizeWaiverHtml } from '../lib/sanitize-html';
 import {
   offeredMembershipTypes,
-  priceForAdding,
+  membershipFee,
+  priceForTypes,
   couponValid,
   applyCoupon,
 } from '../lib/pricing';
@@ -36,6 +37,7 @@ function missingProfileFields(me: Athlete): string[] {
   if (!me.firstName?.trim()) missing.push('First name');
   if (!me.lastName?.trim()) missing.push('Last name');
   if (!me.dob?.trim()) missing.push('Date of birth');
+  if (!me.state?.trim()) missing.push('Training state');
   if (!me.phone?.trim()) missing.push('Phone number');
   if (!me.shirt?.trim()) missing.push('T-shirt size');
   if (!me.studentStatus?.trim()) missing.push('Student status');
@@ -84,12 +86,6 @@ function MembershipInner({ me }: { me: Athlete }) {
   };
   const [selectedTypes, setSelectedTypes] = useState<MembershipType[]>(defaultSelectedTypes);
 
-  const toggleType = (t: MembershipType) => {
-    setSelectedTypes((prev) =>
-      prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t],
-    );
-  };
-
   // Check whether everything is already owned
   const allOwned = purchasableTypes.length === 0 && existingForSeason.length > 0;
 
@@ -134,11 +130,24 @@ function MembershipInner({ me }: { me: Athlete }) {
       couponValid(c, nowISO),
   );
 
-  // Per-type prices using priceForAdding (task 1)
-  const pricePerType = (t: MembershipType) => priceForAdding(season, t, me.memberships);
+  // Combined price for the whole selection — "both" costs the higher single fee
+  // (athlete), not the sum (per 2026-06-22 feedback). Price for any subset.
+  const selPrice = (types: MembershipType[]) => priceForTypes(season, types, me.memberships);
 
-  // Total for selected types (coupon applied to the sum)
-  const subtotal = selectedTypes.reduce((sum, t) => sum + pricePerType(t), 0);
+  // The newly-added types (those not already active this season).
+  const newTypes = selectedTypes.filter(
+    (t) => !existingForSeason.some((m) => m.type === t && m.status === 'active'),
+  );
+  // The dearest newly-added type carries the whole combined charge; any other
+  // new type is then $0 (included). Owned/re-selected types are $0 too. This
+  // keeps the per-line display summing exactly to the combined subtotal.
+  const topNewType = newTypes
+    .slice()
+    .sort((a, b) => membershipFee(season, b) - membershipFee(season, a))[0];
+  const pricePerType = (t: MembershipType) => (t === topNewType ? selPrice(selectedTypes) : 0);
+
+  // Total for selected types (coupon applied to the combined subtotal)
+  const subtotal = selPrice(selectedTypes);
   const discounted = couponDef ? applyCoupon(subtotal, couponDef) : subtotal;
   const discount = subtotal - discounted;
 
@@ -297,16 +306,9 @@ function MembershipInner({ me }: { me: Athlete }) {
 
   return (
     <div style={{ maxWidth: 660 }}>
-      {/* Back button (task 2) — shown when inside the flow */}
-      {step !== 'info' && step !== 'done' && (
-        <button
-          className="btn ghost small"
-          style={{ marginBottom: 12 }}
-          onClick={goBack}
-        >
-          ← Back
-        </button>
-      )}
+      {/* Page-level back (leaves the membership flow). The in-flow "previous
+          step" back lives in each step-box header (upper-right) so it reads as
+          a step-back, not a leave-the-page action. */}
       {step === 'info' && (
         <button
           className="btn ghost small"
@@ -428,29 +430,38 @@ function MembershipInner({ me }: { me: Athlete }) {
                     </tbody>
                   </table>
 
-                  {/* Task 1: membership type selection */}
-                  {offeredTypes.length > 1 && (
+                  {/* Membership type selection — single dropdown (athlete / coach /
+                      both). "Both" is charged the higher single fee, not the sum. */}
+                  {offeredTypes.length > 1 && purchasableTypes.length > 0 && (
                     <div style={{ marginBottom: 14 }}>
-                      <p style={{ fontWeight: 600, margin: '0 0 8px', fontSize: 14 }}>Membership type(s) to purchase:</p>
-                      {purchasableTypes.map((t) => (
-                        <label key={t} className="checkrow" style={{ marginBottom: 4 }}>
-                          <input
-                            type="checkbox"
-                            checked={selectedTypes.includes(t)}
-                            onChange={() => toggleType(t)}
-                          />
-                          <span>
-                            {typeLabel(t)} membership
-                            {' '}
-                            <strong>{fmtMoney(pricePerType(t))}</strong>
-                            {pricePerType(t) === 0 && existingForSeason.length > 0 && (
-                              <span style={{ color: 'var(--green-600)', fontSize: 13 }}> (included with your existing membership)</span>
-                            )}
-                          </span>
-                        </label>
-                      ))}
-                      {purchasableTypes.length === 0 && (
-                        <p style={{ color: 'var(--ink-soft)', fontSize: 13 }}>All available membership types for {season.name} are already active.</p>
+                      <Field label="Membership type to purchase">
+                        <select
+                          className="input"
+                          value={selectedTypes.length > 1 ? 'both' : (selectedTypes[0] ?? '')}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setSelectedTypes(
+                              v === 'both'
+                                ? purchasableTypes.filter((t) => t === 'athlete' || t === 'coach')
+                                : [v as MembershipType],
+                            );
+                          }}
+                        >
+                          {purchasableTypes.includes('athlete') && (
+                            <option value="athlete">Athlete — {fmtMoney(selPrice(['athlete']))}</option>
+                          )}
+                          {purchasableTypes.includes('coach') && (
+                            <option value="coach">Coach — {fmtMoney(selPrice(['coach']))}</option>
+                          )}
+                          {purchasableTypes.includes('athlete') && purchasableTypes.includes('coach') && (
+                            <option value="both">Both (Athlete + Coach) — {fmtMoney(selPrice(['athlete', 'coach']))}</option>
+                          )}
+                        </select>
+                      </Field>
+                      {existingForSeason.some((m) => m.status === 'active') && (
+                        <p style={{ color: 'var(--green-600)', fontSize: 13, margin: '4px 0 0' }}>
+                          Your existing {season.name} membership is credited toward this price.
+                        </p>
                       )}
                     </div>
                   )}
@@ -477,7 +488,10 @@ function MembershipInner({ me }: { me: Athlete }) {
           {/* STEP 2 — Waiver */}
           {step === 'waiver' && (
             <div className="card card-pad">
-              <h3 className="card-title">Step 2 of 3 — Sign the {season.name} waiver</h3>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 8 }}>
+                <h3 className="card-title" style={{ marginBottom: 0 }}>Step 2 of 3 — Sign the {season.name} waiver</h3>
+                <button className="btn ghost small" onClick={goBack}>← Back</button>
+              </div>
               {offeredTypes.length > 1 && selectedTypes.length > 0 && (
                 <p style={{ fontSize: 14, color: 'var(--ink-soft)', marginTop: 0 }}>
                   Purchasing: {selectedTypes.map(typeLabel).join(' + ')} membership
@@ -546,7 +560,10 @@ function MembershipInner({ me }: { me: Athlete }) {
           {/* STEP 3 — Payment */}
           {step === 'pay' && (
             <div className="card card-pad">
-              <h3 className="card-title">Step 3 of 3 — Payment</h3>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 8 }}>
+                <h3 className="card-title" style={{ marginBottom: 0 }}>Step 3 of 3 — Payment</h3>
+                <button className="btn ghost small" onClick={goBack}>← Back</button>
+              </div>
 
               {/* Line items per type */}
               {selectedTypes.map((t) => (

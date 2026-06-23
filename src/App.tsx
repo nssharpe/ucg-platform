@@ -8,7 +8,7 @@ import { ToastProvider } from './components/ui';
 import { isUnlocked } from './lib/store';
 import { useCapabilities } from './lib/capabilities';
 import { isSupabaseConfigured } from './lib/supabase';
-import { useSession, useAuthLoading, hasLikelySession } from './lib/auth';
+import { useSession, useAuthLoading, hasLikelySession, useRolesLoaded } from './lib/auth';
 import { Gate } from './pages/Gate';
 import { Home } from './pages/Home';
 
@@ -98,7 +98,11 @@ function RequireAccount({ children }: { children: ReactNode }) {
  */
 function RequireAdmin({ children }: { children: ReactNode }) {
   const caps = useCapabilities();
+  const rolesLoaded = useRolesLoaded();
   if (!caps.signedIn) return <Gate onUnlock={() => {}} />;
+  // Roles load async after the session resolves. Until we know them, show the
+  // loader rather than flashing "Admin access required" at an actual admin.
+  if (!rolesLoaded) return <PageFallback />;
   if (!caps.isAdmin) {
     return (
       <div style={{ padding: '60px 24px', maxWidth: 480, margin: '0 auto', textAlign: 'center' }}>

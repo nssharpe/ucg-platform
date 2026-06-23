@@ -12,6 +12,11 @@ let session: Session | null = null;
 // the gate for a signed-in user on refresh.
 let loading = isSupabaseConfigured;
 let roles: string[] = [];
+// False until the first fetchMyRoles() resolves for the current user, so role
+// gates can show a loader instead of flashing "access denied" on refresh while
+// roles are still in flight. When Supabase is unconfigured there are no roles to
+// load, so treat them as already resolved.
+let rolesLoaded = !isSupabaseConfigured;
 let linkedUserId: string | null = null; // auth user we've already linked this session
 const listeners = new Set<() => void>();
 const roleListeners = new Set<() => void>();
@@ -41,6 +46,8 @@ function stashedKind(): 'athlete' | 'coach' | null {
 async function onAuthenticated(user: Session['user']) {
   if (linkedUserId === user.id) return;
   linkedUserId = user.id;
+  rolesLoaded = false; // new user — roles unknown until fetchMyRoles resolves below
+  notifyRoles();
   const [first, last] = stashedName();
   const signupKind = stashedKind();
   const personId = await linkOrCreatePerson(first, last);
@@ -71,6 +78,7 @@ async function onAuthenticated(user: Session['user']) {
     }
   }
   roles = await fetchMyRoles(user.id);
+  rolesLoaded = true;
   notifyRoles();
 }
 
@@ -82,6 +90,7 @@ function applySession(next: Session | null) {
     void onAuthenticated(next.user);
   } else {
     linkedUserId = null;
+    rolesLoaded = !isSupabaseConfigured;
     if (roles.length) { roles = []; notifyRoles(); }
   }
 }
@@ -122,6 +131,16 @@ export function useMyRoles(): string[] {
 /** Non-reactive roles snapshot. */
 export function getMyRoles(): string[] {
   return roles;
+}
+
+/** True once the signed-in user's roles have been fetched (or when Supabase is
+ *  unconfigured and there are none to fetch). Role gates use this to show a
+ *  loader instead of an "access denied" flash on refresh. Reactive. */
+export function useRolesLoaded(): boolean {
+  return useSyncExternalStore(
+    (cb) => { roleListeners.add(cb); return () => roleListeners.delete(cb); },
+    () => rolesLoaded,
+  );
 }
 
 /** Synchronous best-effort check for a likely-signed-in user, used to avoid

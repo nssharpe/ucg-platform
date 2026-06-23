@@ -115,12 +115,8 @@ function AdminAttentionList() {
     return cart.length > 0;
   });
 
-  // Clubs with no coach with active membership
-  const clubsNoCoach = db.clubs.filter((club) => {
-    const coaches = db.people.filter((p) => p.kind === 'coach' && p.mainClubId === club.id
-      && p.memberships.some((m) => m.seasonId === season.id && m.status === 'active'));
-    return coaches.length === 0;
-  });
+  // NOTE: we intentionally do NOT warn about clubs lacking a coach with active
+  // membership — having a coach is not a requirement (per 2026-06-22 feedback).
 
   // Pending club payment memberships
   const pendingPayment = db.people.filter((p) =>
@@ -131,10 +127,6 @@ function AdminAttentionList() {
     ...pendingWaivers.map((p) => ({
       msg: `Under-18 waiver needed: ${p.firstName} ${p.lastName}`,
       to: `/people/${p.id}`,
-    })),
-    ...clubsNoCoach.map((c) => ({
-      msg: `${c.shortName} has no coach with an active membership`,
-      to: `/club/${c.id}`,
     })),
     ...pendingPayment.length > 0 ? [{
       msg: `${pendingPayment.length} membership${pendingPayment.length > 1 ? 's' : ''} awaiting club payment`,

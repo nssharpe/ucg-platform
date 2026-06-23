@@ -1,21 +1,60 @@
 import { useCallback, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ToastCtx } from './ui-hooks';
+import { ToastCtx, type ToastOptions } from './ui-hooks';
 
 // ---- Toasts ----
+const TOAST_TTL = 6000; // info toasts auto-dismiss after this; errors persist
+
+type ToastItem = { id: number; msg: string; variant: 'info' | 'error'; persist: boolean };
+
 export function ToastProvider({ children }: { children: ReactNode }) {
-  const [toasts, setToasts] = useState<{ id: number; msg: string }[]>([]);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
   const nextId = useRef(1);
-  const push = useCallback((msg: string) => {
-    const id = nextId.current++;
-    setToasts((t) => [...t, { id, msg }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3500);
+  const timers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+
+  const remove = useCallback((id: number) => {
+    const tm = timers.current.get(id);
+    if (tm) { clearTimeout(tm); timers.current.delete(id); }
+    setToasts((t) => t.filter((x) => x.id !== id));
   }, []);
+
+  const arm = useCallback((id: number) => {
+    timers.current.set(id, setTimeout(() => remove(id), TOAST_TTL));
+  }, [remove]);
+
+  const push = useCallback((msg: string, opts?: ToastOptions) => {
+    const id = nextId.current++;
+    const variant = opts?.variant ?? 'info';
+    const persist = opts?.persist ?? variant === 'error';
+    setToasts((t) => [...t, { id, msg, variant, persist }]);
+    if (!persist) arm(id);
+  }, [arm]);
+
   return (
     <ToastCtx.Provider value={push}>
       {children}
       <div className="toast-wrap">
-        {toasts.map((t) => <div key={t.id} className="toast">{t.msg}</div>)}
+        {toasts.map((t) => (
+          <div
+            key={t.id}
+            className="toast"
+            role={t.variant === 'error' ? 'alert' : 'status'}
+            style={{
+              display: 'flex', alignItems: 'flex-start', gap: 10,
+              ...(t.variant === 'error' ? { borderLeft: '4px solid var(--coral-600)' } : {}),
+            }}
+            // Pause auto-dismiss while hovered so it can be read / screenshotted.
+            onMouseEnter={() => { const tm = timers.current.get(t.id); if (tm) { clearTimeout(tm); timers.current.delete(t.id); } }}
+            onMouseLeave={() => { if (!t.persist && !timers.current.has(t.id)) arm(t.id); }}
+          >
+            <span style={{ flex: 1 }}>{t.msg}</span>
+            <button
+              onClick={() => remove(t.id)}
+              aria-label="Dismiss"
+              style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0, fontSize: 16, lineHeight: 1, opacity: 0.7 }}
+            >✕</button>
+          </div>
+        ))}
       </div>
     </ToastCtx.Provider>
   );
@@ -23,8 +62,17 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
 // ---- Modal ----
 export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  // Only close on a click that BOTH starts and ends on the veil. Without the
+  // mousedown guard, drag-selecting text inside a field and releasing on the veil
+  // (e.g. highlighting a number right-to-left) fires a click whose target is the
+  // veil — which would close the modal and discard everything typed so far.
+  const downOnVeil = useRef(false);
   return (
-    <div className="modal-veil" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div
+      className="modal-veil"
+      onMouseDown={(e) => { downOnVeil.current = e.target === e.currentTarget; }}
+      onClick={(e) => { if (e.target === e.currentTarget && downOnVeil.current) onClose(); }}
+    >
       <div className="modal">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: 16 }}>
           <h2 className="display" style={{ fontSize: 22 }}>{title}</h2>

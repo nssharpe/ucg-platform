@@ -35,6 +35,28 @@ export function priceForAdding(
   return membershipFee(season, type);
 }
 
+/**
+ * Combined price to acquire ALL of `types` at once, given existing memberships.
+ * Holding both athlete + coach is worth the HIGHER single fee (athlete), so
+ * buying "both" together costs the athlete fee — not the sum. (Per 2026-06-22
+ * feedback: athlete $50 / coach $40 / both $50.) Already-owned active types are
+ * credited at their fee, so adding the cheaper type after the dearer one is $0
+ * and adding the dearer after the cheaper costs only the difference.
+ */
+export function priceForTypes(
+  season: Season,
+  types: MembershipType[],
+  existing: Membership[],
+): number {
+  const valueOf = (ts: MembershipType[]): number =>
+    ts.reduce((max, t) => Math.max(max, membershipFee(season, t)), 0);
+  const owned = existing
+    .filter((m) => m.seasonId === season.id && m.status === 'active')
+    .map((m) => m.type);
+  const union = Array.from(new Set([...owned, ...types]));
+  return Math.max(0, valueOf(union) - valueOf(owned));
+}
+
 /** Which membership types a person may purchase, from their profile roles. */
 export function offeredMembershipTypes(roles: {
   athlete: boolean;

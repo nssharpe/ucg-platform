@@ -125,6 +125,14 @@ export class WriteQueue {
     if (changed) { this.persist(); this.notify(); void this.run(); }
   }
 
+  /** Drop every failed entry (user chose "Dismiss"/"Stop trying"). These changes
+   *  stay applied locally but are abandoned for write-through; the banner clears. */
+  discardFailed(): void {
+    const before = this.entries.length;
+    this.entries = this.entries.filter((e) => e.status !== 'failed');
+    if (this.entries.length !== before) { this.persist(); this.notify(); }
+  }
+
   /** Called by the browser 'online' event — resume any pending writes. */
   resume(): void {
     void this.run();
@@ -261,3 +269,4 @@ export function enqueueWrite(op: WriteOp, label?: string): void {
 export const subscribeWriteQueue = (listener: () => void) => writeQueue.subscribe(listener);
 export const getWriteQueueState = (): WriteQueueState => writeQueue.getState();
 export const retryFailedWrites = () => writeQueue.retryFailed();
+export const discardFailedWrites = () => writeQueue.discardFailed();

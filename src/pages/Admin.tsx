@@ -1721,7 +1721,8 @@ export function Communicate() {
   const db = useDB();
   const toast = useToast();
   const season = db.seasons.find((s) => s.current)!;
-  const [aud, setAud] = useState({ athletes: true, coaches: false, managers: false, clubEmails: false, withMembership: 'any' as 'any' | 'with' | 'without' });
+  // Default to NO audience selected to avoid accidental org-wide sends (2026-06-22).
+  const [aud, setAud] = useState({ athletes: false, coaches: false, managers: false, clubEmails: false, withMembership: 'any' as 'any' | 'with' | 'without' });
   const [regions, setRegions] = useState<Region[]>([]);
   const [channel, setChannel] = useState<'email' | 'sms'>('email');
   const allRegions = [...new Set(Object.values(STATE_REGIONS))] as Region[];
@@ -1755,6 +1756,7 @@ export function Communicate() {
     if (channel === 'sms') {
       const valid = people.filter((p) => p.phone).map((p) => ({ phone: p.phone!, name: p.name }));
       if (valid.length === 0) { toast('No recipients have a phone number.'); return; }
+      if (valid.length > 10 && !window.confirm(`Are you sure you want to send a text message to ${valid.length} people?`)) return;
       // Confirm before spending on a multi-segment blast (each segment is billed).
       const seg = analyzeMessage(body);
       if (seg.segments > 1 && !window.confirm(
@@ -1783,6 +1785,7 @@ export function Communicate() {
     if (!subj) { toast('Add a subject before sending.'); return; }
     const valid = people.filter((p) => p.email).map((p) => ({ email: p.email!, name: p.name }));
     if (valid.length === 0) { toast('No recipients have an email address.'); return; }
+    if (valid.length > 10 && !window.confirm(`Are you sure you want to send an email message to ${valid.length} people?`)) return;
     setSending(true);
     try {
       const res = await sendEmail(subj, body, valid);
@@ -1838,15 +1841,15 @@ export function Communicate() {
 
   const recipients = useMemo(() => db.people.filter((p) => {
     const isManager = managerIdSet.has(p.id);
-    if (p.kind === 'athlete' && !aud.athletes) return false;
-    // Coaches pass if coaches checkbox is on; managers (any person in club.managerIds) pass if managers checkbox is on
-    if (p.kind === 'coach') {
-      if (!aud.coaches && !(aud.managers && isManager)) return false;
-    }
-    // Athletes who are also managers (edge case) still pass when managers is checked
-    if (p.kind === 'athlete' && aud.managers && isManager) return true;
-    // Manager-only filter: if managers is checked but athletes is off, exclude non-manager athletes
-    if (!aud.athletes && p.kind === 'athlete' && !isManager) return false;
+    // Include the person if they match ANY checked audience group. Checking
+    // "Club managers" must include a manager regardless of whether they are an
+    // athlete or coach — the previous athlete-first exclusion dropped
+    // athlete-managers before the manager check ever ran.
+    const matchesGroup =
+      (aud.athletes && p.kind === 'athlete') ||
+      (aud.coaches && p.kind === 'coach') ||
+      (aud.managers && isManager);
+    if (!matchesGroup) return false;
     const has = p.memberships.some((m) => m.seasonId === season.id && m.status === 'active');
     if (aud.withMembership === 'with' && !has) return false;
     if (aud.withMembership === 'without' && has) return false;

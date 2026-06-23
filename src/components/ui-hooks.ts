@@ -6,7 +6,11 @@ import { createContext, useContext, useMemo } from 'react';
 // ToastCtx from here.
 
 // ---- Toasts ----
-export const ToastCtx = createContext<(msg: string) => void>(() => {});
+// `variant: 'error'` persists by default (no auto-dismiss) so errors can be read
+// and screenshotted; pass `persist` to override either way. All toasts have a
+// manual ✕ close.
+export type ToastOptions = { variant?: 'info' | 'error'; persist?: boolean };
+export const ToastCtx = createContext<(msg: string, opts?: ToastOptions) => void>(() => {});
 export const useToast = () => useContext(ToastCtx);
 
 // ---- Date formatting ----

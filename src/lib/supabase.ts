@@ -610,7 +610,7 @@ export async function recordWaiverSignature(
 ): Promise<{ ok: boolean; error?: string }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('record-waiver-signature', { body: args });
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
   return data as { ok: boolean; error?: string };
 }
 
@@ -621,7 +621,7 @@ export async function requestGuardianWaiver(args: {
 }): Promise<{ ok: boolean; error?: string }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('request-guardian-waiver', { body: args });
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
   return data as { ok: boolean; error?: string };
 }
 
