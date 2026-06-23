@@ -54,6 +54,7 @@ const WaiverSign = lazy(() => import('./pages/WaiverSign'));
 const SetPassword = lazy(() => import('./pages/SetPassword'));
 const MyRegistrations = lazy(() => import('./pages/MyRegistrations').then((m) => ({ default: m.MyRegistrations })));
 const PurchaseHistory = lazy(() => import('./pages/PurchaseHistory').then((m) => ({ default: m.PurchaseHistory })));
+const ErrorLog = lazy(() => import('./pages/ErrorLog').then((m) => ({ default: m.ErrorLog })));
 
 /** Prefetch all route chunks once the browser is idle after first paint. */
 function usePrefetchRoutes() {
@@ -195,6 +196,7 @@ export default function App() {
               <Route path="/admin/clubs" element={<RequireAdmin><AdminClubs /></RequireAdmin>} />
               <Route path="/admin/league" element={<RequireAdmin><AdminLeague /></RequireAdmin>} />
               <Route path="/admin/communicate" element={<RequireAdmin><Communicate /></RequireAdmin>} />
+              <Route path="/admin/errors" element={<RequireAdmin><ErrorLog /></RequireAdmin>} />
               <Route path="/waiver/sign/:token" element={<WaiverSign />} />
               <Route path="/set-password" element={<SetPassword />} />
               <Route path="*" element={<Home />} />

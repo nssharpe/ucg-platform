@@ -589,6 +589,48 @@ export async function inviteAccount(args: {
 }
 
 // ---------------------------------------------------------------------------
+// Client error log — durable, admin-searchable record of front-end errors.
+// ---------------------------------------------------------------------------
+export interface ErrorLogRow {
+  id: string; createdAt: string; email: string | null; personId: string | null;
+  context: string | null; message: string; stack: string | null;
+  detail: unknown; url: string | null; userAgent: string | null; appVersion: string | null;
+}
+
+/** Persist a reported client error (fire-and-forget; never throws). */
+export async function logClientError(e: {
+  message: string; stack?: string; context?: string; detail?: Record<string, unknown>;
+}): Promise<void> {
+  if (!supabase) return;
+  try {
+    const { data: u } = await supabase.auth.getUser();
+    const email = u.user?.email ?? null;
+    const personId = u.user
+      ? (await supabase.from('people').select('id').eq('auth_user_id', u.user.id).maybeSingle()).data?.id ?? null
+      : null;
+    await supabase.from('error_logs').insert({
+      person_id: personId, email, context: e.context ?? null,
+      message: e.message?.slice(0, 2000) ?? '(no message)', stack: e.stack?.slice(0, 8000) ?? null,
+      detail: e.detail ?? null, url: (typeof location !== 'undefined' ? location.hash : null),
+      user_agent: (typeof navigator !== 'undefined' ? navigator.userAgent : null),
+      app_version: (import.meta.env.VITE_APP_VERSION as string | undefined) ?? import.meta.env.MODE,
+    });
+  } catch { /* logging must never break the app */ }
+}
+
+/** Read recent client errors (admins only, via RLS). Optional text filter is
+ *  applied client-side over email/message/context. */
+export async function fetchErrorLogs(limit = 200): Promise<ErrorLogRow[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from('error_logs').select('*').order('created_at', { ascending: false }).limit(limit);
+  if (error) { console.error('[supabase] fetchErrorLogs failed:', error); return []; }
+  return (data ?? []).map((r) => ({
+    id: r.id, createdAt: r.created_at, email: r.email, personId: r.person_id, context: r.context,
+    message: r.message, stack: r.stack, detail: r.detail, url: r.url, userAgent: r.user_agent, appVersion: r.app_version,
+  }));
+}
+
+// ---------------------------------------------------------------------------
 // Communication log — record + read sends from the Communicate tool.
 // ---------------------------------------------------------------------------
 export interface CommLogEntry {

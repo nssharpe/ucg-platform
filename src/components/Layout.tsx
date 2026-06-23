@@ -45,6 +45,7 @@ function navFor(caps: ReturnType<typeof useCapabilities>): NavGroup[] {
       { to: '/admin/clubs', label: 'Clubs' },
       { to: '/admin/league', label: 'League Controls' },
       { to: '/admin/communicate', label: 'Communicate' },
+      { to: '/admin/errors', label: 'Error Log' },
     ]});
   }
   return groups;
