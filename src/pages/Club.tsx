@@ -19,6 +19,16 @@ import { RegistrationEditor } from '../components/RegistrationEditor';
 
 type SortCol = 'firstName' | 'lastName' | 'WAG' | 'MAG' | 'TNT' | 'studentStatus';
 
+/** Event list as text, appending the synchro partner's name when the SY event is
+ *  registered and a partner is set (per 2026-06-22 feedback). */
+function eventsText(r: Registration, nameOf: (id: string) => string): string {
+  const base = r.events.join(', ');
+  if (r.events.includes('SY') && r.partnerAthleteId) {
+    return `${base} (synchro w/ ${nameOf(r.partnerAthleteId)})`;
+  }
+  return base;
+}
+
 function sortRoster(
   roster: Athlete[],
   col: SortCol,
@@ -494,11 +504,16 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
 
   const lvlName = (id?: string) => db.levels.find((l) => l.id === id)?.name ?? '—';
 
+  const nameOf = (id: string) => {
+    const p = db.people.find((x) => x.id === id);
+    return p ? `${p.firstName} ${p.lastName}` : 'partner';
+  };
+
   // Summarize registrations for a given athlete as "WAG – Silver – VT, BB, FX"
   const regSummary = (athleteId: string) => {
     const regs = regsFor(athleteId);
     if (regs.length === 0) return null;
-    return regs.map((r) => `${r.discipline === 'TNT' ? 'T&T' : r.discipline} – ${lvlName(r.levelId)} – ${r.events.join(', ')}`).join(' / ');
+    return regs.map((r) => `${r.discipline === 'TNT' ? 'T&T' : r.discipline} – ${lvlName(r.levelId)} – ${eventsText(r, nameOf)}`).join(' / ');
   };
 
   // Persist registration changes from RegistrationEditor
@@ -776,6 +791,7 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
             onSave={(regs) => saveRegs(editingAthlete.id, regs)}
             onCancel={() => setEditingAthleteId(null)}
             changeFeeApplies={changeFeeApplies}
+            incomingPartnerId={db.registrations.find((r) => r.meetId === meet.id && !r.refunded && r.events.includes('SY') && r.partnerAthleteId === editingAthlete.id)?.athleteId ?? null}
           />
         </Modal>
       )}
@@ -796,6 +812,7 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
             season={season}
             onSave={(regs) => addToCart(registerAthlete.id, regs)}
             onCancel={() => setRegisterAthleteId(null)}
+            incomingPartnerId={db.registrations.find((r) => r.meetId === meet.id && !r.refunded && r.events.includes('SY') && r.partnerAthleteId === registerAthlete.id)?.athleteId ?? null}
           />
         </Modal>
       )}
@@ -842,9 +859,13 @@ export function ClubCart() {
       (r) => r.meetId === meet.id && r.athleteId === item.refUserId && !r.refunded,
     );
     if (regs.length === 0) return null;
+    const nameOf = (id: string) => {
+      const p = db.people.find((x) => x.id === id);
+      return p ? `${p.firstName} ${p.lastName}` : 'partner';
+    };
     return regs.map((r) => {
       const lvl = db.levels.find((l) => l.id === r.levelId)?.name ?? '—';
-      return `${r.discipline === 'TNT' ? 'T&T' : r.discipline} – ${lvl} – ${r.events.join(', ')}`;
+      return `${r.discipline === 'TNT' ? 'T&T' : r.discipline} – ${lvl} – ${eventsText(r, nameOf)}`;
     }).join(' / ');
   };
 

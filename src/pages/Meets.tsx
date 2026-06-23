@@ -379,6 +379,7 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
           onSave={handleRegSave}
           onCancel={onClose}
           changeFeeApplies={changeFeeApplies}
+          incomingPartnerId={db.registrations.find((r) => r.meetId === meet.id && !r.refunded && r.events.includes('SY') && r.partnerAthleteId === athlete.id)?.athleteId ?? null}
         />
       )}
 

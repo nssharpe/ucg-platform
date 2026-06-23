@@ -40,6 +40,8 @@ interface DiscSectionProps {
   onChange: (d: DraftReg) => void;
   allAthletes: Athlete[];
   season: Season;
+  /** Athlete who already named this athlete as their synchro partner, if any. */
+  incomingPartnerId?: string | null;
 }
 
 /** Draft shape for one discipline */
@@ -52,7 +54,7 @@ export interface DraftReg {
   partnerUnknown: boolean;
 }
 
-function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, season }: DiscSectionProps) {
+function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, season, incomingPartnerId }: DiscSectionProps) {
   const discLevels = levels.filter((l) => l.discipline === disc && !l.retired);
   const events = EVENTS[disc];
   const isTNT = disc === 'TNT';
@@ -81,7 +83,15 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
         delete nextEventLevels[code];
       }
     }
-    onChange({ ...draft, events: next, eventLevels: nextEventLevels });
+    // Auto-link the synchro partner: if someone already named this athlete as
+    // their partner, default this athlete's partner to them when they add SY.
+    let partnerAthleteId = draft.partnerAthleteId;
+    let partnerUnknown = draft.partnerUnknown;
+    if (code === 'SY' && next.includes('SY') && !partnerAthleteId && incomingPartnerId) {
+      partnerAthleteId = incomingPartnerId;
+      partnerUnknown = false;
+    }
+    onChange({ ...draft, events: next, eventLevels: nextEventLevels, partnerAthleteId, partnerUnknown });
   };
 
   const selectAllAround = () => {
@@ -90,7 +100,10 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
     if (isTNT) {
       for (const code of allCodes) nextEventLevels[code] = draft.eventLevels[code] ?? draft.levelId;
     }
-    onChange({ ...draft, events: allCodes, eventLevels: nextEventLevels });
+    // Auto-link synchro partner when selecting all (which includes SY for T&T).
+    const partnerAthleteId = (allCodes.includes('SY') && !draft.partnerAthleteId && incomingPartnerId)
+      ? incomingPartnerId : draft.partnerAthleteId;
+    onChange({ ...draft, events: allCodes, eventLevels: nextEventLevels, partnerAthleteId });
   };
 
   const clearAll = () => {
@@ -249,6 +262,8 @@ export interface RegistrationEditorProps {
   onCancel: () => void;
   /** When true, save button says "Add change to cart" — the parent handles the fee */
   changeFeeApplies?: boolean;
+  /** Athlete who already named this athlete as their synchro partner, if any. */
+  incomingPartnerId?: string | null;
 }
 
 export function RegistrationEditor({
@@ -262,6 +277,7 @@ export function RegistrationEditor({
   onSave,
   onCancel,
   changeFeeApplies = false,
+  incomingPartnerId = null,
 }: RegistrationEditorProps) {
   // Build initial draft state from existing regs (or defaults from athlete.levels)
   const initDrafts = (): Record<Discipline, DraftReg> => {
@@ -350,6 +366,7 @@ export function RegistrationEditor({
           onChange={(d) => updateDisc(disc, d)}
           allAthletes={allAthletes}
           season={season}
+          incomingPartnerId={disc === 'TNT' ? incomingPartnerId : null}
         />
       ))}
 

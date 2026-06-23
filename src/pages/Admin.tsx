@@ -9,6 +9,7 @@ import { RegionEditor } from '../components/RegionEditor';
 import { DISCIPLINES, STATE_REGIONS, GENERAL_WAIVER_TYPE } from '../lib/types';
 import type { AccountInvite, Athlete, Club, ClubRequest, Coupon, Level, Region, Season, WaiverType, WaiverDocument } from '../lib/types';
 import { sha256Hex, nextVersion, certificateText } from '../lib/waivers-core';
+import { downloadWaiverProof, formatSignedAt } from '../lib/waiver-proof';
 import { sanitizeWaiverHtml, escapeHtml } from '../lib/sanitize-html';
 import { fmtMoney } from '../lib/scoring';
 import { randomPromoCode, couponValid } from '../lib/pricing';
@@ -1157,12 +1158,22 @@ function Waivers() {
         <input className="input" style={{ maxWidth: 280, marginBottom: 12 }} placeholder="Search by name"
           value={signedQ} onChange={(e) => setSignedQ(e.target.value)} />
         {signed.length === 0 ? (
-          <p style={{ fontSize: 13.5, color: 'var(--ink-soft)' }}>No signatures recorded for this season.</p>
+          <p style={{ fontSize: 13.5, color: 'var(--ink-soft)' }}>
+            No signatures recorded for {selectedSeason?.name ?? 'this season'}.
+            {(db.waiverSignatures ?? []).length > 0 && (
+              <> {(db.waiverSignatures ?? []).length} signature{(db.waiverSignatures ?? []).length !== 1 ? 's' : ''} exist in other seasons — switch the season above to view them.</>
+            )}
+          </p>
         ) : (
           <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
             {signed.slice(0, 300).map(({ sig, name, version }) => (
               <li key={sig.id} style={{ borderBottom: '1px solid var(--line)', padding: '8px 0' }}>
-                <strong>{name}</strong> <span style={{ color: 'var(--ink-soft)' }}>({sig.signerRole})</span>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                  <strong>{name}</strong> <span style={{ color: 'var(--ink-soft)' }}>({sig.signerRole})</span>
+                  <span style={{ color: 'var(--ink-soft)', fontSize: 12.5 }}>{formatSignedAt(sig.signedAt)}</span>
+                  <button className="btn small ghost" style={{ marginLeft: 'auto' }}
+                    onClick={() => downloadWaiverProof(sig, version, name)}>Download proof (PDF)</button>
+                </div>
                 <details>
                   <summary style={{ fontSize: 12.5, color: 'var(--accent)', cursor: 'pointer' }}>Certificate</summary>
                   <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '4px 0 0' }}>
