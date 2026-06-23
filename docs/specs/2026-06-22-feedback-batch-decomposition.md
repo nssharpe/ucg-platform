@@ -15,6 +15,13 @@
 - **Status:** ☐ todo · ◐ in progress · ☑ done
 
 ## Progress log
+- **2026-06-23 — final cluster (all live):** Phase 8 club-membership lifecycle (table +
+  backfill + status/purchase/grant/revoke + registration & hosting gate, ON); 1.4 merge
+  now persists (deletePerson + pushPerson, dup no longer reappears); 7.5 swap-athlete on a
+  registration (with change fee); 7.4 View Cart (topbar, per-section + all checkout). With
+  the earlier comms log (4.5) and error-log DB (10.2), the entire 2026-06-22 batch is
+  implemented and deployed. Remaining non-build items are advisory only: 10.4 MFA/passkeys
+  (phased plan in research note) and server-emailed PDFs (print/jsPDF download shipped).
 - **2026-06-23:** Phase 2 complete (2.1 training-state highlight, 2.2 in-flow back button,
   2.3 athlete/coach/both pricing dropdown + `priceForTypes` helper & unit tests, 2.4
   Independent-Athlete checkbox in PersonForm + Profile, 2.5 grad-year unset/N/A). Also
