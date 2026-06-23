@@ -76,13 +76,24 @@ Per research lines 53–69. In the Communicate composer, when `channel === 'sms'
 - Put the pure logic in a testable module (e.g. `src/lib/sms-segments.ts`) so it gets
   Vitest coverage like the scoring engines — **add `tests/sms-segments.test.ts`**.
 
-## Phase 3 — Consent + send log (compliance + the stubbed confirmation)
+## Phase 3 — Consent + send log (compliance + the stubbed confirmation) — ✅ BUILT 2026-06-23
 Per research lines 76–87.
-- **SMS-consent flag** per member (migration: add `sms_consent` + `sms_consent_at`
-  to the member/profile table). Filter the SMS audience to consented recipients only.
-- **Server-side cap**: `send-sms` also rejects/alerts over a configured max segments.
-- **Send log**: persist recipients, segment count, cost estimate, timestamps so the
-  Communicate "who it went to" confirmation becomes real (table + insert from the fn).
+- **SMS-consent flag** per member — migration `20260623000050_sms_consent_and_send_log.sql`
+  added `sms_consent boolean default false` + `sms_consent_at timestamptz` to `people`
+  (applied to the live DB). `Athlete.smsConsent`/`smsConsentAt` + `personToRow`/`rowToPerson`
+  map it. **CTIA opt-in checkbox** on the self-serve profile (`Profile.tsx`, next to Phone),
+  unchecked by default, stamps `smsConsentAt` on opt-in.
+- **Audience filter** — Communicate (`Admin.tsx`) gates the SMS audience to opted-in
+  numbers. `doSend` enforces consent on **every** send (test + audience) via
+  `partitionByConsent`; the send card shows the consent-gated count and how many matched
+  recipients are skipped (no consent / no phone).
+- **Server-side cap**: confirmed `send-sms` already caps `MAX_RECIPIENTS=50` and
+  `SMS_MAX_SEGMENTS` (default 3). No change until the 10DLC throughput tier is known.
+- **Send log**: reused the existing `comm_log` (decided vs. new table) — migration added
+  `segments`, `encoding`, `cost_estimate` columns; `logComm`/`fetchCommLog` populate +
+  read them, and the Communicate history detail view shows segments · encoding · est. cost.
+- **Pure logic** (Vitest, node env): `src/lib/sms-send.ts` (`estimateSmsCost`,
+  `partitionByConsent`, `SMS_COST_PER_SEGMENT_USD`) + `tests/sms-send.test.ts` (6 cases).
 
 ## Phase 4 — Inbound webhook (deferred; what the console field was asking about)
 The "Webhook URL" in the profile wizard points here. **Not needed to send.** When built:

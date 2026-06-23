@@ -683,6 +683,8 @@ export type Database = {
           placement: Json
           roles: Json
           shirt: string | null
+          sms_consent: boolean
+          sms_consent_at: string | null
           state: string | null
           student_status: Database["public"]["Enums"]["student_status"] | null
           updated_at: string
@@ -709,6 +711,8 @@ export type Database = {
           placement?: Json
           roles?: Json
           shirt?: string | null
+          sms_consent?: boolean
+          sms_consent_at?: string | null
           state?: string | null
           student_status?: Database["public"]["Enums"]["student_status"] | null
           updated_at?: string
@@ -735,6 +739,8 @@ export type Database = {
           placement?: Json
           roles?: Json
           shirt?: string | null
+          sms_consent?: boolean
+          sms_consent_at?: string | null
           state?: string | null
           student_status?: Database["public"]["Enums"]["student_status"] | null
           updated_at?: string

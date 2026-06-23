@@ -15,6 +15,7 @@ import { fmtMoney } from '../lib/scoring';
 import { randomPromoCode, couponValid } from '../lib/pricing';
 import { fetchAllRoles, isSupabaseConfigured, pushAll, pushClub, pushClubManager, pushClubRequest, pushCoupon, pushLevel, pushMembership, pushRegistration, pushSeason, pushUserRole, pushAccountInvite, deleteCoupon, deleteRegistration, sendEmail, sendSms, pushWaiverDocument, logComm, fetchCommLog, pushPerson, deletePerson, type SendEmailResult, type CommLogEntry } from '../lib/supabase';
 import { analyzeMessage, normalizeToGsm7 } from '../lib/sms-segments';
+import { estimateSmsCost, partitionByConsent } from '../lib/sms-send';
 import { useCapabilities } from '../lib/capabilities';
 
 // ---------- Merge Athletes modal ----------
@@ -1796,25 +1797,34 @@ export function Communicate() {
   // Send the current subject/body to an explicit recipient list via the
   // send-email (Gmail SMTP) or send-sms (Telnyx) Edge Function, per channel.
   // Used by both the test and main sends.
-  const doSend = async (people: { email?: string; phone?: string; name?: string }[], label: string) => {
+  const doSend = async (people: { email?: string; phone?: string; name?: string; smsConsent?: boolean }[], label: string) => {
     if (!isSupabaseConfigured) { toast(`${channel === 'sms' ? 'SMS' : 'Email'} needs Supabase configured to send.`); return; }
     if (!body.trim()) { toast(`Add a ${channel === 'sms' ? 'message' : 'email body'} before sending.`); return; }
 
     if (channel === 'sms') {
-      const valid = people.filter((p) => p.phone).map((p) => ({ phone: p.phone!, name: p.name }));
-      if (valid.length === 0) { toast('No recipients have a phone number.'); return; }
-      if (valid.length > 10 && !window.confirm(`Are you sure you want to send a text message to ${valid.length} people?`)) return;
+      const withPhone = people.filter((p) => p.phone);
+      if (withPhone.length === 0) { toast('No recipients have a phone number.'); return; }
+      // Enforce SMS consent on every send (test and audience): only opted-in
+      // numbers are texted. Non-consented recipients are dropped here.
+      const { eligible, excluded } = partitionByConsent(withPhone);
+      if (eligible.length === 0) {
+        toast(`None of the ${withPhone.length} recipient${withPhone.length !== 1 ? 's' : ''} with a phone have opted in to SMS.`, { variant: 'error' });
+        return;
+      }
+      const valid = eligible.map((p) => ({ phone: p.phone!, name: p.name }));
+      const skipNote = excluded.length ? ` (${excluded.length} skipped — no SMS consent)` : '';
+      if (valid.length > 10 && !window.confirm(`Are you sure you want to send a text message to ${valid.length} people${skipNote}?`)) return;
       // Confirm before spending on a multi-segment blast (each segment is billed).
       const seg = analyzeMessage(body);
       if (seg.segments > 1 && !window.confirm(
         `This message is ${seg.segments} ${seg.encoding} segments — each recipient is billed ${seg.segments}×. ` +
-        `Send to ${valid.length} recipient${valid.length !== 1 ? 's' : ''} anyway?`,
+        `Send to ${valid.length} recipient${valid.length !== 1 ? 's' : ''}${skipNote} anyway?`,
       )) return;
       setSending(true);
       try {
         const res = await sendSms(body, valid);
         if (res.ok) {
-          toast(`${label}: sent to ${res.sentCount} recipient${res.sentCount !== 1 ? 's' : ''}.`);
+          toast(`${label}: sent to ${res.sentCount} recipient${res.sentCount !== 1 ? 's' : ''}${skipNote}.`);
         } else if (res.sentCount > 0) {
           toast(`${label}: ${res.sentCount} sent, ${res.failedCount} failed${res.error ? ` — ${res.error}` : ''}.`);
         } else {
@@ -1824,6 +1834,7 @@ export function Communicate() {
           channel: 'sms', isTest: label.toLowerCase().startsWith('test'), subject: null, body,
           recipientCount: valid.length, sentCount: res.sentCount ?? null, failedCount: res.failedCount ?? null,
           recipients: valid.map((v) => ({ name: v.name ?? '', contact: v.phone })), error: res.ok ? null : (res.error ?? null),
+          segments: seg.segments, encoding: seg.encoding, costEstimate: estimateSmsCost(seg.segments, res.sentCount ?? valid.length),
         });
         setLogRefresh((n) => n + 1);
       } catch (e) {
@@ -1926,6 +1937,16 @@ export function Communicate() {
     return db.clubs.filter((c) => c.email).map((c) => ({ name: c.name, email: c.email }));
   }, [db.clubs, aud.clubEmails]);
 
+  // SMS audience is gated on consent + a phone number. Reflect the true size and
+  // how many of the matched audience are skipped, so the count isn't misleading.
+  const smsAudience = useMemo(() => {
+    const withPhone = recipients.filter((p) => p.phone);
+    const eligible = partitionByConsent(withPhone).eligible;
+    return { eligible: eligible.length, noConsent: withPhone.length - eligible.length, noPhone: recipients.length - withPhone.length };
+  }, [recipients]);
+  const audienceCount = channel === 'sms' ? smsAudience.eligible : recipients.length + clubEmailRows.length;
+  const smsSkipped = smsAudience.noConsent + smsAudience.noPhone;
+
   // People options for test-send Combo
   // For text-message sends, search/show by phone; for email, by email.
   const peopleOptions = useMemo(() =>
@@ -1947,17 +1968,18 @@ export function Communicate() {
   const removeTestPerson = (id: string) => setTestGroup((g) => g.filter((x) => x.id !== id));
 
   const sendToAudience = async () => {
-    const total = recipients.length + clubEmailRows.length;
-    const personRows = recipients.map((p) => ({
+    // For SMS the displayed audience is consent-gated; mirror that in the summary.
+    const smsRecipients = channel === 'sms' ? partitionByConsent(recipients.filter((p) => p.phone)).eligible : recipients;
+    const personRows = (channel === 'sms' ? smsRecipients : recipients).map((p) => ({
       name: `${p.firstName} ${p.lastName}`,
-      contact: channel === 'sms' ? (p.phone || p.email) : p.email,
+      contact: channel === 'sms' ? p.phone : p.email,
     }));
-    const clubRows = clubEmailRows.map((c) => ({ name: `${c.name} (club email)`, contact: c.email ?? '' }));
-    const record: SendRecord = { sentAt: new Date(), channel, recipientCount: total, recipients: [...personRows, ...clubRows] };
+    const clubRows = channel === 'sms' ? [] : clubEmailRows.map((c) => ({ name: `${c.name} (club email)`, contact: c.email ?? '' }));
+    const record: SendRecord = { sentAt: new Date(), channel, recipientCount: personRows.length + clubRows.length, recipients: [...personRows, ...clubRows] };
     setLastSend(record);
     setSendLogExpanded(false);
     const sendRows = [
-      ...recipients.map((p) => ({ email: p.email, phone: p.phone, name: `${p.firstName} ${p.lastName}` })),
+      ...recipients.map((p) => ({ email: p.email, phone: p.phone, name: `${p.firstName} ${p.lastName}`, smsConsent: p.smsConsent })),
       ...clubEmailRows.map((c) => ({ email: c.email ?? '', name: c.name })),
     ];
     await doSend(sendRows, channel === 'sms' ? 'Text' : 'Email');
@@ -2221,16 +2243,23 @@ export function Communicate() {
           <h3 className="card-title">Send to selected audience</h3>
           <p style={{ fontSize: 13.5, color: 'var(--ink-soft)', marginTop: 0 }}>
             Sends the composed {channel === 'sms' ? 'text message' : 'email'} to the{' '}
-            {recipients.length + clubEmailRows.length} recipient{recipients.length + clubEmailRows.length !== 1 ? 's' : ''}{' '}
-            matching your Audience filters.
+            {audienceCount} recipient{audienceCount !== 1 ? 's' : ''}{' '}
+            matching your Audience filters{channel === 'sms' ? ' who have opted in to SMS' : ''}.
           </p>
           <button
             className="btn primary"
-            disabled={sending || recipients.length + clubEmailRows.length === 0}
+            disabled={sending || audienceCount === 0}
             onClick={sendToAudience}
           >
-            {sending ? 'Sending…' : `Send to ${recipients.length + clubEmailRows.length} →`}
+            {sending ? 'Sending…' : `Send to ${audienceCount} →`}
           </button>
+          {channel === 'sms' && smsSkipped > 0 && (
+            <p style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 4 }}>
+              {smsSkipped} matched recipient{smsSkipped !== 1 ? 's' : ''} skipped
+              {smsAudience.noConsent > 0 ? ` — ${smsAudience.noConsent} not opted in` : ''}
+              {smsAudience.noPhone > 0 ? `${smsAudience.noConsent > 0 ? ',' : ' —'} ${smsAudience.noPhone} without a phone` : ''}.
+            </p>
+          )}
           {channel === 'sms' && (
             <p style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 4 }}>Live delivery requires an approved 10DLC campaign.</p>
           )}
@@ -2296,7 +2325,7 @@ export function Communicate() {
             className="btn ghost"
             disabled={testGroup.length === 0 || sending}
             onClick={() => doSend(
-              testGroup.map((p) => ({ email: p.email, phone: p.phone, name: `${p.firstName} ${p.lastName}` })),
+              testGroup.map((p) => ({ email: p.email, phone: p.phone, name: `${p.firstName} ${p.lastName}`, smsConsent: p.smsConsent })),
               channel === 'sms' ? 'Test text' : 'Test email',
             )}
           >
@@ -2339,6 +2368,12 @@ export function Communicate() {
                     {open && (
                       <div style={{ marginTop: 8, fontSize: 13 }}>
                         {c.subject && <div style={{ marginBottom: 4 }}><strong>Subject:</strong> {c.subject}</div>}
+                        {c.channel === 'sms' && c.segments != null && (
+                          <div style={{ marginBottom: 4, color: 'var(--ink-soft)' }}>
+                            {c.segments} segment{c.segments !== 1 ? 's' : ''}{c.encoding ? ` · ${c.encoding}` : ''}
+                            {c.costEstimate != null ? ` · est. $${c.costEstimate.toFixed(c.costEstimate < 1 ? 4 : 2)}` : ''}
+                          </div>
+                        )}
                         {c.error && <div style={{ color: 'var(--coral-600)', marginBottom: 4 }}>Error: {c.error}</div>}
                         <details style={{ marginBottom: 6 }}>
                           <summary style={{ cursor: 'pointer', color: 'var(--ink-soft)' }}>Message</summary>

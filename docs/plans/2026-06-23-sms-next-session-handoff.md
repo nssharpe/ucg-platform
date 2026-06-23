@@ -34,7 +34,10 @@ already built, committed, and pushed (commits `8b0ce2b`, `8356475`). The
 
 Please pick up the remaining work in this order:
 
-## 1. Phase 3 — SMS consent + send log
+## 1. Phase 3 — SMS consent + send log — ✅ DONE 2026-06-23
+See the master plan's Phase 3 section for the as-built summary (migration
+`20260623000050`, `Profile.tsx` consent checkbox, `Admin.tsx` consent-gated audience,
+`src/lib/sms-send.ts` + tests, `comm_log` segment/encoding/cost columns). Original scope:
 Per the plan's Phase 3. Use brainstorming/TDD/migration conventions in CLAUDE.md.
 - **Consent flag:** new migration adding `sms_consent boolean default false` and
   `sms_consent_at timestamptz` to the member/profile table (find the right table;

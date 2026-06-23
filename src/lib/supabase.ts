@@ -175,7 +175,8 @@ const personToRow = (p: Athlete) => ({
   first_name: p.firstName, last_name: p.lastName, email: p.email,
   dob: p.dob || null, gender: p.gender, placement: p.placement ?? {}, grad_year: p.gradYear,
   student_status: p.studentStatus, shirt: p.shirt, country: p.country, state: p.state,
-  phone: p.phone, main_club_id: p.mainClubId, levels: p.levels ?? {},
+  phone: p.phone, sms_consent: p.smsConsent ?? false, sms_consent_at: p.smsConsentAt ?? null,
+  main_club_id: p.mainClubId, levels: p.levels ?? {},
   emergency: p.emergency ?? {}, dietary: p.dietary ?? [], dietary_notes: p.dietaryNotes ?? '',
   achievements: p.achievements ?? [],
 });
@@ -656,6 +657,10 @@ export interface CommLogEntry {
   failedCount: number | null;
   recipients: { name: string; contact: string }[];
   error: string | null;
+  /** SMS-only: segments per recipient, encoding, and estimated total cost (USD). */
+  segments?: number | null;
+  encoding?: string | null;
+  costEstimate?: number | null;
 }
 
 /** Insert a comm-log row (best-effort; never throws). */
@@ -669,6 +674,7 @@ export async function logComm(entry: CommLogEntry): Promise<void> {
       channel: entry.channel, is_test: entry.isTest, subject: entry.subject, body: entry.body,
       recipient_count: entry.recipientCount, sent_count: entry.sentCount, failed_count: entry.failedCount,
       recipients: entry.recipients, error: entry.error,
+      segments: entry.segments ?? null, encoding: entry.encoding ?? null, cost_estimate: entry.costEstimate ?? null,
     });
   } catch (e) { console.error('[supabase] logComm failed:', e); }
 }
@@ -682,6 +688,7 @@ export async function fetchCommLog(limit = 100): Promise<(CommLogEntry & { id: s
     id: r.id, sentAt: r.sent_at, channel: r.channel, isTest: r.is_test, subject: r.subject, body: r.body,
     recipientCount: r.recipient_count, sentCount: r.sent_count, failedCount: r.failed_count,
     recipients: (r.recipients ?? []) as { name: string; contact: string }[], error: r.error,
+    segments: r.segments ?? null, encoding: r.encoding ?? null, costEstimate: r.cost_estimate ?? null,
   }));
 }
 
@@ -833,7 +840,8 @@ export async function loadAll(): Promise<DB | null> {
       firstName: r.first_name, lastName: r.last_name, email: r.email,
       dob: r.dob ?? '', gender: r.gender as Athlete['gender'], placement: (r.placement ?? {}) as Athlete['placement'], gradYear: r.grad_year ?? 1900,
       studentStatus: r.student_status as Athlete['studentStatus'], shirt: r.shirt ?? '', country: r.country ?? '', state: r.state ?? '',
-      phone: r.phone ?? '', mainClubId: r.main_club_id, altClubIds: altClubsByPerson.get(r.id) ?? [],
+      phone: r.phone ?? '', smsConsent: r.sms_consent ?? false, smsConsentAt: r.sms_consent_at ?? null,
+      mainClubId: r.main_club_id, altClubIds: altClubsByPerson.get(r.id) ?? [],
       levels: (r.levels ?? {}) as Athlete['levels'], emergency: (r.emergency ?? { contact: '', relation: '', phone: '' }) as Athlete['emergency'],
       dietary: (r.dietary ?? []) as Athlete['dietary'], dietaryNotes: r.dietary_notes ?? '',
       memberships: membershipsByPerson.get(r.id) ?? [], achievements: (r.achievements ?? []) as Athlete['achievements'],

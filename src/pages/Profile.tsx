@@ -311,6 +311,20 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                 {missingFieldKeys.has('phone') && !p.phone && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Required</div>}
               </Field>
             </div>
+            <label className="checkrow" style={{ alignItems: 'flex-start', gap: 8, marginTop: 8 }}>
+              <input
+                type="checkbox"
+                checked={!!p.smsConsent}
+                style={{ marginTop: 2 }}
+                onChange={(e) =>
+                  set(e.target.checked
+                    ? { smsConsent: true, smsConsentAt: new Date().toISOString() }
+                    : { smsConsent: false, smsConsentAt: null })}
+              />
+              <span style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
+                Text me registration and event reminders from UCG. Msg &amp; data rates may apply. Reply STOP to opt out.
+              </span>
+            </label>
           </div>
 
           <div className="card card-pad" style={{ marginBottom: 16 }}>

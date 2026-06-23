@@ -127,6 +127,10 @@ export interface Athlete {
   country: string;
   state: string;
   phone: string;
+  /** CTIA SMS opt-in. False/undefined = not consented (cannot be texted). */
+  smsConsent?: boolean;
+  /** When sms_consent was last set true (ISO). */
+  smsConsentAt?: string | null;
   mainClubId: string | null;
   altClubIds: string[];
   levels: Partial<Record<Discipline, string>>; // levelId per discipline
