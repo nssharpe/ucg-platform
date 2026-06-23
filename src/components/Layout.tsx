@@ -178,6 +178,14 @@ export function Layout({ children }: { children: ReactNode }) {
           ) : null}
           <span className="crumb">{labelFor(loc.pathname)}</span>
           <div style={{ flex: 1 }} />
+          {me && (() => {
+            const cartCount = (db.carts[me.id] ?? []).length;
+            return (
+              <Link to="/cart" className="topbar-user" title="View your cart" style={{ marginRight: 8 }}>
+                🛒 Cart{cartCount > 0 ? ` (${cartCount})` : ''}
+              </Link>
+            );
+          })()}
           {me ? (
             <Link to="/me" className="topbar-user" title="View your profile">
               <span className="topbar-user-avatar" aria-hidden="true">
