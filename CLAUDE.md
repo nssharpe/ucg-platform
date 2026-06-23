@@ -14,8 +14,8 @@ will apply first.
 ## Supabase / migrations
 - Project ref `wkyerxlgricfphopocoz` (org NAIGC). Migrations in `supabase/migrations/`.
   CLI is linked (`supabase link` done 2026-06-19). All migrations are applied and
-  tracked by the CLI — through the waiver-e-sign set (`20260620000010/0020/0030`,
-  the latest as of 2026-06-21). `supabase functions deploy <name>` deploys Edge
+  tracked by the CLI — latest is `20260623000050_sms_consent_and_send_log.sql`
+  (SMS Phase 3) as of 2026-06-23. `supabase functions deploy <name>` deploys Edge
   Functions (see [Email infra] below).
 - Migration filenames use Supabase's required timestamp format:
   `<YYYYMMDDHHmmss>_name.sql`. Create new ones with `supabase migration new <name>`.
