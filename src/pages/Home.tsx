@@ -102,12 +102,10 @@ function AdminAttentionList() {
   const db = useDB();
   const season = db.seasons.find((s) => s.current)!;
 
-  // Under-18 athletes with a current-season membership but no waiver
-  const pendingWaivers = db.people.filter((p) => {
-    if (!isUnder18(p.dob)) return false;
-    const mem = p.memberships.find((m) => m.seasonId === season.id && m.status === 'active');
-    return mem && !mem.waiverSignedAt;
-  });
+  // Under-18 athletes whose current-season membership is awaiting a guardian waiver.
+  const pendingWaivers = db.people.filter((p) =>
+    isUnder18(p.dob) && p.memberships.some((m) => m.seasonId === season.id && m.status === 'pending-waiver'),
+  );
 
   // Clubs with pending cart items
   const clubsWithCart = db.clubs.filter((c) => {
@@ -126,11 +124,11 @@ function AdminAttentionList() {
   const items: { msg: string; to: string }[] = [
     ...pendingWaivers.map((p) => ({
       msg: `Under-18 waiver needed: ${p.firstName} ${p.lastName}`,
-      to: `/people/${p.id}`,
+      to: `/admin/members/${p.id}`,
     })),
     ...pendingPayment.length > 0 ? [{
       msg: `${pendingPayment.length} membership${pendingPayment.length > 1 ? 's' : ''} awaiting club payment`,
-      to: '/admin/memberships',
+      to: '/admin/members',
     }] : [],
     ...clubsWithCart.map((c) => {
       const cart = db.carts[c.id] ?? [];
@@ -208,12 +206,11 @@ function ClubManagerCard({ clubId }: { clubId: string }) {
   const cart = db.carts[clubId] ?? [];
   const cartTotal = cart.reduce((s, i) => s + i.amount, 0);
 
-  // Under-18 with active membership but no waiver
-  const pendingWaivers = roster.filter((p) => {
-    if (!isUnder18(p.dob)) return false;
-    const mem = p.memberships.find((m) => m.seasonId === season.id && m.status === 'active');
-    return mem && !mem.waiverSignedAt;
-  });
+  // Under-18 athletes whose membership is awaiting a guardian waiver. (An active
+  // membership always has a signed waiver, so the pending state is what matters.)
+  const pendingWaivers = roster.filter((p) =>
+    isUnder18(p.dob) && p.memberships.some((m) => m.seasonId === season.id && m.status === 'pending-waiver'),
+  );
 
   // Meets this club is registered for (at least one athlete reg from this club)
   const clubMeetIds = [...new Set(
@@ -239,7 +236,7 @@ function ClubManagerCard({ clubId }: { clubId: string }) {
           <strong style={{ fontSize: 13 }}>Needs attention</strong>
           {pendingWaivers.map((p) => (
             <div key={p.id} style={{ fontSize: 13, marginTop: 4 }}>
-              ⚠ Under-18 waiver needed: <Link to={`/people/${p.id}`}>{p.firstName} {p.lastName}</Link>
+              ⚠ Under-18 waiver needed: <Link to={`/club/${clubId}`}>{p.firstName} {p.lastName}</Link>
             </div>
           ))}
           {cart.length > 0 && (

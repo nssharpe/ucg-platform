@@ -30,7 +30,7 @@ const blank = (): Omit<Athlete, 'id'> => ({
   kind: 'athlete', roles: { athlete: true, coach: false },
   firstName: '', lastName: '', email: '', dob: '', gender: 'Female',
   // 0 = not yet chosen (forces a year or an explicit N/A); 1900 = N/A sentinel.
-  gradYear: 0, studentStatus: 'Student', shirt: '', country: 'United States',
+  gradYear: 0, studentStatus: 'Student', shirt: 'Adult S', country: 'United States',
   state: '', phone: '', mainClubId: null, altClubIds: [], levels: {},
   emergency: { contact: '', relation: '', phone: '' },
   dietary: [], dietaryNotes: '', memberships: [], achievements: [],
@@ -80,17 +80,20 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
 
   return (
     <Modal title={person ? `Edit ${person.firstName} ${person.lastName}` : 'New person'} onClose={onClose}>
+      <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '0 0 12px' }}>
+        Fields marked <span style={{ color: 'var(--coral-600)' }}>*</span> are required.
+      </p>
       <div className="grid cols-2">
-        <Field label="Type">
+        <Field label="Type" required>
           <select className="input" value={draft.kind} onChange={(e) => set({ kind: e.target.value as Athlete['kind'] })}>
             <option value="athlete">Athlete</option>
             <option value="coach">Coach</option>
           </select>
         </Field>
-        <Field label="Email"><input type="email" value={draft.email} onChange={(e) => set({ email: e.target.value })} /></Field>
-        <Field label="First name"><input type="text" value={draft.firstName} onChange={(e) => set({ firstName: e.target.value })} /></Field>
-        <Field label="Last name"><input type="text" value={draft.lastName} onChange={(e) => set({ lastName: e.target.value })} /></Field>
-        <Field label="Date of birth" hint="Athletes must be 15+, coaches 18+."><input type="date" value={draft.dob} onChange={(e) => set({ dob: e.target.value })} /></Field>
+        <Field label="Email" required><input type="email" value={draft.email} onChange={(e) => set({ email: e.target.value })} /></Field>
+        <Field label="First name" required><input type="text" value={draft.firstName} onChange={(e) => set({ firstName: e.target.value })} /></Field>
+        <Field label="Last name" required><input type="text" value={draft.lastName} onChange={(e) => set({ lastName: e.target.value })} /></Field>
+        <Field label="Date of birth" required hint="Athletes must be 15+, coaches 18+."><input type="date" value={draft.dob} onChange={(e) => set({ dob: e.target.value })} /></Field>
         <Field label="Gender">
           <select className="input" value={draft.gender} onChange={(e) => set({ gender: e.target.value as Gender })}>
             {GENDERS.map((g) => <option key={g}>{g}</option>)}
@@ -108,7 +111,7 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
             </select>
           </Field>
         ))}
-        <Field label="Undergrad graduation year">
+        <Field label="Undergrad graduation year" required>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             <input type="number" disabled={noGradYear} value={noGradYear || unsetGradYear ? '' : draft.gradYear} placeholder="YYYY"
               onChange={(e) => set({ gradYear: +e.target.value || 0 })} />
@@ -132,7 +135,7 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
           </select>
         </Field>
         <Field label="Country"><input type="text" value={draft.country} onChange={(e) => set({ country: e.target.value })} /></Field>
-        <Field label="Training state">
+        <Field label="Training state" required>
           <Combo options={states.map((s) => ({ value: s, label: s, sub: STATE_REGIONS[s] }))} value={draft.state || null} onChange={(v) => set({ state: v })} />
         </Field>
         <Field label="Phone">
@@ -148,7 +151,7 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
 
       <h3 className="card-title" style={{ marginTop: 8 }}>Competition</h3>
       <div className="grid cols-2">
-        <Field label="Main club" hint="The only club that can pay their membership fee.">
+        <Field label="Main club" required hint="The only club that can pay their membership fee.">
           {independent ? (
             <input type="text" disabled value="Independent Athlete" />
           ) : (

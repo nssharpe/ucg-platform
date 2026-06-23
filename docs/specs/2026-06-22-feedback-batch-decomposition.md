@@ -45,6 +45,15 @@
   all for league admins). Plan: docs/plans/2026-06-23-club-invites-and-roster.md. Typecheck
   clean; 121/121 tests pass. **Needs live test** (email round-trip) + confirm the redirect
   URL is allowlisted in Supabase Auth.
+- **2026-06-23 — front-end batch + New-Person tweaks:** 4.3 (test card adapts to channel;
+  search/show by phone for SMS), 4.4 (Send moved to its own card with Last-send at bottom;
+  Test card beside it), 10.3 (sign-up password min-length hint, min 10). 9.3 fixed properly
+  (pending-waiver detection was checking `active` + no-waiver, which never matches; now keys
+  on `pending-waiver` status; dead `/people/:id` links repointed). 9.2 confirmed already done
+  (retire/unretire soft-delete filters new meets, keeps past). New-Person form: T-shirt
+  defaults Adult S, required-field asterisks + note, grad-year already unset. Coach
+  "invite by email" now creates a real account via `invite-account` (+ name fields) instead
+  of an in-memory placeholder + home-page link. tsc clean; 121/121 tests.
 - **2026-06-22:** Research notes + this plan written; 4 decisions resolved (see below).
 
 ---

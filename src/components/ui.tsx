@@ -168,10 +168,10 @@ export function Stat({ value, label, accent }: { value: ReactNode; label: string
 }
 
 // ---- Field ----
-export function Field({ label, hint, children, tip }: { label: string; hint?: string; children: ReactNode; tip?: string }) {
+export function Field({ label, hint, children, tip, required }: { label: string; hint?: string; children: ReactNode; tip?: string; required?: boolean }) {
   return (
     <div className="field">
-      <label>{label}{tip && <span data-tip={tip} style={{ marginLeft: 6, cursor: 'help', color: 'var(--ink-soft)' }}>ⓘ</span>}</label>
+      <label>{label}{required && <span aria-hidden style={{ color: 'var(--coral-600)', marginLeft: 3 }}>*</span>}{tip && <span data-tip={tip} style={{ marginLeft: 6, cursor: 'help', color: 'var(--ink-soft)' }}>ⓘ</span>}</label>
       {children}
       {hint && <div className="hint">{hint}</div>}
     </div>

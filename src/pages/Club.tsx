@@ -239,7 +239,10 @@ function ClubSettings({ club }: { club: Club }) {
 function ClubManagers({ club }: { club: Club }) {
   const db = useDB();
   const toast = useToast();
+  const [cFirst, setCFirst] = useState('');
+  const [cLast, setCLast] = useState('');
   const [email, setEmail] = useState('');
+  const [invitingCoach, setInvitingCoach] = useState(false);
   const managers = club.managerIds
     .map((id) => db.people.find((p) => p.id === id))
     .filter((p): p is Athlete => !!p);
@@ -267,27 +270,25 @@ function ClubManagers({ club }: { club: Club }) {
     });
   };
 
-  const inviteByEmail = () => {
+  const inviteByEmail = async () => {
     const addr = email.trim().toLowerCase();
     if (!addr) return;
+    // Already a member? Just promote them to manager — no new account needed.
     const existing = db.people.find((p) => p.email.toLowerCase() === addr);
-    if (existing) { addManager(existing.id); setEmail(''); return; }
-    const id = crypto.randomUUID();
-    const local = addr.split('@')[0];
-    const person: Athlete = {
-      id, kind: 'coach', roles: { athlete: false, coach: true }, firstName: local, lastName: '(invited)', email: addr,
-      dob: '', gender: 'Other', gradYear: 1900, studentStatus: 'Non-Student', shirt: '',
-      country: 'USA', state: club.state ?? '', phone: '', mainClubId: club.id, altClubIds: [],
-      levels: {}, emergency: { contact: '', relation: '', phone: '' }, dietary: [], dietaryNotes: '',
-      memberships: [], achievements: [],
-    };
-    mutate((d) => { d.people.push(person); pushPerson(person); });
-    addManager(id);
-    setEmail('');
-    sendClubInvite({ clubId: club.id, kind: 'coach', email: addr, name: `${person.firstName} ${person.lastName}` })
-      .then((res) => toast(res.ok
-        ? `Coach invited — a setup email was sent to ${addr}.`
-        : `Coach added as manager, but the email failed: ${res.error ?? 'unknown error'}.`));
+    if (existing) { addManager(existing.id); setEmail(''); setCFirst(''); setCLast(''); return; }
+    if (!cFirst.trim() || !cLast.trim()) { toast('Enter the coach’s first and last name.', { variant: 'error' }); return; }
+    // New person: create a real account + email a set-password link (lands them on
+    // membership after sign-in). The server creates/links the people row, so we
+    // don't fabricate an in-memory person here.
+    setInvitingCoach(true);
+    const res = await inviteAccount({ clubId: club.id, email: addr, firstName: cFirst.trim(), lastName: cLast.trim(), kind: 'coach' });
+    setInvitingCoach(false);
+    if (res.ok) {
+      toast(`Account created — a set-password link was emailed to ${addr}. Add them as a manager once they appear on the roster.`);
+      setEmail(''); setCFirst(''); setCLast('');
+    } else {
+      toast(res.error ?? 'Could not create the account.', { variant: 'error' });
+    }
   };
 
   return (
@@ -307,11 +308,17 @@ function ClubManagers({ club }: { club: Club }) {
         <Field label="Add an existing member as manager">
           <Combo options={candidates} value={null} onChange={addManager} placeholder="Search people…" />
         </Field>
-        <Field label="Or invite a coach by email">
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input type="email" value={email} placeholder="coach@club.org"
-              onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') inviteByEmail(); }} />
-            <button className="btn small" type="button" onClick={inviteByEmail} disabled={!email.trim()}>Invite</button>
+        <Field label="Or invite a new coach (creates their account)" hint="They’ll get an email to set a password, then land on membership.">
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <input type="text" value={cFirst} placeholder="First" style={{ flex: '1 1 80px' }}
+              onChange={(e) => setCFirst(e.target.value)} />
+            <input type="text" value={cLast} placeholder="Last" style={{ flex: '1 1 80px' }}
+              onChange={(e) => setCLast(e.target.value)} />
+            <input type="email" value={email} placeholder="coach@club.org" style={{ flex: '2 1 140px' }}
+              onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void inviteByEmail(); }} />
+            <button className="btn small" type="button" onClick={() => void inviteByEmail()} disabled={!email.trim() || invitingCoach}>
+              {invitingCoach ? 'Inviting…' : 'Invite'}
+            </button>
           </div>
         </Field>
       </div>

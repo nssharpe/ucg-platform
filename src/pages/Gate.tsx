@@ -2,6 +2,10 @@ import { useState } from 'react';
 import { checkPassword } from '../lib/store';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 
+// Keep in step with the Supabase password policy (Auth → Policies). See
+// docs/research/2026-06-22-password-policy.md.
+const MIN_PASSWORD_LEN = 10;
+
 export function Gate({ onUnlock }: { onUnlock: () => void }) {
   if (isSupabaseConfigured) return <AuthGate />;
   return <PasswordGate onUnlock={onUnlock} />;
@@ -144,7 +148,12 @@ function AuthGate() {
           autoComplete={mode === 'sign-in' ? 'current-password' : 'new-password'}
           onChange={(e) => { setPw(e.target.value); setErr(null); setInfo(null); }}
         />
-        <button className="btn primary" disabled={busy || !email || !pw}>
+        {mode === 'sign-up' && (
+          <div className="gate-note" style={{ color: pw.length > 0 && pw.length < MIN_PASSWORD_LEN ? 'var(--coral-100)' : 'var(--ice-200)', marginTop: 6, textAlign: 'left' }}>
+            Use at least {MIN_PASSWORD_LEN} characters.
+          </div>
+        )}
+        <button className="btn primary" disabled={busy || !email || !pw || (mode === 'sign-up' && pw.length < MIN_PASSWORD_LEN)}>
           {busy ? 'Please wait…' : mode === 'sign-in' ? 'Sign in →' : 'Sign up →'}
         </button>
         {err && <div className="gate-err">{err}</div>}
