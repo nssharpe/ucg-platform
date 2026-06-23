@@ -692,6 +692,28 @@ export async function fetchCommLog(limit = 100): Promise<(CommLogEntry & { id: s
   }));
 }
 
+export interface SmsMessage {
+  id: string;
+  direction: 'outbound' | 'inbound';
+  phone: string;
+  status: string | null;
+  body: string | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Per-message SMS log (outbound delivery status + inbound replies). Admin-only via RLS. */
+export async function fetchSmsMessages(limit = 200): Promise<SmsMessage[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from('sms_messages').select('*').order('created_at', { ascending: false }).limit(limit);
+  if (error) { console.error('[supabase] fetchSmsMessages failed:', error); return []; }
+  return (data ?? []).map((r) => ({
+    id: r.id, direction: r.direction, phone: r.phone, status: r.status, body: r.body,
+    error: r.error, createdAt: r.created_at, updatedAt: r.updated_at,
+  }));
+}
+
 /** Ask a club's managers + league admins for manager access. Email only. */
 export async function requestManagerAccess(
   clubId: string,

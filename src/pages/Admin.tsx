@@ -13,9 +13,10 @@ import { downloadWaiverProof, formatSignedAt } from '../lib/waiver-proof';
 import { sanitizeWaiverHtml, escapeHtml } from '../lib/sanitize-html';
 import { fmtMoney } from '../lib/scoring';
 import { randomPromoCode, couponValid } from '../lib/pricing';
-import { fetchAllRoles, isSupabaseConfigured, pushAll, pushClub, pushClubManager, pushClubRequest, pushCoupon, pushLevel, pushMembership, pushRegistration, pushSeason, pushUserRole, pushAccountInvite, deleteCoupon, deleteRegistration, sendEmail, sendSms, pushWaiverDocument, logComm, fetchCommLog, pushPerson, deletePerson, type SendEmailResult, type CommLogEntry } from '../lib/supabase';
+import { fetchAllRoles, isSupabaseConfigured, pushAll, pushClub, pushClubManager, pushClubRequest, pushCoupon, pushLevel, pushMembership, pushRegistration, pushSeason, pushUserRole, pushAccountInvite, deleteCoupon, deleteRegistration, sendEmail, sendSms, pushWaiverDocument, logComm, fetchCommLog, fetchSmsMessages, pushPerson, deletePerson, type SendEmailResult, type CommLogEntry, type SmsMessage } from '../lib/supabase';
 import { analyzeMessage, normalizeToGsm7 } from '../lib/sms-segments';
 import { estimateSmsCost, partitionByConsent } from '../lib/sms-send';
+import { classifyDeliveryStatus } from '../lib/sms-inbound';
 import { useCapabilities } from '../lib/capabilities';
 
 // ---------- Merge Athletes modal ----------
@@ -1789,6 +1790,28 @@ export function Communicate() {
     return () => { live = false; };
   }, [historyOpen, logRefresh]);
 
+  // Per-message SMS activity (sms_messages): inbound replies + delivery status.
+  const [smsMessages, setSmsMessages] = useState<SmsMessage[]>([]);
+  const [smsActivityOpen, setSmsActivityOpen] = useState(false);
+  const [smsActivityRefresh, setSmsActivityRefresh] = useState(0);
+  const [smsLoading, setSmsLoading] = useState(false);
+  useEffect(() => {
+    if (!smsActivityOpen) return;
+    let live = true;
+    void fetchSmsMessages().then((rows) => { if (live) { setSmsMessages(rows); setSmsLoading(false); } });
+    return () => { live = false; };
+  }, [smsActivityOpen, smsActivityRefresh]);
+  // Loading is flipped on by the open/refresh handlers (not the effect) to avoid
+  // a synchronous setState-in-effect; the fetch's .then turns it back off.
+  const openSmsActivity = () => {
+    const next = !smsActivityOpen;
+    setSmsActivityOpen(next);
+    if (next) setSmsLoading(true);
+  };
+  const refreshSmsActivity = () => { setSmsLoading(true); setSmsActivityRefresh((n) => n + 1); };
+  const inboundMsgs = useMemo(() => smsMessages.filter((m) => m.direction === 'inbound'), [smsMessages]);
+  const outboundMsgs = useMemo(() => smsMessages.filter((m) => m.direction === 'outbound'), [smsMessages]);
+
   // Test send
   const [testPersonId, setTestPersonId] = useState<string | null>(null);
   const [testGroup, setTestGroup] = useState<Athlete[]>([]);
@@ -2394,6 +2417,80 @@ export function Communicate() {
                   </div>
                 );
               })}
+            </div>
+          )
+        )}
+      </div>
+
+      {/* ---- Text activity: inbound replies + per-message delivery status ---- */}
+      <div className="card card-pad" style={{ marginTop: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <h3 className="card-title" style={{ margin: 0 }}>Text activity</h3>
+          <span style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>inbound replies &amp; delivery status</span>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            {smsActivityOpen && (
+              <button className="btn small ghost" disabled={smsLoading} onClick={refreshSmsActivity}>Refresh</button>
+            )}
+            <button className="btn small ghost" onClick={openSmsActivity}>{smsActivityOpen ? 'Hide' : 'Show'}</button>
+          </div>
+        </div>
+        {smsActivityOpen && (
+          smsLoading ? (
+            <p style={{ fontSize: 13.5, color: 'var(--ink-soft)', marginTop: 10 }}>Loading…</p>
+          ) : smsMessages.length === 0 ? (
+            <p style={{ fontSize: 13.5, color: 'var(--ink-soft)', marginTop: 10 }}>
+              No text activity yet. Inbound replies and delivery receipts appear here once Telnyx delivers them
+              (requires the approved 10DLC campaign).
+            </p>
+          ) : (
+            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {/* Inbound replies */}
+              <div>
+                <h4 style={{ margin: '0 0 6px', fontSize: 14 }}>Replies ({inboundMsgs.length})</h4>
+                {inboundMsgs.length === 0 ? (
+                  <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: 0 }}>No inbound replies.</p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {inboundMsgs.map((m) => (
+                      <div key={m.id} style={{ border: '1px solid var(--line)', borderRadius: 6, padding: '8px 12px' }}>
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                          <Badge tone="navy">In</Badge>
+                          <strong style={{ fontSize: 13 }}>{m.phone}</strong>
+                          <span style={{ fontSize: 12, color: 'var(--ink-soft)' }}>
+                            {new Date(m.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 13, marginTop: 4, color: 'var(--ink)' }}>{m.body || '—'}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Outbound delivery status */}
+              <div>
+                <h4 style={{ margin: '0 0 6px', fontSize: 14 }}>Delivery status ({outboundMsgs.length})</h4>
+                {outboundMsgs.length === 0 ? (
+                  <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: 0 }}>No outbound messages tracked.</p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {outboundMsgs.map((m) => {
+                      const cls = classifyDeliveryStatus(m.status);
+                      const tone = cls === 'delivered' ? 'ok' : cls === 'failed' ? 'err' : 'warn';
+                      return (
+                        <div key={m.id} style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', fontSize: 13, padding: '4px 0', borderBottom: '1px solid var(--line)' }}>
+                          <Badge tone={tone}>{m.status || cls}</Badge>
+                          <span>{m.phone}</span>
+                          <span style={{ fontSize: 12, color: 'var(--ink-soft)' }}>
+                            {new Date(m.updatedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                          {m.error && <span style={{ fontSize: 12, color: 'var(--coral-600)' }}>{m.error}</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           )
         )}

@@ -15,6 +15,14 @@ export function isStopKeyword(text: string): boolean {
   return STOP_KEYWORDS.has((text ?? '').trim().toUpperCase());
 }
 
+/** Collapse a Telnyx delivery status into the three states the UI/webhook care about. */
+export function classifyDeliveryStatus(status: string | null | undefined): 'delivered' | 'failed' | 'pending' {
+  const s = (status ?? '').toLowerCase();
+  if (s === 'delivered') return 'delivered';
+  if (/fail|undeliver|expired|rejected/.test(s)) return 'failed';
+  return 'pending';
+}
+
 export type TelnyxEvent =
   | { kind: 'inbound'; messageId: string; from: string; text: string }
   | { kind: 'dlr'; messageId: string; to: string; status: string }

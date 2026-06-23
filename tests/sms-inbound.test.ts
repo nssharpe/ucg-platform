@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizePhone, isStopKeyword, parseTelnyxWebhook } from '../src/lib/sms-inbound';
+import { normalizePhone, isStopKeyword, parseTelnyxWebhook, classifyDeliveryStatus } from '../src/lib/sms-inbound';
 
 describe('normalizePhone', () => {
   it('reduces US numbers in any format to the last 10 digits', () => {
@@ -48,5 +48,21 @@ describe('parseTelnyxWebhook', () => {
   it('returns other for unrecognized / malformed payloads', () => {
     expect(parseTelnyxWebhook({}).kind).toBe('other');
     expect(parseTelnyxWebhook({ data: { event_type: 'number.something' } }).kind).toBe('other');
+  });
+});
+
+describe('classifyDeliveryStatus', () => {
+  it('maps a delivered status', () => {
+    expect(classifyDeliveryStatus('delivered')).toBe('delivered');
+  });
+  it('maps the failure statuses', () => {
+    for (const s of ['delivery_failed', 'sending_failed', 'expired', 'rejected', 'undelivered']) {
+      expect(classifyDeliveryStatus(s)).toBe('failed');
+    }
+  });
+  it('treats in-flight / unknown / empty as pending', () => {
+    for (const s of ['queued', 'sending', 'sent', '', null]) {
+      expect(classifyDeliveryStatus(s)).toBe('pending');
+    }
   });
 });

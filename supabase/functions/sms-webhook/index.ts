@@ -20,7 +20,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendBatch, type EmailMessage } from '../_shared/resend.ts';
-import { parseTelnyxWebhook, isStopKeyword, normalizePhone } from './parse.ts';
+import { parseTelnyxWebhook, isStopKeyword, normalizePhone, classifyDeliveryStatus } from './parse.ts';
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -95,7 +95,7 @@ Deno.serve(async (req) => {
   if (ev.kind === 'dlr') {
     // Delivery receipt — update the message-level status. Mark the row's error
     // when the carrier reports a failure so it surfaces in the admin log.
-    const failed = /fail|undeliver|expired|rejected/i.test(ev.status);
+    const failed = classifyDeliveryStatus(ev.status) === 'failed';
     await db.from('sms_messages')
       .update({ status: ev.status, error: failed ? ev.status : null, updated_at: new Date().toISOString() })
       .eq('id', ev.messageId);

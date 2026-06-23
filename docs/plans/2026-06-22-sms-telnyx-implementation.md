@@ -106,8 +106,11 @@ Per research lines 76–87.
   to `sms_messages` + best-effort email to league admins (no SMS reply path by design).
   **STOP** keyword → `people.sms_consent = false` (STOP only; re-opt-in is manual).
 - Pure logic `src/lib/sms-inbound.ts` (`normalizePhone`, `isStopKeyword`,
-  `parseTelnyxWebhook`) + `tests/sms-inbound.test.ts` (7 cases); Deno copy at
-  `supabase/functions/sms-webhook/parse.ts` (keep in sync, like `segments.ts`).
+  `parseTelnyxWebhook`, `classifyDeliveryStatus`) + `tests/sms-inbound.test.ts` (10 cases);
+  Deno copy at `supabase/functions/sms-webhook/parse.ts` (keep in sync, like `segments.ts`).
+- **Admin UI:** Communicate has a "Text activity" card (`fetchSmsMessages`) listing inbound
+  replies and per-message delivery status (delivered/failed/pending via
+  `classifyDeliveryStatus`) — in addition to the inbound-reply email to admins.
 - **⚠ TO GO LIVE (console, Nate):** (1) set `TELNYX_PUBLIC_KEY` to the portal's Ed25519
   public key (`supabase secrets set TELNYX_PUBLIC_KEY=...`); (2) paste the function URL
   into the messaging profile's **Webhook URL** field. Until both are done the webhook
