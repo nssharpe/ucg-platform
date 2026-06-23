@@ -588,6 +588,50 @@ export async function inviteAccount(args: {
   return data as { ok: boolean; sentCount?: number; error?: string };
 }
 
+// ---------------------------------------------------------------------------
+// Communication log — record + read sends from the Communicate tool.
+// ---------------------------------------------------------------------------
+export interface CommLogEntry {
+  id?: string;
+  sentAt?: string;
+  channel: 'email' | 'sms';
+  isTest: boolean;
+  subject: string | null;
+  body: string;
+  recipientCount: number;
+  sentCount: number | null;
+  failedCount: number | null;
+  recipients: { name: string; contact: string }[];
+  error: string | null;
+}
+
+/** Insert a comm-log row (best-effort; never throws). */
+export async function logComm(entry: CommLogEntry): Promise<void> {
+  if (!supabase) return;
+  try {
+    const { data: u } = await supabase.auth.getUser();
+    const personId = u.user ? (await supabase.from('people').select('id').eq('auth_user_id', u.user.id).maybeSingle()).data?.id ?? null : null;
+    await supabase.from('comm_log').insert({
+      sender_person_id: personId,
+      channel: entry.channel, is_test: entry.isTest, subject: entry.subject, body: entry.body,
+      recipient_count: entry.recipientCount, sent_count: entry.sentCount, failed_count: entry.failedCount,
+      recipients: entry.recipients, error: entry.error,
+    });
+  } catch (e) { console.error('[supabase] logComm failed:', e); }
+}
+
+/** The signed-in user's communication history (admins see all, via RLS). */
+export async function fetchCommLog(limit = 100): Promise<(CommLogEntry & { id: string; sentAt: string })[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.from('comm_log').select('*').order('sent_at', { ascending: false }).limit(limit);
+  if (error) { console.error('[supabase] fetchCommLog failed:', error); return []; }
+  return (data ?? []).map((r) => ({
+    id: r.id, sentAt: r.sent_at, channel: r.channel, isTest: r.is_test, subject: r.subject, body: r.body,
+    recipientCount: r.recipient_count, sentCount: r.sent_count, failedCount: r.failed_count,
+    recipients: (r.recipients ?? []) as { name: string; contact: string }[], error: r.error,
+  }));
+}
+
 /** Ask a club's managers + league admins for manager access. Email only. */
 export async function requestManagerAccess(
   clubId: string,

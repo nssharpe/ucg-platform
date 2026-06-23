@@ -13,7 +13,7 @@ import { downloadWaiverProof, formatSignedAt } from '../lib/waiver-proof';
 import { sanitizeWaiverHtml, escapeHtml } from '../lib/sanitize-html';
 import { fmtMoney } from '../lib/scoring';
 import { randomPromoCode, couponValid } from '../lib/pricing';
-import { fetchAllRoles, isSupabaseConfigured, pushAll, pushClub, pushClubManager, pushClubRequest, pushCoupon, pushLevel, pushMembership, pushRegistration, pushSeason, pushUserRole, pushAccountInvite, deleteCoupon, deleteRegistration, sendEmail, sendSms, pushWaiverDocument, type SendEmailResult } from '../lib/supabase';
+import { fetchAllRoles, isSupabaseConfigured, pushAll, pushClub, pushClubManager, pushClubRequest, pushCoupon, pushLevel, pushMembership, pushRegistration, pushSeason, pushUserRole, pushAccountInvite, deleteCoupon, deleteRegistration, sendEmail, sendSms, pushWaiverDocument, logComm, fetchCommLog, type SendEmailResult, type CommLogEntry } from '../lib/supabase';
 import { analyzeMessage, normalizeToGsm7 } from '../lib/sms-segments';
 import { useCapabilities } from '../lib/capabilities';
 
@@ -1778,6 +1778,18 @@ export function Communicate() {
   const [lastSend, setLastSend] = useState<SendRecord | null>(null);
   const [sendLogExpanded, setSendLogExpanded] = useState(false);
 
+  // Persistent communication history (comm_log)
+  const [logRefresh, setLogRefresh] = useState(0);
+  const [commLog, setCommLog] = useState<(CommLogEntry & { id: string; sentAt: string })[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!historyOpen) return;
+    let live = true;
+    void fetchCommLog().then((rows) => { if (live) setCommLog(rows); });
+    return () => { live = false; };
+  }, [historyOpen, logRefresh]);
+
   // Test send
   const [testPersonId, setTestPersonId] = useState<string | null>(null);
   const [testGroup, setTestGroup] = useState<Athlete[]>([]);
@@ -1810,6 +1822,12 @@ export function Communicate() {
         } else {
           toast(`${label} failed: ${res.error ?? 'unknown error'}`);
         }
+        await logComm({
+          channel: 'sms', isTest: label.toLowerCase().startsWith('test'), subject: null, body,
+          recipientCount: valid.length, sentCount: res.sentCount ?? null, failedCount: res.failedCount ?? null,
+          recipients: valid.map((v) => ({ name: v.name ?? '', contact: v.phone })), error: res.ok ? null : (res.error ?? null),
+        });
+        setLogRefresh((n) => n + 1);
       } catch (e) {
         toast(`${label} failed: ${e instanceof Error ? e.message : String(e)}`);
       } finally {
@@ -1833,6 +1851,12 @@ export function Communicate() {
       } else {
         toast(`${label} failed: ${res.error ?? 'unknown error'}`);
       }
+      await logComm({
+        channel: 'email', isTest: label.toLowerCase().startsWith('test'), subject: subj, body,
+        recipientCount: valid.length, sentCount: res.sentCount ?? null, failedCount: res.failedCount ?? null,
+        recipients: valid.map((v) => ({ name: v.name ?? '', contact: v.email })), error: res.ok ? null : (res.error ?? null),
+      });
+      setLogRefresh((n) => n + 1);
     } catch (e) {
       toast(`${label} failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -2281,6 +2305,65 @@ export function Communicate() {
             {sending ? 'Sending…' : `Send test to ${testGroup.length} selected`}
           </button>
         </div>
+      </div>
+
+      {/* ---- Communication history (persistent log) ---- */}
+      <div className="card card-pad" style={{ marginTop: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <h3 className="card-title" style={{ margin: 0 }}>Communication history</h3>
+          <button className="btn small ghost" style={{ marginLeft: 'auto' }} onClick={() => setHistoryOpen((v) => !v)}>
+            {historyOpen ? 'Hide' : 'Show'}
+          </button>
+        </div>
+        {historyOpen && (
+          commLog.length === 0 ? (
+            <p style={{ fontSize: 13.5, color: 'var(--ink-soft)', marginTop: 10 }}>No sends recorded yet.</p>
+          ) : (
+            <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {commLog.map((c) => {
+                const open = expandedLogId === c.id;
+                const when = new Date(c.sentAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+                const ok = (c.failedCount ?? 0) === 0 && !c.error;
+                return (
+                  <div key={c.id} style={{ border: '1px solid var(--line)', borderRadius: 6, padding: '8px 12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', cursor: 'pointer' }}
+                      onClick={() => setExpandedLogId(open ? null : c.id)}>
+                      <Badge tone={c.channel === 'sms' ? 'navy' : 'info'}>{c.channel === 'sms' ? 'Text' : 'Email'}</Badge>
+                      {c.isTest && <Badge tone="warn">Test</Badge>}
+                      <span style={{ fontSize: 13 }}>{when}</span>
+                      <span style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
+                        {c.recipientCount} recipient{c.recipientCount !== 1 ? 's' : ''}
+                        {c.sentCount != null && ` · ${c.sentCount} sent${c.failedCount ? `, ${c.failedCount} failed` : ''}`}
+                      </span>
+                      <Badge tone={ok ? 'ok' : 'err'}>{ok ? 'Sent' : 'Issues'}</Badge>
+                      <span style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--accent)' }}>{open ? 'Hide' : 'Details'}</span>
+                    </div>
+                    {open && (
+                      <div style={{ marginTop: 8, fontSize: 13 }}>
+                        {c.subject && <div style={{ marginBottom: 4 }}><strong>Subject:</strong> {c.subject}</div>}
+                        {c.error && <div style={{ color: 'var(--coral-600)', marginBottom: 4 }}>Error: {c.error}</div>}
+                        <details style={{ marginBottom: 6 }}>
+                          <summary style={{ cursor: 'pointer', color: 'var(--ink-soft)' }}>Message</summary>
+                          <div style={{ whiteSpace: 'pre-wrap', maxHeight: 200, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 4, padding: 8, marginTop: 4, fontSize: 12.5 }}>{c.body}</div>
+                        </details>
+                        <details>
+                          <summary style={{ cursor: 'pointer', color: 'var(--ink-soft)' }}>Recipients ({c.recipients.length})</summary>
+                          <div style={{ maxHeight: 200, overflowY: 'auto', marginTop: 4 }}>
+                            {c.recipients.map((r, i) => (
+                              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '2px 0', fontSize: 12.5 }}>
+                                <span>{r.name || '—'}</span><span style={{ color: 'var(--ink-soft)' }}>{r.contact}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )
+        )}
       </div>
     </div>
   );
