@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
+import { clubHasActiveMembership, seasonForDate } from '../lib/capabilities-core';
 import { Badge, Combo, Field, Modal, Tabs } from '../components/ui';
 import { useToast, useFmtDate } from '../components/ui-hooks';
 import { CLUB_ACCESS_LABELS } from '../lib/types';
@@ -10,8 +11,9 @@ import { fmtMoney } from '../lib/scoring';
 import {
   deleteRegistration, pushCart, pushClub, pushClubManager, pushInvoice,
   pushMembership, pushRegistration, requestManagerAccess, sendClubInvite,
-  inviteAccount,
+  inviteAccount, pushClubMembership, deleteClubMembership,
 } from '../lib/supabase';
+import type { ClubMembership } from '../lib/types';
 import { ClubForm } from '../components/ClubForm';
 import { RegistrationEditor } from '../components/RegistrationEditor';
 
@@ -139,6 +141,7 @@ export function ClubPage() {
         )}
       </div>
 
+      <ClubMembershipCard club={club} />
       {canManage && <ClubManagers club={club} />}
       {canManage && <ClubSettings club={club} />}
 
@@ -240,6 +243,107 @@ function ClubSettings({ club }: { club: Club }) {
       <div style={{ marginTop: 12 }}>
         <button className="btn primary small" onClick={save}>Save settings</button>
       </div>
+    </div>
+  );
+}
+
+// ---- ClubMembershipCard -----------------------------------------------------
+// Shows the club's membership status per season; managers purchase (after a
+// required settings review); league admins grant/revoke for any season.
+function ClubMembershipCard({ club }: { club: Club }) {
+  const db = useDB();
+  const caps = useCapabilities();
+  const toast = useToast();
+  const [reviewSeason, setReviewSeason] = useState<string | null>(null);
+  const [reviewed, setReviewed] = useState(false);
+
+  const isAdmin = caps.actingAsAdmin;
+  const canManage = isAdmin || caps.managedClubIds.includes(club.id);
+  const currentSeason = db.seasons.find((s) => s.current);
+  const seasons = db.seasons.filter((s) => s.active).slice().sort((a, b) => a.startsOn.localeCompare(b.startsOn));
+  const seasonName = (id: string) => db.seasons.find((s) => s.id === id)?.name ?? id;
+
+  const grant = (seasonId: string, byAdmin: boolean) => {
+    const cm: ClubMembership = { id: crypto.randomUUID(), clubId: club.id, seasonId, status: 'active', grantedByAdmin: byAdmin, createdAt: new Date().toISOString() };
+    mutate((d) => { (d.clubMemberships ??= []).push(cm); pushClubMembership(cm); });
+    toast(`Club membership ${byAdmin ? 'granted' : 'purchased'} for ${seasonName(seasonId)}.`);
+  };
+  const revoke = (seasonId: string) => {
+    const cm = (db.clubMemberships ?? []).find((x) => x.clubId === club.id && x.seasonId === seasonId);
+    if (!cm) return;
+    mutate((d) => { d.clubMemberships = (d.clubMemberships ?? []).filter((x) => x.id !== cm.id); deleteClubMembership(cm.id); });
+    toast(`Club membership revoked for ${seasonName(seasonId)}.`);
+  };
+
+  const currentActive = currentSeason ? clubHasActiveMembership(db, club.id, currentSeason.id) : false;
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 18 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+        <h3 className="card-title" style={{ margin: 0 }}>Club membership</h3>
+        {currentSeason && (currentActive
+          ? <Badge tone="ok">✓ Active · {currentSeason.name}</Badge>
+          : <Badge tone="err">Not active · {currentSeason?.name}</Badge>)}
+      </div>
+      <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginTop: 0 }}>
+        A club must hold an active membership for a season before its athletes can register or it can host that season.
+        Membership runs July 1 – June 30.
+      </p>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {seasons.map((s) => {
+          const active = clubHasActiveMembership(db, club.id, s.id);
+          return (
+            <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 14, padding: '4px 0', borderBottom: '1px solid var(--line)' }}>
+              <span style={{ minWidth: 150 }}>
+                {s.name}{s.current ? ' (current season)' : ' (upcoming season)'}
+              </span>
+              {active ? <Badge tone="ok">Active</Badge> : <Badge tone="warn">None</Badge>}
+              <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                {!active && canManage && (
+                  <button className="btn small primary" onClick={() => { setReviewSeason(s.id); setReviewed(false); }}>
+                    Purchase
+                  </button>
+                )}
+                {isAdmin && (active
+                  ? <button className="btn small ghost" onClick={() => revoke(s.id)}>Revoke</button>
+                  : <button className="btn small ghost" onClick={() => grant(s.id, true)}>Grant (admin)</button>)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {reviewSeason && (
+        <Modal title={`Purchase ${seasonName(reviewSeason)} club membership`} onClose={() => setReviewSeason(null)}>
+          {!db.seasons.find((s) => s.id === reviewSeason)?.current && (
+            <div className="card card-pad" style={{ borderLeft: '4px solid var(--amber-600)', marginBottom: 12 }}>
+              ⚠ You are purchasing for <strong>{seasonName(reviewSeason)}</strong>, which is not the current season.
+            </div>
+          )}
+          <p style={{ fontSize: 14, marginTop: 0 }}>Review your club’s details before purchasing — they must be correct for the season:</p>
+          <table className="tbl" style={{ marginBottom: 12 }}>
+            <tbody>
+              <tr><td>Name</td><td><strong>{club.name}</strong> ({club.shortName})</td></tr>
+              <tr><td>Location</td><td>{club.state} · {club.region} region</td></tr>
+              <tr><td>Contact email</td><td>{club.email || <em>none set</em>}</td></tr>
+              <tr><td>Eligibility</td><td>{club.access ?? 'open'}</td></tr>
+              <tr><td>Club payments</td><td>{club.allowClubPay ? 'Athletes may push fees to club cart' : 'Off'}</td></tr>
+              <tr><td>Managers</td><td>{club.managerIds.length}</td></tr>
+            </tbody>
+          </table>
+          <label className="checkrow" style={{ marginBottom: 12 }}>
+            <input type="checkbox" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} />
+            I have reviewed the club’s settings and details above and confirm they are correct.
+          </label>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button className="btn primary" disabled={!reviewed} onClick={() => { grant(reviewSeason, false); setReviewSeason(null); setReviewed(false); }}>
+              Complete purchase
+            </button>
+            <button className="btn ghost" onClick={() => setReviewSeason(null)}>Cancel</button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -481,6 +585,19 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
 
   const regClosed = meet.status !== 'reg-open';
 
+  // Gate: the club must hold an active membership for the meet's season before
+  // registering any athlete. Returns true (and toasts) when blocked.
+  const clubMembershipBlocked = (): boolean => {
+    const seasonId = seasonForDate(db, meet.startDate);
+    if (!clubHasActiveMembership(db, clubId, seasonId)) {
+      const sName = db.seasons.find((s) => s.id === seasonId)?.name ?? 'this season';
+      const club = db.clubs.find((c) => c.id === clubId);
+      toast(`${club?.shortName ?? 'This club'} needs an active ${sName} club membership before registering athletes for this meet. Purchase it on the club page.`, { variant: 'error' });
+      return true;
+    }
+    return false;
+  };
+
   // changeFee applies if the fee is defined and we're past the startsAt date
   const changeFeeApplies = !!(
     meet.changeFee &&
@@ -518,6 +635,7 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
 
   // Persist registration changes from RegistrationEditor
   const saveRegs = (athleteId: string, newRegs: Registration[]) => {
+    if (clubMembershipBlocked()) return;
     mutate((d) => {
       const existingForAthlete = d.registrations.filter(
         (r) => r.meetId === meet.id && r.athleteId === athleteId && r.clubId === clubId && !r.refunded,
@@ -567,6 +685,7 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
 
   // Add entries to club cart (for unregistered athletes after editor saves)
   const addToCart = (athleteId: string, regs: Registration[]) => {
+    if (clubMembershipBlocked()) return;
     saveRegs(athleteId, regs);
     // Queue cart items for the newly registered disciplines
     mutate((d) => {

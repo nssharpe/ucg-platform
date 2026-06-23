@@ -436,6 +436,19 @@ export interface DB {
   waiverDocuments?: WaiverDocument[];
   /** Recorded e-signatures (the legal evidence records). */
   waiverSignatures?: WaiverSignature[];
+  /** Per-(club, season) club memberships — gate for registration & hosting. */
+  clubMemberships?: ClubMembership[];
+}
+
+/** A club's membership for a season. Its presence (status 'active') is the gate
+ *  that lets the club's athletes register and the club host that season. */
+export interface ClubMembership {
+  id: string;
+  clubId: string;
+  seasonId: string;
+  status: 'active';
+  grantedByAdmin: boolean;
+  createdAt: string;
 }
 
 export const STATE_REGIONS: Record<string, Region> = {

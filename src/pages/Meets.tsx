@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
+import { seasonForDate, clubHasActiveMembership } from '../lib/capabilities-core';
 import { Badge, Field, Modal, Tabs } from '../components/ui';
 import { useToast, useFmtDate } from '../components/ui-hooks';
 import { MeetWizard } from '../components/MeetWizard';
@@ -199,7 +200,7 @@ interface SelfRegModalProps {
   meet: Meet;
   athlete: Athlete;
   onClose: () => void;
-  toast: (msg: string) => void;
+  toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void;
 }
 
 function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
@@ -232,6 +233,14 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
 
   // Called by RegistrationEditor when the athlete confirms their selections
   const handleRegSave = (regs: Registration[]) => {
+    // Gate: the competing club must hold an active membership for the meet's season.
+    const seasonId = seasonForDate(db, meet.startDate);
+    if (!clubHasActiveMembership(db, selectedClubId, seasonId)) {
+      const sName = db.seasons.find((s) => s.id === seasonId)?.name ?? 'this season';
+      const club = db.clubs.find((c) => c.id === selectedClubId);
+      toast(`${club?.shortName ?? 'Your club'} needs an active ${sName} club membership before anyone can register for this meet. A club manager can purchase it on the club page.`, { variant: 'error' });
+      return;
+    }
     if (hasAddons) {
       setPendingRegs(regs);
       setStep('addons');

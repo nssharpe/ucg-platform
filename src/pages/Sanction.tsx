@@ -8,6 +8,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import { mutate, useDB } from '../lib/store';
 import { pushSanctionRequest, pushSanctionVote, pushMeet, notifySanction } from '../lib/supabase';
 import { useCapabilities } from '../lib/capabilities';
+import { seasonForDate, clubHasActiveMembership } from '../lib/capabilities-core';
 import { useSession } from '../lib/auth';
 import { Combo, Field } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
@@ -255,6 +256,12 @@ export function SanctionRequestForm() {
     if (!eventName.trim()) return setError('Event name is required.');
     if (!accessibleAccepted) return setError('You must certify that this event is accessible to all divisions. If you cannot, please contact info@naigc.org.');
     if (!startDate || !endDate || endDate < startDate) return setError('End date must be on or after the start date.');
+    // Gate: a club must hold active membership for the event's season to host.
+    const hostSeasonId = seasonForDate(db, startDate);
+    if (!clubHasActiveMembership(db, hostClubId, hostSeasonId)) {
+      const sName = db.seasons.find((s) => s.id === hostSeasonId)?.name ?? 'that season';
+      return setError(`Your club needs an active ${sName} club membership to host an event that season. Purchase it on your club page first.`);
+    }
     if (!regOpens || !regCloses) return setError('Registration open and close dates are required.');
     if (!city.trim() || !state) return setError('City and state are required.');
     if (!venue.trim()) return setError('Venue name is required.');

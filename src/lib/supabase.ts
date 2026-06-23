@@ -7,7 +7,7 @@
 // block the UI) and are no-ops when `isSupabaseConfigured` is false.
 import { createClient, type SupabaseClient, type RealtimePostgresChangesPayload, type PostgrestError } from '@supabase/supabase-js';
 import type {
-  AccountInvite, Athlete, Club, ClubRequest, Coupon, DB, Invoice, Level, Meet, Membership, Region, Registration, SanctionRequest, SanctionVote, Score, Season,
+  AccountInvite, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, Invoice, Level, Meet, Membership, Region, Registration, SanctionRequest, SanctionVote, Score, Season,
   WaiverDocument, WaiverSignature,
 } from './types';
 import { writeQueue, type WriteOp, type ExecResult } from './write-queue';
@@ -294,6 +294,10 @@ const rowToWaiverDocument = (r: Row<'waiver_documents'>): WaiverDocument => ({
   id: r.id, seasonId: r.season_id, waiverType: r.waiver_type as WaiverDocument['waiverType'], version: r.version,
   body: r.body, contentHash: r.content_hash, published: r.published, createdAt: r.created_at,
 });
+const rowToClubMembership = (r: { id: string; club_id: string; season_id: string; status: string; granted_by_admin: boolean; created_at: string }): ClubMembership => ({
+  id: r.id, clubId: r.club_id, seasonId: r.season_id, status: 'active',
+  grantedByAdmin: !!r.granted_by_admin, createdAt: r.created_at,
+});
 const rowToWaiverSignature = (r: Row<'waiver_signatures'>): WaiverSignature => ({
   id: r.id, personId: r.person_id, seasonId: r.season_id, waiverType: r.waiver_type as WaiverSignature['waiverType'],
   waiverDocumentId: r.waiver_document_id, contentHash: r.content_hash,
@@ -310,6 +314,10 @@ export function pushLevel(l: Level) { remoteUpsert('levels', [levelToRow(l)]); }
 export function deleteLevel(id: string) { remoteDelete('levels', id); }
 export function pushCoupon(c: Coupon) { remoteUpsert('coupons', [couponToRow(c)]); }
 export function deleteCoupon(code: string) { remoteDelete('coupons', code, 'code'); }
+export function pushClubMembership(cm: ClubMembership) {
+  remoteUpsert('club_memberships', [{ id: cm.id, club_id: cm.clubId, season_id: cm.seasonId, status: cm.status, granted_by_admin: cm.grantedByAdmin }]);
+}
+export function deleteClubMembership(id: string) { remoteDelete('club_memberships', id, 'id'); }
 
 export function pushClub(c: Club) {
   remoteUpsert('clubs', [clubToRow(c)]);
@@ -757,7 +765,7 @@ export async function loadAll(): Promise<DB | null> {
       seasonsR, levelsR, clubsR, clubManagersR, peopleR, altClubsR, membershipsR,
       meetsR, sessionsR, squadsR, registrationsR, scoresR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
       clubRequestsR, appSettingsR, accountInvitesR, sanctionRequestsR, sanctionVotesR,
-      waiverDocsR, waiverSigsR,
+      waiverDocsR, waiverSigsR, clubMembershipsR,
     ] = await Promise.all([
       supabase.from('seasons').select('*'),
       supabase.from('levels').select('*'),
@@ -782,6 +790,7 @@ export async function loadAll(): Promise<DB | null> {
       supabase.from('sanction_votes').select('*'),      // 0008; tolerated if absent
       supabase.from('waiver_documents').select('*'),    // tolerated if absent
       supabase.from('waiver_signatures').select('*'),   // tolerated if absent
+      supabase.from('club_memberships').select('*'),    // tolerated if absent
     ]);
 
     // club_requests may not exist on a pre-0005 DB — tolerate its error, fail on the rest.
@@ -922,6 +931,8 @@ export async function loadAll(): Promise<DB | null> {
       .map(rowToWaiverDocument);
     const waiverSignatures: WaiverSignature[] = (waiverSigsR.error ? [] : waiverSigsR.data ?? [])
       .map(rowToWaiverSignature);
+    const clubMemberships: ClubMembership[] = (clubMembershipsR.error ? [] : clubMembershipsR.data ?? [])
+      .map(rowToClubMembership);
 
     return {
       seasons, levels, clubs, people, meets, registrations, scores, invoices, coupons,
@@ -932,6 +943,7 @@ export async function loadAll(): Promise<DB | null> {
       ...(sanctionVotes.length ? { sanctionVotes } : {}),
       ...(waiverDocuments.length ? { waiverDocuments } : {}),
       ...(waiverSignatures.length ? { waiverSignatures } : {}),
+      ...(clubMemberships.length ? { clubMemberships } : {}),
     };
   } catch (e) {
     console.error('[supabase] loadAll threw:', e);

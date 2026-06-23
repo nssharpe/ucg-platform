@@ -32,6 +32,26 @@ export function currentSeasonId(db: DB): string | null {
   return db.seasons.find((s) => s.current)?.id ?? null;
 }
 
+/** The season whose [startsOn, endsOn] window contains `dateISO` (YYYY-MM-DD).
+ *  Falls back to the current season when no window matches. */
+export function seasonForDate(db: DB, dateISO: string): string | null {
+  const d = (dateISO ?? '').slice(0, 10);
+  if (d) {
+    const hit = db.seasons.find((s) => s.startsOn && s.endsOn && d >= s.startsOn && d <= s.endsOn);
+    if (hit) return hit.id;
+  }
+  return currentSeasonId(db);
+}
+
+/** True when a club holds an active membership for the given season — the gate
+ *  for that club's athletes registering and the club hosting that season. */
+export function clubHasActiveMembership(db: DB, clubId: string | null, seasonId: string | null): boolean {
+  if (!clubId || !seasonId) return false;
+  return (db.clubMemberships ?? []).some(
+    (cm) => cm.clubId === clubId && cm.seasonId === seasonId && cm.status === 'active',
+  );
+}
+
 /** Derive what the current (possibly impersonated) user can do.
  *  Impersonation only applies when the real user is an admin — a non-admin with
  *  a stray viewPersonId stays themselves. */
