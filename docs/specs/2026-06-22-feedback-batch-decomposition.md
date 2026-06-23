@@ -65,6 +65,18 @@
   registration — too risky to ship unverified overnight; needs its own spec + live test);
   7.4 View Cart, 7.5 swap-athlete-on-reg, 4.5 comms log, 10.2 error-log DB, 1.4 merge
   persistence (each medium/large; queued for a focused session with live verification).
+- **2026-06-23 — morning fixes + more (deployed live):** Fixed invite/set-password
+  redirect (router useNavigate, waits for session; expired-link message); toasts persist
+  until closed (+Clear all); real client-side **PDF downloads** via jsPDF — waiver proof
+  now embeds the full signed waiver text, receipts download directly; Purchase History
+  now shows a plain-English summary + details overlay; promo percent validated 0–100;
+  write-queue banner shows the underlying error. Then shipped **4.5 communication log**
+  (comm_log table + history view) and **10.2 error-log DB** (error_logs + admin Error Log
+  page + report-error sink + window error handlers). All migrations applied to live DB;
+  every push verified green (tsc + lint + build + 121 tests).
+  **Still remaining:** Phase 8 club-membership lifecycle (large, gates registration —
+  needs sign-off on behavior), 7.4 View Cart, 7.5 swap-athlete-on-reg, 1.4 merge
+  persistence.
 - **2026-06-22:** Research notes + this plan written; 4 decisions resolved (see below).
 
 ---
