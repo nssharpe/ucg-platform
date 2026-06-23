@@ -124,6 +124,8 @@ Deno.serve(async (req) => {
   // --- Send via Telnyx, one request per recipient ---
   const sent: string[] = [];
   const failed: { phone: string; error: string }[] = [...invalid];
+  // Per-message rows for sms_messages so the webhook can attach delivery receipts.
+  const sentRows: { id: string; direction: string; phone: string; status: string }[] = [];
 
   for (const r of valid) {
     const msg: Record<string, unknown> = { to: r.to, text };
@@ -137,6 +139,9 @@ Deno.serve(async (req) => {
       });
       if (resp.ok) {
         sent.push(r.to);
+        const okBody = await resp.json().catch(() => ({}));
+        const id = okBody?.data?.id;
+        if (typeof id === 'string') sentRows.push({ id, direction: 'outbound', phone: r.to, status: 'sent' });
       } else {
         const errBody = await resp.json().catch(() => ({}));
         const detail = errBody?.errors?.[0]?.detail ?? errBody?.errors?.[0]?.title ?? `HTTP ${resp.status}`;
@@ -145,6 +150,12 @@ Deno.serve(async (req) => {
     } catch (e) {
       failed.push({ phone: r.to, error: e instanceof Error ? e.message : String(e) });
     }
+  }
+
+  // Best-effort: record sent messages so DLR webhooks can update their status.
+  if (sentRows.length) {
+    try { await admin.from('sms_messages').insert(sentRows); }
+    catch (e) { console.error('[send-sms] sms_messages insert failed:', e); }
   }
 
   return json({

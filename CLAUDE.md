@@ -14,8 +14,8 @@ will apply first.
 ## Supabase / migrations
 - Project ref `wkyerxlgricfphopocoz` (org NAIGC). Migrations in `supabase/migrations/`.
   CLI is linked (`supabase link` done 2026-06-19). All migrations are applied and
-  tracked by the CLI — latest is `20260623000050_sms_consent_and_send_log.sql`
-  (SMS Phase 3) as of 2026-06-23. `supabase functions deploy <name>` deploys Edge
+  tracked by the CLI — latest is `20260623000060_sms_messages.sql`
+  (SMS Phase 4) as of 2026-06-23. `supabase functions deploy <name>` deploys Edge
   Functions (see [Email infra] below).
 - Migration filenames use Supabase's required timestamp format:
   `<YYYYMMDDHHmmss>_name.sql`. Create new ones with `supabase migration new <name>`.
@@ -84,7 +84,13 @@ will apply first.
   change/redeploy.
 - Functions in `supabase/functions/`:
   - `send-email` — Communicate broadcast, **admin-only**, Resend batch (50-recipient cap).
-  - `send-sms` — Communicate text sender, **admin-only**, Telnyx.
+  - `send-sms` — Communicate text sender, **admin-only**, Telnyx. Records each sent
+    message to `sms_messages` (for DLR tracking by `sms-webhook`).
+  - `sms-webhook` — inbound Telnyx webhook. Deployed `--no-verify-jwt`; authenticity via
+    Telnyx **Ed25519** signature verified against the `TELNYX_PUBLIC_KEY` secret (fails
+    closed if unset). DLRs → `sms_messages` status; inbound replies → store + email admins
+    (we never reply over SMS); STOP keyword → `people.sms_consent = false` (STOP only, no
+    auto re-opt-in). Webhook URL goes in the messaging profile's Webhook URL field.
   - `request-guardian-waiver` — minor waiver signing link. `record-waiver-signature`.
   - `notify-club-cart` — emails a club's managers when a member pushes fees to the cart.
   - `send-club-invite` — club manager invites a coach (`kind:'coach'`) or a member to

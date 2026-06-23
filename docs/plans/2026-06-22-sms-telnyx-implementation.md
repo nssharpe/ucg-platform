@@ -95,16 +95,23 @@ Per research lines 76–87.
 - **Pure logic** (Vitest, node env): `src/lib/sms-send.ts` (`estimateSmsCost`,
   `partitionByConsent`, `SMS_COST_PER_SEGMENT_USD`) + `tests/sms-send.test.ts` (6 cases).
 
-## Phase 4 — Inbound webhook (deferred; what the console field was asking about)
-The "Webhook URL" in the profile wizard points here. **Not needed to send.** When built:
-- New function **`sms-webhook`** at
-  `https://wkyerxlgricfphopocoz.supabase.co/functions/v1/sms-webhook`.
-- **Deploy with `--no-verify-jwt`** (Telnyx can't send a Supabase JWT) and instead
-  verify Telnyx's **Ed25519 request signature** (`telnyx-signature-ed25519` headers)
-  using the public key from the portal.
-- Handle: **delivery receipts (DLRs)** → update the send log; **inbound replies** →
-  store/notify; honor STOP at the app layer too (set `sms_consent = false`).
-- Then paste that URL into the messaging profile's Webhook URL field.
+## Phase 4 — Inbound webhook — ✅ BUILT 2026-06-23 (needs 2 console steps to go live)
+- Function **`sms-webhook`** deployed `--no-verify-jwt` at
+  `https://wkyerxlgricfphopocoz.supabase.co/functions/v1/sms-webhook`. Verifies Telnyx's
+  **Ed25519** signature (`telnyx-signature-ed25519` + `telnyx-timestamp`) over
+  `${timestamp}|${rawBody}` against `TELNYX_PUBLIC_KEY`; 5-min replay window; fails closed
+  if the key is unset.
+- **DLRs** → update `sms_messages.status` by Telnyx message id (migration
+  `20260623000060`; `send-sms` now records each sent message). **Inbound replies** → upsert
+  to `sms_messages` + best-effort email to league admins (no SMS reply path by design).
+  **STOP** keyword → `people.sms_consent = false` (STOP only; re-opt-in is manual).
+- Pure logic `src/lib/sms-inbound.ts` (`normalizePhone`, `isStopKeyword`,
+  `parseTelnyxWebhook`) + `tests/sms-inbound.test.ts` (7 cases); Deno copy at
+  `supabase/functions/sms-webhook/parse.ts` (keep in sync, like `segments.ts`).
+- **⚠ TO GO LIVE (console, Nate):** (1) set `TELNYX_PUBLIC_KEY` to the portal's Ed25519
+  public key (`supabase secrets set TELNYX_PUBLIC_KEY=...`); (2) paste the function URL
+  into the messaging profile's **Webhook URL** field. Until both are done the webhook
+  rejects everything (fail-closed) — expected.
 
 ## Testing / verification
 - Vitest: segment-counter logic (Phase 2). No network in tests.

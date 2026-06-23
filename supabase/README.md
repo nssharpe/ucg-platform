@@ -51,6 +51,7 @@ sequence numbers used in conversation. In order:
 | `20260623000030_error_logs.sql` | `error_logs` — client error log (anyone inserts, admins read), powers the admin Error Log page. |
 | `20260623000040_club_memberships.sql` | `club_memberships` (per club+season) — the registration/hosting gate; backfills the current season for clubs with active members. |
 | `20260623000050_sms_consent_and_send_log.sql` | `people.sms_consent`/`sms_consent_at` (CTIA opt-in) + `comm_log.segments`/`encoding`/`cost_estimate` (SMS send-log enrichment). |
+| `20260623000060_sms_messages.sql` | `sms_messages` — per-message log (outbound DLR status + inbound replies) the `sms-webhook` function updates. RLS: admins read; service-role writes. |
 
 All migrations are applied to the live project and tracked by the linked CLI
 (`supabase db push`). Migrations are append-only — add new ones rather than editing
@@ -69,7 +70,8 @@ is the only admin-gated sender.
 | Function | Purpose | Caller |
 |----------|---------|--------|
 | `send-email` | Communicate broadcast / test sender (Resend batch, 50-recipient cap). | admin only |
-| `send-sms` | Communicate text sender (Telnyx). | admin only |
+| `send-sms` | Communicate text sender (Telnyx); records sent messages to `sms_messages`. | admin only |
+| `sms-webhook` | Inbound Telnyx webhook: DLRs → `sms_messages` status, inbound replies → store + email admins, STOP → `sms_consent` off. Verifies Telnyx Ed25519 signature (`TELNYX_PUBLIC_KEY`). | Telnyx (no JWT; signature-verified) |
 | `record-waiver-signature` | Server-stamps real IP into `waiver_signatures`, activates membership. | signed-in owner (self) / guardian token |
 | `request-guardian-waiver` | Creates a signing token + emails a minor's guardian the link. | signed-in owner |
 | `notify-club-cart` | Emails a club's managers when a member pushes fees to the cart. | any signed-in member |

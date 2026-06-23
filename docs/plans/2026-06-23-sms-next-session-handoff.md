@@ -53,7 +53,10 @@ Per the plan's Phase 3. Use brainstorming/TDD/migration conventions in CLAUDE.md
   table vs. reuse; insert from the function or the client. Wire the existing
   `SendRecord`/lastSend UI to read from it.
 
-## 2. Phase 4 — inbound webhook (delivery receipts + replies)
+## 2. Phase 4 — inbound webhook (delivery receipts + replies) — ✅ DONE 2026-06-23
+Built + deployed; see the master plan's Phase 4 section. **Remaining (console, Nate):**
+set `TELNYX_PUBLIC_KEY` secret + paste the webhook URL into the messaging profile. Below
+is the original scope for reference:
 Per the plan's Phase 4.
 - New function `sms-webhook` deployed with `--no-verify-jwt` (Telnyx can't send a
   Supabase JWT). Verify Telnyx's Ed25519 signature (`telnyx-signature-ed25519` +
