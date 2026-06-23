@@ -51,6 +51,7 @@ const AdminClubs = lazy(() => loaders.Admin().then((m) => ({ default: m.AdminClu
 const AdminLeague = lazy(() => loaders.Admin().then((m) => ({ default: m.AdminLeague })));
 const Communicate = lazy(() => loaders.Admin().then((m) => ({ default: m.Communicate })));
 const WaiverSign = lazy(() => import('./pages/WaiverSign'));
+const SetPassword = lazy(() => import('./pages/SetPassword'));
 
 /** Prefetch all route chunks once the browser is idle after first paint. */
 function usePrefetchRoutes() {
@@ -123,6 +124,19 @@ export default function App() {
   const [unlockedLocally, setUnlockedLocally] = useState(isUnlocked());
   usePrefetchRoutes();
 
+  // After a set-password / invite link, Supabase strips its token from the URL
+  // hash (detectSessionInUrl), leaving our ?setpw=1 marker. Send the user to the
+  // set-password route and clear the marker so a later refresh doesn't re-trigger.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('setpw') === '1') {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('setpw');
+      url.hash = '/set-password';
+      window.history.replaceState(null, '', url.toString());
+    }
+  }, []);
+
   if (isSupabaseConfigured) {
     // Avoid flashing the gate for a signed-in user while getSession() resolves
     // on refresh. Guests (no token) fall through to the app and browse public
@@ -164,6 +178,7 @@ export default function App() {
               <Route path="/admin/league" element={<RequireAdmin><AdminLeague /></RequireAdmin>} />
               <Route path="/admin/communicate" element={<RequireAdmin><Communicate /></RequireAdmin>} />
               <Route path="/waiver/sign/:token" element={<WaiverSign />} />
+              <Route path="/set-password" element={<SetPassword />} />
               <Route path="*" element={<Home />} />
             </Routes>
           </Suspense>

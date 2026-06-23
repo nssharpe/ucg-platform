@@ -37,6 +37,14 @@
   remaining "shows 0" cause is manager-row persistence (see 1.4 theme, live-DB). 4.1
   default audience now nobody. 4.2 >10-recipient confirm on email + SMS. 7.2 T&T quick-
   select renamed "All Apparatuses". Typecheck clean; 121/121 tests pass.
+- **2026-06-23 — Phase 3 (invites/roster):** New `invite-account` Edge Function (deployed)
+  admin-creates an account + emails a Resend set-password link (invite link, recovery
+  fallback for existing users); new `#/set-password` page + `?setpw=1` boot redirect; Club
+  page: "Copy invite link" → **Add athlete** modal, per-roster-row **Invite** button
+  (membership link), and a **club switcher** dropdown by the page title (managed clubs /
+  all for league admins). Plan: docs/plans/2026-06-23-club-invites-and-roster.md. Typecheck
+  clean; 121/121 tests pass. **Needs live test** (email round-trip) + confirm the redirect
+  URL is allowlisted in Supabase Auth.
 - **2026-06-22:** Research notes + this plan written; 4 decisions resolved (see below).
 
 ---
