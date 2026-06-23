@@ -78,20 +78,24 @@ real security.
 ## Status & roadmap
 
 **Done:** Supabase backend (write-through + realtime live results) · real auth +
-capability model · accounts↔people · club management + new-club requests · admin
-role grants · membership lifecycle (digital waiver e-signature, club-pay) · club
-roster & meet-reg grid · club cart, coupons & invoices · meet/session/squad builder
-+ meet wizard · native scoring engines for all disciplines · nationals finals-qual /
-awards engine · live results (AA, event rankings, team scores) · imported real
-Nationals 2026 data · test-grade transactional email (Gmail SMTP Edge Functions:
-Communicate broadcast, guardian-waiver links, club-cart manager notifications) ·
-PWA + perf work · test suite.
+capability model · accounts↔people · club management + new-club requests · admin role
+grants · membership lifecycle (digital waiver e-signature, club-pay) · **club-membership
+lifecycle + registration/hosting gate** · club roster & meet-reg grid + roster club
+switcher · **admin-create invites with set-password links** (Add-athlete) · club cart,
+coupons (incl. account-restricted) & invoices · **View Cart + Purchase History + My
+Registrations** (client-side PDF receipts/waiver proof) · account merge (persisted) ·
+meet/session/squad builder + meet wizard · native scoring engines for all disciplines ·
+nationals finals-qual / awards engine · live results · imported real Nationals 2026
+data · **transactional email via Resend + SMS via Telnyx** (Communicate broadcast with a
+persistent communication log, guardian-waiver links, club-cart notices, invites) ·
+**client error-log DB + admin Error Log** · PWA + perf work · test suite.
 
-**Next (sub-projects):** Stripe payments → typed memberships + per-season waiver (B) →
-club-based registration multi-club picker (C) → codeless judge access (D) → meet
-1-vs-2-panel + calculator-vs-simple config (E). Further out: PDF certs, banquet
-tickets, production email transport (Resend / Workspace relay), external API, finals
-rosters. Full status in [`CLAUDE.md`](CLAUDE.md); docs index in [`docs/`](docs).
+**Next (sub-projects):** Stripe payments (+ server-emailed PDF receipts) → typed
+memberships + per-season waiver (B) → codeless judge access (D) → meet 1-vs-2-panel +
+calculator-vs-simple config (E) → MFA/passkeys (see
+[research note](docs/research/2026-06-22-auth-2fa-passkeys.md)). Further out: PDF certs,
+banquet tickets, external API, finals rosters. Full status in [`CLAUDE.md`](CLAUDE.md);
+docs index in [`docs/`](docs).
 
 **Path to launch:** [`docs/production-readiness.md`](docs/production-readiness.md) is the
 gap analysis + phased plan for reaching production gold standards (UX, security,

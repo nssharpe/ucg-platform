@@ -46,6 +46,10 @@ sequence numbers used in conversation. In order:
 | `20260620000010_membership_status_pending_waiver.sql` | Adds the `pending-waiver` membership status. |
 | `20260620000020_waiver_esign.sql` | `waiver_documents`, `waiver_signatures`, `waiver_sign_requests` + RLS. |
 | `20260620000030_seed_general_waiver.sql` | Seeds the default general waiver document. |
+| `20260623000010_coupon_account_restriction.sql` | Adds `coupons.restricted_to_person_id` (promo codes usable by a single account). |
+| `20260623000020_comm_log.sql` | `comm_log` — one row per Communicate send (channel, recipients, outcome). RLS: sender reads own, admins all. |
+| `20260623000030_error_logs.sql` | `error_logs` — client error log (anyone inserts, admins read), powers the admin Error Log page. |
+| `20260623000040_club_memberships.sql` | `club_memberships` (per club+season) — the registration/hosting gate; backfills the current season for clubs with active members. |
 
 All migrations are applied to the live project and tracked by the linked CLI
 (`supabase db push`). Migrations are append-only — add new ones rather than editing
@@ -54,16 +58,24 @@ applied files. See `../CLAUDE.md` for the enum-add transaction gotcha.
 ## Edge Functions (`functions/`)
 
 Deno functions deployed with `supabase functions deploy <name> --project-ref <ref>`.
-All email goes through Gmail SMTP (denomailer) using project secrets `GMAIL_USER` /
-`GMAIL_APP_PASSWORD` — **test-grade**; swap to Resend / Workspace relay before
-production. Front-end invokers live in `src/lib/supabase.ts`.
+Email goes through **Resend** (HTTP API) via the shared helper `functions/_shared/resend.ts`
+(`resendFrom`/`sendOne`/`sendBatch`); secrets `RESEND_API_KEY` / `RESEND_FROM`. SMS goes
+through **Telnyx** (`send-sms`). The old `GMAIL_*` secrets are unused (rollback only).
+Front-end invokers live in `src/lib/supabase.ts`. The notify-style functions allow any
+signed-in caller and resolve recipients server-side with the service role; `send-email`
+is the only admin-gated sender.
 
 | Function | Purpose | Caller |
 |----------|---------|--------|
-| `send-email` | Communicate broadcast / test sender (50-recipient cap). | admin only |
-| `record-waiver-signature` | Server-stamps real IP into `waiver_signatures`, activates membership. | signed-in owner |
+| `send-email` | Communicate broadcast / test sender (Resend batch, 50-recipient cap). | admin only |
+| `send-sms` | Communicate text sender (Telnyx). | admin only |
+| `record-waiver-signature` | Server-stamps real IP into `waiver_signatures`, activates membership. | signed-in owner (self) / guardian token |
 | `request-guardian-waiver` | Creates a signing token + emails a minor's guardian the link. | signed-in owner |
 | `notify-club-cart` | Emails a club's managers when a member pushes fees to the cart. | any signed-in member |
+| `send-club-invite` | Invite a coach (signup) or a member (purchase membership) by email. | club manager / admin |
+| `invite-account` | Admin-create an account + email a branded set-password link (Resend). Used by roster "Add athlete". | club manager / admin |
+| `request-manager-access` | Member asks a club's managers + admins for access. | any signed-in member |
+| `notify-sanction` | Sanction lifecycle emails (submitted → team+admins; approved/rejected → requester). | any signed-in member |
 
 ## Stand it up
 
@@ -156,10 +168,26 @@ The localStorage password gate (`checkPassword`/`isUnlocked` in `store.ts`)
 remains as the fallback when Supabase isn't configured; `src/pages/Gate.tsx`
 and `src/lib/auth.ts` handle Supabase Auth when it is.
 
+## Club-membership gate (since `…000040`)
+
+A club must hold an active `club_memberships` row for a season before its athletes can
+register or it can host that season. Enforced **client-side** at the registration and
+sanction-request entry points via the pure helpers `clubHasActiveMembership` /
+`seasonForDate` in `src/lib/capabilities-core.ts`. Managers purchase from the club page
+(after a settings review); league admins grant/revoke any season. The gate is ON.
+
+## Observability
+
+- `comm_log` — every Communicate send; surfaced in Communicate → "Communication history".
+- `error_logs` — front-end errors (via `report-error.ts` sink + `window` handlers in
+  `main.tsx`); surfaced in the admin **Error Log** page (search by user email). See
+  `docs/research/2026-06-22-error-logging-observability.md`.
+
 ## Not covered yet (future migrations)
 
 Payments (Stripe via an Edge Function — `invoices`/`cart_items` tables already exist),
 the membership-expiry notification cron, scheduled database backups, and the public API
-surface for other leagues. (Waiver e-signature **is** built — see migrations 0010–0030
-and the `record-waiver-signature` / `request-guardian-waiver` functions; it stores a
-structured signature evidence record, no PDFs by design.)
+surface for other leagues. (Waiver e-signature **is** built — migrations 0010–0030 +
+`record-waiver-signature` / `request-guardian-waiver`; it stores a structured signature
+evidence record. PDF proof and receipts are generated **client-side** (jsPDF) on demand;
+server-emailed PDF attachments will come with the payments work.)

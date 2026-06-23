@@ -76,29 +76,75 @@ will apply first.
   change/redeploy.
 - Functions in `supabase/functions/`:
   - `send-email` — Communicate broadcast, **admin-only**, Resend batch (50-recipient cap).
+  - `send-sms` — Communicate text sender, **admin-only**, Telnyx.
   - `request-guardian-waiver` — minor waiver signing link. `record-waiver-signature`.
   - `notify-club-cart` — emails a club's managers when a member pushes fees to the cart.
   - `send-club-invite` — club manager invites a coach (`kind:'coach'`) or a member to
     purchase membership (`kind:'membership'`); authorizes the caller manages the club.
+  - `invite-account` — admin-create a real auth user + email a branded **set-password**
+    link (`generateLink` type `invite`, or `recovery` if they already exist). Used by the
+    roster "Add athlete". The link's `redirectTo` carries `?setpw=1` (see set-password note).
   - `request-manager-access` — any member asks a club's managers + admins for access.
   - `notify-sanction` — sanction lifecycle (`event:'submitted'` → team+admins;
     `'approved'`/`'rejected'` → the requester).
   - The notify-style functions allow any signed-in caller and resolve recipients
-    server-side with the service role (pattern: `notify-club-cart`). `send-email` is the
-    only admin-gated sender.
-- Front-end invokers in `src/lib/supabase.ts`: `sendEmail`, `requestGuardianWaiver`,
-  `notifyClubCart`, `sendClubInvite`, `requestManagerAccess`, `notifySanction`. Deploy:
-  `supabase functions deploy <name> --project-ref wkyerxlgricfphopocoz` (sandbox
+    server-side with the service role (pattern: `notify-club-cart`). `send-email`/`send-sms`
+    are the only admin-gated senders.
+- Front-end invokers in `src/lib/supabase.ts`: `sendEmail`, `sendSms`, `requestGuardianWaiver`,
+  `notifyClubCart`, `sendClubInvite`, `inviteAccount`, `requestManagerAccess`, `notifySanction`.
+  Deploy: `supabase functions deploy <name> --project-ref wkyerxlgricfphopocoz` (sandbox
   disabled; Docker NOT required) — the deploy bundles `_shared/resend.ts` automatically.
+- **Edge Function error surfacing:** invokers must unwrap the JSON `error` body via
+  `edgeErrorMessage(error)` (returns the function's real message), NOT `error.message`
+  (which is the generic "Edge Function returned a non-2xx status code"). Every invoker
+  follows this — match it for new ones.
 - **Still over-claim** (deferred with Stripe — payment is itself a stub): the
   "Confirmation emailed" toasts in `Membership.tsx` (direct-pay completion) and
   `Club.tsx` (club-cart pay button) say email but send none. Wire when payments land.
+
+## Patterns & gotchas (learned in build)
+- **Auth/set-password round-trip with HashRouter.** Supabase uses implicit flow
+  (`detectSessionInUrl`), which puts the token in the URL **hash** — clashing with
+  HashRouter. The invite/set-password flow works around it: `redirectTo` is the app base
+  + `?setpw=1` (a *query*, survives hash-stripping); on boot `App.tsx` detects `?setpw=1`,
+  routes to `#/set-password`, and clears the marker. `SetPassword.tsx` waits ~2.5s for the
+  session before showing an "expired link" message (the session arrives async via
+  `onAuthStateChange`). **Dashboard requirement:** redirect URLs must include the
+  wildcards `https://nssharpe.github.io/ucg-platform/**` and `http://localhost:5173/**`,
+  or Supabase drops the query and the link lands on home.
+- **Club-membership gate is ON.** A club needs an active `club_memberships` row for a
+  season before its athletes can register or it can host. Enforced at the registration
+  (`Meets.tsx`, `Club.tsx`) and sanction-request (`Sanction.tsx`) entry points via
+  `clubHasActiveMembership`/`seasonForDate` (`capabilities-core.ts`). New registration
+  paths MUST apply this gate. A migration backfills the current season for clubs with
+  active members; future seasons require purchase/grant.
+- **`rolesLoaded` gate.** Roles load async *after* the session resolves; `RequireAdmin`
+  (and role screens) must wait on `useRolesLoaded()` or they flash "access denied" on
+  refresh. Reset it on sign-out / new user (`auth.ts`).
+- **Toasts.** `useToast()` takes `(msg, { variant?: 'info'|'error', persist? })`. Errors
+  persist until closed; all toasts have an ✕ and hover-pause (`ui.tsx`). Prefer
+  `{ variant: 'error' }` for failures so they don't auto-dismiss.
+- **PDFs are client-side (jsPDF), generated on demand** — waiver proof (embeds the full
+  signed waiver text + timestamp/IP) and receipts. No server PDF/storage; regenerate from
+  data. Server-emailed PDF attachments are deferred to the payments work.
+- **New DB collection plumbing** (e.g. `club_memberships`, `comm_log`): add to
+  `types.ts` (`DB.<x>`), a `rowTo<X>` + `push<X>`/`delete<X>` in `supabase.ts`, the
+  `loadAll` Promise.all + map + conditional spread into the return. `from('<new_table>')`
+  typechecks even if absent from `database.types`.
+- **ESLint traps that fail `npm run lint`:** don't define a component inside another
+  component's render (extract to module scope); don't call `setState` synchronously in a
+  `useEffect` body (initialize state instead). Lint only files you touch.
 
 ## Deferred / TODO (not yet built)
 - **New-club-request email** — the new-club-request flow should email
   `newclubinquiries@naigc.org`. The email transport now exists (above); the request flow
   just doesn't fire it yet. Wire a best-effort send via the same path.
-- Stripe payments (memberships, meet entries, banquet), typed membership purchase +
-  per-season waiver, codeless judge access (URL / 6-digit / QR), multi-judge + score-
-  entry-mode meet config, PDF certs, finals rosters. See `docs/specs/` + `docs/plans/`,
+- **MFA / passkeys** — phased recommendation in
+  `docs/research/2026-06-22-auth-2fa-passkeys.md` (TOTP opt-in → require for admins →
+  passkeys). Not built.
+- **Still over-claims email** (deferred with Stripe — payment is a stub): the
+  "Confirmation emailed" toasts in `Membership.tsx` / `Club.tsx` pay buttons send no email.
+- Stripe payments (memberships, meet entries, banquet) + server-emailed PDF receipts,
+  per-season typed waivers, codeless judge access (URL / 6-digit / QR), multi-judge +
+  score-entry-mode meet config, PDF certs, finals rosters. See `docs/specs/` + `docs/plans/`,
   and the roadmap in `docs/README.md`.
