@@ -36,3 +36,6 @@ scripts/scoreflippers-import/*_raw.*
 scripts/scoreflippers-import/clubs.json
 scripts/scoreflippers-import/people.json
 scripts/scoreflippers-import/import.sql
+
+# Claude Code personal per-project settings (not shared)
+.claude/settings.local.json
