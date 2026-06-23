@@ -40,9 +40,11 @@ will apply first.
 - Regardless of path: verify a build by grepping for "files generated" AND confirming
   `dist/index.html`'s script refs exist under `dist/assets` — never trust the piped
   exit code alone.
-- `ucg-prod-preview` launch config runs `vite preview` only — REBUILD first, and
-  clear the service worker (unregister + `caches.delete` + reload) or it serves the
-  previous bundle.
+- Launch configs (`.claude/launch.json`): `ucg-dev` (the dev server on 5173) and
+  `ucg-preview` (dev on 5176 with `--strictPort`, so previews don't collide with a
+  running `ucg-dev`). If you ever run `vite preview` (serves `dist/` only): REBUILD
+  first, and clear the service worker (unregister + `caches.delete` + reload) or it
+  serves the previous bundle.
 - Pre-existing lint debt (`src/lib/supabase.ts` `any`s, etc.) — `npm run lint` has
   never been clean. Lint only the files you touch.
 
@@ -65,6 +67,12 @@ will apply first.
 - Write new design specs to `docs/specs/`, implementation plans to `docs/plans/`
   (overrides the brainstorming/writing-plans skill defaults — do NOT recreate
   `docs/superpowers/`).
+- **Keep docs current after every commit.** A `PostToolUse` hook in
+  `.claude/settings.json` fires after any `git commit` and injects a reminder to
+  sweep the docs (`README.md`, `CLAUDE.md`, `docs/README.md`, `supabase/README.md`,
+  + relevant `docs/specs`/`docs/plans`) and update anything the change made stale —
+  in the same session. Skip only when the commit is docs-only or has no doc impact.
+  Edit/disable the hook via `/hooks` or that settings file.
 
 ## Email infra (Resend, working)
 - Transactional email sends via **Resend** (HTTP API) through a shared helper,
