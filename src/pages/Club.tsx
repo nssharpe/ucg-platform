@@ -719,6 +719,28 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
     toast('Refund requested — pending league admin approval.');
   };
 
+  // Swap a registration to another club athlete (who has membership). Applies the
+  // change fee when within the change-fee window (e.g. after reg close).
+  const swapAthlete = (fromId: string, toId: string) => {
+    const to = db.people.find((p) => p.id === toId);
+    if (!to) return;
+    mutate((d) => {
+      for (const r of d.registrations) {
+        if (r.meetId === meet.id && r.athleteId === fromId && r.clubId === clubId && !r.refunded) {
+          r.athleteId = toId;
+          pushRegistration(r, r.sessionId);
+        }
+      }
+      if (changeFeeApplies && meet.changeFee) {
+        const cart = d.carts[clubId] ?? (d.carts[clubId] = []);
+        cart.push({ id: `ci-change-${Date.now()}-${toId}`, label: `${meet.name} change fee — swap to ${to.firstName} ${to.lastName}`, amount: meet.changeFee.amount, kind: 'meet-entry', refUserId: toId });
+        pushCart(clubId, cart, true);
+      }
+    });
+    toast(`Registration swapped to ${to.firstName} ${to.lastName}.${changeFeeApplies && meet.changeFee ? ` Change fee ${fmtMoney(meet.changeFee.amount)} added to club cart.` : ''}`);
+    setEditingAthleteId(null);
+  };
+
   const editingAthlete = editingAthleteId ? db.people.find((p) => p.id === editingAthleteId) : null;
   const registerAthlete = registerAthleteId ? db.people.find((p) => p.id === registerAthleteId) : null;
 
@@ -899,6 +921,24 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
           title={`Edit registration — ${editingAthlete.firstName} ${editingAthlete.lastName}`}
           onClose={() => setEditingAthleteId(null)}
         >
+          {unregisteredWithMembership.length > 0 && (
+            <div style={{ marginBottom: 14, paddingBottom: 14, borderBottom: '1px solid var(--line)' }}>
+              <Field label="Swap this registration to another athlete"
+                hint={changeFeeApplies && meet.changeFee ? `A ${fmtMoney(meet.changeFee.amount)} change fee will be added to the club cart.` : 'Moves all of this athlete’s entries for this meet to a club member who has membership.'}>
+                <Combo
+                  options={unregisteredWithMembership.map((a) => ({ value: a.id, label: `${a.firstName} ${a.lastName}`, sub: a.email }))}
+                  value={null}
+                  placeholder="Search a club member with membership…"
+                  onChange={(toId) => {
+                    const to = db.people.find((p) => p.id === toId);
+                    if (to && window.confirm(`Swap ${editingAthlete.firstName} ${editingAthlete.lastName}'s registration to ${to.firstName} ${to.lastName}?${changeFeeApplies && meet.changeFee ? ` A ${fmtMoney(meet.changeFee.amount)} change fee applies.` : ''}`)) {
+                      swapAthlete(editingAthlete.id, toId);
+                    }
+                  }}
+                />
+              </Field>
+            </div>
+          )}
           <RegistrationEditor
             meet={meet}
             athlete={editingAthlete}

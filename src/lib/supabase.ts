@@ -318,6 +318,9 @@ export function pushClubMembership(cm: ClubMembership) {
   remoteUpsert('club_memberships', [{ id: cm.id, club_id: cm.clubId, season_id: cm.seasonId, status: cm.status, granted_by_admin: cm.grantedByAdmin }]);
 }
 export function deleteClubMembership(id: string) { remoteDelete('club_memberships', id, 'id'); }
+/** Hard-delete a person remotely (used by account merge). Cascades remove the
+ *  person's remaining child rows (memberships, alt clubs, signatures, etc.). */
+export function deletePerson(id: string) { remoteDelete('people', id, 'id'); }
 
 export function pushClub(c: Club) {
   remoteUpsert('clubs', [clubToRow(c)]);

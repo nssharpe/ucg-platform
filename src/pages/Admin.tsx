@@ -13,7 +13,7 @@ import { downloadWaiverProof, formatSignedAt } from '../lib/waiver-proof';
 import { sanitizeWaiverHtml, escapeHtml } from '../lib/sanitize-html';
 import { fmtMoney } from '../lib/scoring';
 import { randomPromoCode, couponValid } from '../lib/pricing';
-import { fetchAllRoles, isSupabaseConfigured, pushAll, pushClub, pushClubManager, pushClubRequest, pushCoupon, pushLevel, pushMembership, pushRegistration, pushSeason, pushUserRole, pushAccountInvite, deleteCoupon, deleteRegistration, sendEmail, sendSms, pushWaiverDocument, logComm, fetchCommLog, type SendEmailResult, type CommLogEntry } from '../lib/supabase';
+import { fetchAllRoles, isSupabaseConfigured, pushAll, pushClub, pushClubManager, pushClubRequest, pushCoupon, pushLevel, pushMembership, pushRegistration, pushSeason, pushUserRole, pushAccountInvite, deleteCoupon, deleteRegistration, sendEmail, sendSms, pushWaiverDocument, logComm, fetchCommLog, pushPerson, deletePerson, type SendEmailResult, type CommLogEntry } from '../lib/supabase';
 import { analyzeMessage, normalizeToGsm7 } from '../lib/sms-segments';
 import { useCapabilities } from '../lib/capabilities';
 
@@ -108,19 +108,17 @@ function MergeAthletesModal({ onClose }: { onClose: () => void }) {
       if (!dp.authUserId && dup.authUserId) {
         dp.authUserId = dup.authUserId;
       }
-      // 7. Remove duplicate from local snapshot
-      // TODO: there is no deletePerson Supabase helper — the remote row for person id
-      //   `${dup.id}` must be removed server-side (DELETE FROM people WHERE id = $1).
-      //   Until that is wired up the dup row will remain in the remote DB but will no
-      //   longer appear in the local snapshot after this mutate.
+      // 6b. Persist the primary's merged changes (authUserId + alt clubs).
+      pushPerson(dp);
+      // 7. Remove the duplicate locally AND remotely (cascades its child rows).
       d.people = d.people.filter((p) => p.id !== dup.id);
+      deletePerson(dup.id);
     });
 
     toast(
       `Merged ${dup.firstName} ${dup.lastName} into ${primary.firstName} ${primary.lastName}. ` +
       `Moved ${regsToMove.length} reg(s), dropped ${regsToDrop.length} collision(s), ` +
-      `added ${membershipsToAdd.length} membership(s). ` +
-      `Duplicate removed from local snapshot — remote row requires manual cleanup (see TODO).`
+      `added ${membershipsToAdd.length} membership(s). The duplicate account was deleted.`
     );
     onClose();
   };
