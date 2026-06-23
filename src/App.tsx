@@ -8,7 +8,7 @@ import { ToastProvider } from './components/ui';
 import { isUnlocked } from './lib/store';
 import { useCapabilities } from './lib/capabilities';
 import { isSupabaseConfigured } from './lib/supabase';
-import { useSession, useAuthLoading, hasLikelySession } from './lib/auth';
+import { useSession, useAuthLoading, hasLikelySession, useRolesLoaded } from './lib/auth';
 import { Gate } from './pages/Gate';
 import { Home } from './pages/Home';
 
@@ -51,6 +51,7 @@ const AdminClubs = lazy(() => loaders.Admin().then((m) => ({ default: m.AdminClu
 const AdminLeague = lazy(() => loaders.Admin().then((m) => ({ default: m.AdminLeague })));
 const Communicate = lazy(() => loaders.Admin().then((m) => ({ default: m.Communicate })));
 const WaiverSign = lazy(() => import('./pages/WaiverSign'));
+const SetPassword = lazy(() => import('./pages/SetPassword'));
 
 /** Prefetch all route chunks once the browser is idle after first paint. */
 function usePrefetchRoutes() {
@@ -98,7 +99,11 @@ function RequireAccount({ children }: { children: ReactNode }) {
  */
 function RequireAdmin({ children }: { children: ReactNode }) {
   const caps = useCapabilities();
+  const rolesLoaded = useRolesLoaded();
   if (!caps.signedIn) return <Gate onUnlock={() => {}} />;
+  // Roles load async after the session resolves. Until we know them, show the
+  // loader rather than flashing "Admin access required" at an actual admin.
+  if (!rolesLoaded) return <PageFallback />;
   if (!caps.isAdmin) {
     return (
       <div style={{ padding: '60px 24px', maxWidth: 480, margin: '0 auto', textAlign: 'center' }}>
@@ -118,6 +123,19 @@ export default function App() {
   const authLoading = useAuthLoading();
   const [unlockedLocally, setUnlockedLocally] = useState(isUnlocked());
   usePrefetchRoutes();
+
+  // After a set-password / invite link, Supabase strips its token from the URL
+  // hash (detectSessionInUrl), leaving our ?setpw=1 marker. Send the user to the
+  // set-password route and clear the marker so a later refresh doesn't re-trigger.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('setpw') === '1') {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('setpw');
+      url.hash = '/set-password';
+      window.history.replaceState(null, '', url.toString());
+    }
+  }, []);
 
   if (isSupabaseConfigured) {
     // Avoid flashing the gate for a signed-in user while getSession() resolves
@@ -160,6 +178,7 @@ export default function App() {
               <Route path="/admin/league" element={<RequireAdmin><AdminLeague /></RequireAdmin>} />
               <Route path="/admin/communicate" element={<RequireAdmin><Communicate /></RequireAdmin>} />
               <Route path="/waiver/sign/:token" element={<WaiverSign />} />
+              <Route path="/set-password" element={<SetPassword />} />
               <Route path="*" element={<Home />} />
             </Routes>
           </Suspense>

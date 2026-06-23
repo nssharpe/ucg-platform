@@ -571,6 +571,21 @@ export async function sendClubInvite(args: {
   return data as { ok: boolean; sentCount?: number; error?: string };
 }
 
+/** Create an account for someone (club manager / admin) and email them a
+ *  set-password link. Caller must manage the club (the function re-checks). */
+export async function inviteAccount(args: {
+  clubId: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  kind?: 'athlete' | 'coach';
+}): Promise<{ ok: boolean; sentCount?: number; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('invite-account', { body: args });
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  return data as { ok: boolean; sentCount?: number; error?: string };
+}
+
 /** Ask a club's managers + league admins for manager access. Email only. */
 export async function requestManagerAccess(
   clubId: string,
@@ -610,7 +625,7 @@ export async function recordWaiverSignature(
 ): Promise<{ ok: boolean; error?: string }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('record-waiver-signature', { body: args });
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
   return data as { ok: boolean; error?: string };
 }
 
@@ -621,7 +636,7 @@ export async function requestGuardianWaiver(args: {
 }): Promise<{ ok: boolean; error?: string }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('request-guardian-waiver', { body: args });
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
   return data as { ok: boolean; error?: string };
 }
 

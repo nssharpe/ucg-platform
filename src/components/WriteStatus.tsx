@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { subscribeWriteQueue, getWriteQueueState, retryFailedWrites } from '../lib/write-queue';
+import { subscribeWriteQueue, getWriteQueueState, retryFailedWrites, discardFailedWrites } from '../lib/write-queue';
 
 /**
  * Surfaces failed write-through saves. The write queue retries transient
@@ -28,6 +28,9 @@ export function WriteStatus() {
         <div className="writestatus-actions">
           <button className="btn" onClick={() => retryFailedWrites()} disabled={!state.online}>
             Retry now
+          </button>
+          <button className="btn ghost" onClick={() => discardFailedWrites()}>
+            Dismiss
           </button>
         </div>
       </div>

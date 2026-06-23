@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   membershipFee,
   priceForAdding,
+  priceForTypes,
   offeredMembershipTypes,
   couponValid,
   applyCoupon,
@@ -48,6 +49,29 @@ describe('membership pricing', () => {
   it('membershipFee returns the right base', () => {
     expect(membershipFee(season, 'athlete')).toBe(35);
     expect(membershipFee(season, 'coach')).toBe(20);
+  });
+});
+
+describe('priceForTypes (combined selection)', () => {
+  it('charges the single fee for one type', () => {
+    expect(priceForTypes(season, ['athlete'], [])).toBe(35);
+    expect(priceForTypes(season, ['coach'], [])).toBe(20);
+  });
+
+  it('charges the HIGHER fee for both together, not the sum', () => {
+    expect(priceForTypes(season, ['athlete', 'coach'], [])).toBe(35); // not 55
+  });
+
+  it('credits an existing athlete so adding coach is $0', () => {
+    expect(priceForTypes(season, ['athlete', 'coach'], [mk('athlete')])).toBe(0);
+  });
+
+  it('credits an existing coach so adding athlete costs the difference', () => {
+    expect(priceForTypes(season, ['athlete', 'coach'], [mk('coach')])).toBe(15); // 35 - 20
+  });
+
+  it('returns 0 when everything selected is already active', () => {
+    expect(priceForTypes(season, ['athlete', 'coach'], [mk('athlete'), mk('coach')])).toBe(0);
   });
 });
 

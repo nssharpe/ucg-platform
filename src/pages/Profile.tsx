@@ -46,6 +46,8 @@ function validateProfile(p: Athlete): ValidationErrors {
   if (!p.firstName.trim()) errs.push({ field: 'firstName', label: 'First name' });
   if (!p.lastName.trim()) errs.push({ field: 'lastName', label: 'Last name' });
   if (!p.dob) errs.push({ field: 'dob', label: 'Date of birth' });
+  if (!p.gradYear) errs.push({ field: 'gradYear', label: 'Graduation year' }); // 0/undefined = not chosen; 1900 = N/A (ok)
+  if (!p.state) errs.push({ field: 'state', label: 'Training state' });
   if (!p.phone) errs.push({ field: 'phone', label: 'Phone' });
   if (!p.shirt) errs.push({ field: 'shirt', label: 'T-shirt size' });
   if (!p.studentStatus) errs.push({ field: 'studentStatus', label: 'Student status' });
@@ -93,6 +95,9 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   const [highlightMissing] = useState<boolean>(() => returnToMembership);
   const [clubReqOpen, setClubReqOpen] = useState(false);
   const [revokeSeasonId, setRevokeSeasonId] = useState<string | null>(null);
+  // "Independent Athlete" = no club (mainClubId null). Tracked locally so the
+  // user can tick it before/instead of picking a club from the dropdown.
+  const [independent, setIndependent] = useState<boolean>(() => person?.mainClubId === null);
 
   // Hooks must run unconditionally, so derive these before the early return below.
   // `current` is null only when `person` is missing (the not-found path).
@@ -262,8 +267,18 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                   ))}
                 </>
               )}
-              <Field label="Undergrad graduation year" hint="Enter 1900 if you do not have a past or future undergraduate graduation year.">
-                <input type="number" value={p.gradYear} onChange={(e) => set({ gradYear: +e.target.value })} />
+              <Field label="Undergrad graduation year">
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                  <input type="number" disabled={p.gradYear === 1900} placeholder="YYYY" style={missingStyle('gradYear')}
+                    value={p.gradYear === 1900 || !p.gradYear ? '' : p.gradYear}
+                    onChange={(e) => set({ gradYear: +e.target.value || 0 })} />
+                  <label className="checkrow" style={{ whiteSpace: 'nowrap', margin: 0 }}>
+                    {/* 1900 = N/A; 0 = not yet chosen */}
+                    <input type="checkbox" checked={p.gradYear === 1900} onChange={(e) => set({ gradYear: e.target.checked ? 1900 : 0 })} />
+                    N/A
+                  </label>
+                </div>
+                {missingFieldKeys.has('gradYear') && !p.gradYear && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Enter a year or check N/A.</div>}
               </Field>
               <Field label="Student status" hint="Full-time student for ≥1 semester this season (Jul–Jun)? Grad students may pick either.">
                 <select className="input" value={p.studentStatus} onChange={(e) => set({ studentStatus: e.target.value as 'Student' | 'Non-Student' })} style={missingStyle('studentStatus')}>
@@ -278,7 +293,10 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                 {missingFieldKeys.has('shirt') && !p.shirt && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Required</div>}
               </Field>
               <Field label="Training state">
-                <Combo options={states.map((s) => ({ value: s, label: s, sub: STATE_REGIONS[s] }))} value={p.state} onChange={(v) => set({ state: v })} />
+                <div style={missingStyle('state')}>
+                  <Combo options={states.map((s) => ({ value: s, label: s, sub: STATE_REGIONS[s] }))} value={p.state} onChange={(v) => set({ state: v })} />
+                </div>
+                {missingFieldKeys.has('state') && !p.state && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Required</div>}
               </Field>
               <Field label="Phone">
                 <input
@@ -303,7 +321,18 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                 label={isCoach ? 'Primary club' : 'Main club'}
                 hint={isCoach ? 'The club you primarily coach for.' : 'The only club that can pay your membership fee.'}
               >
-                <Combo options={clubOptions} value={p.mainClubId} onChange={(v) => set({ mainClubId: v })} />
+                {independent ? (
+                  <input type="text" disabled value="Independent Athlete" />
+                ) : (
+                  <Combo options={clubOptions} value={p.mainClubId} placeholder="Select a club…" onChange={(v) => set({ mainClubId: v })} />
+                )}
+                {!isCoach && (
+                  <label className="checkrow" style={{ margin: '8px 0 0' }}>
+                    <input type="checkbox" checked={independent}
+                      onChange={(e) => { setIndependent(e.target.checked); if (e.target.checked) set({ mainClubId: null }); }} />
+                    No club — I am an Independent Athlete
+                  </label>
+                )}
               </Field>
               <Field label="Region" hint="Derived from training state.">
                 <input type="text" disabled value={STATE_REGIONS[p.state] ?? 'Other'} />

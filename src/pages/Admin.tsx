@@ -1721,7 +1721,8 @@ export function Communicate() {
   const db = useDB();
   const toast = useToast();
   const season = db.seasons.find((s) => s.current)!;
-  const [aud, setAud] = useState({ athletes: true, coaches: false, managers: false, clubEmails: false, withMembership: 'any' as 'any' | 'with' | 'without' });
+  // Default to NO audience selected to avoid accidental org-wide sends (2026-06-22).
+  const [aud, setAud] = useState({ athletes: false, coaches: false, managers: false, clubEmails: false, withMembership: 'any' as 'any' | 'with' | 'without' });
   const [regions, setRegions] = useState<Region[]>([]);
   const [channel, setChannel] = useState<'email' | 'sms'>('email');
   const allRegions = [...new Set(Object.values(STATE_REGIONS))] as Region[];
@@ -1755,6 +1756,7 @@ export function Communicate() {
     if (channel === 'sms') {
       const valid = people.filter((p) => p.phone).map((p) => ({ phone: p.phone!, name: p.name }));
       if (valid.length === 0) { toast('No recipients have a phone number.'); return; }
+      if (valid.length > 10 && !window.confirm(`Are you sure you want to send a text message to ${valid.length} people?`)) return;
       // Confirm before spending on a multi-segment blast (each segment is billed).
       const seg = analyzeMessage(body);
       if (seg.segments > 1 && !window.confirm(
@@ -1783,6 +1785,7 @@ export function Communicate() {
     if (!subj) { toast('Add a subject before sending.'); return; }
     const valid = people.filter((p) => p.email).map((p) => ({ email: p.email!, name: p.name }));
     if (valid.length === 0) { toast('No recipients have an email address.'); return; }
+    if (valid.length > 10 && !window.confirm(`Are you sure you want to send an email message to ${valid.length} people?`)) return;
     setSending(true);
     try {
       const res = await sendEmail(subj, body, valid);
@@ -1838,15 +1841,15 @@ export function Communicate() {
 
   const recipients = useMemo(() => db.people.filter((p) => {
     const isManager = managerIdSet.has(p.id);
-    if (p.kind === 'athlete' && !aud.athletes) return false;
-    // Coaches pass if coaches checkbox is on; managers (any person in club.managerIds) pass if managers checkbox is on
-    if (p.kind === 'coach') {
-      if (!aud.coaches && !(aud.managers && isManager)) return false;
-    }
-    // Athletes who are also managers (edge case) still pass when managers is checked
-    if (p.kind === 'athlete' && aud.managers && isManager) return true;
-    // Manager-only filter: if managers is checked but athletes is off, exclude non-manager athletes
-    if (!aud.athletes && p.kind === 'athlete' && !isManager) return false;
+    // Include the person if they match ANY checked audience group. Checking
+    // "Club managers" must include a manager regardless of whether they are an
+    // athlete or coach — the previous athlete-first exclusion dropped
+    // athlete-managers before the manager check ever ran.
+    const matchesGroup =
+      (aud.athletes && p.kind === 'athlete') ||
+      (aud.coaches && p.kind === 'coach') ||
+      (aud.managers && isManager);
+    if (!matchesGroup) return false;
     const has = p.memberships.some((m) => m.seasonId === season.id && m.status === 'active');
     if (aud.withMembership === 'with' && !has) return false;
     if (aud.withMembership === 'without' && has) return false;
@@ -1865,13 +1868,14 @@ export function Communicate() {
   }, [db.clubs, aud.clubEmails]);
 
   // People options for test-send Combo
+  // For text-message sends, search/show by phone; for email, by email.
   const peopleOptions = useMemo(() =>
     db.people.map((p) => ({
       value: p.id,
       label: `${p.firstName} ${p.lastName}`,
-      sub: p.email,
+      sub: channel === 'sms' ? (p.phone || '(no phone)') : p.email,
     })).sort((a, b) => a.label.localeCompare(b.label)),
-    [db.people]
+    [db.people, channel]
   );
 
   const addTestPerson = (id: string) => {
@@ -1882,6 +1886,23 @@ export function Communicate() {
   };
 
   const removeTestPerson = (id: string) => setTestGroup((g) => g.filter((x) => x.id !== id));
+
+  const sendToAudience = async () => {
+    const total = recipients.length + clubEmailRows.length;
+    const personRows = recipients.map((p) => ({
+      name: `${p.firstName} ${p.lastName}`,
+      contact: channel === 'sms' ? (p.phone || p.email) : p.email,
+    }));
+    const clubRows = clubEmailRows.map((c) => ({ name: `${c.name} (club email)`, contact: c.email ?? '' }));
+    const record: SendRecord = { sentAt: new Date(), channel, recipientCount: total, recipients: [...personRows, ...clubRows] };
+    setLastSend(record);
+    setSendLogExpanded(false);
+    const sendRows = [
+      ...recipients.map((p) => ({ email: p.email, phone: p.phone, name: `${p.firstName} ${p.lastName}` })),
+      ...clubEmailRows.map((c) => ({ email: c.email ?? '', name: c.name })),
+    ];
+    await doSend(sendRows, channel === 'sms' ? 'Text' : 'Email');
+  };
 
   return (
     <div style={{ maxWidth: 920 }}>
@@ -2131,114 +2152,98 @@ export function Communicate() {
             )}
           </div>
 
-          {/* Send button */}
+        </div>
+      </div>
+
+      {/* ---- Send card (separate from Audience/Message so it's clear this is the
+              real send, not the test) — with the last-send summary at the bottom ---- */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'start', marginTop: 16 }}>
+        <div className="card card-pad">
+          <h3 className="card-title">Send to selected audience</h3>
+          <p style={{ fontSize: 13.5, color: 'var(--ink-soft)', marginTop: 0 }}>
+            Sends the composed {channel === 'sms' ? 'text message' : 'email'} to the{' '}
+            {recipients.length + clubEmailRows.length} recipient{recipients.length + clubEmailRows.length !== 1 ? 's' : ''}{' '}
+            matching your Audience filters.
+          </p>
           <button
             className="btn primary"
-            style={{ marginTop: 8 }}
-            disabled={sending}
-            onClick={async () => {
-              const total = recipients.length + clubEmailRows.length;
-              const personRows = recipients.map((p) => ({
-                name: `${p.firstName} ${p.lastName}`,
-                contact: channel === 'sms' ? ((p as Athlete).phone ?? p.email) : p.email,
-              }));
-              const clubRows = clubEmailRows.map((c) => ({ name: `${c.name} (club email)`, contact: c.email ?? '' }));
-              const record: SendRecord = {
-                sentAt: new Date(),
-                channel,
-                recipientCount: total,
-                recipients: [...personRows, ...clubRows],
-              };
-              setLastSend(record);
-              setSendLogExpanded(false);
-              const sendRows = [
-                ...recipients.map((p) => ({ email: p.email, phone: (p as Athlete).phone, name: `${p.firstName} ${p.lastName}` })),
-                ...clubEmailRows.map((c) => ({ email: c.email ?? '', name: c.name })),
-              ];
-              await doSend(sendRows, channel === 'sms' ? 'Text' : 'Email');
-            }}
+            disabled={sending || recipients.length + clubEmailRows.length === 0}
+            onClick={sendToAudience}
           >
             {sending ? 'Sending…' : `Send to ${recipients.length + clubEmailRows.length} →`}
           </button>
           {channel === 'sms' && (
             <p style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 4 }}>Live delivery requires an approved 10DLC campaign.</p>
           )}
-        </div>
-      </div>
 
-      {/* ---- Last send summary ---- */}
-      {lastSend && (
-        <div className="card card-pad" style={{ marginTop: 16, borderLeft: '3px solid var(--accent)' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-            <span style={{ fontWeight: 600, fontSize: 14 }}>
-              Last send — {lastSend.channel === 'sms' ? 'Text' : 'Email'} sent to{' '}
-              <span style={{ color: 'var(--accent)' }}>{lastSend.recipientCount} recipient{lastSend.recipientCount !== 1 ? 's' : ''}</span>
-            </span>
-            <span style={{ fontSize: 12, color: 'var(--ink-soft)' }}>
-              {lastSend.sentAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{' '}
-              {lastSend.sentAt.toLocaleDateString()}
-            </span>
-            <button
-              className="btn small ghost"
-              style={{ marginLeft: 'auto' }}
-              onClick={() => setSendLogExpanded((v) => !v)}
-            >
-              {sendLogExpanded ? 'Hide' : 'Show list'}
-            </button>
-          </div>
-          {sendLogExpanded && (
-            <div style={{
-              marginTop: 8, maxHeight: 240, overflowY: 'auto',
-              border: '1px solid var(--line)', borderRadius: 6,
-              fontSize: 12.5, background: 'var(--surface-0)',
-            }}>
-              {lastSend.recipients.map((r, i) => (
-                <div key={i} style={{ padding: '4px 12px', borderBottom: '1px solid var(--line)', display: 'flex', gap: 8, justifyContent: 'space-between' }}>
-                  <span>{r.name}</span>
-                  <span style={{ color: 'var(--ink-soft)' }}>{r.contact || <em style={{ opacity: 0.5 }}>—</em>}</span>
+          {/* Last send summary — bottom of the send card */}
+          {lastSend && (
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: 600, fontSize: 14 }}>
+                  Last send — {lastSend.channel === 'sms' ? 'Text' : 'Email'} to{' '}
+                  <span style={{ color: 'var(--accent)' }}>{lastSend.recipientCount} recipient{lastSend.recipientCount !== 1 ? 's' : ''}</span>
+                </span>
+                <span style={{ fontSize: 12, color: 'var(--ink-soft)' }}>
+                  {lastSend.sentAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{' '}
+                  {lastSend.sentAt.toLocaleDateString()}
+                </span>
+                <button className="btn small ghost" style={{ marginLeft: 'auto' }} onClick={() => setSendLogExpanded((v) => !v)}>
+                  {sendLogExpanded ? 'Hide' : 'Show list'}
+                </button>
+              </div>
+              {sendLogExpanded && (
+                <div style={{ marginTop: 8, maxHeight: 240, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 6, fontSize: 12.5, background: 'var(--surface-0)' }}>
+                  {lastSend.recipients.map((r, i) => (
+                    <div key={i} style={{ padding: '4px 12px', borderBottom: '1px solid var(--line)', display: 'flex', gap: 8, justifyContent: 'space-between' }}>
+                      <span>{r.name}</span>
+                      <span style={{ color: 'var(--ink-soft)' }}>{r.contact || <em style={{ opacity: 0.5 }}>—</em>}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ---- Test send card (next to the real send) ---- */}
+        <div className="card card-pad">
+          <h3 className="card-title">Send test {channel === 'sms' ? 'text message' : 'email'}</h3>
+          <p style={{ fontSize: 13.5, color: 'var(--ink-soft)', marginTop: 0 }}>
+            Sends the same composed message to specific people you pick — these need not match the
+            audience filters.
+          </p>
+          <Field label="Add person to test group">
+            <Combo
+              options={peopleOptions}
+              value={testPersonId}
+              onChange={addTestPerson}
+              placeholder={`Search by name or ${channel === 'sms' ? 'phone' : 'email'}…`}
+            />
+          </Field>
+
+          {testGroup.length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              {testGroup.map((p) => (
+                <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0', fontSize: 13.5 }}>
+                  <span>{p.firstName} {p.lastName} <span style={{ color: 'var(--ink-soft)', fontSize: 12.5 }}>{channel === 'sms' ? (p.phone || '(no phone)') : p.email}</span></span>
+                  <button className="btn small ghost" onClick={() => removeTestPerson(p.id)}>✕</button>
                 </div>
               ))}
             </div>
           )}
+
+          <button
+            className="btn ghost"
+            disabled={testGroup.length === 0 || sending}
+            onClick={() => doSend(
+              testGroup.map((p) => ({ email: p.email, phone: p.phone, name: `${p.firstName} ${p.lastName}` })),
+              channel === 'sms' ? 'Test text' : 'Test email',
+            )}
+          >
+            {sending ? 'Sending…' : `Send test to ${testGroup.length} selected`}
+          </button>
         </div>
-      )}
-
-      {/* ---- Test send section ---- */}
-      <div className="card card-pad" style={{ marginTop: 16, maxWidth: 560 }}>
-        <h3 className="card-title">Send test email</h3>
-        <p style={{ fontSize: 13.5, color: 'var(--ink-soft)', marginTop: 0 }}>
-          Pick specific people to test against — these need not match the audience filters above.
-        </p>
-        <Field label="Add person to test group">
-          <Combo
-            options={peopleOptions}
-            value={testPersonId}
-            onChange={addTestPerson}
-            placeholder="Search by name or email…"
-          />
-        </Field>
-
-        {testGroup.length > 0 && (
-          <div style={{ marginBottom: 10 }}>
-            {testGroup.map((p) => (
-              <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0', fontSize: 13.5 }}>
-                <span>{p.firstName} {p.lastName} <span style={{ color: 'var(--ink-soft)', fontSize: 12.5 }}>{p.email}</span></span>
-                <button className="btn small ghost" onClick={() => removeTestPerson(p.id)}>✕</button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <button
-          className="btn ghost"
-          disabled={testGroup.length === 0 || sending}
-          onClick={() => doSend(
-            testGroup.map((p) => ({ email: p.email, phone: p.phone, name: `${p.firstName} ${p.lastName}` })),
-            channel === 'sms' ? 'Test text' : 'Test email',
-          )}
-        >
-          {sending ? 'Sending…' : `Send test to ${testGroup.length} selected`}
-        </button>
       </div>
     </div>
   );

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { Badge, Combo, Field, Modal, Tabs } from '../components/ui';
@@ -10,6 +10,7 @@ import { fmtMoney } from '../lib/scoring';
 import {
   deleteRegistration, pushCart, pushClub, pushClubManager, pushInvoice,
   pushMembership, pushPerson, pushRegistration, requestManagerAccess, sendClubInvite,
+  inviteAccount,
 } from '../lib/supabase';
 import { ClubForm } from '../components/ClubForm';
 import { RegistrationEditor } from '../components/RegistrationEditor';
@@ -46,9 +47,11 @@ export function ClubPage() {
   const db = useDB();
   const caps = useCapabilities();
   const toast = useToast();
+  const navigate = useNavigate();
   const club = db.clubs.find((c) => c.id === clubId);
   const [tab, setTab] = useState<'roster' | 'meetreg'>('roster');
   const [editingClub, setEditingClub] = useState(false);
+  const [addingAthlete, setAddingAthlete] = useState(false);
   if (!club) return <p>Club not found.</p>;
 
   const canManage = caps.actingAsAdmin || caps.managedClubIds.includes(club.id);
@@ -63,23 +66,33 @@ export function ClubPage() {
 
   const rosterSize = db.people.filter((p) => p.mainClubId === club.id).length;
 
-  // Invite link points to account creation / sign-up
-  const copyInviteLink = () => {
-    const url = `${location.origin}${location.pathname}#/?signup=1&club=${club.id}`;
-    navigator.clipboard.writeText(url).then(
-      () => toast('Invite link copied to clipboard'),
-      () => toast('Could not copy — your browser may require HTTPS or user gesture'),
-    );
-  };
-
   const managerNames = club.managerIds
     .map((id) => db.people.find((p) => p.id === id))
     .filter((p): p is Athlete => !!p)
     .map((p) => `${p.firstName} ${p.lastName}`);
 
+  // Clubs the user can switch between from here: league admins see all clubs,
+  // managers see the clubs they manage. Only shown when there's a real choice.
+  const switchableClubs = (caps.actingAsAdmin
+    ? db.clubs
+    : db.clubs.filter((c) => caps.managedClubIds.includes(c.id))
+  ).slice().sort((a, b) => a.name.localeCompare(b.name));
+
   return (
     <div>
-      <h1 className="page-title display">{club.name}</h1>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <h1 className="page-title display" style={{ marginBottom: 0 }}>{club.name}</h1>
+        {switchableClubs.length > 1 && (
+          <div style={{ minWidth: 240 }}>
+            <Combo
+              options={switchableClubs.map((c) => ({ value: c.id, label: c.name, sub: `${c.state} · ${c.region}` }))}
+              value={club.id}
+              placeholder="Switch club…"
+              onChange={(v) => { if (v && v !== club.id) navigate(`/club/${v}`); }}
+            />
+          </div>
+        )}
+      </div>
       <p className="page-sub">
         {club.shortName && club.shortName !== club.name && <><strong>{club.shortName}</strong> · </>}
         {club.state} · {club.region} region · <a href={`mailto:${club.email}`}>{club.email}</a> ·
@@ -99,7 +112,7 @@ export function ClubPage() {
           <>
             <button className="btn ghost small" onClick={() => setEditingClub(true)}>Edit club details</button>
             <button className="btn ghost small" data-tip="Ask UCG to sanction a meet hosted by your club" onClick={() => alert('Sanction request form — wires to league admin approval queue (post-MVP).')}>Request meet sanction</button>
-            <button className="btn ghost small" data-tip="Email your members a link to join UCG under this club" onClick={copyInviteLink}>Copy invite link</button>
+            <button className="btn ghost small" data-tip="Create an account for an athlete and email them a set-password link" onClick={() => setAddingAthlete(true)}>Add athlete</button>
           </>
         )}
         {!isManager && isMember && caps.personId && (
@@ -124,10 +137,50 @@ export function ClubPage() {
         active={tab}
         onChange={setTab}
       />
-      {tab === 'roster' ? <Roster clubId={club.id} /> : <MeetRegGrid clubId={club.id} canManage={canManage} />}
+      {tab === 'roster' ? <Roster clubId={club.id} canManage={canManage} /> : <MeetRegGrid clubId={club.id} canManage={canManage} />}
 
       {editingClub && <ClubForm club={club} onClose={() => setEditingClub(false)} />}
+      {addingAthlete && <AddAthleteModal clubId={club.id} clubName={club.name} onClose={() => setAddingAthlete(false)} />}
     </div>
+  );
+}
+
+// ---- AddAthleteModal --------------------------------------------------------
+// Creates a real account for an athlete (first/last/email) with this club as
+// their main club, and emails them a set-password link (invite-account fn).
+function AddAthleteModal({ clubId, clubName, onClose }: { clubId: string; clubName: string; onClose: () => void }) {
+  const toast = useToast();
+  const [first, setFirst] = useState('');
+  const [last, setLast] = useState('');
+  const [email, setEmail] = useState('');
+  const [busy, setBusy] = useState(false);
+  const valid = first.trim() && last.trim() && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+
+  const submit = async () => {
+    if (!valid) { toast('Enter a first name, last name, and a valid email.'); return; }
+    setBusy(true);
+    const res = await inviteAccount({ clubId, email: email.trim(), firstName: first.trim(), lastName: last.trim(), kind: 'athlete' });
+    setBusy(false);
+    if (res.ok) { toast(`Account created — a set-password link was emailed to ${email.trim()}.`); onClose(); }
+    else { toast(res.error ?? 'Could not create the account.', { variant: 'error' }); }
+  };
+
+  return (
+    <Modal title={`Add athlete to ${clubName}`} onClose={onClose}>
+      <p style={{ color: 'var(--ink-soft)', marginTop: 0, fontSize: 14 }}>
+        We’ll create their account with {clubName} as their main club and email them a link to
+        set a password. After signing in they land on the membership page.
+      </p>
+      <div className="grid cols-2">
+        <Field label="First name"><input className="input" value={first} onChange={(e) => setFirst(e.target.value)} /></Field>
+        <Field label="Last name"><input className="input" value={last} onChange={(e) => setLast(e.target.value)} /></Field>
+      </div>
+      <Field label="Email"><input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
+      <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+        <button className="btn primary" disabled={!valid || busy} onClick={submit}>{busy ? 'Creating…' : 'Create account & email link'}</button>
+        <button className="btn ghost" onClick={onClose}>Cancel</button>
+      </div>
+    </Modal>
   );
 }
 
@@ -186,7 +239,10 @@ function ClubSettings({ club }: { club: Club }) {
 function ClubManagers({ club }: { club: Club }) {
   const db = useDB();
   const toast = useToast();
+  const [cFirst, setCFirst] = useState('');
+  const [cLast, setCLast] = useState('');
   const [email, setEmail] = useState('');
+  const [invitingCoach, setInvitingCoach] = useState(false);
   const managers = club.managerIds
     .map((id) => db.people.find((p) => p.id === id))
     .filter((p): p is Athlete => !!p);
@@ -214,27 +270,25 @@ function ClubManagers({ club }: { club: Club }) {
     });
   };
 
-  const inviteByEmail = () => {
+  const inviteByEmail = async () => {
     const addr = email.trim().toLowerCase();
     if (!addr) return;
+    // Already a member? Just promote them to manager — no new account needed.
     const existing = db.people.find((p) => p.email.toLowerCase() === addr);
-    if (existing) { addManager(existing.id); setEmail(''); return; }
-    const id = crypto.randomUUID();
-    const local = addr.split('@')[0];
-    const person: Athlete = {
-      id, kind: 'coach', roles: { athlete: false, coach: true }, firstName: local, lastName: '(invited)', email: addr,
-      dob: '', gender: 'Other', gradYear: 1900, studentStatus: 'Non-Student', shirt: '',
-      country: 'USA', state: club.state ?? '', phone: '', mainClubId: club.id, altClubIds: [],
-      levels: {}, emergency: { contact: '', relation: '', phone: '' }, dietary: [], dietaryNotes: '',
-      memberships: [], achievements: [],
-    };
-    mutate((d) => { d.people.push(person); pushPerson(person); });
-    addManager(id);
-    setEmail('');
-    sendClubInvite({ clubId: club.id, kind: 'coach', email: addr, name: `${person.firstName} ${person.lastName}` })
-      .then((res) => toast(res.ok
-        ? `Coach invited — a setup email was sent to ${addr}.`
-        : `Coach added as manager, but the email failed: ${res.error ?? 'unknown error'}.`));
+    if (existing) { addManager(existing.id); setEmail(''); setCFirst(''); setCLast(''); return; }
+    if (!cFirst.trim() || !cLast.trim()) { toast('Enter the coach’s first and last name.', { variant: 'error' }); return; }
+    // New person: create a real account + email a set-password link (lands them on
+    // membership after sign-in). The server creates/links the people row, so we
+    // don't fabricate an in-memory person here.
+    setInvitingCoach(true);
+    const res = await inviteAccount({ clubId: club.id, email: addr, firstName: cFirst.trim(), lastName: cLast.trim(), kind: 'coach' });
+    setInvitingCoach(false);
+    if (res.ok) {
+      toast(`Account created — a set-password link was emailed to ${addr}. Add them as a manager once they appear on the roster.`);
+      setEmail(''); setCFirst(''); setCLast('');
+    } else {
+      toast(res.error ?? 'Could not create the account.', { variant: 'error' });
+    }
   };
 
   return (
@@ -254,11 +308,17 @@ function ClubManagers({ club }: { club: Club }) {
         <Field label="Add an existing member as manager">
           <Combo options={candidates} value={null} onChange={addManager} placeholder="Search people…" />
         </Field>
-        <Field label="Or invite a coach by email">
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input type="email" value={email} placeholder="coach@club.org"
-              onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') inviteByEmail(); }} />
-            <button className="btn small" type="button" onClick={inviteByEmail} disabled={!email.trim()}>Invite</button>
+        <Field label="Or invite a new coach (creates their account)" hint="They’ll get an email to set a password, then land on membership.">
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <input type="text" value={cFirst} placeholder="First" style={{ flex: '1 1 80px' }}
+              onChange={(e) => setCFirst(e.target.value)} />
+            <input type="text" value={cLast} placeholder="Last" style={{ flex: '1 1 80px' }}
+              onChange={(e) => setCLast(e.target.value)} />
+            <input type="email" value={email} placeholder="coach@club.org" style={{ flex: '2 1 140px' }}
+              onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void inviteByEmail(); }} />
+            <button className="btn small" type="button" onClick={() => void inviteByEmail()} disabled={!email.trim() || invitingCoach}>
+              {invitingCoach ? 'Inviting…' : 'Invite'}
+            </button>
           </div>
         </Field>
       </div>
@@ -268,10 +328,21 @@ function ClubManagers({ club }: { club: Club }) {
 
 // ---- Roster -----------------------------------------------------------------
 
-function Roster({ clubId }: { clubId: string }) {
+function Roster({ clubId, canManage }: { clubId: string; canManage: boolean }) {
   const db = useDB();
   const caps = useCapabilities();
+  const toast = useToast();
   const [search, setSearch] = useState('');
+  const [inviting, setInviting] = useState<string | null>(null);
+
+  const invite = async (p: Athlete) => {
+    if (!p.email) { toast('This member has no email on file.', { variant: 'error' }); return; }
+    setInviting(p.id);
+    const res = await sendClubInvite({ clubId, kind: 'membership', email: p.email, name: `${p.firstName} ${p.lastName}` });
+    setInviting(null);
+    if (res.ok) toast(`Membership invite emailed to ${p.email}.`);
+    else toast(res.error ?? 'Could not send the invite.', { variant: 'error' });
+  };
   const [sortCol, setSortCol] = useState<SortCol>('lastName');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const season = db.seasons.find((s) => s.current)!;
@@ -326,6 +397,7 @@ function Roster({ clubId }: { clubId: string }) {
               <th style={{ cursor: 'pointer' }} onClick={() => handleSort('MAG')}>MAG{sortIcon('MAG')}</th>
               <th style={{ cursor: 'pointer' }} onClick={() => handleSort('TNT')}>T&amp;T{sortIcon('TNT')}</th>
               <th style={{ cursor: 'pointer' }} onClick={() => handleSort('studentStatus')}>Student{sortIcon('studentStatus')}</th>
+              {canManage && <th></th>}
             </tr>
           </thead>
           <tbody>
@@ -353,6 +425,20 @@ function Roster({ clubId }: { clubId: string }) {
                   <td>{lvlName(p.levels.MAG)}</td>
                   <td>{lvlName(p.levels.TNT)}</td>
                   <td>{p.studentStatus === 'Student' ? '🎓' : '—'}</td>
+                  {canManage && (
+                    <td style={{ textAlign: 'right' }}>
+                      {m?.status !== 'active' && (
+                        <button
+                          className="btn ghost small"
+                          disabled={inviting === p.id || !p.email}
+                          data-tip={p.email ? 'Email a link to purchase membership' : 'No email on file'}
+                          onClick={() => invite(p)}
+                        >
+                          {inviting === p.id ? 'Sending…' : 'Invite'}
+                        </button>
+                      )}
+                    </td>
+                  )}
                 </tr>
               );
             })}

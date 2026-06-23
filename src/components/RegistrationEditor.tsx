@@ -150,7 +150,7 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
                 style={{ marginLeft: 8 }}
                 onClick={isAA ? clearAll : selectAllAround}
               >
-                {isAA ? 'Clear all' : 'All-Around'}
+                {isAA ? 'Clear all' : (isTNT ? 'All Apparatuses' : 'All-Around')}
               </button>
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 16px' }}>
