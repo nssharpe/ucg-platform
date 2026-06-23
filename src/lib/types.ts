@@ -348,6 +348,8 @@ export interface Coupon {
   endsAt?: string | null; // ISO; null/absent = no end bound
   maxUses?: number | null; // null/absent = unlimited
   usedCount?: number; // times redeemed
+  /** When set, only this person may redeem the code. null/absent = anyone. */
+  restrictedToPersonId?: string | null;
 }
 
 /** A member's request to create a new club (admins approve → real club). */

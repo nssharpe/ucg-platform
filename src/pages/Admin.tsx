@@ -1199,6 +1199,8 @@ type CouponDraft = {
   startsAt: string;
   endsAt: string;
   maxUses: string; // blank = unlimited
+  restrictAccount: boolean;
+  restrictedToPersonId: string | null;
 };
 
 // W14 task 11: inline validity indicator using couponValid()
@@ -1231,7 +1233,7 @@ function Promos() {
   const toast = useToast();
   const [draft, setDraft] = useState<CouponDraft>({
     code: '', discountType: 'pct', value: '', appliesTo: 'any',
-    startsAt: '', endsAt: '', maxUses: '',
+    startsAt: '', endsAt: '', maxUses: '', restrictAccount: false, restrictedToPersonId: null,
   });
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   // W14 task 9: inline edit state per coupon (code → draft)
@@ -1248,6 +1250,7 @@ function Promos() {
     if (draft.maxUses.trim() !== '' && (isNaN(maxUses as number) || (maxUses as number) < 1)) {
       toast('Max uses must be a positive integer or blank for unlimited.'); return;
     }
+    if (draft.restrictAccount && !draft.restrictedToPersonId) { toast('Pick the account this code is restricted to, or uncheck the restriction.'); return; }
     const coupon: Coupon = {
       code,
       ...(draft.discountType === 'pct' ? { pctOff: value } : { amountOff: value }),
@@ -1256,9 +1259,10 @@ function Promos() {
       endsAt: draft.endsAt || null,
       maxUses: maxUses ?? null,
       usedCount: 0,
+      restrictedToPersonId: draft.restrictAccount ? draft.restrictedToPersonId : null,
     };
     mutate((d) => { d.coupons.push(coupon); pushCoupon(coupon); });
-    setDraft({ code: '', discountType: 'pct', value: '', appliesTo: 'any', startsAt: '', endsAt: '', maxUses: '' });
+    setDraft({ code: '', discountType: 'pct', value: '', appliesTo: 'any', startsAt: '', endsAt: '', maxUses: '', restrictAccount: false, restrictedToPersonId: null });
     toast(`Promo code "${code}" created.`);
   };
 
@@ -1383,6 +1387,21 @@ function Promos() {
             onChange={(e) => setDraft({ ...draft, maxUses: e.target.value })}
           />
         </Field>
+        <label className="checkrow" style={{ marginTop: 4 }}>
+          <input type="checkbox" checked={draft.restrictAccount}
+            onChange={(e) => setDraft({ ...draft, restrictAccount: e.target.checked, restrictedToPersonId: e.target.checked ? draft.restrictedToPersonId : null })} />
+          Only usable by a specific account?
+        </label>
+        {draft.restrictAccount && (
+          <Field label="Restricted to account">
+            <Combo
+              options={db.people.map((p) => ({ value: p.id, label: `${p.firstName} ${p.lastName}`, sub: p.email })).sort((a, b) => a.label.localeCompare(b.label))}
+              value={draft.restrictedToPersonId}
+              onChange={(v) => setDraft({ ...draft, restrictedToPersonId: v })}
+              placeholder="Search by name or email…"
+            />
+          </Field>
+        )}
         <button className="btn primary" onClick={addCoupon}>Create code</button>
       </div>
 
@@ -1409,7 +1428,13 @@ function Promos() {
               const isEditing = editingCode === c.code;
               return (
                 <tr key={c.code}>
-                  <td><strong style={{ fontFamily: 'monospace' }}>{c.code}</strong></td>
+                  <td>
+                    <strong style={{ fontFamily: 'monospace' }}>{c.code}</strong>
+                    {c.restrictedToPersonId && (() => {
+                      const p = db.people.find((x) => x.id === c.restrictedToPersonId);
+                      return <span style={{ display: 'block', fontSize: 11, color: 'var(--ink-soft)' }} data-tip="Only this account can redeem this code">🔒 {p ? `${p.firstName} ${p.lastName}` : 'specific account'}</span>;
+                    })()}
+                  </td>
                   <td>
                     {c.pctOff != null ? `${c.pctOff}% off` : c.amountOff != null ? `${fmtMoney(c.amountOff)} off` : '—'}
                   </td>

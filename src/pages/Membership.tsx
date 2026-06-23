@@ -127,6 +127,7 @@ function MembershipInner({ me }: { me: Athlete }) {
     (c) =>
       c.code === coupon.toUpperCase() &&
       (c.appliesTo === 'membership' || c.appliesTo === 'any') &&
+      (!c.restrictedToPersonId || c.restrictedToPersonId === me.id) &&
       couponValid(c, nowISO),
   );
 

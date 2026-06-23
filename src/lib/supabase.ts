@@ -158,6 +158,7 @@ const couponToRow = (c: Coupon) => ({
   code: c.code, pct_off: c.pctOff ?? null, amount_off: c.amountOff ?? null, applies_to: c.appliesTo,
   starts_at: c.startsAt ?? null, ends_at: c.endsAt ?? null,
   max_uses: c.maxUses ?? null, used_count: c.usedCount ?? 0,
+  restricted_to_person_id: c.restrictedToPersonId ?? null,
 });
 const rowToCoupon = (r: Row<'coupons'>): Coupon => ({
   code: r.code, pctOff: r.pct_off == null ? undefined : Number(r.pct_off),
@@ -165,6 +166,7 @@ const rowToCoupon = (r: Row<'coupons'>): Coupon => ({
   startsAt: r.starts_at ?? null, endsAt: r.ends_at ?? null,
   maxUses: r.max_uses == null ? null : Number(r.max_uses),
   usedCount: r.used_count == null ? 0 : Number(r.used_count),
+  restrictedToPersonId: (r as { restricted_to_person_id?: string | null }).restricted_to_person_id ?? null,
 });
 
 const personToRow = (p: Athlete) => ({
