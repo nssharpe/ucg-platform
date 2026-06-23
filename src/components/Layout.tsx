@@ -23,6 +23,7 @@ function navFor(caps: ReturnType<typeof useCapabilities>): NavGroup[] {
       { to: '/me', label: 'Profile' },
       { to: '/membership', label: 'Membership' },
       { to: '/me/registrations', label: 'My Registrations' },
+      { to: '/me/purchases', label: 'Purchase History' },
     ]});
   }
   if (caps.managedClubIds.length > 0) {
