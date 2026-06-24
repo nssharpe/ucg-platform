@@ -32,7 +32,7 @@ in [`../CLAUDE.md`](../CLAUDE.md).
 | [digital-waiver-esign-design](specs/2026-06-20-digital-waiver-esign-design.md) | Clickwrap e-signature: versioned text, signature evidence, guardian path | ✅ shipped |
 | [resend-email-transport-design](specs/2026-06-22-resend-email-transport-design.md) | Swap email transport from Gmail SMTP to Resend | ✅ shipped |
 | [feedback-batch-decomposition (6/22)](specs/2026-06-22-feedback-batch-decomposition.md) | Master decomposition of the 6/22–6/23 feedback batch (10 phases + decisions) | ✅ shipped (all phases live) |
-| [topbar-responsive-and-mobile-nav-design](specs/2026-06-24-topbar-responsive-and-mobile-nav-design.md) | One-line topbar badges, measurement-driven degradation, mobile drawer nav, mobile dev pipeline | 🟡 on branch `feat/topbar-responsive-mobile-nav` |
+| [topbar-responsive-and-mobile-nav-design](specs/2026-06-24-topbar-responsive-and-mobile-nav-design.md) | One-line topbar badges, measurement-driven degradation, mobile drawer nav, mobile dev pipeline | ✅ shipped |
 
 ## Plans (`plans/`) — step-by-step implementation records
 
@@ -46,7 +46,7 @@ in [`../CLAUDE.md`](../CLAUDE.md).
 | [resend-email-and-stubs](plans/2026-06-22-resend-email-and-stubs.md) | Resend transport swap + stub fixes | ✅ shipped |
 | [sms-telnyx-implementation](plans/2026-06-22-sms-telnyx-implementation.md) | Communicate text channel via Telnyx | ✅ shipped |
 | [club-invites-and-roster](plans/2026-06-23-club-invites-and-roster.md) | Admin-create invites + set-password, Add-athlete, roster club switcher (Phase 3) | ✅ shipped |
-| [topbar-responsive-and-mobile-nav](plans/2026-06-24-topbar-responsive-and-mobile-nav.md) | Topbar one-line badges + measurement degradation + mobile drawer nav | 🟡 on branch `feat/topbar-responsive-mobile-nav` |
+| [topbar-responsive-and-mobile-nav](plans/2026-06-24-topbar-responsive-and-mobile-nav.md) | Topbar one-line badges + measurement degradation + mobile drawer nav | ✅ shipped |
 | [playwright-responsive-tests](plans/2026-06-24-playwright-responsive-tests.md) | Proposed (not built) Playwright responsive screenshot tests in CI | 📓 proposed |
 
 ## Research (`research/`) — informational, not commitments
