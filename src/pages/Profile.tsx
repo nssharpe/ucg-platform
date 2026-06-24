@@ -45,14 +45,23 @@ type ValidationErrors = { field: string; label: string }[];
 
 function validateProfile(p: Athlete): ValidationErrors {
   const errs: ValidationErrors = [];
+  // Athlete-only fields: a later task hides student status + grad year for
+  // coach-only accounts, so only require them when the person is an athlete.
+  const isAthlete = effectiveRoles(p).athlete;
   if (!p.firstName.trim()) errs.push({ field: 'firstName', label: 'First name' });
   if (!p.lastName.trim()) errs.push({ field: 'lastName', label: 'Last name' });
   if (!p.dob) errs.push({ field: 'dob', label: 'Date of birth' });
-  if (!p.gradYear) errs.push({ field: 'gradYear', label: 'Graduation year' }); // 0/undefined = not chosen; 1900 = N/A (ok)
+  if (isAthlete && !p.gradYear) errs.push({ field: 'gradYear', label: 'Graduation year' }); // 0/undefined = not chosen; 1900 = N/A (ok)
   if (!p.state) errs.push({ field: 'state', label: 'Training state' });
   if (!p.phone) errs.push({ field: 'phone', label: 'Phone' });
   if (!p.shirt) errs.push({ field: 'shirt', label: 'T-shirt size' });
-  if (!p.studentStatus) errs.push({ field: 'studentStatus', label: 'Student status' });
+  if (isAthlete && !p.studentStatus) errs.push({ field: 'studentStatus', label: 'Student status' });
+  // Main club: `string` = a club is picked, `null` = "No club / Independent
+  // Athlete" (an explicit, valid choice). The `Athlete` type makes mainClubId
+  // non-optional (`string | null`), so there is no "never chosen" sentinel to
+  // reject here — both states are valid. New-person creation (PersonForm) is
+  // where the explicit club-vs-independent choice is enforced before a person
+  // exists; Profile only edits already-created people.
   if (!p.emergency.contact) errs.push({ field: 'emergency.contact', label: 'Emergency contact' });
   if (!p.emergency.phone) errs.push({ field: 'emergency.phone', label: 'Emergency phone' });
   return errs;
@@ -284,9 +293,11 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                 {missingFieldKeys.has('gradYear') && !p.gradYear && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Enter a year or check N/A.</div>}
               </Field>
               <Field label="Student status" hint="Full-time student for ≥1 semester this season (Jul–Jun)? Grad students may pick either.">
-                <select className="input" value={p.studentStatus} onChange={(e) => set({ studentStatus: e.target.value as 'Student' | 'Non-Student' })} style={missingStyle('studentStatus')}>
-                  <option>Student</option><option>Non-Student</option>
+                <select className="input" value={p.studentStatus} onChange={(e) => set({ studentStatus: e.target.value as Athlete['studentStatus'] })} style={missingStyle('studentStatus')}>
+                  <option value="" disabled>Select…</option>
+                  <option value="Student">Student</option><option value="Non-Student">Non-Student</option>
                 </select>
+                {missingFieldKeys.has('studentStatus') && !p.studentStatus && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Required</div>}
               </Field>
               <Field label="T-shirt size">
                 <select className="input" value={p.shirt} onChange={(e) => set({ shirt: e.target.value })} style={missingStyle('shirt')}>

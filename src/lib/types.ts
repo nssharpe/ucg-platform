@@ -122,7 +122,7 @@ export interface Athlete {
   gender: Gender;
   placement?: Partial<Record<Discipline, Placement>>;
   gradYear: number; // 1900 = n/a
-  studentStatus: 'Student' | 'Non-Student';
+  studentStatus: 'Student' | 'Non-Student' | ''; // '' = unset (must be chosen for athletes)
   shirt: string;
   country: string;
   state: string;
