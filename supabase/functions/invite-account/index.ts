@@ -83,9 +83,12 @@ Deno.serve(async (req) => {
   // else create a new one. Never clobber an already-linked person's club.
   const { data: existing } = await db.from('people')
     .select('id, auth_user_id').eq('email', email).order('created_at', { ascending: true }).limit(1).maybeSingle();
+  // roles must match the invited kind — the people.roles column defaults to
+  // athlete-only, so a coach insert that omits it would show as an athlete.
+  const roles = kind === 'coach' ? { athlete: false, coach: true } : { athlete: true, coach: false };
   if (!existing) {
     await db.from('people').insert({
-      id: crypto.randomUUID(), auth_user_id: authUserId, kind,
+      id: crypto.randomUUID(), auth_user_id: authUserId, kind, roles,
       first_name: firstName, last_name: lastName, email, main_club_id: clubId,
     });
   } else if (!existing.auth_user_id) {
