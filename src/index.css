@@ -205,6 +205,15 @@ option { color: var(--ink); background: #fff; }
 .member-banner.warn { background: var(--coral-100); color: var(--coral-600); }
 .member-banner a { color: inherit; }
 
+/* membership badges live in the topbar, left of the cart; one inline row */
+.topbar-membership {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.member-banner { white-space: nowrap; }
+
 /* signed-in identity chip in the top bar */
 .topbar-user {
   display: inline-flex;

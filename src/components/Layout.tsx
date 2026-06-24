@@ -6,6 +6,7 @@ import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { offeredMembershipTypes } from '../lib/pricing';
 import { useSession } from '../lib/auth';
 import { Combo } from './ui';
+import { TopbarMembership } from './TopbarMembership';
 import { useNavHistory, useGoBack, labelFor } from '../lib/navHistory';
 
 interface NavGroup { group: string; items: { to: string; label: string }[] }
@@ -189,6 +190,13 @@ export function Layout({ children }: { children: ReactNode }) {
           ) : null}
           <span className="crumb">{labelFor(loc.pathname)}</span>
           <div style={{ flex: 1 }} />
+          {me && (
+            <TopbarMembership
+              items={membershipBannerItems}
+              seasonName={season.name}
+              clubShort={myClubShort}
+            />
+          )}
           {me && (() => {
             const cartCount = (db.carts[me.id] ?? []).length;
             return (
@@ -209,21 +217,6 @@ export function Layout({ children }: { children: ReactNode }) {
           ) : isSupabaseConfigured && !session ? (
             <Link to="/me" className="topbar-user topbar-user-guest">Sign in</Link>
           ) : null}
-          {me && membershipBannerItems.length > 0 && (
-            <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
-              {membershipBannerItems.map(({ type, label, status }) => (
-                status === 'active' ? (
-                  <span key={type} className="member-banner ok">✓ {season.name} {label} membership active</span>
-                ) : status === 'pending-club-payment' ? (
-                  <span key={type} className="member-banner warn">⏳ {season.name} {label} membership — pending payment by {myClubShort} · <Link to="/membership">details</Link></span>
-                ) : status === 'pending-waiver' ? (
-                  <span key={type} className="member-banner warn">⏳ {season.name} {label} membership — pending guardian waiver · <Link to="/membership">details</Link></span>
-                ) : (
-                  <span key={type} className="member-banner warn">✕ No {season.name} {label} membership · <Link to="/membership">purchase now</Link></span>
-                )
-              ))}
-            </span>
-          )}
         </header>
         <main className="content">{children}</main>
       </div>
