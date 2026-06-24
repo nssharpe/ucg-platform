@@ -53,7 +53,7 @@ Deno.serve(async (req) => {
 
   // Record a pending request with a secret review token (reuse an existing
   // pending one for this requester+club so repeated clicks don't pile up).
-  let reviewToken: string | null = null;
+  let reviewToken: string;
   const { data: existingReq } = await db.from('manager_access_requests')
     .select('token').eq('club_id', clubId).eq('requester_person_id', caller.id).eq('status', 'pending').maybeSingle();
   if (existingReq) {
