@@ -43,7 +43,20 @@ function ageFromDob(dob: string): number {
 // ---------------------------------------------------------------------------
 type ValidationErrors = { field: string; label: string }[];
 
-function validateProfile(p: Athlete): ValidationErrors {
+/** Is an athlete profile still "not yet completed"? We reuse the required
+ *  `studentStatus` field as the unset marker (`''` = never filled in) rather
+ *  than adding a DB column. A brand-new self-signup person lands here with
+ *  `studentStatus === ''` and `mainClubId === null`. */
+function athleteProfileIncomplete(p: Athlete): boolean {
+  return effectiveRoles(p).athlete && !p.studentStatus;
+}
+
+// `independent` is local form state (the "No club" checkbox), not stored on the
+// person — the stored value is `mainClubId` (null = no club). validateProfile
+// takes it so it can require an explicit club-vs-Independent choice for new
+// athlete accounts. Defaults to deriving from `mainClubId` for callers (e.g.
+// the initial editMode check) that don't have the live toggle.
+function validateProfile(p: Athlete, independentChecked: boolean = p.mainClubId === null): ValidationErrors {
   const errs: ValidationErrors = [];
   // Athlete-only fields: a later task hides student status + grad year for
   // coach-only accounts, so only require them when the person is an athlete.
@@ -57,11 +70,16 @@ function validateProfile(p: Athlete): ValidationErrors {
   if (!p.shirt) errs.push({ field: 'shirt', label: 'T-shirt size' });
   if (isAthlete && !p.studentStatus) errs.push({ field: 'studentStatus', label: 'Student status' });
   // Main club: `string` = a club is picked, `null` = "No club / Independent
-  // Athlete" (an explicit, valid choice). The `Athlete` type makes mainClubId
-  // non-optional (`string | null`), so there is no "never chosen" sentinel to
-  // reject here — both states are valid. New-person creation (PersonForm) is
-  // where the explicit club-vs-independent choice is enforced before a person
-  // exists; Profile only edits already-created people.
+  // Athlete". For a COMPLETE athlete profile both are valid choices. But a new
+  // self-signup account is created with `mainClubId = null` and lands here to
+  // fill in its profile — we must NOT treat that default null as "Independent
+  // chosen". So for an incomplete athlete profile require an explicit choice:
+  // a club picked OR the Independent box ticked (feedback 1c). The local
+  // `independent` toggle is the only signal that null means a deliberate choice.
+  if (isAthlete && athleteProfileIncomplete(p)) {
+    const clubChosen = independentChecked || !!p.mainClubId;
+    if (!clubChosen) errs.push({ field: 'mainClubId', label: 'Main club' });
+  }
   if (!p.emergency.contact) errs.push({ field: 'emergency.contact', label: 'Emergency contact' });
   if (!p.emergency.phone) errs.push({ field: 'emergency.phone', label: 'Emergency phone' });
   return errs;
@@ -108,16 +126,30 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   const [revokeSeasonId, setRevokeSeasonId] = useState<string | null>(null);
   // "Independent Athlete" = no club (mainClubId null). Tracked locally so the
   // user can tick it before/instead of picking a club from the dropdown.
-  const [independent, setIndependent] = useState<boolean>(() => person?.mainClubId === null);
+  // For an INCOMPLETE new athlete profile (studentStatus unset + no club) we
+  // start UNCHECKED so neither a club nor No-club is pre-selected — the user
+  // must take an explicit action (feedback 1c). Only derive Independent from a
+  // null club when the profile is already complete (or it's a coach).
+  const [independent, setIndependent] = useState<boolean>(() =>
+    person ? !athleteProfileIncomplete(person) && person.mainClubId === null : false
+  );
 
   // Hooks must run unconditionally, so derive these before the early return below.
   // `current` is null only when `person` is missing (the not-found path).
   const current = draft ?? person ?? null;
-  const validationErrors = useMemo(() => (current ? validateProfile(current) : []), [current]);
+  const validationErrors = useMemo(() => (current ? validateProfile(current, independent) : []), [current, independent]);
 
-  // When arriving from membership, highlight still-empty required fields in red
+  // When arriving from membership, highlight still-empty required fields in red.
+  // The club-choice guard (feedback 1c) also self-surfaces outside that flow:
+  // a new self-signup lands in edit mode without `?return=membership`, so always
+  // surface a missing `mainClubId` choice so the disabled Save has a visible reason.
   const missingFieldKeys = useMemo(
-    () => highlightMissing ? new Set(validationErrors.map((e) => e.field)) : new Set<string>(),
+    () => {
+      const base = highlightMissing ? validationErrors.map((e) => e.field) : [];
+      const keys = new Set(base);
+      if (validationErrors.some((e) => e.field === 'mainClubId')) keys.add('mainClubId');
+      return keys;
+    },
     [highlightMissing, validationErrors]
   );
 
@@ -352,7 +384,9 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                 {independent ? (
                   <input type="text" disabled value="Independent Athlete" />
                 ) : (
-                  <Combo options={clubOptions} value={p.mainClubId} placeholder="Select a club…" onChange={(v) => set({ mainClubId: v })} />
+                  <div style={missingStyle('mainClubId')}>
+                    <Combo options={clubOptions} value={p.mainClubId} placeholder="Select a club…" onChange={(v) => set({ mainClubId: v })} />
+                  </div>
                 )}
                 {!isCoach && (
                   <label className="checkrow" style={{ margin: '8px 0 0' }}>
@@ -360,6 +394,9 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                       onChange={(e) => { setIndependent(e.target.checked); if (e.target.checked) set({ mainClubId: null }); }} />
                     No club — I am an Independent Athlete
                   </label>
+                )}
+                {missingFieldKeys.has('mainClubId') && (
+                  <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Pick a club, or check "No club".</div>
                 )}
               </Field>
               <Field label="Region" hint="Derived from training state.">
