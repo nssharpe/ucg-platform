@@ -11,6 +11,10 @@ standing authorization to run `supabase db push` / apply migrations to the live 
 (granted 2026-06-18). Still confirm genuinely destructive prod actions and show what
 will apply first.
 
+When executing a written implementation plan, **default to subagent-driven execution**
+(`superpowers:subagent-driven-development` — fresh subagent per task + review between
+tasks). Nate prefers this; don't ask which execution mode to use (decided 2026-06-24).
+
 ## Supabase / migrations
 - Project ref `wkyerxlgricfphopocoz` (org NAIGC). Migrations in `supabase/migrations/`.
   CLI is linked (`supabase link` done 2026-06-19). All migrations are applied and
