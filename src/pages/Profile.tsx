@@ -65,7 +65,9 @@ function validateProfile(p: Athlete, independentChecked: boolean = p.mainClubId 
   if (!p.lastName.trim()) errs.push({ field: 'lastName', label: 'Last name' });
   if (!p.dob) errs.push({ field: 'dob', label: 'Date of birth' });
   if (isAthlete && !p.gradYear) errs.push({ field: 'gradYear', label: 'Graduation year' }); // 0/undefined = not chosen; 1900 = N/A (ok)
-  if (!p.state) errs.push({ field: 'state', label: 'Training state' });
+  // Coach-only accounts see "Coaching state"; anyone training outside the US has no state.
+  const coachOnly = effectiveRoles(p).coach && !effectiveRoles(p).athlete;
+  if (!p.outsideUs && !p.state) errs.push({ field: 'state', label: coachOnly ? 'Coaching state' : 'Training state' });
   if (!p.phone) errs.push({ field: 'phone', label: 'Phone' });
   if (!p.shirt) errs.push({ field: 'shirt', label: 'T-shirt size' });
   if (isAthlete && !p.studentStatus) errs.push({ field: 'studentStatus', label: 'Student status' });
@@ -163,6 +165,10 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   const roles = effectiveRoles(p);
   const isAthlete = roles.athlete;
   const isCoach = roles.coach;
+  // Coach-only: hide student status + grad year, relabel state field (feedback 1e).
+  const coachOnly = isCoach && !isAthlete;
+  const outsideUs = !!p.outsideUs;
+  const stateLabel = coachOnly ? 'Coaching state' : 'Training state';
 
   /** Returns inline border style if this field is currently missing and we're highlighting */
   const missingStyle = (field: string): CSSProperties =>
@@ -311,26 +317,30 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                   ))}
                 </>
               )}
-              <Field label="Undergrad graduation year">
-                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                  <input type="number" disabled={p.gradYear === 1900} placeholder="YYYY" style={missingStyle('gradYear')}
-                    value={p.gradYear === 1900 || !p.gradYear ? '' : p.gradYear}
-                    onChange={(e) => set({ gradYear: +e.target.value || 0 })} />
-                  <label className="checkrow" style={{ whiteSpace: 'nowrap', margin: 0 }}>
-                    {/* 1900 = N/A; 0 = not yet chosen */}
-                    <input type="checkbox" checked={p.gradYear === 1900} onChange={(e) => set({ gradYear: e.target.checked ? 1900 : 0 })} />
-                    N/A
-                  </label>
-                </div>
-                {missingFieldKeys.has('gradYear') && !p.gradYear && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Enter a year or check N/A.</div>}
-              </Field>
-              <Field label="Student status" hint="Full-time student for ≥1 semester this season (Jul–Jun)? Grad students may pick either.">
-                <select className="input" value={p.studentStatus} onChange={(e) => set({ studentStatus: e.target.value as Athlete['studentStatus'] })} style={missingStyle('studentStatus')}>
-                  <option value="" disabled>Select…</option>
-                  <option value="Student">Student</option><option value="Non-Student">Non-Student</option>
-                </select>
-                {missingFieldKeys.has('studentStatus') && !p.studentStatus && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Required</div>}
-              </Field>
+              {!coachOnly && (
+                <Field label="Undergrad graduation year">
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                    <input type="number" disabled={p.gradYear === 1900} placeholder="YYYY" style={missingStyle('gradYear')}
+                      value={p.gradYear === 1900 || !p.gradYear ? '' : p.gradYear}
+                      onChange={(e) => set({ gradYear: +e.target.value || 0 })} />
+                    <label className="checkrow" style={{ whiteSpace: 'nowrap', margin: 0 }}>
+                      {/* 1900 = N/A; 0 = not yet chosen */}
+                      <input type="checkbox" checked={p.gradYear === 1900} onChange={(e) => set({ gradYear: e.target.checked ? 1900 : 0 })} />
+                      N/A
+                    </label>
+                  </div>
+                  {missingFieldKeys.has('gradYear') && !p.gradYear && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Enter a year or check N/A.</div>}
+                </Field>
+              )}
+              {!coachOnly && (
+                <Field label="Student status" hint="Full-time student for ≥1 semester this season (Jul–Jun)? Grad students may pick either.">
+                  <select className="input" value={p.studentStatus} onChange={(e) => set({ studentStatus: e.target.value as Athlete['studentStatus'] })} style={missingStyle('studentStatus')}>
+                    <option value="" disabled>Select…</option>
+                    <option value="Student">Student</option><option value="Non-Student">Non-Student</option>
+                  </select>
+                  {missingFieldKeys.has('studentStatus') && !p.studentStatus && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Required</div>}
+                </Field>
+              )}
               <Field label="T-shirt size">
                 <select className="input" value={p.shirt} onChange={(e) => set({ shirt: e.target.value })} style={missingStyle('shirt')}>
                   <option value="">Select a size…</option>
@@ -338,11 +348,20 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                 </select>
                 {missingFieldKeys.has('shirt') && !p.shirt && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Required</div>}
               </Field>
-              <Field label="Training state">
-                <div style={missingStyle('state')}>
-                  <Combo options={states.map((s) => ({ value: s, label: s, sub: STATE_REGIONS[s] }))} value={p.state} onChange={(v) => set({ state: v })} />
-                </div>
-                {missingFieldKeys.has('state') && !p.state && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Required</div>}
+              <Field label={stateLabel}>
+                {outsideUs ? (
+                  <input type="text" disabled value="Outside US" />
+                ) : (
+                  <div style={missingStyle('state')}>
+                    <Combo options={states.map((s) => ({ value: s, label: s, sub: STATE_REGIONS[s] }))} value={p.state} onChange={(v) => set({ state: v })} />
+                  </div>
+                )}
+                <label className="checkrow" style={{ margin: '8px 0 0' }}>
+                  <input type="checkbox" checked={outsideUs}
+                    onChange={(e) => set(e.target.checked ? { outsideUs: true, state: '' } : { outsideUs: false })} />
+                  {coachOnly ? 'Coaching outside the US' : 'Training outside the US'}
+                </label>
+                {!outsideUs && missingFieldKeys.has('state') && !p.state && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Required</div>}
               </Field>
               <Field label="Phone">
                 <input
@@ -399,8 +418,8 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                   <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Pick a club, or check "No club".</div>
                 )}
               </Field>
-              <Field label="Region" hint="Derived from training state.">
-                <input type="text" disabled value={STATE_REGIONS[p.state] ?? 'Other'} />
+              <Field label="Region" hint={outsideUs ? 'Set because you train outside the US.' : `Derived from ${stateLabel.toLowerCase()}.`}>
+                <input type="text" disabled value={outsideUs ? 'Outside US' : p.state ? STATE_REGIONS[p.state] ?? 'Other' : '—'} />
               </Field>
               <Field
                 label={isCoach ? 'Other clubs you coach for' : 'Other clubs'}
@@ -516,10 +535,10 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
               {isAthlete && person.gender !== 'Male' && person.gender !== 'Female' && DISCIPLINES.map((d) => (
                 <ViewRow key={d} label={`${d} placement`} value={person.placement?.[d] ?? 'women+'} />
               ))}
-              <ViewRow label="Grad year" value={person.gradYear === 1900 ? 'N/A' : String(person.gradYear)} />
-              <ViewRow label="Student status" value={person.studentStatus} />
+              {!coachOnly && <ViewRow label="Grad year" value={person.gradYear === 1900 ? 'N/A' : String(person.gradYear)} />}
+              {!coachOnly && <ViewRow label="Student status" value={person.studentStatus} />}
               <ViewRow label="T-shirt size" value={person.shirt} />
-              <ViewRow label="Training state" value={`${person.state}${STATE_REGIONS[person.state] ? ` (${STATE_REGIONS[person.state]})` : ''}`} />
+              <ViewRow label={stateLabel} value={person.outsideUs ? 'Outside US' : `${person.state}${STATE_REGIONS[person.state] ? ` (${STATE_REGIONS[person.state]})` : ''}`} />
               <ViewRow label="Phone" value={person.phone} />
             </div>
           </div>
@@ -530,7 +549,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
             </h3>
             <div className="grid cols-2">
               <ViewRow label={isCoach ? 'Primary club' : 'Main club'} value={db.clubs.find((c) => c.id === person.mainClubId)?.name ?? '—'} />
-              <ViewRow label="Region" value={STATE_REGIONS[person.state] ?? 'Other'} />
+              <ViewRow label="Region" value={person.outsideUs ? 'Outside US' : STATE_REGIONS[person.state] ?? 'Other'} />
               {!adminView && person.mainClubId && !caps.managedClubIds.includes(person.mainClubId) && (
                 <div style={{ gridColumn: '1 / -1' }}>
                   <RequestAdminRoleButton
