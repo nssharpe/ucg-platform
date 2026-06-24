@@ -168,7 +168,9 @@ export function buildEntries(db: DB, meet: Meet, discipline: Discipline, phase?:
       gender: athlete?.gender ?? '',
       student: athlete?.studentStatus === 'Student',
       level: reg.levelId,
-      category: platformCategory(athlete?.placement?.[discipline], athlete?.gender ?? '', athlete?.studentStatus ?? 'Non-Student'),
+      // studentStatus may now be '' (unset) for an incomplete profile; treat that as Non-Student
+      // for category placement (|| catches '' where ?? would not).
+      category: platformCategory(athlete?.placement?.[discipline], athlete?.gender ?? '', athlete?.studentStatus || 'Non-Student'),
       session: reg.sessionId ?? '',
       events,
       aaPlaceEligible: true,
