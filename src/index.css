@@ -215,21 +215,22 @@ option { color: var(--ink); background: #fff; }
 }
 .member-banner { white-space: nowrap; }
 
-/* stacked: full-width second row, coach left + athlete right (pins right even alone) */
+/* full text shows inline; the short form shows once the badges are stacked */
+.topbar-membership[data-mode="inline"] .mb-short { display: none; }
+.topbar-membership[data-mode="stacked"] .mb-full { display: none; }
+
+/* stacked: badges drop to their own full-width second row, kept to a single line
+   (so the topbar is never more than two lines). Coach pins left, athlete right —
+   via `order` so it holds regardless of DOM order and for a lone badge too. */
 .topbar-membership[data-mode="stacked"] {
   order: 1;
   flex: 1 0 100%;
-  flex-wrap: wrap;
-  justify-content: space-between;
+  flex-wrap: nowrap;
   margin-top: 8px;
   gap: 8px;
 }
-.topbar-membership[data-mode="stacked"] .member-banner.is-athlete { margin-left: auto; }
-
-/* shed levels: drop the trailing link, then the season name */
-.topbar-membership[data-shed="1"] .mb-link,
-.topbar-membership[data-shed="2"] .mb-link { display: none; }
-.topbar-membership[data-shed="2"] .mb-season { display: none; }
+.topbar-membership[data-mode="stacked"] .member-banner.is-coach { order: 0; }
+.topbar-membership[data-mode="stacked"] .member-banner.is-athlete { order: 1; margin-left: auto; }
 
 /* signed-in identity chip in the top bar */
 .topbar-user {
@@ -823,6 +824,21 @@ option { color: var(--ink); background: #fff; }
   .nav-toggle:hover { border-color: var(--ink-soft); }
   .content { padding: 18px 14px 48px; }
   .topbar { padding: 10px 14px; }
+}
+
+/* Narrow screens: shrink the user chip to its avatar and tighten the topbar gap so
+   line 1 (hamburger · crumb · cart · avatar) stays on one row — only the membership
+   badges drop to the second line, never the name. */
+@media (max-width: 600px) {
+  .topbar { gap: 8px; }
+  .topbar-user-name { display: none; }
+}
+
+/* Very narrow: compact the stacked badges so a dual-role (athlete + coach) pair still
+   fits on a single second line instead of overflowing or wrapping to a third. */
+@media (max-width: 520px) {
+  .topbar-membership[data-mode="stacked"] { gap: 6px; }
+  .topbar-membership[data-mode="stacked"] .member-banner { font-size: 11.5px; padding: 5px 9px; }
 }
 
 @media print {
