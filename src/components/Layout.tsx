@@ -1,11 +1,13 @@
 import { NavLink, Link, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useDB, useViewPersonId, setViewPersonId } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { offeredMembershipTypes } from '../lib/pricing';
 import { useSession } from '../lib/auth';
 import { Combo } from './ui';
+import { TopbarMembership } from './TopbarMembership';
 import { useNavHistory, useGoBack, labelFor } from '../lib/navHistory';
 
 interface NavGroup { group: string; items: { to: string; label: string }[] }
@@ -56,6 +58,31 @@ export function Layout({ children }: { children: ReactNode }) {
   const caps = useCapabilities();
   const db = useDB();
   const loc = useLocation();
+  const topbarRef = useRef<HTMLElement>(null);
+  const [navOpen, setNavOpen] = useState(false);
+
+  // Close the drawer on navigation. Derive the close from a path change using
+  // the store-previous-value pattern (setState during render bails out the
+  // in-progress render) — this avoids both `set-state-in-effect` and the
+  // ref-during-render lint errors that an effect/ref approach would trip.
+  const [lastPath, setLastPath] = useState(loc.pathname);
+  if (lastPath !== loc.pathname) {
+    setLastPath(loc.pathname);
+    if (navOpen) setNavOpen(false);
+  }
+
+  // Close on Escape; lock body scroll while the drawer is open.
+  useEffect(() => {
+    if (!navOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setNavOpen(false); };
+    window.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [navOpen]);
   const viewPersonId = useViewPersonId();
   const session = useSession();
   useNavHistory(); // record each page visit into the module-level stack
@@ -84,7 +111,7 @@ export function Layout({ children }: { children: ReactNode }) {
 
   return (
     <div className="shell">
-      <aside className="sidebar">
+      <aside id="app-sidebar" className={`sidebar${navOpen ? ' open' : ''}`}>
         <div className="brand-block">
           <Link to="/" className="brand-mark">UCG<span className="spark">.</span></Link>
           <div className="brand-sub">United Club Gymnastics</div>
@@ -165,8 +192,21 @@ export function Layout({ children }: { children: ReactNode }) {
           )}
         </div>
       </aside>
+      {navOpen && <div className="nav-overlay" onClick={() => setNavOpen(false)} aria-hidden="true" />}
       <div className="main">
-        <header className="topbar">
+        <header className="topbar" ref={topbarRef}>
+          <button
+            type="button"
+            className="nav-toggle"
+            aria-label={navOpen ? 'Close menu' : 'Open menu'}
+            aria-expanded={navOpen}
+            aria-controls="app-sidebar"
+            onClick={() => setNavOpen((o) => !o)}
+          >
+            <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+              <path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          </button>
           {goBack ? (
             <button
               type="button"
@@ -189,6 +229,14 @@ export function Layout({ children }: { children: ReactNode }) {
           ) : null}
           <span className="crumb">{labelFor(loc.pathname)}</span>
           <div style={{ flex: 1 }} />
+          {me && (
+            <TopbarMembership
+              items={membershipBannerItems}
+              seasonName={season.name}
+              clubShort={myClubShort}
+              topbarRef={topbarRef}
+            />
+          )}
           {me && (() => {
             const cartCount = (db.carts[me.id] ?? []).length;
             return (
@@ -209,21 +257,6 @@ export function Layout({ children }: { children: ReactNode }) {
           ) : isSupabaseConfigured && !session ? (
             <Link to="/me" className="topbar-user topbar-user-guest">Sign in</Link>
           ) : null}
-          {me && membershipBannerItems.length > 0 && (
-            <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
-              {membershipBannerItems.map(({ type, label, status }) => (
-                status === 'active' ? (
-                  <span key={type} className="member-banner ok">✓ {season.name} {label} membership active</span>
-                ) : status === 'pending-club-payment' ? (
-                  <span key={type} className="member-banner warn">⏳ {season.name} {label} membership — pending payment by {myClubShort} · <Link to="/membership">details</Link></span>
-                ) : status === 'pending-waiver' ? (
-                  <span key={type} className="member-banner warn">⏳ {season.name} {label} membership — pending guardian waiver · <Link to="/membership">details</Link></span>
-                ) : (
-                  <span key={type} className="member-banner warn">✕ No {season.name} {label} membership · <Link to="/membership">purchase now</Link></span>
-                )
-              ))}
-            </span>
-          )}
         </header>
         <main className="content">{children}</main>
       </div>
