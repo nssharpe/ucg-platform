@@ -11,6 +11,7 @@
   --ice-300: #c3dade;
   --coral-500: #f46949;
   --coral-600: #e2553a;
+  --coral-700: #b23a1e; /* AA-compliant text (4.9:1) on --coral-100 */
   --coral-100: #fde4dc;
   --white: #fcfcfc;
   --green-600: #2e7d52;
@@ -203,7 +204,7 @@ option { color: var(--ink); background: #fff; }
   border-radius: 99px;
 }
 .member-banner.ok { background: var(--green-100); color: var(--green-600); }
-.member-banner.warn { background: var(--coral-100); color: var(--coral-600); }
+.member-banner.warn { background: var(--coral-100); color: var(--coral-700); }
 .member-banner a { color: inherit; }
 
 /* membership badges live in the topbar, left of the cart; one inline row */
@@ -216,6 +217,7 @@ option { color: var(--ink); background: #fff; }
 .member-banner { white-space: nowrap; }
 
 /* full text shows inline; the short form shows once the badges are stacked */
+.mb-full, .mb-short { display: inline; }
 .topbar-membership[data-mode="inline"] .mb-short { display: none; }
 .topbar-membership[data-mode="stacked"] .mb-full { display: none; }
 
