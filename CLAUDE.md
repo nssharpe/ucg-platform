@@ -49,6 +49,12 @@ will apply first.
   serves the previous bundle.
 - Pre-existing lint debt (`src/lib/supabase.ts` `any`s, etc.) — `npm run lint` has
   never been clean. Lint only the files you touch.
+- **CI gate:** the GitHub Actions "Deploy to GitHub Pages" workflow runs `npm run lint`
+  and **fails the deploy on any lint _error_** (the few pre-existing _warnings_ are
+  tolerated, exit 0). `npm run build` does NOT run eslint, so a clean build can still
+  break the deploy. ALWAYS `npx eslint <touched files>` before pushing. ESLint also lints
+  `supabase/functions/**` (e.g. `no-useless-assignment` fires on a `let x = null` that's
+  always reassigned before use).
 
 ## Tests
 - Vitest, **node environment**, config in `vitest.config.ts` (no app plugins loaded).
