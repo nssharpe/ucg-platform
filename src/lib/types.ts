@@ -126,6 +126,8 @@ export interface Athlete {
   shirt: string;
   country: string;
   state: string;
+  /** True ⇒ trains/coaches outside the US; `state` is optional and region = "Outside US". */
+  outsideUs?: boolean;
   phone: string;
   /** CTIA SMS opt-in. False/undefined = not consented (cannot be texted). */
   smsConsent?: boolean;
