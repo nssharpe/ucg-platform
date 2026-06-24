@@ -825,6 +825,7 @@ option { color: var(--ink); background: #fff; }
     cursor: pointer;
   }
   .nav-toggle:hover { border-color: var(--ink-soft); }
+  .crumb { flex: 1; text-align: center; }
   .content { padding: 18px 14px 48px; }
   .topbar { padding: 10px 14px; }
 }
