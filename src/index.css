@@ -262,6 +262,7 @@ option { color: var(--ink); background: #fff; }
   font-size: 10.5px;
   font-weight: 700;
   letter-spacing: 0.3px;
+  text-indent: 0.3px; /* offset the trailing letter-spacing so initials sit centered */
 }
 .topbar-user-name { white-space: nowrap; }
 .topbar-user-guest { padding: 5px 12px; color: var(--ink-soft); }
@@ -834,6 +835,8 @@ option { color: var(--ink); background: #fff; }
 @media (max-width: 600px) {
   .topbar { gap: 8px; }
   .topbar-user-name { display: none; }
+  /* name hidden — collapse the chip to a concentric circle around the avatar */
+  .topbar-user { padding: 4px; }
 }
 
 /* Very narrow: compact the stacked badges so a dual-role (athlete + coach) pair still
