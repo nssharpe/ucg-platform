@@ -56,6 +56,9 @@ sequence numbers used in conversation. In order:
 | `20260624000010_member_club_cart_rls.sql` | `cart_member_clubpush` policy: a member may insert/read/delete a club-cart row that is theirs (`ref_user_id = self`) when the club has `allow_club_pay`. Fixes "send to club cart" failing RLS for non-managers. |
 | `20260624000020_manager_access_requests.sql` | `manager_access_requests` (tokenized "Request Club Admin Role") + `get_manager_access_request` / `decide_manager_access` security-definer RPCs (granted to anon for the no-login review page). First responder approves (adds to `club_managers`) or denies; idempotent. |
 | `20260624204707_people_outside_us.sql` | `people.outside_us` boolean (default false) — athlete/coach trains outside the US, so the state field is optional and Region resolves to "Outside US". |
+| `20260624233240_app_role_regional_rep.sql` | Adds the `regional_rep` app role (own file — enum-add must commit before use). |
+| `20260624233241_app_role_finance_admin.sql` | Adds the `finance_admin` app role (own file — enum-add must commit before use). |
+| `20260624233242_regional_rep_regions.sql` | `regional_rep_regions` (user_id → region, one per rep) for Regional Representatives. RLS: admins manage all; a rep reads own row. |
 
 All migrations are applied to the live project and tracked by the linked CLI
 (`supabase db push`). Migrations are append-only — add new ones rather than editing
@@ -149,6 +152,11 @@ real concepts, enforced by RLS:
   redemption goes through the `redeem_coupon(code)` RPC. May also push their own
   fee to a club's cart when the club allows it (`cart_member_clubpush`, since
   20260624000010). "Athlete"/"coach" are membership types, not roles.
+- **sanctioning** — a `user_roles` row; the Sanctioning Team (voting UI later).
+- **regional_rep** — a `user_roles` row; a Regional Representative. Their region
+  is stored per-user in `regional_rep_regions` (admin-managed; reps read own).
+- **finance_admin** — a `user_roles` row; no extra attributes (gates a later
+  finance-dashboard phase). Admins are NOT implicitly finance/regional reps.
 - **judge** — will be account-free via a per-meet code (sub-project D); not yet
   built. Until then, admins/hosts enter scores.
 - **anon / guest** — public read of meets, sessions, registrations, and scores so
@@ -157,8 +165,9 @@ real concepts, enforced by RLS:
 Accounts link to a `people` row by verified email on first sign-in via the
 `link_or_create_person` security-definer RPC (0005). Helper SQL functions
 (`is_admin()`, `manages_club()`, `my_person_id()`) keep the policies readable.
-The `app_role` enum still carries the original six values, but only `admin` is
-issued as an account role now.
+The `app_role` enum carries the original values plus `sanctioning`, `regional_rep`,
+and `finance_admin`; `admin`, `sanctioning`, `regional_rep`, and `finance_admin`
+are issued as account roles via the admin User Roles page.
 
 ## How the app data layer uses this
 

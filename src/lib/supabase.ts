@@ -455,6 +455,23 @@ export async function fetchAllRoles(): Promise<{ userId: string; role: string }[
   return (data ?? []).map((r: { user_id: string; role: string }) => ({ userId: r.user_id, role: r.role }));
 }
 
+/** Set (upsert) a regional representative's region. One region per user_id;
+ *  conflict on user_id replaces. Admin-only at the RLS layer. */
+export function setRegionalRepRegion(userId: string, region: string) {
+  remoteUpsert('regional_rep_regions', [{ user_id: userId, region }], 'user_id');
+}
+
+/** All regional_rep_regions rows as { [user_id]: region }. RLS returns every row
+ *  for an admin (own row otherwise). Returns {} on error, matching fetchAllRoles. */
+export async function fetchRegionalRepRegions(): Promise<Record<string, string>> {
+  if (!supabase) return {};
+  const { data, error } = await supabase.from('regional_rep_regions').select('user_id, region');
+  if (error) { console.error('[supabase] fetchRegionalRepRegions failed:', error); return {}; }
+  const out: Record<string, string> = {};
+  for (const r of (data ?? []) as { user_id: string; region: string }[]) out[r.user_id] = r.region;
+  return out;
+}
+
 /** The signed-in user's app roles. Pass the known auth uid (from the session)
  *  to avoid a redundant getUser() round-trip; falls back to getUser() if omitted.
  *  RLS returns only the caller's own rows. */
