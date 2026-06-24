@@ -43,10 +43,14 @@ SECURITY DEFINER funcs in `20260601000002_rls.sql`.
 - [ ] Add `''` to `studentStatus` type in `types.ts`; update `PersonForm.blank()` to
   `studentStatus: ''`. Add a placeholder `<option value="" disabled>Select…</option>` and mark
   the field required + missing-styled when empty, in BOTH `PersonForm.tsx` and `Profile.tsx`.
-- [ ] In `Profile.tsx`, ensure the new-person initial state uses `gradYear: 0` and
-  `independent` derived as `false` for a brand-new person (mainClubId not yet null-by-default);
-  add a `clubChosen` guard to `validate()` mirroring `PersonForm` (block save until a club or
-  No-club is chosen) with a clear error.
+- [x] In `Profile.tsx`, ensure the new-person initial state uses `gradYear: 0` and
+  `independent` derived as `false` for a brand-new person; add a `clubChosen` guard to
+  `validateProfile()` (block save until a club or No-club is chosen) with a clear error.
+  Done: a new athlete profile is identified by `studentStatus === ''` (the unset marker —
+  no new DB column); for such a profile `independent` initializes UNCHECKED and
+  `validateProfile(p, independentChecked)` pushes a `mainClubId` error until
+  `independentChecked || !!p.mainClubId`. Existing COMPLETE profiles (`studentStatus !== ''`)
+  are unaffected — Independent stays derived from `mainClubId === null` and is never re-blocked.
 - [ ] Verify `npx vitest run` still green (no pure-logic tests touch this, but capability tests
   must not break from the type change). Run `npx eslint src/components/PersonForm.tsx
   src/pages/Profile.tsx src/lib/types.ts`.
