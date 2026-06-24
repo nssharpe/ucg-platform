@@ -64,19 +64,30 @@ export function TopbarMembership({ items, seasonName, clubShort, topbarRef }: {
     const root = rootRef.current;
     if (!topbar || !root) return;
 
-    // Probe inline fit: force the topbar onto a single line and check overflow.
+    // Read available width in the settled layout BEFORE perturbing anything:
+    // forcing nowrap below can toggle the page's scrollbar and change clientWidth.
+    const avail = topbar.clientWidth;
+
+    // Probe the natural one-line width. Forcing nowrap alone is not enough — the
+    // flex spacer's grow and the items' shrink collapse the row so it never reports
+    // overflow. Neutralize every child's flex to its content size for the read.
     root.dataset.mode = 'inline';
     root.dataset.shed = '0';
+    const kids = Array.from(topbar.children) as HTMLElement[];
     const prevWrap = topbar.style.flexWrap;
+    const prevFlex = kids.map((k) => k.style.flex);
     topbar.style.flexWrap = 'nowrap';
-    const inlineFits = topbar.scrollWidth <= topbar.clientWidth;
+    kids.forEach((k) => { k.style.flex = '0 0 auto'; });
+    const required = topbar.scrollWidth;
     topbar.style.flexWrap = prevWrap;
-    if (inlineFits) {
+    kids.forEach((k, i) => { k.style.flex = prevFlex[i]; });
+    if (required <= avail) {
       commit('inline', 0);
       return;
     }
 
-    // Stacked: badges on their own full-width row. Shed pieces until the row fits.
+    // Stacked: badges drop to their own full-width row (which may itself wrap when
+    // even the tightest pair is too wide). Shed pieces until the row stops overflowing.
     root.dataset.mode = 'stacked';
     let nextShed: Shed = 0;
     root.dataset.shed = '0';

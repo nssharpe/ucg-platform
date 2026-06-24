@@ -219,6 +219,7 @@ option { color: var(--ink); background: #fff; }
 .topbar-membership[data-mode="stacked"] {
   order: 1;
   flex: 1 0 100%;
+  flex-wrap: wrap;
   justify-content: space-between;
   margin-top: 8px;
   gap: 8px;
