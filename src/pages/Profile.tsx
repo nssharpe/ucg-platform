@@ -8,7 +8,7 @@ import { SHIRT_SIZES, DIETARY_OPTIONS, STATE_REGIONS, DISCIPLINES } from '../lib
 import type { Athlete, ClubRequest, Gender, Region } from '../lib/types';
 import { GENERAL_WAIVER_TYPE } from '../lib/types';
 import { pushClubRequest, pushMembership, pushPerson, deleteRegistration, sendEmail, createWaiverLink, fetchPublishedWaiver, requestManagerAccess } from '../lib/supabase';
-import { getSession } from '../lib/auth';
+import { getSession, useAuthLoading, useRolesLoaded } from '../lib/auth';
 import { escapeHtml } from '../lib/sanitize-html';
 import { downloadWaiverProof, formatSignedAt } from '../lib/waiver-proof';
 
@@ -107,8 +107,22 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   const caps = useCapabilities();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  // Auth/sync readiness signals — only meaningful for the SELF view. On an
+  // account switch (or fresh email-confirm sign-in) the session changes before
+  // syncFromSupabase() pulls the new user's person row into the snapshot, so a
+  // naive `!person` check would flash "Person not found." `rolesLoaded` is the
+  // reliable "ready" gate: onAuthenticated awaits linkOrCreatePerson →
+  // syncFromSupabase() → fetchMyRoles before setting it true, so
+  // rolesLoaded === true implies the new user's person row is already in the
+  // snapshot. (It's reset to false on every user change.)
+  const authLoading = useAuthLoading();
+  const rolesLoaded = useRolesLoaded();
   const personId = adminView ? params.personId! : caps.personId;
   const person = db.people.find((p) => p.id === personId);
+  // Self view: are we still resolving auth/sync, so a missing person is just
+  // "not loaded yet" rather than "no access"? Don't show not-found during this
+  // window — show the loader, then (once settled) redirect Home if truly absent.
+  const selfResolving = !adminView && (authLoading || !rolesLoaded);
 
   // Determine if we should auto-open edit mode and return to membership after save
   const returnParam = searchParams.get('return');
@@ -156,7 +170,25 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
     [highlightMissing, validationErrors]
   );
 
-  if (!person) return <p>Person not found.</p>;
+  // Self view, settled, and still no person row = the signed-in user genuinely
+  // has no profile for the current account. Don't strand them on "Person not
+  // found" — send them Home. (Terminal state: rolesLoaded is true here, so this
+  // can't loop with the loader below.) The admin members detail view keeps its
+  // real not-found for a bad :personId.
+  const selfNoAccess = !adminView && !person && !selfResolving;
+  useEffect(() => {
+    if (selfNoAccess) navigate('/', { replace: true });
+  }, [selfNoAccess, navigate]);
+
+  // While auth/sync is still resolving on the self view, show the loader rather
+  // than a transient "Person not found" (feedback 1i/1j). Same Loading… style
+  // as App's PageFallback.
+  if (!person) {
+    if (selfResolving || selfNoAccess) {
+      return <div style={{ padding: 40, textAlign: 'center', color: 'var(--ink-soft)' }}>Loading…</div>;
+    }
+    return <p>Person not found.</p>;
+  }
   const pid: string = person.id;
   const p = draft ?? person;
   const set = (patch: Partial<Athlete>) => setDraft({ ...p, ...patch });
