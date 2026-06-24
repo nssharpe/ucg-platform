@@ -11,6 +11,7 @@
   --ice-300: #c3dade;
   --coral-500: #f46949;
   --coral-600: #e2553a;
+  --coral-700: #b23a1e; /* AA-compliant text (4.9:1) on --coral-100 */
   --coral-100: #fde4dc;
   --white: #fcfcfc;
   --green-600: #2e7d52;
@@ -203,7 +204,7 @@ option { color: var(--ink); background: #fff; }
   border-radius: 99px;
 }
 .member-banner.ok { background: var(--green-100); color: var(--green-600); }
-.member-banner.warn { background: var(--coral-100); color: var(--coral-600); }
+.member-banner.warn { background: var(--coral-100); color: var(--coral-700); }
 .member-banner a { color: inherit; }
 
 /* membership badges live in the topbar, left of the cart; one inline row */
@@ -215,21 +216,23 @@ option { color: var(--ink); background: #fff; }
 }
 .member-banner { white-space: nowrap; }
 
-/* stacked: full-width second row, coach left + athlete right (pins right even alone) */
+/* full text shows inline; the short form shows once the badges are stacked */
+.mb-full, .mb-short { display: inline; }
+.topbar-membership[data-mode="inline"] .mb-short { display: none; }
+.topbar-membership[data-mode="stacked"] .mb-full { display: none; }
+
+/* stacked: badges drop to their own full-width second row, kept to a single line
+   (so the topbar is never more than two lines). Coach pins left, athlete right —
+   via `order` so it holds regardless of DOM order and for a lone badge too. */
 .topbar-membership[data-mode="stacked"] {
   order: 1;
   flex: 1 0 100%;
-  flex-wrap: wrap;
-  justify-content: space-between;
+  flex-wrap: nowrap;
   margin-top: 8px;
   gap: 8px;
 }
-.topbar-membership[data-mode="stacked"] .member-banner.is-athlete { margin-left: auto; }
-
-/* shed levels: drop the trailing link, then the season name */
-.topbar-membership[data-shed="1"] .mb-link,
-.topbar-membership[data-shed="2"] .mb-link { display: none; }
-.topbar-membership[data-shed="2"] .mb-season { display: none; }
+.topbar-membership[data-mode="stacked"] .member-banner.is-coach { order: 0; }
+.topbar-membership[data-mode="stacked"] .member-banner.is-athlete { order: 1; margin-left: auto; }
 
 /* signed-in identity chip in the top bar */
 .topbar-user {
@@ -823,6 +826,21 @@ option { color: var(--ink); background: #fff; }
   .nav-toggle:hover { border-color: var(--ink-soft); }
   .content { padding: 18px 14px 48px; }
   .topbar { padding: 10px 14px; }
+}
+
+/* Narrow screens: shrink the user chip to its avatar and tighten the topbar gap so
+   line 1 (hamburger · crumb · cart · avatar) stays on one row — only the membership
+   badges drop to the second line, never the name. */
+@media (max-width: 600px) {
+  .topbar { gap: 8px; }
+  .topbar-user-name { display: none; }
+}
+
+/* Very narrow: compact the stacked badges so a dual-role (athlete + coach) pair still
+   fits on a single second line instead of overflowing or wrapping to a third. */
+@media (max-width: 520px) {
+  .topbar-membership[data-mode="stacked"] { gap: 6px; }
+  .topbar-membership[data-mode="stacked"] .member-banner { font-size: 11.5px; padding: 5px 9px; }
 }
 
 @media print {

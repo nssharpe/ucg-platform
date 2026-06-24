@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
-import type { RefObject } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import { Link } from 'react-router-dom';
 
 export interface MembershipBannerItem {
@@ -8,43 +8,47 @@ export interface MembershipBannerItem {
   status: string;
 }
 
-/** One status badge. `mb-season` / `mb-link` spans are the pieces the fitter sheds. */
+/**
+ * One status badge, Title Case. Renders both a full form (`mb-full`, shown inline)
+ * and a short form (`mb-short`, shown when the badges are stacked onto their own
+ * second row). CSS toggles between them via the parent's `data-mode`.
+ */
 function Badge({ item, seasonName, clubShort }: {
   item: MembershipBannerItem;
   seasonName: string;
   clubShort: string;
 }) {
-  const season = <span className="mb-season">{seasonName} </span>;
-  const cls = (tone: 'ok' | 'warn') => `member-banner ${tone} is-${item.type}`;
+  const role = item.label; // 'Athlete' | 'Coach'
+  let full: ReactNode;
+  let short: string;
   switch (item.status) {
     case 'active':
-      return <span className={cls('ok')}>✓ {season}{item.label} membership active</span>;
+      full = <>✓ {seasonName} {role} Membership Active</>;
+      short = `✓ ${role} Membership Active`;
+      break;
     case 'pending-club-payment':
-      return (
-        <span className={cls('warn')}>
-          ⏳ {season}{item.label} membership — pending payment by {clubShort}
-          <span className="mb-link"> · <Link to="/membership">details</Link></span>
-        </span>
-      );
+      full = <>⏳ {seasonName} {role} Membership — Pending Payment by {clubShort} <Link to="/membership">· Details</Link></>;
+      short = `⏳ ${role} Membership Pending`;
+      break;
     case 'pending-waiver':
-      return (
-        <span className={cls('warn')}>
-          ⏳ {season}{item.label} membership — pending guardian waiver
-          <span className="mb-link"> · <Link to="/membership">details</Link></span>
-        </span>
-      );
+      full = <>⏳ {seasonName} {role} Membership — Pending Guardian Waiver <Link to="/membership">· Details</Link></>;
+      short = `⏳ ${role} Membership Pending`;
+      break;
     default:
-      return (
-        <span className={cls('warn')}>
-          ✕ No {season}{item.label} membership
-          <span className="mb-link"> · <Link to="/membership">purchase now</Link></span>
-        </span>
-      );
+      full = <>✕ No {seasonName} {role} Membership <Link to="/membership">· Purchase Now</Link></>;
+      short = `✕ No ${role} Membership`;
+      break;
   }
+  const tone = item.status === 'active' ? 'ok' : 'warn';
+  return (
+    <span className={`member-banner ${tone} is-${item.type}`}>
+      <span className="mb-full">{full}</span>
+      <span className="mb-short">{short}</span>
+    </span>
+  );
 }
 
 type Mode = 'inline' | 'stacked';
-type Shed = 0 | 1 | 2; // 0 full · 1 drop link · 2 drop link + season
 
 export function TopbarMembership({ items, seasonName, clubShort, topbarRef }: {
   items: MembershipBannerItem[];
@@ -54,57 +58,27 @@ export function TopbarMembership({ items, seasonName, clubShort, topbarRef }: {
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [mode, setMode] = useState<Mode>('inline');
-  const [shed, setShed] = useState<Shed>(0);
 
-  // Measure real widths and pick the tightest state that still fits.
-  // Uses forced synchronous layout (reading scrollWidth after each dataset
-  // write reflows), which is fine here: it only runs on resize, on one element.
+  // Decide inline vs stacked by directly observing the real layout rather than
+  // estimating widths (margins / sub-pixel rounding make estimates unreliable):
+  // render the badges inline, then check whether the line-1 user chip got pushed
+  // off the crumb's row. If it did, the row is too tight — drop the badges to their
+  // own full-width second row instead (so the name never wraps; the badges bump).
   const measure = useCallback(() => {
     const topbar = topbarRef.current;
     const root = rootRef.current;
     if (!topbar || !root) return;
 
-    // Read available width in the settled layout BEFORE perturbing anything:
-    // forcing nowrap below can toggle the page's scrollbar and change clientWidth.
-    const avail = topbar.clientWidth;
-
-    // Probe the natural one-line width. Forcing nowrap alone is not enough — the
-    // flex spacer's grow and the items' shrink collapse the row so it never reports
-    // overflow. Neutralize every child's flex to its content size for the read.
     root.dataset.mode = 'inline';
-    root.dataset.shed = '0';
-    const kids = Array.from(topbar.children) as HTMLElement[];
-    const prevWrap = topbar.style.flexWrap;
-    const prevFlex = kids.map((k) => k.style.flex);
-    topbar.style.flexWrap = 'nowrap';
-    kids.forEach((k) => { k.style.flex = '0 0 auto'; });
-    const required = topbar.scrollWidth;
-    topbar.style.flexWrap = prevWrap;
-    kids.forEach((k, i) => { k.style.flex = prevFlex[i]; });
-    if (required <= avail) {
-      commit('inline', 0);
-      return;
-    }
-
-    // Stacked: badges drop to their own full-width row (which may itself wrap when
-    // even the tightest pair is too wide). Shed pieces until the row stops overflowing.
-    root.dataset.mode = 'stacked';
-    let nextShed: Shed = 0;
-    root.dataset.shed = '0';
-    if (root.scrollWidth > root.clientWidth) {
-      nextShed = 1;
-      root.dataset.shed = '1';
-      if (root.scrollWidth > root.clientWidth) {
-        nextShed = 2;
-        root.dataset.shed = '2';
-      }
-    }
-    commit('stacked', nextShed);
-
-    function commit(m: Mode, s: Shed) {
-      setMode((prev) => (prev === m ? prev : m));
-      setShed((prev) => (prev === s ? prev : s));
-    }
+    const crumb = topbar.querySelector('.crumb');
+    const users = topbar.querySelectorAll('.topbar-user');
+    const name = users[users.length - 1];
+    // Reading getBoundingClientRect forces the synchronous reflow we need here.
+    const wrapped = !!crumb && !!name
+      && name.getBoundingClientRect().top - crumb.getBoundingClientRect().top > 6;
+    const next: Mode = wrapped ? 'stacked' : 'inline';
+    root.dataset.mode = next;
+    setMode((prev) => (prev === next ? prev : next));
   }, [topbarRef]);
 
   useLayoutEffect(() => {
@@ -112,7 +86,13 @@ export function TopbarMembership({ items, seasonName, clubShort, topbarRef }: {
     const topbar = topbarRef.current;
     if (!topbar || typeof ResizeObserver === 'undefined') return;
     let raf = 0;
-    const ro = new ResizeObserver(() => {
+    let lastWidth = topbar.clientWidth;
+    const ro = new ResizeObserver((entries) => {
+      // Only react to width changes. Switching inline↔stacked changes the topbar's
+      // height, which would otherwise re-fire the observer and risk a feedback loop.
+      const width = entries[0].contentRect.width;
+      if (Math.abs(width - lastWidth) < 0.5) return;
+      lastWidth = width;
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(measure);
     });
@@ -126,7 +106,7 @@ export function TopbarMembership({ items, seasonName, clubShort, topbarRef }: {
 
   if (items.length === 0) return null;
   return (
-    <div ref={rootRef} className="topbar-membership" data-mode={mode} data-shed={shed}>
+    <div ref={rootRef} className="topbar-membership" data-mode={mode}>
       {items.map((it) => (
         <Badge key={it.type} item={it} seasonName={seasonName} clubShort={clubShort} />
       ))}
