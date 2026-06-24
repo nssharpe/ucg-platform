@@ -58,6 +58,30 @@ function AuthGate() {
 
   const clearMsg = () => { setErr(null); setInfo(null); };
 
+  const forgotPassword = async () => {
+    if (!supabase) return;
+    clearMsg();
+    if (!email.trim()) { setErr('Enter your email first.'); return; }
+    setBusy(true);
+    const redirectTo = `${window.location.origin}${import.meta.env.BASE_URL ?? '/'}?setpw=1`;
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+    setBusy(false);
+    if (error) setErr(error.message);
+    else setInfo('Check your email for a password-reset link.');
+  };
+
+  const magicLink = async () => {
+    if (!supabase) return;
+    clearMsg();
+    if (!email.trim()) { setErr('Enter your email first.'); return; }
+    setBusy(true);
+    const emailRedirectTo = `${window.location.origin}${import.meta.env.BASE_URL ?? '/'}`;
+    const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo } });
+    setBusy(false);
+    if (error) setErr(error.message);
+    else setInfo('Check your email for a sign-in link — click it to log in.');
+  };
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!supabase) return;
@@ -158,6 +182,32 @@ function AuthGate() {
         </button>
         {err && <div className="gate-err">{err}</div>}
         {info && <div className="gate-note" style={{ color: 'var(--ice-200)', marginTop: 12 }}>{info}</div>}
+        {mode === 'sign-in' && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 14, marginTop: 12 }}>
+            <button
+              type="button"
+              onClick={forgotPassword}
+              disabled={busy}
+              style={{
+                background: 'none', border: 'none', padding: 0, cursor: busy ? 'default' : 'pointer',
+                color: 'var(--ice-200)', fontSize: 13, textDecoration: 'underline', opacity: busy ? 0.6 : 1,
+              }}
+            >
+              Forgot my password?
+            </button>
+            <button
+              type="button"
+              onClick={magicLink}
+              disabled={busy}
+              style={{
+                background: 'none', border: 'none', padding: 0, cursor: busy ? 'default' : 'pointer',
+                color: 'var(--ice-200)', fontSize: 13, textDecoration: 'underline', opacity: busy ? 0.6 : 1,
+              }}
+            >
+              Email me a sign-in link
+            </button>
+          </div>
+        )}
         <button
           type="button"
           className="btn ghost"
