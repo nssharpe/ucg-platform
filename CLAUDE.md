@@ -15,6 +15,13 @@ When executing a written implementation plan, **default to subagent-driven execu
 (`superpowers:subagent-driven-development` — fresh subagent per task + review between
 tasks). Nate prefers this; don't ask which execution mode to use (decided 2026-06-24).
 
+**After finishing dev work, always merge the feature branch back to `main` and push
+(which deploys live) — don't stop to ask.** Standing instruction from Nate (2026-06-24):
+branch → implement → verify (tests + lint + responsive sweep) → merge to `main` → push.
+Still run the test suite, `npx eslint` the touched files, and confirm the build before
+pushing (the push deploys to production), but the merge-and-push decision itself is
+pre-authorized — no need to present the finishing-a-development-branch menu for it.
+
 ## Supabase / migrations
 - Project ref `wkyerxlgricfphopocoz` (org NAIGC). Migrations in `supabase/migrations/`.
   CLI is linked (`supabase link` done 2026-06-19). All migrations are applied and
