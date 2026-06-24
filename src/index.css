@@ -178,6 +178,7 @@ option { color: var(--ink); background: #fff; }
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .topbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 14px;
   padding: 12px 28px;
@@ -213,6 +214,21 @@ option { color: var(--ink); background: #fff; }
   min-width: 0;
 }
 .member-banner { white-space: nowrap; }
+
+/* stacked: full-width second row, coach left + athlete right (pins right even alone) */
+.topbar-membership[data-mode="stacked"] {
+  order: 1;
+  flex: 1 0 100%;
+  justify-content: space-between;
+  margin-top: 8px;
+  gap: 8px;
+}
+.topbar-membership[data-mode="stacked"] .member-banner.is-athlete { margin-left: auto; }
+
+/* shed levels: drop the trailing link, then the season name */
+.topbar-membership[data-shed="1"] .mb-link,
+.topbar-membership[data-shed="2"] .mb-link { display: none; }
+.topbar-membership[data-shed="2"] .mb-season { display: none; }
 
 /* signed-in identity chip in the top bar */
 .topbar-user {

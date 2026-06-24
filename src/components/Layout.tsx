@@ -1,5 +1,6 @@
 import { NavLink, Link, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
+import { useRef } from 'react';
 import { useDB, useViewPersonId, setViewPersonId } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
@@ -57,6 +58,7 @@ export function Layout({ children }: { children: ReactNode }) {
   const caps = useCapabilities();
   const db = useDB();
   const loc = useLocation();
+  const topbarRef = useRef<HTMLElement>(null);
   const viewPersonId = useViewPersonId();
   const session = useSession();
   useNavHistory(); // record each page visit into the module-level stack
@@ -167,7 +169,7 @@ export function Layout({ children }: { children: ReactNode }) {
         </div>
       </aside>
       <div className="main">
-        <header className="topbar">
+        <header className="topbar" ref={topbarRef}>
           {goBack ? (
             <button
               type="button"
@@ -195,6 +197,7 @@ export function Layout({ children }: { children: ReactNode }) {
               items={membershipBannerItems}
               seasonName={season.name}
               clubShort={myClubShort}
+              topbarRef={topbarRef}
             />
           )}
           {me && (() => {
