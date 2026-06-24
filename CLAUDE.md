@@ -14,11 +14,11 @@ will apply first.
 ## Supabase / migrations
 - Project ref `wkyerxlgricfphopocoz` (org NAIGC). Migrations in `supabase/migrations/`.
   CLI is linked (`supabase link` done 2026-06-19). All migrations are applied and
-  tracked by the CLI — latest is `20260623000070_self_pay_invoice_rls.sql`
-  (lets a member write their OWN invoice + invoice_items so direct-pay
-  memberships — incl. $0-after-promo — generate a receipt; coupon redemption moved
-  behind the `redeem_coupon(code)` security-definer RPC) as of 2026-06-23.
-  `supabase functions deploy <name>` deploys Edge Functions (see [Email infra] below).
+  tracked by the CLI — latest is `20260624000020_manager_access_requests.sql`
+  (no-login "Request Club Admin Role": `manager_access_requests` + `get_manager_access_request`/
+  `decide_manager_access` RPCs; the prior `20260624000010_member_club_cart_rls.sql` lets a
+  member push their OWN fee to a club cart via the `cart_member_clubpush` policy) as of
+  2026-06-24. `supabase functions deploy <name>` deploys Edge Functions (see [Email infra] below).
 - Migration filenames use Supabase's required timestamp format:
   `<YYYYMMDDHHmmss>_name.sql`. Create new ones with `supabase migration new <name>`.
 - Apply via `supabase db push` (the shell sandbox blocks network — run with the
@@ -101,14 +101,21 @@ will apply first.
     link (`generateLink` type `invite`, or `recovery` if they already exist). Used by the
     club page "Add athlete" / "Add coach" buttons (`kind` sets `people.roles` to match —
     coach inserts are coach-only). The link's `redirectTo` carries `?setpw=1` (see set-password note).
-  - `request-manager-access` — any member asks a club's managers + admins for access.
+  - `request-manager-access` — "Request Club Admin Role": records a
+    `manager_access_requests` row + emails managers/admins a **no-login** review link
+    (`#/manager-access/<token>` → `ManagerAccessReview`). First responder approves
+    (adds them to `club_managers` via `decide_manager_access`) or denies; idempotent.
+  - `create-waiver-link` — admin/club-manager mints a **no-login** waiver signing link
+    (`#/waiver/sign/<token>`) for a member. Used by the League → member "Activate" popup
+    (email or copy). Returns `{token, link}`; emailing is done client-side via `send-email`.
   - `notify-sanction` — sanction lifecycle (`event:'submitted'` → team+admins;
     `'approved'`/`'rejected'` → the requester).
   - The notify-style functions allow any signed-in caller and resolve recipients
     server-side with the service role (pattern: `notify-club-cart`). `send-email`/`send-sms`
     are the only admin-gated senders.
 - Front-end invokers in `src/lib/supabase.ts`: `sendEmail`, `sendSms`, `requestGuardianWaiver`,
-  `notifyClubCart`, `sendClubInvite`, `inviteAccount`, `requestManagerAccess`, `notifySanction`.
+  `notifyClubCart`, `sendClubInvite`, `inviteAccount`, `requestManagerAccess`, `notifySanction`,
+  `createWaiverLink`, `fetchManagerAccessRequest`, `decideManagerAccess`.
   Deploy: `supabase functions deploy <name> --project-ref wkyerxlgricfphopocoz` (sandbox
   disabled; Docker NOT required) — the deploy bundles `_shared/resend.ts` automatically.
 - **Edge Function error surfacing:** invokers must unwrap the JSON `error` body via

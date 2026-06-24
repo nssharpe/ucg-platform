@@ -53,6 +53,8 @@ sequence numbers used in conversation. In order:
 | `20260623000050_sms_consent_and_send_log.sql` | `people.sms_consent`/`sms_consent_at` (CTIA opt-in) + `comm_log.segments`/`encoding`/`cost_estimate` (SMS send-log enrichment). |
 | `20260623000060_sms_messages.sql` | `sms_messages` — per-message log (outbound DLR status + inbound replies) the `sms-webhook` function updates. RLS: admins read; service-role writes. |
 | `20260623000070_self_pay_invoice_rls.sql` | Lets a member write their OWN `invoices` + `invoice_items` (direct-pay membership receipts, incl. $0-after-promo). Replaces the admin-only `invoice_items` write policy with an owner-write one. Adds `redeem_coupon(code)` security-definer RPC (atomic `used_count` bump, enforces `max_uses`) so members don't need direct UPDATE on `coupons`. |
+| `20260624000010_member_club_cart_rls.sql` | `cart_member_clubpush` policy: a member may insert/read/delete a club-cart row that is theirs (`ref_user_id = self`) when the club has `allow_club_pay`. Fixes "send to club cart" failing RLS for non-managers. |
+| `20260624000020_manager_access_requests.sql` | `manager_access_requests` (tokenized "Request Club Admin Role") + `get_manager_access_request` / `decide_manager_access` security-definer RPCs (granted to anon for the no-login review page). First responder approves (adds to `club_managers`) or denies; idempotent. |
 
 All migrations are applied to the live project and tracked by the linked CLI
 (`supabase db push`). Migrations are append-only — add new ones rather than editing
@@ -73,12 +75,13 @@ is the only admin-gated sender.
 | `send-email` | Communicate broadcast / test sender (Resend batch, 50-recipient cap). | admin only |
 | `send-sms` | Communicate text sender (Telnyx); records sent messages to `sms_messages`. | admin only |
 | `sms-webhook` | Inbound Telnyx webhook: DLRs → `sms_messages` status, inbound replies → store + email admins, STOP → `sms_consent` off. Verifies Telnyx Ed25519 signature (`TELNYX_PUBLIC_KEY`). | Telnyx (no JWT; signature-verified) |
-| `record-waiver-signature` | Server-stamps real IP into `waiver_signatures`, activates membership. | signed-in owner (self) / guardian token |
+| `record-waiver-signature` | Server-stamps real IP into `waiver_signatures`, activates membership (club-pay rows → `pending-club-payment`; returns `pendingPayment`). | signed-in owner (self) / guardian token |
 | `request-guardian-waiver` | Creates a signing token + emails a minor's guardian the link. | signed-in owner |
+| `create-waiver-link` | Mints a no-login waiver signing link for a member (admin "Activate" popup — email or copy). Returns `{token, link}`. | admin / club manager |
 | `notify-club-cart` | Emails a club's managers when a member pushes fees to the cart. | any signed-in member |
 | `send-club-invite` | Invite a coach (signup) or a member (purchase membership) by email. | club manager / admin |
-| `invite-account` | Admin-create an account + email a branded set-password link (Resend). Used by roster "Add athlete". | club manager / admin |
-| `request-manager-access` | Member asks a club's managers + admins for access. | any signed-in member |
+| `invite-account` | Create an account + email a branded set-password link (Resend). Used by club "Add athlete"/"Add coach" (`roles` set to match kind). | club manager / admin |
+| `request-manager-access` | "Request Club Admin Role": records `manager_access_requests` + emails managers/admins a no-login review link; first responder approves/denies. | any signed-in member |
 | `notify-sanction` | Sanction lifecycle emails (submitted → team+admins; approved/rejected → requester). | any signed-in member |
 
 ## Stand it up
@@ -142,8 +145,9 @@ real concepts, enforced by RLS:
 - **member** (baseline signed-in person) — reads/writes their own `people` row,
   memberships, alt-clubs, registrations, and (since 0070) their own `invoices` +
   `invoice_items` so a direct-pay membership generates a receipt; coupon
-  redemption goes through the `redeem_coupon(code)` RPC. "Athlete"/"coach" are
-  membership types, not roles.
+  redemption goes through the `redeem_coupon(code)` RPC. May also push their own
+  fee to a club's cart when the club allows it (`cart_member_clubpush`, since
+  20260624000010). "Athlete"/"coach" are membership types, not roles.
 - **judge** — will be account-free via a per-meet code (sub-project D); not yet
   built. Until then, admins/hosts enter scores.
 - **anon / guest** — public read of meets, sessions, registrations, and scores so
