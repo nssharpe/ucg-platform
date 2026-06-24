@@ -99,7 +99,8 @@ will apply first.
     purchase membership (`kind:'membership'`); authorizes the caller manages the club.
   - `invite-account` — admin-create a real auth user + email a branded **set-password**
     link (`generateLink` type `invite`, or `recovery` if they already exist). Used by the
-    roster "Add athlete". The link's `redirectTo` carries `?setpw=1` (see set-password note).
+    club page "Add athlete" / "Add coach" buttons (`kind` sets `people.roles` to match —
+    coach inserts are coach-only). The link's `redirectTo` carries `?setpw=1` (see set-password note).
   - `request-manager-access` — any member asks a club's managers + admins for access.
   - `notify-sanction` — sanction lifecycle (`event:'submitted'` → team+admins;
     `'approved'`/`'rejected'` → the requester).
