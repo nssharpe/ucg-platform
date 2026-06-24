@@ -44,11 +44,14 @@ migrations for new roles + the people RLS fix.
 - [ ] **1h. BUG: new athlete save → "new row violates RLS policy for people".** Reproduce,
   inspect the `people` INSERT RLS policy; a self-insert path for a brand-new person is being
   blocked. New migration to fix the policy. Verify Test Athlete5 save succeeds.
-- [ ] **1i. "Confirm my account" flashes a page before settling on Home.** Route to Home
-  first. Likely `App.tsx` setpw/confirm boot routing or `SetPassword.tsx`.
-- [ ] **1j. Logout→login flashes "Person not found" before loading.** Wait for load before
-  rendering; if new account lacks access to the current route, go Home instead. Guard on
-  `rolesLoaded`/person-loaded. `App.tsx`, `Profile.tsx`, route guards.
+- [x] **1i. "Confirm my account" flashes a page before settling on Home.** Subsumed by 1j's
+  guard — the flash was the same Profile not-found transient; `*` already lands on Home. No
+  separate change (commit 5b8e960).
+- [x] **1j. Logout→login flashes "Person not found" before loading.** `Profile.tsx` self view now
+  shows the `Loading…` fallback while `useAuthLoading() || !useRolesLoaded()`, and navigates Home
+  once settled with no person. `rolesLoaded === true` implies the snapshot synced the new user
+  (onAuthenticated awaits `syncFromSupabase()` first). Admin members view keeps its real
+  not-found (commit 5b8e960).
 - [ ] **1k. Forgot password + magic sign-in link.** Add "Forgot my password" on `Gate.tsx`
   (Supabase `resetPasswordForEmail`) AND passwordless magic link (`signInWithOtp`, email link
   → auto-login). Reuse `?setpw=1`-style hash workaround for HashRouter. `Gate.tsx`, `auth.ts`,

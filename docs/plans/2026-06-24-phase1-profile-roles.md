@@ -195,13 +195,25 @@ account.
   access to the current route, navigate **Home** instead of flashing not-found.
 
 **Steps:**
-- [ ] Trace the confirm/login boot in `App.tsx`; ensure default landing = Home and no gated page
+- [x] Trace the confirm/login boot in `App.tsx`; ensure default landing = Home and no gated page
   renders mid-resolve. Add a "person loading" guard to `Profile.tsx` (show loader until the
   acting person resolves; route Home if no access).
-- [ ] `npx eslint` touched files; `npx vitest run`.
-- [ ] Preview-verify (best-effort without auth): no "Person not found" flash on a simulated
+- [x] `npx eslint` touched files; `npx vitest run`.
+- [x] Preview-verify (best-effort without auth): no "Person not found" flash on a simulated
   person-load delay; default route is Home.
-- [ ] Commit: `fix(auth): no page/not-found flash on confirm and account switch (land on Home)`
+- [x] Commit: `fix(auth): no page/not-found flash on confirm and account switch (land on Home)`
+
+**Implemented (commit 5b8e960):** Guard lives entirely in `Profile.tsx` (self view only).
+On an account switch / fresh email-confirm sign-in the session changes before
+`syncFromSupabase()` pulls the new user's person row into the snapshot, so a naive `!person`
+check flashed "Person not found". Added a `selfResolving` gate (`useAuthLoading() || !useRolesLoaded()`)
+that renders the `Loading…` fallback instead. **`rolesLoaded === true` is the reliable "synced"
+signal** because `onAuthenticated` awaits `linkOrCreatePerson` → `syncFromSupabase()` →
+`fetchMyRoles` before setting it true (and resets it to false on every user change). Once settled
+with still no person (genuine no-access), a `useEffect` does `navigate('/', {replace:true})` →
+Home. The admin `/admin/members/:personId` view is untouched and keeps its real not-found for a
+bad id. **1i needed no separate change**: the route table's `*` already lands on Home, and the
+confirm-time flash was the same not-found/profile transient that the 1j loader guard removes.
 
 ## Task 7: Forgot password + magic sign-in link (1k)
 
