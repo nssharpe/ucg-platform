@@ -69,13 +69,17 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
   (contrast), and below 860px the nav drawer opens/closes (hamburger → overlay → Esc →
   link-tap). Canonical breakpoint: the sidebar switches to an off-canvas **drawer**
   below **860px** (`Layout.tsx` + the `@media (max-width: 860px)` block in `index.css`).
-  - The topbar membership badges self-fit via runtime measurement (`TopbarMembership`
-    — inline → stacked → shed link → shed season, driven by a `ResizeObserver`), so most
-    topbar layout fixes are CSS spacing, not new px breakpoints. The fitter probe reads
-    `topbar.clientWidth` BEFORE forcing `flex-wrap:nowrap` and neutralizes children's
-    `flex` during the read (a naive `nowrap` + `scrollWidth` check is fooled by the flex
-    spacer's grow + items' shrink — it never reports overflow). Don't "simplify" that
-    back out.
+  - The topbar membership badges self-fit via runtime measurement (`TopbarMembership`,
+    driven by a `ResizeObserver`). Two states only: **inline** (full Title Case text,
+    left of the cart) and **stacked** (short text on its own single second row — so the
+    topbar is never more than two lines). The fitter decides by *directly observing the
+    layout*: it renders inline, then checks whether the line-1 user chip wrapped off the
+    `.crumb`'s row (`name.top - crumb.top > 6`); if so it stacks the badges. Width
+    *estimation* was tried and abandoned — margins/sub-pixel rounding and `scrollWidth`'s
+    `clientWidth` floor make it unreliable. Don't reintroduce it. Stacked pinning is
+    coach-left/athlete-right via CSS `order` (holds for a lone badge too), and the
+    `@media (max-width:600px/520px)` rules (avatar-only chip, compact badges) keep a
+    dual-role pair on one second line on phones.
   - **No-session gotcha:** the dev server runs unauthenticated (env-gated), so
     membership badges (which need a signed-in `me`) don't render. To verify badge
     degradation without auth, inject a realistic topbar via `preview_eval` (build the
