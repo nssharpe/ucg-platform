@@ -329,8 +329,18 @@ export function pushClub(c: Club) {
   remoteReplace('club_managers', { club_id: c.id }, c.managerIds.map((personId) => ({ club_id: c.id, person_id: personId })));
 }
 
-export function pushPerson(p: Athlete) {
-  remoteUpsert('people', [personToRow(p)]);
+/** Push a person row (+ alt-clubs + memberships) to Supabase.
+ *  Pass `opts.selfAuthUserId` ONLY when the acting signed-in user is saving
+ *  THEIR OWN row: it stamps `auth_user_id` so the `people` INSERT RLS policy's
+ *  `auth_user_id = auth.uid()` branch passes on a first-time self INSERT (an
+ *  ordinary member otherwise fails is_admin()/manages_club()). NEVER pass it
+ *  when creating/editing OTHER people (admins/club-managers) — that would stamp
+ *  the actor's uid onto someone else's row. */
+export function pushPerson(p: Athlete, opts?: { selfAuthUserId?: string }) {
+  const row = opts?.selfAuthUserId
+    ? { ...personToRow(p), auth_user_id: opts.selfAuthUserId }
+    : personToRow(p);
+  remoteUpsert('people', [row]);
   remoteReplace('person_alt_clubs', { person_id: p.id }, p.altClubIds.map((clubId) => ({ person_id: p.id, club_id: clubId })));
   remoteReplace('memberships', { person_id: p.id }, p.memberships.map((m) => membershipToRow(p.id, m)));
 }

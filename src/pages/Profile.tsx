@@ -8,6 +8,7 @@ import { SHIRT_SIZES, DIETARY_OPTIONS, STATE_REGIONS, DISCIPLINES } from '../lib
 import type { Athlete, ClubRequest, Gender, Region } from '../lib/types';
 import { GENERAL_WAIVER_TYPE } from '../lib/types';
 import { pushClubRequest, pushMembership, pushPerson, deleteRegistration, sendEmail, createWaiverLink, fetchPublishedWaiver, requestManagerAccess } from '../lib/supabase';
+import { getSession } from '../lib/auth';
 import { escapeHtml } from '../lib/sanitize-html';
 import { downloadWaiverProof, formatSignedAt } from '../lib/waiver-proof';
 
@@ -199,10 +200,15 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
 
   const save = () => {
     if (!canSave) return;
+    // When the user is saving THEIR OWN profile (not an admin editing someone
+    // else), stamp the session uid so a first-time self INSERT satisfies the
+    // `people` insert RLS policy (`auth_user_id = auth.uid()`). adminView edits
+    // of OTHER people must NOT pass it (they pass is_admin() instead).
+    const selfAuthUserId = adminView ? undefined : getSession()?.user.id;
     mutate((d) => {
       const i = d.people.findIndex((x) => x.id === pid);
       d.people[i] = { ...p };
-      pushPerson(d.people[i]);
+      pushPerson(d.people[i], selfAuthUserId ? { selfAuthUserId } : undefined);
     });
     setDraft(null);
     setEditMode(false);
