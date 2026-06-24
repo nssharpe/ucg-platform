@@ -14,9 +14,11 @@ will apply first.
 ## Supabase / migrations
 - Project ref `wkyerxlgricfphopocoz` (org NAIGC). Migrations in `supabase/migrations/`.
   CLI is linked (`supabase link` done 2026-06-19). All migrations are applied and
-  tracked by the CLI — latest is `20260623000060_sms_messages.sql`
-  (SMS Phase 4) as of 2026-06-23. `supabase functions deploy <name>` deploys Edge
-  Functions (see [Email infra] below).
+  tracked by the CLI — latest is `20260623000070_self_pay_invoice_rls.sql`
+  (lets a member write their OWN invoice + invoice_items so direct-pay
+  memberships — incl. $0-after-promo — generate a receipt; coupon redemption moved
+  behind the `redeem_coupon(code)` security-definer RPC) as of 2026-06-23.
+  `supabase functions deploy <name>` deploys Edge Functions (see [Email infra] below).
 - Migration filenames use Supabase's required timestamp format:
   `<YYYYMMDDHHmmss>_name.sql`. Create new ones with `supabase migration new <name>`.
 - Apply via `supabase db push` (the shell sandbox blocks network — run with the

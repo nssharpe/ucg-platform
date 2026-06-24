@@ -252,11 +252,12 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                 {missingFieldKeys.has('dob') && !p.dob && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Required</div>}
               </Field>
               <Field label="Gender">
-                <select className="input" value={p.gender} onChange={(e) => set({ gender: e.target.value as Gender })}>
+                <select className="input" value={p.gender ?? ''} onChange={(e) => set({ gender: (e.target.value || null) as Gender })}>
+                  <option value="">Select…</option>
                   {['Male', 'Female', 'Non-binary', 'Genderfluid', 'Agender', 'Other'].map((g) => <option key={g}>{g}</option>)}
                 </select>
               </Field>
-              {isAthlete && p.gender !== 'Male' && p.gender !== 'Female' && (
+              {isAthlete && !!p.gender && p.gender !== 'Male' && p.gender !== 'Female' && (
                 <>
                   {DISCIPLINES.map((d) => (
                     <Field key={d} label={`${d} placement category`} tip="Determines which division you place in for this discipline">

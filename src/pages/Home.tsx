@@ -267,7 +267,7 @@ function ClubManagerCard({ clubId }: { clubId: string }) {
       )}
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <Link className="btn primary" to={`/club/${clubId}`}>Roster &amp; meet reg →</Link>
+        <Link className="btn primary" to={`/club/${clubId}`}>Roster &amp; Meet Reg →</Link>
         <Link className="btn ghost" to={`/club/${clubId}/cart`}>Club cart ({cart.length})</Link>
       </div>
     </div>

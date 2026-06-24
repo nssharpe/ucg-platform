@@ -5,8 +5,8 @@ import { useCapabilities } from '../lib/capabilities';
 import { Badge, Field } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 import { fmtMoney } from '../lib/scoring';
-import { pushCart, pushCoupon, pushInvoice, pushMembership, fetchPublishedWaiver, recordWaiverSignature, requestGuardianWaiver, notifyClubCart } from '../lib/supabase';
-import type { Athlete, Membership, MembershipType, WaiverDocument } from '../lib/types';
+import { pushCart, redeemCoupon, pushInvoice, pushMembership, fetchPublishedWaiver, recordWaiverSignature, requestGuardianWaiver, notifyClubCart } from '../lib/supabase';
+import type { Athlete, InvoiceItem, Membership, MembershipType, WaiverDocument } from '../lib/types';
 import { GENERAL_WAIVER_TYPE } from '../lib/types';
 import { isMinorAt } from '../lib/waivers-core';
 import { sanitizeWaiverHtml } from '../lib/sanitize-html';
@@ -201,20 +201,28 @@ function MembershipInner({ me }: { me: Athlete }) {
         pushMembership(p.id, membership);
       }
 
-      // Build invoice items (one per type)
-      const invoiceItems = selectedTypes.map((t, i) => {
-        const basePrice = pricePerType(t);
-        // Split the coupon discount proportionally across types (or just apply to first)
-        const itemAmount = i === 0 ? Math.max(0, basePrice - discount) : basePrice;
+      // Build invoice items at full price; the coupon becomes its own negative
+      // "discount" line so the receipt can show each item's real value, a
+      // subtotal, the promo applied, and the final total.
+      const invoiceItems: InvoiceItem[] = selectedTypes.map((t, i) => {
         const labelType = t === 'coach' ? 'Coach' : 'Athlete';
         return {
           id: `ii-${Date.now()}-${i}`,
           label: `${labelType} membership ${season.name}`,
-          amount: via === 'comp' ? 0 : itemAmount,
+          amount: via === 'comp' ? 0 : pricePerType(t),
           kind: 'membership' as const,
           refUserId: me.id,
         };
       });
+      if (via !== 'comp' && couponDef && discount > 0) {
+        invoiceItems.push({
+          id: `ii-${Date.now()}-disc`,
+          label: `Promo code ${couponDef.code}`,
+          amount: -discount,
+          kind: 'discount',
+          refUserId: me.id,
+        });
+      }
 
       if (via === 'club' && club) {
         const adderName = `${me.firstName} ${me.lastName}`;
@@ -250,12 +258,14 @@ function MembershipInner({ me }: { me: Athlete }) {
         pushInvoice(invoice);
       }
 
-      // Task 7: increment coupon usedCount
+      // Increment coupon usedCount. The remote write goes through a security-
+      // definer RPC (members have no direct UPDATE on coupons); locally we mirror
+      // the bump for immediate UI feedback.
       if (couponDef && via !== 'club') {
         const ci = d.coupons.findIndex((c) => c.code === couponDef.code);
         if (ci >= 0) {
           d.coupons[ci] = { ...d.coupons[ci], usedCount: (d.coupons[ci].usedCount ?? 0) + 1 };
-          pushCoupon(d.coupons[ci]);
+          void redeemCoupon(couponDef.code);
         }
       }
     });

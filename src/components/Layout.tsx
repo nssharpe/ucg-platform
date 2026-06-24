@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { useDB, useViewPersonId, setViewPersonId } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import { offeredMembershipTypes } from '../lib/pricing';
 import { useSession } from '../lib/auth';
 import { Combo } from './ui';
 import { useNavHistory, useGoBack, labelFor } from '../lib/navHistory';
@@ -29,7 +30,7 @@ function navFor(caps: ReturnType<typeof useCapabilities>): NavGroup[] {
   if (caps.managedClubIds.length > 0) {
     const cid = caps.managedClubIds[0];
     groups.push({ group: 'My Club', items: [
-      { to: `/club/${cid}`, label: 'Roster & meet reg' },
+      { to: `/club/${cid}`, label: 'Roster & Meet Reg' },
       { to: `/club/${cid}/cart`, label: 'Club Cart & Invoices' },
       { to: '/sanction', label: 'Request a Sanction' },
     ]});
@@ -62,7 +63,15 @@ export function Layout({ children }: { children: ReactNode }) {
 
   const me = caps.person;
   const season = db.seasons.find((s) => s.current)!;
-  const myMembership = me?.memberships.find((m) => m.seasonId === season.id);
+  // Per-role membership status for the banner: a person who is an athlete and/or
+  // coach should see each offered type's status separately.
+  const membershipBannerItems = me ? offeredMembershipTypes(
+    me.roles ?? { athlete: me.kind !== 'coach', coach: me.kind === 'coach' },
+  ).map((type) => ({
+    type,
+    label: type === 'coach' ? 'Coach' : 'Athlete',
+    status: me.memberships.find((m) => m.seasonId === season.id && m.type === type)?.status ?? 'none',
+  })) : [];
 
   // Admin-only "view as (person)" impersonation.
   const personOptions = db.people.map((p) => ({
@@ -198,14 +207,20 @@ export function Layout({ children }: { children: ReactNode }) {
           ) : isSupabaseConfigured && !session ? (
             <Link to="/me" className="topbar-user topbar-user-guest">Sign in</Link>
           ) : null}
-          {me && (
-            myMembership?.status === 'active' ? (
-              <span className="member-banner ok">✓ {season.name} membership active</span>
-            ) : myMembership?.status === 'pending-club-payment' ? (
-              <span className="member-banner warn">⏳ Awaiting club payment — <Link to="/membership">details</Link></span>
-            ) : (
-              <span className="member-banner warn">✕ No {season.name} membership — <Link to="/membership">purchase now</Link></span>
-            )
+          {me && membershipBannerItems.length > 0 && (
+            <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
+              {membershipBannerItems.map(({ type, label, status }) => (
+                status === 'active' ? (
+                  <span key={type} className="member-banner ok">✓ {season.name} {label} membership active</span>
+                ) : status === 'pending-club-payment' ? (
+                  <span key={type} className="member-banner warn">⏳ {season.name} {label} membership — awaiting club payment · <Link to="/membership">details</Link></span>
+                ) : status === 'pending-waiver' ? (
+                  <span key={type} className="member-banner warn">⏳ {season.name} {label} membership — awaiting waiver · <Link to="/membership">details</Link></span>
+                ) : (
+                  <span key={type} className="member-banner warn">✕ No {season.name} {label} membership · <Link to="/membership">purchase now</Link></span>
+                )
+              ))}
+            </span>
           )}
         </header>
         <main className="content">{children}</main>

@@ -220,7 +220,7 @@ const squadToRow = (sessionId: string, q: Meet['sessions'][number]['squads'][num
 
 const registrationToRow = (r: Registration, squadId: string | null = null) => ({
   id: r.id, meet_id: r.meetId, athlete_id: r.athleteId, club_id: r.clubId, discipline: r.discipline,
-  level_id: r.levelId, events: r.events, session_id: r.sessionId, squad_id: squadId,
+  level_id: r.levelId, events: r.events, session_id: r.sessionId || null, squad_id: squadId,
   refunded: r.refunded ?? false, refund_requested: r.refundRequested ?? false,
   keep_listed: r.keepListed ?? false,
   partner_athlete_id: r.partnerAthleteId ?? null, event_levels: r.eventLevels ?? null,
@@ -469,6 +469,15 @@ export async function linkOrCreatePerson(first: string, last: string): Promise<s
   const { data, error } = await supabase.rpc('link_or_create_person', { p_first: first, p_last: last });
   if (error) { console.error('[supabase] link_or_create_person failed:', error); return null; }
   return (data as string) ?? null;
+}
+
+/** Atomically record one redemption of a coupon (enforces max_uses server-side).
+ *  Returns true when a redemption was counted. Best-effort: never throws. */
+export async function redeemCoupon(code: string): Promise<boolean> {
+  if (!supabase) return false;
+  const { data, error } = await supabase.rpc('redeem_coupon', { p_code: code });
+  if (error) { console.error('[supabase] redeem_coupon failed:', error); return false; }
+  return data === true;
 }
 
 // ---------------------------------------------------------------------------

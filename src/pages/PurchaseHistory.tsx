@@ -82,22 +82,43 @@ function PurchaseHistoryInner({ personId, name }: { personId: string; name: stri
           <div style={{ fontSize: 13.5, color: 'var(--ink-soft)', marginBottom: 12 }}>
             {detail.createdAt.slice(0, 10)} · {detail.paidAt ? 'Paid' : 'Unpaid'} · Billed to {name}
           </div>
-          <table className="tbl" style={{ marginBottom: 12 }}>
-            <tbody>
-              {(detail.athleteId === personId ? detail.items : detail.items.filter((i) => i.refUserId === personId)).map((i) => (
-                <tr key={i.id}>
-                  <td>{i.label}{i.refunded ? ' (refunded)' : ''}</td>
-                  <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtMoney(i.refunded ? 0 : i.amount)}</td>
-                </tr>
-              ))}
-              {detail.couponCode && (
-                <tr><td style={{ color: 'var(--ink-soft)' }}>Promo code</td><td style={{ textAlign: 'right', color: 'var(--ink-soft)' }}>{detail.couponCode}</td></tr>
-              )}
-              <tr style={{ borderTop: '2px solid var(--navy-800)', fontWeight: 700 }}>
-                <td>Total</td><td style={{ textAlign: 'right' }}>{fmtMoney(invoiceTotal(detail))}</td>
-              </tr>
-            </tbody>
-          </table>
+          {(() => {
+            // Lines visible to this viewer (their own line(s) on a shared club
+            // invoice, or every line on their own invoice).
+            const shown = detail.athleteId === personId ? detail.items : detail.items.filter((i) => i.refUserId === personId);
+            const lineItems = shown.filter((i) => i.kind !== 'discount');
+            const subtotal = lineItems.reduce((s, i) => s + (i.refunded ? 0 : i.amount), 0);
+            const discount = -shown.filter((i) => i.kind === 'discount').reduce((s, i) => s + (i.refunded ? 0 : i.amount), 0);
+            const total = subtotal - discount;
+            return (
+              <table className="tbl" style={{ marginBottom: 12 }}>
+                <tbody>
+                  {lineItems.map((i) => (
+                    <tr key={i.id}>
+                      <td>{i.label}{i.refunded ? ' (refunded)' : ''}</td>
+                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtMoney(i.refunded ? 0 : i.amount)}</td>
+                    </tr>
+                  ))}
+                  {discount > 0 && (
+                    <>
+                      <tr style={{ borderTop: '1px solid var(--line)' }}>
+                        <td style={{ color: 'var(--ink-soft)' }}>Subtotal</td>
+                        <td style={{ textAlign: 'right', color: 'var(--ink-soft)' }}>{fmtMoney(subtotal)}</td>
+                      </tr>
+                      <tr>
+                        <td style={{ color: 'var(--ink-soft)' }}>Promo code{detail.couponCode ? ` (${detail.couponCode})` : ''}</td>
+                        <td style={{ textAlign: 'right', color: 'var(--ink-soft)' }}>−{fmtMoney(discount)}</td>
+                      </tr>
+                    </>
+                  )}
+                  <tr style={{ borderTop: '2px solid var(--navy-800)', fontWeight: 700 }}>
+                    <td>Total{discount > 0 ? ' paid' : ''}</td>
+                    <td style={{ textAlign: 'right' }}>{fmtMoney(total)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            );
+          })()}
           <div style={{ display: 'flex', gap: 10 }}>
             <button className="btn primary" onClick={() => downloadReceipt(detail, name)}>Download receipt (PDF)</button>
             <button className="btn ghost" onClick={() => setDetail(null)}>Close</button>
