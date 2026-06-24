@@ -52,6 +52,7 @@ sequence numbers used in conversation. In order:
 | `20260623000040_club_memberships.sql` | `club_memberships` (per club+season) — the registration/hosting gate; backfills the current season for clubs with active members. |
 | `20260623000050_sms_consent_and_send_log.sql` | `people.sms_consent`/`sms_consent_at` (CTIA opt-in) + `comm_log.segments`/`encoding`/`cost_estimate` (SMS send-log enrichment). |
 | `20260623000060_sms_messages.sql` | `sms_messages` — per-message log (outbound DLR status + inbound replies) the `sms-webhook` function updates. RLS: admins read; service-role writes. |
+| `20260623000070_self_pay_invoice_rls.sql` | Lets a member write their OWN `invoices` + `invoice_items` (direct-pay membership receipts, incl. $0-after-promo). Replaces the admin-only `invoice_items` write policy with an owner-write one. Adds `redeem_coupon(code)` security-definer RPC (atomic `used_count` bump, enforces `max_uses`) so members don't need direct UPDATE on `coupons`. |
 
 All migrations are applied to the live project and tracked by the linked CLI
 (`supabase db push`). Migrations are append-only — add new ones rather than editing
@@ -139,8 +140,10 @@ real concepts, enforced by RLS:
 - **meet host** — *derived*, not stored: a manager of the meet's `host_club_id`.
   Manages that meet's sessions/squads and may write its scores.
 - **member** (baseline signed-in person) — reads/writes their own `people` row,
-  memberships, alt-clubs, and registrations. "Athlete"/"coach" are membership
-  types, not roles.
+  memberships, alt-clubs, registrations, and (since 0070) their own `invoices` +
+  `invoice_items` so a direct-pay membership generates a receipt; coupon
+  redemption goes through the `redeem_coupon(code)` RPC. "Athlete"/"coach" are
+  membership types, not roles.
 - **judge** — will be account-free via a per-meet code (sub-project D); not yet
   built. Until then, admins/hosts enter scores.
 - **anon / guest** — public read of meets, sessions, registrations, and scores so
