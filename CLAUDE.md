@@ -53,6 +53,28 @@ tasks). Nate prefers this; don't ask which execution mode to use (decided 2026-0
   serves the previous bundle.
 - Pre-existing lint debt (`src/lib/supabase.ts` `any`s, etc.) — `npm run lint` has
   never been clean. Lint only the files you touch.
+- **Responsive verification (mobile/tablet/laptop).** Any change touching layout, CSS,
+  the topbar, or the sidebar/nav MUST be verified at three canonical viewports before
+  claiming done: **phone 375px**, **tablet 768px**, **laptop 1280px** (spot-check 1440
+  for wide). Use the preview tooling (`preview_resize` + `preview_screenshot`) and
+  confirm at each width: no horizontal overflow (`documentElement.scrollWidth` ≤
+  `clientWidth`), the topbar stays one line or degrades cleanly, text stays legible
+  (contrast), and below 860px the nav drawer opens/closes (hamburger → overlay → Esc →
+  link-tap). Canonical breakpoint: the sidebar switches to an off-canvas **drawer**
+  below **860px** (`Layout.tsx` + the `@media (max-width: 860px)` block in `index.css`).
+  - The topbar membership badges self-fit via runtime measurement (`TopbarMembership`
+    — inline → stacked → shed link → shed season, driven by a `ResizeObserver`), so most
+    topbar layout fixes are CSS spacing, not new px breakpoints. The fitter probe reads
+    `topbar.clientWidth` BEFORE forcing `flex-wrap:nowrap` and neutralizes children's
+    `flex` during the read (a naive `nowrap` + `scrollWidth` check is fooled by the flex
+    spacer's grow + items' shrink — it never reports overflow). Don't "simplify" that
+    back out.
+  - **No-session gotcha:** the dev server runs unauthenticated (env-gated), so
+    membership badges (which need a signed-in `me`) don't render. To verify badge
+    degradation without auth, inject a realistic topbar via `preview_eval` (build the
+    `.topbar` innerHTML with `.topbar-membership` + dual `.member-banner` badges, a cart
+    chip, and a long user name = worst case) and exercise the live CSS/measurement at
+    each width. The drawer/hamburger itself needs no auth.
 - **CI gate:** the GitHub Actions "Deploy to GitHub Pages" workflow runs `npm run lint`
   and **fails the deploy on any lint _error_** (the few pre-existing _warnings_ are
   tolerated, exit 0). `npm run build` does NOT run eslint, so a clean build can still
