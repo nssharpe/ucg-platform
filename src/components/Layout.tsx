@@ -228,7 +228,7 @@ export function Layout({ children }: { children: ReactNode }) {
             </button>
           ) : null}
           <span className="crumb">{labelFor(loc.pathname)}</span>
-          <div style={{ flex: 1 }} />
+          <div className="topbar-spacer" />
           {me && (
             <TopbarMembership
               items={membershipBannerItems}

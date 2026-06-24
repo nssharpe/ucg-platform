@@ -191,6 +191,7 @@ option { color: var(--ink); background: #fff; }
   z-index: 40;
 }
 .crumb { font-size: 13px; color: var(--ink-soft); }
+.topbar-spacer { flex: 1; }
 .content { padding: 26px 28px 64px; max-width: 1240px; width: 100%; margin: 0 auto; }
 
 /* membership banner */
@@ -825,7 +826,10 @@ option { color: var(--ink); background: #fff; }
     cursor: pointer;
   }
   .nav-toggle:hover { border-color: var(--ink-soft); }
+  /* center the crumb in the open space: it grows to fill the whole gap (the
+     desktop spacer is removed) and its text centers at the true midpoint */
   .crumb { flex: 1; text-align: center; }
+  .topbar-spacer { display: none; }
   .content { padding: 18px 14px 48px; }
   .topbar { padding: 10px 14px; }
 }
