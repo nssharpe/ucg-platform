@@ -51,6 +51,7 @@ const AdminClubs = lazy(() => loaders.Admin().then((m) => ({ default: m.AdminClu
 const AdminLeague = lazy(() => loaders.Admin().then((m) => ({ default: m.AdminLeague })));
 const Communicate = lazy(() => loaders.Admin().then((m) => ({ default: m.Communicate })));
 const WaiverSign = lazy(() => import('./pages/WaiverSign'));
+const ManagerAccessReview = lazy(() => import('./pages/ManagerAccessReview'));
 const SetPassword = lazy(() => import('./pages/SetPassword'));
 const MyRegistrations = lazy(() => import('./pages/MyRegistrations').then((m) => ({ default: m.MyRegistrations })));
 const PurchaseHistory = lazy(() => import('./pages/PurchaseHistory').then((m) => ({ default: m.PurchaseHistory })));
@@ -200,6 +201,7 @@ export default function App() {
               <Route path="/admin/communicate" element={<RequireAdmin><Communicate /></RequireAdmin>} />
               <Route path="/admin/errors" element={<RequireAdmin><ErrorLog /></RequireAdmin>} />
               <Route path="/waiver/sign/:token" element={<WaiverSign />} />
+              <Route path="/manager-access/:token" element={<ManagerAccessReview />} />
               <Route path="/set-password" element={<SetPassword />} />
               <Route path="*" element={<Home />} />
             </Routes>

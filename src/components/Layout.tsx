@@ -63,6 +63,8 @@ export function Layout({ children }: { children: ReactNode }) {
 
   const me = caps.person;
   const season = db.seasons.find((s) => s.current)!;
+  const myClubShort = me ? (db.clubs.find((c) => c.id === me.mainClubId)?.shortName
+    || db.clubs.find((c) => c.id === me.mainClubId)?.name || 'your club') : 'your club';
   // Per-role membership status for the banner: a person who is an athlete and/or
   // coach should see each offered type's status separately.
   const membershipBannerItems = me ? offeredMembershipTypes(
@@ -213,9 +215,9 @@ export function Layout({ children }: { children: ReactNode }) {
                 status === 'active' ? (
                   <span key={type} className="member-banner ok">✓ {season.name} {label} membership active</span>
                 ) : status === 'pending-club-payment' ? (
-                  <span key={type} className="member-banner warn">⏳ {season.name} {label} membership — awaiting club payment · <Link to="/membership">details</Link></span>
+                  <span key={type} className="member-banner warn">⏳ {season.name} {label} membership — pending payment by {myClubShort} · <Link to="/membership">details</Link></span>
                 ) : status === 'pending-waiver' ? (
-                  <span key={type} className="member-banner warn">⏳ {season.name} {label} membership — awaiting waiver · <Link to="/membership">details</Link></span>
+                  <span key={type} className="member-banner warn">⏳ {season.name} {label} membership — pending guardian waiver · <Link to="/membership">details</Link></span>
                 ) : (
                   <span key={type} className="member-banner warn">✕ No {season.name} {label} membership · <Link to="/membership">purchase now</Link></span>
                 )

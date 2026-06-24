@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
-import { Badge, Combo, Field, Tabs } from '../components/ui';
+import { Badge, Combo, Field, Modal, Tabs } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
-import { pushRegistration } from '../lib/supabase';
-import type { Registration } from '../lib/types';
+import { pushRegistration, pushCart } from '../lib/supabase';
+import { fmtMoney } from '../lib/scoring';
+import type { Club, Meet, Registration } from '../lib/types';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -29,6 +30,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   const [tab, setTab] = useState<'upcoming' | 'past'>('upcoming');
   const [q, setQ] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [editingMeetId, setEditingMeetId] = useState<string | null>(null);
 
   const lvlName = (id?: string) => db.levels.find((l) => l.id === id)?.name ?? '—';
   const nameOf = (id: string) => {
@@ -62,16 +64,40 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   const affiliatedClubIds = me ? [me.mainClubId, ...(me.altClubIds ?? [])].filter((x): x is string => !!x) : [];
   const affiliatedClubs = db.clubs.filter((c) => affiliatedClubIds.includes(c.id));
 
-  const changeClub = (meetId: string, newClubId: string) => {
+  // A meet's change fee is live once its start date has passed.
+  const changeFeeApplies = (meet: Meet) => !!(meet.changeFee && new Date() >= new Date(meet.changeFee.startsAt));
+
+  // Label used for a meet's change fee in the athlete's cart — also how we detect
+  // that a change fee for this meet is already pending checkout.
+  const changeFeeLabel = (meetName: string) => `${meetName} change fee`;
+  const changeFeePending = (meet: Meet) =>
+    (db.carts[personId] ?? []).some((c) => c.kind === 'meet-entry' && c.label.startsWith(changeFeeLabel(meet.name)));
+
+  const changeClub = (meet: Meet, newClubId: string) => {
+    const applyFee = changeFeeApplies(meet) && !!meet.changeFee;
+    const alreadyPending = changeFeePending(meet);
     mutate((d) => {
       for (const r of d.registrations) {
-        if (r.meetId === meetId && r.athleteId === personId && !r.refunded) {
+        if (r.meetId === meet.id && r.athleteId === personId && !r.refunded) {
           r.clubId = newClubId;
-          pushRegistration(r);
+          pushRegistration(r, r.sessionId);
         }
       }
+      if (applyFee && meet.changeFee && !alreadyPending) {
+        const cart = d.carts[personId] ?? (d.carts[personId] = []);
+        const clubName = d.clubs.find((c) => c.id === newClubId)?.shortName ?? 'new club';
+        cart.push({
+          id: `ci-change-${Date.now()}`,
+          label: `${changeFeeLabel(meet.name)} — club switch to ${clubName}`,
+          amount: meet.changeFee.amount, kind: 'meet-entry', refUserId: personId,
+        });
+        pushCart(personId, cart, false);
+      }
     });
-    toast('Updated the club for this competition.');
+    toast(applyFee
+      ? `Club updated. A ${fmtMoney(meet.changeFee!.amount)} change fee was added to your cart — pay it to finalize.`
+      : 'Updated the club for this competition.');
+    setEditingMeetId(null);
   };
 
   return (
@@ -108,7 +134,17 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                     {meet.startDate}{meet.endDate !== meet.startDate ? `–${meet.endDate}` : ''} · {meet.city}, {meet.state}
                   </span>
                   {club && <Badge tone="navy">{club.shortName || club.name}</Badge>}
-                  <span style={{ marginLeft: 'auto', color: 'var(--accent)', fontSize: 13 }}>{isOpen ? 'Hide' : 'Details'}</span>
+                  <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 10, alignItems: 'center' }}>
+                    {isOpen && tab === 'upcoming' && affiliatedClubs.length > 1 && (
+                      <button
+                        className="btn ghost small"
+                        onClick={(e) => { e.stopPropagation(); setEditingMeetId(meet.id); }}
+                      >
+                        Edit
+                      </button>
+                    )}
+                    <span style={{ color: 'var(--accent)', fontSize: 13 }}>{isOpen ? 'Hide' : 'Details'}</span>
+                  </span>
                 </div>
 
                 {isOpen && (
@@ -133,21 +169,22 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                       </tbody>
                     </table>
 
-                    {tab === 'upcoming' ? (
-                      affiliatedClubs.length > 1 ? (
-                        <Field label="Club I’m competing for" hint={regClosed ? 'Registration is closed — changes may be limited.' : undefined}>
-                          <Combo
-                            options={affiliatedClubs.map((c) => ({ value: c.id, label: c.name, sub: `${c.state} · ${c.region}` }))}
-                            value={regs[0]?.clubId ?? null}
-                            onChange={(v) => { if (v && v !== regs[0]?.clubId) changeClub(meet.id, v); }}
-                          />
-                        </Field>
+                    {tab === 'upcoming' && (
+                      changeFeePending(meet) ? (
+                        <div className="card card-pad" style={{ borderLeft: '4px solid var(--warn-500, #d97706)', padding: '8px 12px', fontSize: 13 }}>
+                          ⏳ Changes are pending checkout — a {fmtMoney(meet.changeFee?.amount ?? 0)} change fee is in your{' '}
+                          <a href="#/cart">cart</a>. Your registration updates fully once it’s paid.
+                        </div>
+                      ) : affiliatedClubs.length > 1 ? (
+                        <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: 0 }}>
+                          Use <strong>Edit</strong> above to change which club you compete for{regClosed ? ' (registration is closed — changes may be limited)' : ''}.
+                        </p>
                       ) : (
                         <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: 0 }}>
                           To compete for a different club, add it as an affiliated club on your profile first.
                         </p>
                       )
-                    ) : null}
+                    )}
                   </div>
                 )}
               </div>
@@ -155,7 +192,61 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
           })}
         </div>
       )}
+
+      {editingMeetId && (() => {
+        const meet = db.meets.find((m) => m.id === editingMeetId);
+        if (!meet) return null;
+        const currentClubId = db.registrations.find((r) => r.meetId === meet.id && r.athleteId === personId && !r.refunded)?.clubId ?? null;
+        return (
+          <EditRegistrationModal
+            meet={meet}
+            clubs={affiliatedClubs}
+            currentClubId={currentClubId}
+            changeFee={changeFeeApplies(meet) ? meet.changeFee ?? null : null}
+            feeAlreadyPending={changeFeePending(meet)}
+            onClose={() => setEditingMeetId(null)}
+            onSave={(newClubId) => changeClub(meet, newClubId)}
+          />
+        );
+      })()}
     </div>
+  );
+}
+
+// ---- EditRegistrationModal --------------------------------------------------
+// Lets an athlete change which affiliated club they compete for. When the meet's
+// change fee is live, saving adds that fee to the athlete's cart.
+function EditRegistrationModal({ meet, clubs, currentClubId, changeFee, feeAlreadyPending, onClose, onSave }: {
+  meet: Meet; clubs: Club[]; currentClubId: string | null;
+  changeFee: { amount: number; startsAt: string } | null; feeAlreadyPending: boolean;
+  onClose: () => void; onSave: (newClubId: string) => void;
+}) {
+  const [clubId, setClubId] = useState<string | null>(currentClubId);
+  const changed = clubId !== null && clubId !== currentClubId;
+  const willCharge = changed && !!changeFee && !feeAlreadyPending;
+
+  return (
+    <Modal title={`Edit registration — ${meet.name}`} onClose={onClose}>
+      <Field label="Club I’m competing for">
+        <Combo
+          options={clubs.map((c) => ({ value: c.id, label: c.name, sub: `${c.state} · ${c.region}` }))}
+          value={clubId}
+          onChange={setClubId}
+        />
+      </Field>
+      {willCharge && (
+        <div className="card card-pad" style={{ borderLeft: '4px solid var(--warn-500, #d97706)', padding: '8px 12px', fontSize: 13, marginTop: 10 }}>
+          A <strong>{fmtMoney(changeFee!.amount)}</strong> change fee applies to this meet. Saving adds it to your cart;
+          the change finalizes once you check out.
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+        <button className="btn primary" disabled={!changed} onClick={() => onSave(clubId!)}>
+          {willCharge ? 'Save & add change to cart' : 'Save change'}
+        </button>
+        <button className="btn ghost" onClick={onClose}>Cancel</button>
+      </div>
+    </Modal>
   );
 }
 

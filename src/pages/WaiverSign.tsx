@@ -14,6 +14,7 @@ export default function WaiverSign() {
   const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [pendingPayment, setPendingPayment] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -36,6 +37,7 @@ export default function WaiverSign() {
     });
     setBusy(false);
     if (!res.ok) { setErr(res.error ?? 'Could not record signature.'); return; }
+    setPendingPayment(!!res.pendingPayment);
     setState('done');
   };
 
@@ -49,7 +51,11 @@ export default function WaiverSign() {
   if (state === 'done') return (
     <div className="card card-pad" style={{ maxWidth: 640, margin: '40px auto' }}>
       <h2>✓ Thank you — the waiver is signed.</h2>
-      <p style={{ color: 'var(--ink-soft)' }}>The athlete's membership is now active.</p>
+      <p style={{ color: 'var(--ink-soft)' }}>
+        {pendingPayment
+          ? "The waiver is on file. The athlete's membership activates once their club pays the membership fee from its club cart."
+          : "The athlete's membership is now active."}
+      </p>
     </div>
   );
 

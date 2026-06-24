@@ -5,7 +5,7 @@ import { useCapabilities } from '../lib/capabilities';
 import { Badge, Field } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 import { fmtMoney } from '../lib/scoring';
-import { pushCart, redeemCoupon, pushInvoice, pushMembership, fetchPublishedWaiver, recordWaiverSignature, requestGuardianWaiver, notifyClubCart } from '../lib/supabase';
+import { pushCartItem, redeemCoupon, pushInvoice, pushMembership, fetchPublishedWaiver, recordWaiverSignature, requestGuardianWaiver, notifyClubCart } from '../lib/supabase';
 import type { Athlete, InvoiceItem, Membership, MembershipType, WaiverDocument } from '../lib/types';
 import { GENERAL_WAIVER_TYPE } from '../lib/types';
 import { isMinorAt } from '../lib/waivers-core';
@@ -231,16 +231,19 @@ function MembershipInner({ me }: { me: Athlete }) {
         for (const t of selectedTypes) {
           const labelType = t === 'coach' ? 'Coach' : 'Athlete';
           const label = `${labelType} Membership ${season.name} — ${adderName} (added by ${adderName})`;
-          cart.push({
+          const item = {
             id: `ci-${Date.now()}-${t}`,
             label,
             amount: pricePerType(t),
-            kind: 'membership',
+            kind: 'membership' as const,
             refUserId: me.id,
-          });
+          };
+          cart.push(item);
+          // Append only this member's own row — a member can't replace the whole
+          // club cart under RLS (that's a manager-only operation).
+          pushCartItem(club.id, item, true);
           addedItems.push({ label, amount: pricePerType(t) });
         }
-        pushCart(club.id, cart, true);
         // Email the club's managers (best-effort; cart item already shows on their dashboard).
         void notifyClubCart({ clubId: club.id, items: addedItems, addedByName: adderName });
       } else {
@@ -380,9 +383,9 @@ function MembershipInner({ me }: { me: Athlete }) {
                 </>
               ) : (
                 <>
-                  <Badge tone="warn">Pending club payment ({typeLabel(m.type)})</Badge>
+                  <Badge tone="warn">Pending payment by {club?.shortName ?? club?.name ?? 'club'} ({typeLabel(m.type)})</Badge>
                   <p style={{ margin: '4px 0 0' }}>
-                    Waiver signed. Your {m.type} membership activates once {club?.name} pays the fee from their club cart.
+                    Waiver signed. Your {m.type} membership activates once {club?.name ?? 'your club'} pays the fee from their club cart.
                   </p>
                 </>
               )}

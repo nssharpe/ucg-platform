@@ -99,10 +99,11 @@ Deno.serve(async (req) => {
     .eq('person_id', a.personId).eq('season_id', a.seasonId).eq('status', 'pending-waiver')
     .neq('paid_via', 'club');
   if (upErr) return json({ ok: false, error: upErr.message }, 500);
-  const { error: upClubErr } = await db.from('memberships')
+  const { data: clubRows, error: upClubErr } = await db.from('memberships')
     .update({ status: 'pending-club-payment', ...ptrs })
     .eq('person_id', a.personId).eq('season_id', a.seasonId).eq('status', 'pending-waiver')
-    .eq('paid_via', 'club');
+    .eq('paid_via', 'club')
+    .select('id');
   if (upClubErr) return json({ ok: false, error: upClubErr.message }, 500);
 
   if (a.signerRole === 'guardian') {
@@ -110,5 +111,6 @@ Deno.serve(async (req) => {
       .update({ status: 'completed', completed_at: new Date().toISOString() })
       .eq('token', a.token);
   }
-  return json({ ok: true });
+  // pendingPayment = the membership still owes a club payment (not yet active).
+  return json({ ok: true, pendingPayment: (clubRows?.length ?? 0) > 0 });
 });

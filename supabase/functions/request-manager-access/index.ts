@@ -1,6 +1,8 @@
-// request-manager-access — a signed-in member asks to manage a club.
-// Emails the club's current managers + all league admins. No DB record (email
-// only); recipients are resolved server-side so the caller never sees them.
+// request-manager-access — a signed-in member asks to manage a club ("Request
+// Club Admin Role"). Records a manager_access_requests row with a secret token,
+// then emails the club's current managers + all league admins a no-login review
+// link. The first manager/admin to approve or deny decides it (idempotent).
+// Recipients are resolved server-side so the caller never sees them.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendBatch, type EmailMessage } from '../_shared/resend.ts';
@@ -40,8 +42,29 @@ Deno.serve(async (req) => {
   if (!club) return json({ ok: false, error: 'Club not found.' }, 404);
 
   const { data: caller } = await db.from('people').select('id, first_name, last_name, email').eq('auth_user_id', userData.user.id).maybeSingle();
-  const requester = caller ? `${caller.first_name} ${caller.last_name}`.trim() : 'A member';
-  const requesterEmail = caller?.email ?? userData.user.email ?? '';
+  if (!caller) return json({ ok: false, error: 'No member record for this account.' }, 400);
+  const requester = `${caller.first_name} ${caller.last_name}`.trim() || 'A member';
+  const requesterEmail = caller.email ?? userData.user.email ?? '';
+
+  // Already a manager? Nothing to request.
+  const { data: alreadyMgr } = await db.from('club_managers')
+    .select('person_id').eq('club_id', clubId).eq('person_id', caller.id).maybeSingle();
+  if (alreadyMgr) return json({ ok: false, error: 'You already manage this club.' }, 400);
+
+  // Record a pending request with a secret review token (reuse an existing
+  // pending one for this requester+club so repeated clicks don't pile up).
+  let reviewToken: string | null = null;
+  const { data: existingReq } = await db.from('manager_access_requests')
+    .select('token').eq('club_id', clubId).eq('requester_person_id', caller.id).eq('status', 'pending').maybeSingle();
+  if (existingReq) {
+    reviewToken = existingReq.token;
+  } else {
+    reviewToken = crypto.randomUUID().replace(/-/g, '');
+    const { error: insErr } = await db.from('manager_access_requests').insert({
+      token: reviewToken, requester_person_id: caller.id, club_id: clubId, status: 'pending',
+    });
+    if (insErr) return json({ ok: false, error: insErr.message }, 500);
+  }
 
   // Recipients: club managers + league admins.
   const { data: mgrRows } = await db.from('club_managers').select('person_id').eq('club_id', clubId);
@@ -65,12 +88,13 @@ Deno.serve(async (req) => {
   });
   if (recipients.length === 0) return json({ ok: true, sentCount: 0, note: 'No managers or admins with valid emails.' });
 
-  const link = `${appUrl}/#/club/${clubId}`;
+  const link = `${appUrl}/#/manager-access/${reviewToken}`;
   const subject = `Manager access requested for ${club.short_name}`;
   const html = `<p>Hello,</p>
-<p><strong>${esc(requester)}</strong>${requesterEmail ? ` (${esc(requesterEmail)})` : ''} has requested manager access to <strong>${esc(club.name)}</strong> on the United Club Gymnastics platform.</p>
-<p>If this is legitimate, add them as a manager from the club page:</p>
-<p><a href="${link}">Open ${esc(club.short_name)} &rarr;</a></p>`;
+<p><strong>${esc(requester)}</strong>${requesterEmail ? ` (${esc(requesterEmail)})` : ''} has requested admin/manager access to <strong>${esc(club.name)}</strong> on the United Club Gymnastics platform.</p>
+<p>Review and approve or deny — no login required:</p>
+<p><a href="${link}">Review this request &rarr;</a></p>
+<p style="color:#667;font-size:13px">The first manager or admin to respond decides the request.</p>`;
 
   const messages: EmailMessage[] = recipients.map((r) => ({
     to: `${r.first_name} ${r.last_name} <${(r.email as string).trim()}>`,

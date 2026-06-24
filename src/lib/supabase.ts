@@ -366,10 +366,18 @@ export function deleteRegistration(id: string) { remoteDelete('registrations', i
 
 export function pushScore(s: Score) { remoteUpsert('scores', [scoreToRow(s)]); }
 
-/** Replace an owner's (club or athlete) cart with the given items. */
+/** Replace an owner's (club or athlete) cart with the given items. Uses a
+ *  delete-then-insert, so it's for the cart OWNER (club manager / the athlete). */
 export function pushCart(ownerKey: string, items: DB['carts'][string], isClub: boolean) {
   const match = isClub ? { club_id: ownerKey } : { person_id: ownerKey };
   remoteReplace('cart_items', match, items.map((it) => cartItemToRow(ownerKey, it, isClub)));
+}
+
+/** Append ONE item to an owner's cart (no replace). Used when a member pushes
+ *  their own fee to a club cart they don't manage — they can insert their own
+ *  row (ref_user_id = self) but can't replace the whole club cart under RLS. */
+export function pushCartItem(ownerKey: string, item: DB['carts'][string][number], isClub: boolean) {
+  remoteUpsert('cart_items', [cartItemToRow(ownerKey, item, isClub)]);
 }
 
 export function pushInvoice(inv: Invoice) {
@@ -759,11 +767,11 @@ export interface RecordSignatureArgs {
  *  Returns { ok } or { ok:false, error }. */
 export async function recordWaiverSignature(
   args: RecordSignatureArgs,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; pendingPayment?: boolean; error?: string }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('record-waiver-signature', { body: args });
   if (error) return { ok: false, error: await edgeErrorMessage(error) };
-  return data as { ok: boolean; error?: string };
+  return data as { ok: boolean; pendingPayment?: boolean; error?: string };
 }
 
 /** Create a guardian signing token and email the link. */
@@ -775,6 +783,35 @@ export async function requestGuardianWaiver(args: {
   const { data, error } = await supabase.functions.invoke('request-guardian-waiver', { body: args });
   if (error) return { ok: false, error: await edgeErrorMessage(error) };
   return data as { ok: boolean; error?: string };
+}
+
+/** No-login lookup of a manager-access request by its review token. */
+export async function fetchManagerAccessRequest(token: string): Promise<{ status: string; requesterName: string; clubName: string } | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase.rpc('get_manager_access_request', { p_token: token });
+  if (error) { console.error('[supabase] get_manager_access_request failed:', error); return null; }
+  const row = (data as { status: string; requester_name: string; club_name: string }[] | null)?.[0];
+  return row ? { status: row.status, requesterName: row.requester_name, clubName: row.club_name } : null;
+}
+
+/** No-login approve/deny of a manager-access request. Returns the outcome:
+ *  'approved' | 'denied' | 'already' | 'invalid' | 'error'. */
+export async function decideManagerAccess(token: string, decision: 'approve' | 'deny', decider: string): Promise<string> {
+  if (!supabase) return 'error';
+  const { data, error } = await supabase.rpc('decide_manager_access', { p_token: token, p_decision: decision, p_decider: decider });
+  if (error) { console.error('[supabase] decide_manager_access failed:', error); return 'error'; }
+  return (data as string) ?? 'error';
+}
+
+/** Admin/club-manager mints a no-login waiver signing link for a member (tied to
+ *  their athlete record). Returns the link to email and/or copy. */
+export async function createWaiverLink(args: {
+  personId: string; seasonId: string; waiverType: string; membershipType?: string;
+}): Promise<{ ok: boolean; token?: string; link?: string; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('create-waiver-link', { body: args });
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  return data as { ok: boolean; token?: string; link?: string; error?: string };
 }
 
 /** Token lookup for the guardian signing page via SECURITY DEFINER RPC

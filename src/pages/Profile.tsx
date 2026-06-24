@@ -1,4 +1,4 @@
-import { useState, useMemo, type CSSProperties } from 'react';
+import { useState, useMemo, useEffect, type CSSProperties } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
@@ -6,7 +6,8 @@ import { Combo, Field, Modal, Badge } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 import { SHIRT_SIZES, DIETARY_OPTIONS, STATE_REGIONS, DISCIPLINES } from '../lib/types';
 import type { Athlete, ClubRequest, Gender, Region } from '../lib/types';
-import { pushClubRequest, pushMembership, pushPerson, deleteRegistration, sendEmail } from '../lib/supabase';
+import { GENERAL_WAIVER_TYPE } from '../lib/types';
+import { pushClubRequest, pushMembership, pushPerson, deleteRegistration, sendEmail, createWaiverLink, fetchPublishedWaiver, requestManagerAccess } from '../lib/supabase';
 import { escapeHtml } from '../lib/sanitize-html';
 import { downloadWaiverProof, formatSignedAt } from '../lib/waiver-proof';
 
@@ -482,6 +483,14 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
             <div className="grid cols-2">
               <ViewRow label={isCoach ? 'Primary club' : 'Main club'} value={db.clubs.find((c) => c.id === person.mainClubId)?.name ?? '—'} />
               <ViewRow label="Region" value={STATE_REGIONS[person.state] ?? 'Other'} />
+              {!adminView && person.mainClubId && !caps.managedClubIds.includes(person.mainClubId) && (
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <RequestAdminRoleButton
+                    clubId={person.mainClubId}
+                    clubName={db.clubs.find((c) => c.id === person.mainClubId)?.name ?? 'your club'}
+                  />
+                </div>
+              )}
               <div style={{ gridColumn: '1 / -1' }}>
                 <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-soft)' }}>
                   {isCoach ? 'Other clubs coached' : 'Other clubs'}
@@ -752,6 +761,33 @@ function ClubRequestForm({ requesterPersonId, onClose }: { requesterPersonId: st
   );
 }
 
+// "Request Club Admin Role" — emails the club's managers + admins a no-login
+// review link. The first to approve adds this member as a club manager.
+function RequestAdminRoleButton({ clubId, clubName }: { clubId: string; clubName: string }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+
+  const request = async () => {
+    setBusy(true);
+    const res = await requestManagerAccess(clubId);
+    setBusy(false);
+    if (res.ok) { setSent(true); toast(`Request sent — ${clubName}'s managers and league admins can approve it.`); }
+    else toast(res.error ?? 'Could not send the request.', { variant: 'error' });
+  };
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <button className="btn ghost small" disabled={busy || sent} onClick={request}>
+        {sent ? '✓ Admin role requested' : busy ? 'Sending…' : 'Request Club Admin Role'}
+      </button>
+      <p style={{ fontSize: 12, color: 'var(--ink-soft)', margin: '4px 0 0' }}>
+        Ask {clubName}'s managers for permission to manage its roster, registrations, and cart.
+      </p>
+    </div>
+  );
+}
+
 function AdminMembershipControls({
   personId,
   revokeSeasonId,
@@ -766,6 +802,36 @@ function AdminMembershipControls({
   const caps = useCapabilities();
   const person = db.people.find((x) => x.id === personId)!;
   const roles = effectiveRoles(person);
+  // Season for which the "pending waiver" link popup is open.
+  const [waiverPopupSeason, setWaiverPopupSeason] = useState<string | null>(null);
+
+  // A waiver is on file if a membership row records it, or a signature exists.
+  const hasWaiverOnFile = (seasonId: string) =>
+    person.memberships.some((x) => x.seasonId === seasonId && x.waiverSignedAt) ||
+    (db.waiverSignatures ?? []).some((x) => x.personId === person.id && x.seasonId === seasonId);
+
+  // Admin "Activate": if a waiver is already on file the membership goes active
+  // immediately; otherwise it becomes "pending-waiver" (like a minor) and we open
+  // the popup so the admin can email or copy a no-login signing link. Signing
+  // flips it to active via record-waiver-signature.
+  const activate = (seasonId: string) => {
+    const seasonName = db.seasons.find((s) => s.id === seasonId)?.name ?? seasonId;
+    const waiverOk = hasWaiverOnFile(seasonId);
+    const defaultType: 'athlete' | 'coach' = (roles.coach && !roles.athlete) ? 'coach' : 'athlete';
+    mutate((d) => {
+      const pid = d.people.find((x) => x.id === personId)!;
+      let em = pid.memberships.find((x) => x.seasonId === seasonId);
+      const status = waiverOk ? 'active' : 'pending-waiver';
+      if (em) { em.status = status; em.activatedByAdmin = true; if (!em.paidVia) em.paidVia = 'comp'; }
+      else {
+        em = { seasonId, type: defaultType, status, waiverSignedAt: null, waiverSignedBy: null, paidVia: 'comp', activatedByAdmin: true };
+        pid.memberships.push(em);
+      }
+      pushMembership(pid.id, em);
+    });
+    if (waiverOk) toast(`Membership activated for ${seasonName}.`);
+    else { toast(`${seasonName} membership is pending a signed waiver.`); setWaiverPopupSeason(seasonId); }
+  };
 
   const confirmRevoke = () => {
     if (!revokeSeasonId) return;
@@ -804,7 +870,16 @@ function AdminMembershipControls({
             <strong style={{ fontSize: 13 }}>{s.name}{s.current ? ' (Current)' : ''}:</strong>
             {isActive ? <Badge tone="ok">Active{m?.activatedByAdmin ? ' (admin)' : ''}</Badge>
               : m?.status === 'pending-club-payment' ? <Badge tone="warn">Pending club</Badge>
-              : <Badge tone="err">None</Badge>}
+              : m?.status === 'pending-waiver' ? (
+                <button
+                  className="badge warn"
+                  data-tip="Awaiting a signed waiver — click to email or copy the signing link"
+                  style={{ cursor: 'pointer', border: 'none' }}
+                  onClick={() => setWaiverPopupSeason(s.id)}
+                >
+                  Pending waiver
+                </button>
+              ) : <Badge tone="err">None</Badge>}
             {m?.waiverSignedAt && <span data-tip={`Signed by ${m.waiverSignedBy} · ${formatSignedAt(m.waiverSignedAt)}`} style={{ fontSize: 12, cursor: 'help' }}>📝</span>}
             {m?.waiverSignedAt && (() => {
               const sig = (db.waiverSignatures ?? []).find((x) => x.personId === person.id && x.seasonId === s.id);
@@ -818,31 +893,13 @@ function AdminMembershipControls({
               );
             })()}
             {caps.actingAsAdmin && (
-              <button
-                className="btn small ghost"
-                onClick={() => {
-                  if (isActive) {
-                    setRevokeSeasonId(s.id);
-                  } else {
-                    // Default new grant type: coach if coach-only, else athlete
-                    const defaultType: 'athlete' | 'coach' = (roles.coach && !roles.athlete) ? 'coach' : 'athlete';
-                    mutate((d) => {
-                      const personInDraft = d.people.find((x) => x.id === personId)!;
-                      let em = personInDraft.memberships.find((x) => x.seasonId === s.id);
-                      if (em) {
-                        em.status = 'active'; em.activatedByAdmin = true;
-                      } else {
-                        em = { seasonId: s.id, type: defaultType, status: 'active', waiverSignedAt: null, waiverSignedBy: null, paidVia: 'comp', activatedByAdmin: true };
-                        personInDraft.memberships.push(em);
-                      }
-                      pushMembership(personInDraft.id, em);
-                    });
-                    toast(`Membership activated for ${s.name}.`);
-                  }
-                }}
-              >
-                {isActive ? 'Revoke' : 'Activate'}
-              </button>
+              isActive ? (
+                <button className="btn small ghost" onClick={() => setRevokeSeasonId(s.id)}>Revoke</button>
+              ) : m?.status === 'pending-waiver' ? (
+                <button className="btn small ghost" onClick={() => setRevokeSeasonId(s.id)}>Cancel</button>
+              ) : (
+                <button className="btn small ghost" onClick={() => activate(s.id)}>Activate</button>
+              )
             )}
           </div>
         );
@@ -861,6 +918,90 @@ function AdminMembershipControls({
           </div>
         </Modal>
       )}
+
+      {waiverPopupSeason && (
+        <WaiverLinkPopup
+          person={person}
+          seasonId={waiverPopupSeason}
+          seasonName={db.seasons.find((s) => s.id === waiverPopupSeason)?.name ?? waiverPopupSeason}
+          onClose={() => setWaiverPopupSeason(null)}
+        />
+      )}
     </>
+  );
+}
+
+// ---- WaiverLinkPopup --------------------------------------------------------
+// Shown after an admin manually activates a membership that has no waiver on
+// file. Mints a no-login signing link (tied to the athlete record) and lets the
+// admin email it or copy it. Signing the link activates the membership.
+function WaiverLinkPopup({ person, seasonId, seasonName, onClose }: {
+  person: Athlete; seasonId: string; seasonName: string; onClose: () => void;
+}) {
+  const toast = useToast();
+  const [link, setLink] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [emailing, setEmailing] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  // Mint the link once when the popup opens.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const doc = await fetchPublishedWaiver(seasonId, GENERAL_WAIVER_TYPE);
+      const waiverType = doc?.waiverType ?? GENERAL_WAIVER_TYPE;
+      if (!doc) { if (!cancelled) setError(`No published waiver exists for ${seasonName}. Publish one in League Controls → Waivers first.`); return; }
+      const res = await createWaiverLink({ personId: person.id, seasonId, waiverType, membershipType: 'all' });
+      if (cancelled) return;
+      if (res.ok && res.link) setLink(res.link);
+      else setError(res.error ?? 'Could not create a signing link.');
+    })();
+    return () => { cancelled = true; };
+  }, [person.id, seasonId, seasonName]);
+
+  const copy = async () => {
+    if (!link) return;
+    try { await navigator.clipboard.writeText(link); setCopied(true); setTimeout(() => setCopied(false), 1800); }
+    catch { toast('Could not copy — select the link and copy manually.', { variant: 'error' }); }
+  };
+
+  const email = async () => {
+    if (!link || !person.email) { toast('No email on file for this member.', { variant: 'error' }); return; }
+    setEmailing(true);
+    const subject = `Action needed: sign your ${seasonName} United Club Gymnastics waiver`;
+    const html = `<p>Hi ${escapeHtml(person.firstName)},</p>
+<p>Your <strong>${escapeHtml(seasonName)}</strong> membership has been activated, but it stays pending until your
+waiver is signed. No login is required.</p>
+<p><a href="${link}">Review &amp; sign your waiver &rarr;</a></p>
+<p>Once signed, your membership becomes active automatically.</p>`;
+    const res = await sendEmail(subject, html, [{ email: person.email, name: `${person.firstName} ${person.lastName}` }]);
+    setEmailing(false);
+    if (res.ok && res.sentCount > 0) { toast(`Waiver link emailed to ${person.email}.`); onClose(); }
+    else toast(`Email failed: ${res.error ?? 'unknown error'}.`, { variant: 'error' });
+  };
+
+  return (
+    <Modal title={`Waiver required — ${person.firstName} ${person.lastName}`} onClose={onClose}>
+      <p style={{ marginTop: 0, fontSize: 14, color: 'var(--ink-soft)' }}>
+        {seasonName} membership is <strong>pending a signed waiver</strong>. Send the member a no-login
+        signing link — once they sign, their membership activates automatically.
+      </p>
+      {error ? (
+        <p style={{ color: 'var(--coral-600)', fontSize: 14 }}>{error}</p>
+      ) : !link ? (
+        <p style={{ fontSize: 14, color: 'var(--ink-soft)' }}>Generating signing link…</p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <input className="input" readOnly value={link} onFocus={(e) => e.currentTarget.select()} style={{ fontSize: 12.5 }} />
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
+        <button className="btn primary" disabled={!link || emailing || !person.email} onClick={email} data-tip={person.email ? undefined : 'No email on file'}>
+          {emailing ? 'Emailing…' : '✉ Email waiver link'}
+        </button>
+        <button className="btn ghost" disabled={!link} onClick={copy}>{copied ? '✓ Copied' : 'Copy link'}</button>
+        <button className="btn ghost" onClick={onClose}>Close</button>
+      </div>
+    </Modal>
   );
 }
