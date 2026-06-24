@@ -24,12 +24,15 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
 
 ## Supabase / migrations
 - Project ref `wkyerxlgricfphopocoz` (org NAIGC). Migrations in `supabase/migrations/`.
-  CLI is linked (`supabase link` done 2026-06-19). All migrations are applied and
-  tracked by the CLI — latest is `20260624000020_manager_access_requests.sql`
+  CLI is linked (`supabase link` done 2026-06-19). Latest migration is
+  `20260624204707_people_outside_us.sql` (`people.outside_us` boolean — trains
+  outside the US ⇒ state optional, Region = "Outside US") — **not yet pushed**, apply
+  with `supabase db push`. The prior `20260624000020_manager_access_requests.sql`
   (no-login "Request Club Admin Role": `manager_access_requests` + `get_manager_access_request`/
-  `decide_manager_access` RPCs; the prior `20260624000010_member_club_cart_rls.sql` lets a
-  member push their OWN fee to a club cart via the `cart_member_clubpush` policy) as of
-  2026-06-24. `supabase functions deploy <name>` deploys Edge Functions (see [Email infra] below).
+  `decide_manager_access` RPCs; `20260624000010_member_club_cart_rls.sql` lets a
+  member push their OWN fee to a club cart via the `cart_member_clubpush` policy) and
+  everything before it are applied as of 2026-06-24.
+  `supabase functions deploy <name>` deploys Edge Functions (see [Email infra] below).
 - Migration filenames use Supabase's required timestamp format:
   `<YYYYMMDDHHmmss>_name.sql`. Create new ones with `supabase migration new <name>`.
 - Apply via `supabase db push` (the shell sandbox blocks network — run with the

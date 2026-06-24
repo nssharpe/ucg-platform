@@ -78,16 +78,15 @@ SECURITY DEFINER funcs in `20260601000002_rls.sql`.
 - Validation: state required ONLY when `!outsideUs`.
 
 **Steps:**
-- [ ] Migration `supabase migration new people_outside_us` → `alter table people add column if
+- [x] Migration `20260624204707_people_outside_us.sql` → `alter table people add column if
   not exists outside_us boolean not null default false;`
-- [ ] `types.ts`: add `outsideUs?: boolean` to `Athlete`. `supabase.ts`: map both directions.
-- [ ] `PersonForm.tsx` + `Profile.tsx`: add the checkbox; gate state-required on `!outsideUs`;
+- [x] `types.ts`: add `outsideUs?: boolean` to `Athlete`. `supabase.ts`: map both directions.
+- [x] `PersonForm.tsx` + `Profile.tsx`: add the checkbox; gate state-required on `!outsideUs`;
   Region field shows "Outside US" when checked (else the `STATE_REGIONS[state]` derivation).
-- [ ] `npx eslint` the touched files; `npx vitest run`.
+- [x] `npx eslint` the touched files; `npx vitest run` (143 passing).
 - [ ] Apply migration: `supabase db push` (sandbox disabled). Confirm column exists.
-- [ ] Preview-verify at 3 widths: toggling Outside US hides/disables state, Region → "Outside US",
-  save allowed without a state.
-- [ ] Commit: `feat(profile): add Outside-US training option (region = Outside US, state optional)`
+- [ ] Preview-verify at 3 widths (dev server unauthenticated — profile forms not exercisable live).
+- [x] Commit: `feat(profile): add Outside-US training option (region = Outside US, state optional)`
 
 ## Task 3: Coach-only field hiding & relabel (1e)
 
@@ -99,12 +98,13 @@ SECURITY DEFINER funcs in `20260601000002_rls.sql`.
 copy too). Athlete or dual-role accounts keep the current fields/labels.
 
 **Steps:**
-- [ ] Compute `coachOnly` in both files. Wrap the grad-year and student-status `<Field>`s in
+- [x] Compute `coachOnly` in both files. Wrap the grad-year and student-status `<Field>`s in
   `{!coachOnly && ...}`; exclude them from validation when `coachOnly`.
-- [ ] Relabel the state field to "Coaching state" when `coachOnly` (param the label).
-- [ ] `npx eslint` touched files; `npx vitest run`.
-- [ ] Preview-verify: a coach-only profile hides those two fields and shows "Coaching state".
-- [ ] Commit: `feat(profile): coach-only accounts hide student/grad fields, relabel coaching state`
+- [x] Relabel the state field to "Coaching state" when `coachOnly` (param the label).
+- [x] `npx eslint` touched files; `npx vitest run` (143 passing).
+- [ ] Preview-verify: a coach-only profile hides those two fields and shows "Coaching state"
+  (dev server unauthenticated — not exercisable live).
+- [x] Commit: `feat(profile): coach-only accounts hide student/grad fields, relabel coaching state`
 
 ## Task 4: New user roles — Regional Representative (+region) & Finance Admin (1f, 1g)
 
