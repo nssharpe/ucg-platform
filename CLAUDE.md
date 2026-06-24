@@ -24,12 +24,22 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
 
 ## Supabase / migrations
 - Project ref `wkyerxlgricfphopocoz` (org NAIGC). Migrations in `supabase/migrations/`.
-  CLI is linked (`supabase link` done 2026-06-19). All migrations are applied and
-  tracked by the CLI — latest is `20260624000020_manager_access_requests.sql`
-  (no-login "Request Club Admin Role": `manager_access_requests` + `get_manager_access_request`/
-  `decide_manager_access` RPCs; the prior `20260624000010_member_club_cart_rls.sql` lets a
-  member push their OWN fee to a club cart via the `cart_member_clubpush` policy) as of
-  2026-06-24. `supabase functions deploy <name>` deploys Edge Functions (see [Email infra] below).
+  CLI is linked (`supabase link` done 2026-06-19). Latest migration is
+  `20260624233746_people_self_insert_by_email.sql` — all migrations through it are
+  **applied** as of 2026-06-24 (feedback-batch Phase 1). That batch added, in order:
+  `20260624204707_people_outside_us.sql` (`people.outside_us` boolean — trains outside
+  the US ⇒ state optional, Region = "Outside US"); `…233240_app_role_regional_rep.sql`
+  + `…233241_app_role_finance_admin.sql` (two new `app_role` enum values — own files per
+  the enum gotcha); `…233242_regional_rep_regions.sql` (`regional_rep_regions` table:
+  one region per Regional-Rep user, admin-write/self-read RLS); and
+  `…233746_people_self_insert_by_email.sql` (broadens the `people` INSERT policy so a
+  signed-in user can save their OWN row even pre-link — self-branch keyed on the verified
+  JWT email; fixes the "new row violates RLS policy for people" save bug). The prior
+  `20260624000020_manager_access_requests.sql` (no-login "Request Club Admin Role":
+  `manager_access_requests` + `get_manager_access_request`/`decide_manager_access` RPCs;
+  `20260624000010_member_club_cart_rls.sql` lets a member push their OWN fee to a club
+  cart via the `cart_member_clubpush` policy) and everything before it are applied too.
+  `supabase functions deploy <name>` deploys Edge Functions (see [Email infra] below).
 - Migration filenames use Supabase's required timestamp format:
   `<YYYYMMDDHHmmss>_name.sql`. Create new ones with `supabase migration new <name>`.
 - Apply via `supabase db push` (the shell sandbox blocks network — run with the
@@ -179,6 +189,21 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
   `onAuthStateChange`). **Dashboard requirement:** redirect URLs must include the
   wildcards `https://nssharpe.github.io/ucg-platform/**` and `http://localhost:5173/**`,
   or Supabase drops the query and the link lands on home.
+  - The sign-in gate (`Gate.tsx` `AuthGate`) also offers **"Forgot my password?"**
+    (`resetPasswordForEmail` with a `?setpw=1` redirect → reuses the set-password landing)
+    and a passwordless **"Email me a sign-in link"** (`signInWithOtp`, bare-base redirect →
+    `onAuthStateChange` auto-signs-in). The not-found/confirm **flash** is fixed: `Profile.tsx`
+    self-view shows a loader while `useAuthLoading() || !useRolesLoaded()` and routes Home once
+    settled with no person (`rolesLoaded===true` implies the snapshot synced the new user, since
+    `onAuthenticated` awaits `syncFromSupabase()` before setting it).
+- **App roles.** `user_roles.role` is the `app_role` enum: `admin`, `sanctioning`, and (added
+  Phase 1) `regional_rep` (carries a region via the `regional_rep_regions` table — multiple
+  users per region) and `finance_admin` (gates the upcoming finance dashboards). Capabilities
+  expose `isSanctioning`, `isRegionalRep`, `isFinanceAdmin` (`capabilities-core.ts`); admins are
+  NOT implicitly regional/finance. Granted in the Admin "User roles" UI (`Admin.tsx` `UserRoles`).
+- **Self profile save stamps `auth_user_id`.** `pushPerson(p, { selfAuthUserId })` includes
+  `auth_user_id` only when the acting user saves their OWN row (Profile non-admin path), so the
+  `people` self-INSERT RLS branch passes; admin/club-manager creation of OTHERS omits it.
 - **Club-membership gate is ON.** A club needs an active `club_memberships` row for a
   season before its athletes can register or it can host. Enforced at the registration
   (`Meets.tsx`, `Club.tsx`) and sanction-request (`Sanction.tsx`) entry points via

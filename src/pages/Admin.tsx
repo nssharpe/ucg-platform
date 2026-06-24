@@ -13,7 +13,7 @@ import { downloadWaiverProof, formatSignedAt } from '../lib/waiver-proof';
 import { sanitizeWaiverHtml, escapeHtml } from '../lib/sanitize-html';
 import { fmtMoney } from '../lib/scoring';
 import { randomPromoCode, couponValid } from '../lib/pricing';
-import { fetchAllRoles, isSupabaseConfigured, pushAll, pushClub, pushClubManager, pushClubRequest, pushCoupon, pushLevel, pushMembership, pushRegistration, pushSeason, pushUserRole, pushAccountInvite, deleteCoupon, deleteRegistration, sendEmail, sendSms, pushWaiverDocument, logComm, fetchCommLog, fetchSmsMessages, pushPerson, deletePerson, type SendEmailResult, type CommLogEntry, type SmsMessage } from '../lib/supabase';
+import { fetchAllRoles, fetchRegionalRepRegions, setRegionalRepRegion, isSupabaseConfigured, pushAll, pushClub, pushClubManager, pushClubRequest, pushCoupon, pushLevel, pushMembership, pushRegistration, pushSeason, pushUserRole, pushAccountInvite, deleteCoupon, deleteRegistration, sendEmail, sendSms, pushWaiverDocument, logComm, fetchCommLog, fetchSmsMessages, pushPerson, deletePerson, type SendEmailResult, type CommLogEntry, type SmsMessage } from '../lib/supabase';
 import { analyzeMessage, normalizeToGsm7 } from '../lib/sms-segments';
 import { estimateSmsCost, partitionByConsent } from '../lib/sms-send';
 import { classifyDeliveryStatus } from '../lib/sms-inbound';
@@ -1521,13 +1521,24 @@ function Promos() {
 const ROLE_DEFS = [
   { role: 'admin', label: 'Full League Admin', desc: 'Full admin access, including user emulation.' },
   { role: 'sanctioning', label: 'Sanctioning Team', desc: 'Will see meets to vote on (voting UI coming in a later wave).' },
+  { role: 'regional_rep', label: 'Regional Representative', desc: 'Represents a region. Set each rep’s region below.' },
+  { role: 'finance_admin', label: 'Finance Admin', desc: 'Access to finance tools (finance dashboard coming in a later phase).' },
 ] as const;
+
+// Canonical NAIGC regions for the Regional Representative dropdown: the distinct
+// region VALUES from STATE_REGIONS, sorted, plus "Outside US".
+const REGION_OPTIONS: string[] = (() => {
+  const set = new Set<string>(Object.values(STATE_REGIONS));
+  set.add('Outside US');
+  return Array.from(set).sort();
+})();
 
 function UserRoles() {
   const db = useDB();
   const toast = useToast();
   // Load all role assignments from Supabase on mount.
   const [roleMap, setRoleMap] = useState<Map<string, Set<string>>>(new Map()); // userId → Set<role>
+  const [regionMap, setRegionMap] = useState<Record<string, string>>({}); // userId → region (regional reps)
   const [loading, setLoading] = useState(true);
   const [addingRole, setAddingRole] = useState<string | null>(null); // role being added
   const [addPersonId, setAddPersonId] = useState<string | null>(null);
@@ -1537,7 +1548,7 @@ function UserRoles() {
     // `loading` already initializes to true and this effect runs once on mount,
     // so no synchronous setLoading(true) is needed (it would only cause a
     // cascading render). setLoading(false) happens in the async .then below.
-    fetchAllRoles().then((rows) => {
+    Promise.all([fetchAllRoles(), fetchRegionalRepRegions()]).then(([rows, regions]) => {
       if (!live) return;
       const map = new Map<string, Set<string>>();
       for (const { userId, role } of rows) {
@@ -1545,6 +1556,7 @@ function UserRoles() {
         map.get(userId)!.add(role);
       }
       setRoleMap(map);
+      setRegionMap(regions);
       setLoading(false);
     });
     return () => { live = false; };
@@ -1567,6 +1579,11 @@ function UserRoles() {
       next.get(userId)?.delete(role);
       return next;
     });
+  };
+
+  const setRegion = (userId: string, region: string) => {
+    setRegionalRepRegion(userId, region);
+    setRegionMap((prev) => ({ ...prev, [userId]: region }));
   };
 
   // Find person by authUserId.
@@ -1642,7 +1659,7 @@ function UserRoles() {
               <p style={{ fontSize: 13.5, color: 'var(--ink-soft)', margin: 0 }}>No one currently holds this role.</p>
             ) : (
               <table className="tbl">
-                <thead><tr><th>Person</th><th>Email</th><th>Auth user ID</th><th /></tr></thead>
+                <thead><tr><th>Person</th><th>Email</th>{role === 'regional_rep' && <th>Region</th>}<th>Auth user ID</th><th /></tr></thead>
                 <tbody>
                   {holders.map(({ userId, person }) => (
                     <tr key={userId}>
@@ -1654,6 +1671,27 @@ function UserRoles() {
                         )}
                       </td>
                       <td style={{ fontSize: 13 }}>{person?.email ?? '—'}</td>
+                      {role === 'regional_rep' && (
+                        <td>
+                          <select
+                            className="input"
+                            value={regionMap[userId] ?? ''}
+                            onChange={(e) => {
+                              const region = e.target.value;
+                              if (!region) return;
+                              setRegion(userId, region);
+                              const name = person ? `${person.firstName} ${person.lastName}` : userId;
+                              toast(`Set ${name}’s region to ${region}.`);
+                            }}
+                            style={{ fontSize: 13, padding: '4px 8px' }}
+                          >
+                            <option value="" disabled>Select region…</option>
+                            {REGION_OPTIONS.map((r) => (
+                              <option key={r} value={r}>{r}</option>
+                            ))}
+                          </select>
+                        </td>
+                      )}
                       <td style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--ink-soft)' }}>{userId.slice(0, 12)}…</td>
                       <td>
                         <button

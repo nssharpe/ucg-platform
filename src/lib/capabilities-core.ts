@@ -12,6 +12,12 @@ export interface Capabilities {
   /** True when the user is on the Sanctioning Team (or an admin). Gates the
    *  Sanctioning queue / vote pages. Admins are implicitly on the team. */
   isSanctioning: boolean;
+  /** True when the user holds the 'finance_admin' role. Gates a later
+   *  finance-dashboard phase. Admins are NOT implicitly finance admins. */
+  isFinanceAdmin: boolean;
+  /** True when the user holds the 'regional_rep' role. Admins are NOT
+   *  implicitly regional reps. */
+  isRegionalRep: boolean;
   /** True only when the user is a real admin AND not currently impersonating
    *  anyone. Use this to gate admin POWERS in the UI (admin nav, edit buttons,
    *  grant/revoke) so that "View as (person)" faithfully shows what that
@@ -65,6 +71,8 @@ export function deriveCapabilities(
 ): Capabilities {
   const isAdmin = roles.includes('admin');
   const isSanctioning = isAdmin || roles.includes('sanctioning');
+  const isFinanceAdmin = roles.includes('finance_admin');
+  const isRegionalRep = roles.includes('regional_rep');
   const impersonating = isAdmin && !!viewPersonId && viewPersonId !== authPersonId;
   const personId = impersonating ? viewPersonId : authPersonId;
   const person = personId ? db.people.find((p) => p.id === personId) ?? null : null;
@@ -79,6 +87,8 @@ export function deriveCapabilities(
     signedIn,
     isAdmin,
     isSanctioning,
+    isFinanceAdmin,
+    isRegionalRep,
     actingAsAdmin: isAdmin && !impersonating,
     personId,
     person,

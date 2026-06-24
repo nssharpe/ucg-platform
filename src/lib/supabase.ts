@@ -175,6 +175,7 @@ const personToRow = (p: Athlete) => ({
   first_name: p.firstName, last_name: p.lastName, email: p.email,
   dob: p.dob || null, gender: p.gender, placement: p.placement ?? {}, grad_year: p.gradYear,
   student_status: p.studentStatus, shirt: p.shirt, country: p.country, state: p.state,
+  outside_us: p.outsideUs ?? false,
   phone: p.phone, sms_consent: p.smsConsent ?? false, sms_consent_at: p.smsConsentAt ?? null,
   main_club_id: p.mainClubId, levels: p.levels ?? {},
   emergency: p.emergency ?? {}, dietary: p.dietary ?? [], dietary_notes: p.dietaryNotes ?? '',
@@ -328,8 +329,18 @@ export function pushClub(c: Club) {
   remoteReplace('club_managers', { club_id: c.id }, c.managerIds.map((personId) => ({ club_id: c.id, person_id: personId })));
 }
 
-export function pushPerson(p: Athlete) {
-  remoteUpsert('people', [personToRow(p)]);
+/** Push a person row (+ alt-clubs + memberships) to Supabase.
+ *  Pass `opts.selfAuthUserId` ONLY when the acting signed-in user is saving
+ *  THEIR OWN row: it stamps `auth_user_id` so the `people` INSERT RLS policy's
+ *  `auth_user_id = auth.uid()` branch passes on a first-time self INSERT (an
+ *  ordinary member otherwise fails is_admin()/manages_club()). NEVER pass it
+ *  when creating/editing OTHER people (admins/club-managers) — that would stamp
+ *  the actor's uid onto someone else's row. */
+export function pushPerson(p: Athlete, opts?: { selfAuthUserId?: string }) {
+  const row = opts?.selfAuthUserId
+    ? { ...personToRow(p), auth_user_id: opts.selfAuthUserId }
+    : personToRow(p);
+  remoteUpsert('people', [row]);
   remoteReplace('person_alt_clubs', { person_id: p.id }, p.altClubIds.map((clubId) => ({ person_id: p.id, club_id: clubId })));
   remoteReplace('memberships', { person_id: p.id }, p.memberships.map((m) => membershipToRow(p.id, m)));
 }
@@ -452,6 +463,23 @@ export async function fetchAllRoles(): Promise<{ userId: string; role: string }[
   const { data, error } = await supabase.from('user_roles').select('user_id, role');
   if (error) { console.error('[supabase] fetchAllRoles failed:', error); return []; }
   return (data ?? []).map((r: { user_id: string; role: string }) => ({ userId: r.user_id, role: r.role }));
+}
+
+/** Set (upsert) a regional representative's region. One region per user_id;
+ *  conflict on user_id replaces. Admin-only at the RLS layer. */
+export function setRegionalRepRegion(userId: string, region: string) {
+  remoteUpsert('regional_rep_regions', [{ user_id: userId, region }], 'user_id');
+}
+
+/** All regional_rep_regions rows as { [user_id]: region }. RLS returns every row
+ *  for an admin (own row otherwise). Returns {} on error, matching fetchAllRoles. */
+export async function fetchRegionalRepRegions(): Promise<Record<string, string>> {
+  if (!supabase) return {};
+  const { data, error } = await supabase.from('regional_rep_regions').select('user_id, region');
+  if (error) { console.error('[supabase] fetchRegionalRepRegions failed:', error); return {}; }
+  const out: Record<string, string> = {};
+  for (const r of (data ?? []) as { user_id: string; region: string }[]) out[r.user_id] = r.region;
+  return out;
 }
 
 /** The signed-in user's app roles. Pass the known auth uid (from the session)
@@ -908,6 +936,7 @@ export async function loadAll(): Promise<DB | null> {
       firstName: r.first_name, lastName: r.last_name, email: r.email,
       dob: r.dob ?? '', gender: r.gender as Athlete['gender'], placement: (r.placement ?? {}) as Athlete['placement'], gradYear: r.grad_year ?? 1900,
       studentStatus: r.student_status as Athlete['studentStatus'], shirt: r.shirt ?? '', country: r.country ?? '', state: r.state ?? '',
+      outsideUs: (r as { outside_us?: boolean }).outside_us ?? false,
       phone: r.phone ?? '', smsConsent: r.sms_consent ?? false, smsConsentAt: r.sms_consent_at ?? null,
       mainClubId: r.main_club_id, altClubIds: altClubsByPerson.get(r.id) ?? [],
       levels: (r.levels ?? {}) as Athlete['levels'], emergency: (r.emergency ?? { contact: '', relation: '', phone: '' }) as Athlete['emergency'],

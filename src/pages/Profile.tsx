@@ -8,6 +8,7 @@ import { SHIRT_SIZES, DIETARY_OPTIONS, STATE_REGIONS, DISCIPLINES } from '../lib
 import type { Athlete, ClubRequest, Gender, Region } from '../lib/types';
 import { GENERAL_WAIVER_TYPE } from '../lib/types';
 import { pushClubRequest, pushMembership, pushPerson, deleteRegistration, sendEmail, createWaiverLink, fetchPublishedWaiver, requestManagerAccess } from '../lib/supabase';
+import { getSession, useAuthLoading, useRolesLoaded } from '../lib/auth';
 import { escapeHtml } from '../lib/sanitize-html';
 import { downloadWaiverProof, formatSignedAt } from '../lib/waiver-proof';
 
@@ -43,16 +44,45 @@ function ageFromDob(dob: string): number {
 // ---------------------------------------------------------------------------
 type ValidationErrors = { field: string; label: string }[];
 
-function validateProfile(p: Athlete): ValidationErrors {
+/** Is an athlete profile still "not yet completed"? We reuse the required
+ *  `studentStatus` field as the unset marker (`''` = never filled in) rather
+ *  than adding a DB column. A brand-new self-signup person lands here with
+ *  `studentStatus === ''` and `mainClubId === null`. */
+function athleteProfileIncomplete(p: Athlete): boolean {
+  return effectiveRoles(p).athlete && !p.studentStatus;
+}
+
+// `independent` is local form state (the "No club" checkbox), not stored on the
+// person — the stored value is `mainClubId` (null = no club). validateProfile
+// takes it so it can require an explicit club-vs-Independent choice for new
+// athlete accounts. Defaults to deriving from `mainClubId` for callers (e.g.
+// the initial editMode check) that don't have the live toggle.
+function validateProfile(p: Athlete, independentChecked: boolean = p.mainClubId === null): ValidationErrors {
   const errs: ValidationErrors = [];
+  // Athlete-only fields: a later task hides student status + grad year for
+  // coach-only accounts, so only require them when the person is an athlete.
+  const isAthlete = effectiveRoles(p).athlete;
   if (!p.firstName.trim()) errs.push({ field: 'firstName', label: 'First name' });
   if (!p.lastName.trim()) errs.push({ field: 'lastName', label: 'Last name' });
   if (!p.dob) errs.push({ field: 'dob', label: 'Date of birth' });
-  if (!p.gradYear) errs.push({ field: 'gradYear', label: 'Graduation year' }); // 0/undefined = not chosen; 1900 = N/A (ok)
-  if (!p.state) errs.push({ field: 'state', label: 'Training state' });
+  if (isAthlete && !p.gradYear) errs.push({ field: 'gradYear', label: 'Graduation year' }); // 0/undefined = not chosen; 1900 = N/A (ok)
+  // Coach-only accounts see "Coaching state"; anyone training outside the US has no state.
+  const coachOnly = effectiveRoles(p).coach && !effectiveRoles(p).athlete;
+  if (!p.outsideUs && !p.state) errs.push({ field: 'state', label: coachOnly ? 'Coaching state' : 'Training state' });
   if (!p.phone) errs.push({ field: 'phone', label: 'Phone' });
   if (!p.shirt) errs.push({ field: 'shirt', label: 'T-shirt size' });
-  if (!p.studentStatus) errs.push({ field: 'studentStatus', label: 'Student status' });
+  if (isAthlete && !p.studentStatus) errs.push({ field: 'studentStatus', label: 'Student status' });
+  // Main club: `string` = a club is picked, `null` = "No club / Independent
+  // Athlete". For a COMPLETE athlete profile both are valid choices. But a new
+  // self-signup account is created with `mainClubId = null` and lands here to
+  // fill in its profile — we must NOT treat that default null as "Independent
+  // chosen". So for an incomplete athlete profile require an explicit choice:
+  // a club picked OR the Independent box ticked (feedback 1c). The local
+  // `independent` toggle is the only signal that null means a deliberate choice.
+  if (isAthlete && athleteProfileIncomplete(p)) {
+    const clubChosen = independentChecked || !!p.mainClubId;
+    if (!clubChosen) errs.push({ field: 'mainClubId', label: 'Main club' });
+  }
   if (!p.emergency.contact) errs.push({ field: 'emergency.contact', label: 'Emergency contact' });
   if (!p.emergency.phone) errs.push({ field: 'emergency.phone', label: 'Emergency phone' });
   return errs;
@@ -77,8 +107,22 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   const caps = useCapabilities();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  // Auth/sync readiness signals — only meaningful for the SELF view. On an
+  // account switch (or fresh email-confirm sign-in) the session changes before
+  // syncFromSupabase() pulls the new user's person row into the snapshot, so a
+  // naive `!person` check would flash "Person not found." `rolesLoaded` is the
+  // reliable "ready" gate: onAuthenticated awaits linkOrCreatePerson →
+  // syncFromSupabase() → fetchMyRoles before setting it true, so
+  // rolesLoaded === true implies the new user's person row is already in the
+  // snapshot. (It's reset to false on every user change.)
+  const authLoading = useAuthLoading();
+  const rolesLoaded = useRolesLoaded();
   const personId = adminView ? params.personId! : caps.personId;
   const person = db.people.find((p) => p.id === personId);
+  // Self view: are we still resolving auth/sync, so a missing person is just
+  // "not loaded yet" rather than "no access"? Don't show not-found during this
+  // window — show the loader, then (once settled) redirect Home if truly absent.
+  const selfResolving = !adminView && (authLoading || !rolesLoaded);
 
   // Determine if we should auto-open edit mode and return to membership after save
   const returnParam = searchParams.get('return');
@@ -99,20 +143,52 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   const [revokeSeasonId, setRevokeSeasonId] = useState<string | null>(null);
   // "Independent Athlete" = no club (mainClubId null). Tracked locally so the
   // user can tick it before/instead of picking a club from the dropdown.
-  const [independent, setIndependent] = useState<boolean>(() => person?.mainClubId === null);
+  // For an INCOMPLETE new athlete profile (studentStatus unset + no club) we
+  // start UNCHECKED so neither a club nor No-club is pre-selected — the user
+  // must take an explicit action (feedback 1c). Only derive Independent from a
+  // null club when the profile is already complete (or it's a coach).
+  const [independent, setIndependent] = useState<boolean>(() =>
+    person ? !athleteProfileIncomplete(person) && person.mainClubId === null : false
+  );
 
   // Hooks must run unconditionally, so derive these before the early return below.
   // `current` is null only when `person` is missing (the not-found path).
   const current = draft ?? person ?? null;
-  const validationErrors = useMemo(() => (current ? validateProfile(current) : []), [current]);
+  const validationErrors = useMemo(() => (current ? validateProfile(current, independent) : []), [current, independent]);
 
-  // When arriving from membership, highlight still-empty required fields in red
+  // When arriving from membership, highlight still-empty required fields in red.
+  // The club-choice guard (feedback 1c) also self-surfaces outside that flow:
+  // a new self-signup lands in edit mode without `?return=membership`, so always
+  // surface a missing `mainClubId` choice so the disabled Save has a visible reason.
   const missingFieldKeys = useMemo(
-    () => highlightMissing ? new Set(validationErrors.map((e) => e.field)) : new Set<string>(),
+    () => {
+      const base = highlightMissing ? validationErrors.map((e) => e.field) : [];
+      const keys = new Set(base);
+      if (validationErrors.some((e) => e.field === 'mainClubId')) keys.add('mainClubId');
+      return keys;
+    },
     [highlightMissing, validationErrors]
   );
 
-  if (!person) return <p>Person not found.</p>;
+  // Self view, settled, and still no person row = the signed-in user genuinely
+  // has no profile for the current account. Don't strand them on "Person not
+  // found" — send them Home. (Terminal state: rolesLoaded is true here, so this
+  // can't loop with the loader below.) The admin members detail view keeps its
+  // real not-found for a bad :personId.
+  const selfNoAccess = !adminView && !person && !selfResolving;
+  useEffect(() => {
+    if (selfNoAccess) navigate('/', { replace: true });
+  }, [selfNoAccess, navigate]);
+
+  // While auth/sync is still resolving on the self view, show the loader rather
+  // than a transient "Person not found" (feedback 1i/1j). Same Loading… style
+  // as App's PageFallback.
+  if (!person) {
+    if (selfResolving || selfNoAccess) {
+      return <div style={{ padding: 40, textAlign: 'center', color: 'var(--ink-soft)' }}>Loading…</div>;
+    }
+    return <p>Person not found.</p>;
+  }
   const pid: string = person.id;
   const p = draft ?? person;
   const set = (patch: Partial<Athlete>) => setDraft({ ...p, ...patch });
@@ -122,6 +198,10 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   const roles = effectiveRoles(p);
   const isAthlete = roles.athlete;
   const isCoach = roles.coach;
+  // Coach-only: hide student status + grad year, relabel state field (feedback 1e).
+  const coachOnly = isCoach && !isAthlete;
+  const outsideUs = !!p.outsideUs;
+  const stateLabel = coachOnly ? 'Coaching state' : 'Training state';
 
   /** Returns inline border style if this field is currently missing and we're highlighting */
   const missingStyle = (field: string): CSSProperties =>
@@ -152,10 +232,15 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
 
   const save = () => {
     if (!canSave) return;
+    // When the user is saving THEIR OWN profile (not an admin editing someone
+    // else), stamp the session uid so a first-time self INSERT satisfies the
+    // `people` insert RLS policy (`auth_user_id = auth.uid()`). adminView edits
+    // of OTHER people must NOT pass it (they pass is_admin() instead).
+    const selfAuthUserId = adminView ? undefined : getSession()?.user.id;
     mutate((d) => {
       const i = d.people.findIndex((x) => x.id === pid);
       d.people[i] = { ...p };
-      pushPerson(d.people[i]);
+      pushPerson(d.people[i], selfAuthUserId ? { selfAuthUserId } : undefined);
     });
     setDraft(null);
     setEditMode(false);
@@ -270,24 +355,30 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                   ))}
                 </>
               )}
-              <Field label="Undergrad graduation year">
-                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                  <input type="number" disabled={p.gradYear === 1900} placeholder="YYYY" style={missingStyle('gradYear')}
-                    value={p.gradYear === 1900 || !p.gradYear ? '' : p.gradYear}
-                    onChange={(e) => set({ gradYear: +e.target.value || 0 })} />
-                  <label className="checkrow" style={{ whiteSpace: 'nowrap', margin: 0 }}>
-                    {/* 1900 = N/A; 0 = not yet chosen */}
-                    <input type="checkbox" checked={p.gradYear === 1900} onChange={(e) => set({ gradYear: e.target.checked ? 1900 : 0 })} />
-                    N/A
-                  </label>
-                </div>
-                {missingFieldKeys.has('gradYear') && !p.gradYear && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Enter a year or check N/A.</div>}
-              </Field>
-              <Field label="Student status" hint="Full-time student for ≥1 semester this season (Jul–Jun)? Grad students may pick either.">
-                <select className="input" value={p.studentStatus} onChange={(e) => set({ studentStatus: e.target.value as 'Student' | 'Non-Student' })} style={missingStyle('studentStatus')}>
-                  <option>Student</option><option>Non-Student</option>
-                </select>
-              </Field>
+              {!coachOnly && (
+                <Field label="Undergrad graduation year">
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                    <input type="number" disabled={p.gradYear === 1900} placeholder="YYYY" style={missingStyle('gradYear')}
+                      value={p.gradYear === 1900 || !p.gradYear ? '' : p.gradYear}
+                      onChange={(e) => set({ gradYear: +e.target.value || 0 })} />
+                    <label className="checkrow" style={{ whiteSpace: 'nowrap', margin: 0 }}>
+                      {/* 1900 = N/A; 0 = not yet chosen */}
+                      <input type="checkbox" checked={p.gradYear === 1900} onChange={(e) => set({ gradYear: e.target.checked ? 1900 : 0 })} />
+                      N/A
+                    </label>
+                  </div>
+                  {missingFieldKeys.has('gradYear') && !p.gradYear && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Enter a year or check N/A.</div>}
+                </Field>
+              )}
+              {!coachOnly && (
+                <Field label="Student status" hint="Full-time student for ≥1 semester this season (Jul–Jun)? Grad students may pick either.">
+                  <select className="input" value={p.studentStatus} onChange={(e) => set({ studentStatus: e.target.value as Athlete['studentStatus'] })} style={missingStyle('studentStatus')}>
+                    <option value="" disabled>Select…</option>
+                    <option value="Student">Student</option><option value="Non-Student">Non-Student</option>
+                  </select>
+                  {missingFieldKeys.has('studentStatus') && !p.studentStatus && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Required</div>}
+                </Field>
+              )}
               <Field label="T-shirt size">
                 <select className="input" value={p.shirt} onChange={(e) => set({ shirt: e.target.value })} style={missingStyle('shirt')}>
                   <option value="">Select a size…</option>
@@ -295,11 +386,20 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                 </select>
                 {missingFieldKeys.has('shirt') && !p.shirt && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Required</div>}
               </Field>
-              <Field label="Training state">
-                <div style={missingStyle('state')}>
-                  <Combo options={states.map((s) => ({ value: s, label: s, sub: STATE_REGIONS[s] }))} value={p.state} onChange={(v) => set({ state: v })} />
-                </div>
-                {missingFieldKeys.has('state') && !p.state && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Required</div>}
+              <Field label={stateLabel}>
+                {outsideUs ? (
+                  <input type="text" disabled value="Outside US" />
+                ) : (
+                  <div style={missingStyle('state')}>
+                    <Combo options={states.map((s) => ({ value: s, label: s, sub: STATE_REGIONS[s] }))} value={p.state} onChange={(v) => set({ state: v })} />
+                  </div>
+                )}
+                <label className="checkrow" style={{ margin: '8px 0 0' }}>
+                  <input type="checkbox" checked={outsideUs}
+                    onChange={(e) => set(e.target.checked ? { outsideUs: true, state: '' } : { outsideUs: false })} />
+                  {coachOnly ? 'Coaching outside the US' : 'Training outside the US'}
+                </label>
+                {!outsideUs && missingFieldKeys.has('state') && !p.state && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Required</div>}
               </Field>
               <Field label="Phone">
                 <input
@@ -341,7 +441,9 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                 {independent ? (
                   <input type="text" disabled value="Independent Athlete" />
                 ) : (
-                  <Combo options={clubOptions} value={p.mainClubId} placeholder="Select a club…" onChange={(v) => set({ mainClubId: v })} />
+                  <div style={missingStyle('mainClubId')}>
+                    <Combo options={clubOptions} value={p.mainClubId} placeholder="Select a club…" onChange={(v) => set({ mainClubId: v })} />
+                  </div>
                 )}
                 {!isCoach && (
                   <label className="checkrow" style={{ margin: '8px 0 0' }}>
@@ -350,9 +452,12 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                     No club — I am an Independent Athlete
                   </label>
                 )}
+                {missingFieldKeys.has('mainClubId') && (
+                  <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Pick a club, or check "No club".</div>
+                )}
               </Field>
-              <Field label="Region" hint="Derived from training state.">
-                <input type="text" disabled value={STATE_REGIONS[p.state] ?? 'Other'} />
+              <Field label="Region" hint={outsideUs ? 'Set because you train outside the US.' : `Derived from ${stateLabel.toLowerCase()}.`}>
+                <input type="text" disabled value={outsideUs ? 'Outside US' : p.state ? STATE_REGIONS[p.state] ?? 'Other' : '—'} />
               </Field>
               <Field
                 label={isCoach ? 'Other clubs you coach for' : 'Other clubs'}
@@ -468,10 +573,10 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
               {isAthlete && person.gender !== 'Male' && person.gender !== 'Female' && DISCIPLINES.map((d) => (
                 <ViewRow key={d} label={`${d} placement`} value={person.placement?.[d] ?? 'women+'} />
               ))}
-              <ViewRow label="Grad year" value={person.gradYear === 1900 ? 'N/A' : String(person.gradYear)} />
-              <ViewRow label="Student status" value={person.studentStatus} />
+              {!coachOnly && <ViewRow label="Grad year" value={person.gradYear === 1900 ? 'N/A' : String(person.gradYear)} />}
+              {!coachOnly && <ViewRow label="Student status" value={person.studentStatus} />}
               <ViewRow label="T-shirt size" value={person.shirt} />
-              <ViewRow label="Training state" value={`${person.state}${STATE_REGIONS[person.state] ? ` (${STATE_REGIONS[person.state]})` : ''}`} />
+              <ViewRow label={stateLabel} value={person.outsideUs ? 'Outside US' : `${person.state}${STATE_REGIONS[person.state] ? ` (${STATE_REGIONS[person.state]})` : ''}`} />
               <ViewRow label="Phone" value={person.phone} />
             </div>
           </div>
@@ -482,7 +587,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
             </h3>
             <div className="grid cols-2">
               <ViewRow label={isCoach ? 'Primary club' : 'Main club'} value={db.clubs.find((c) => c.id === person.mainClubId)?.name ?? '—'} />
-              <ViewRow label="Region" value={STATE_REGIONS[person.state] ?? 'Other'} />
+              <ViewRow label="Region" value={person.outsideUs ? 'Outside US' : STATE_REGIONS[person.state] ?? 'Other'} />
               {!adminView && person.mainClubId && !caps.managedClubIds.includes(person.mainClubId) && (
                 <div style={{ gridColumn: '1 / -1' }}>
                   <RequestAdminRoleButton
