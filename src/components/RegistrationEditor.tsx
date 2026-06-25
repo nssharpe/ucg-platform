@@ -256,6 +256,10 @@ export interface RegistrationEditorProps {
   meet: Meet;
   athlete: Athlete;
   clubId: string;
+  /** The club the athlete is CURRENTLY registered with (before any edit). When
+   *  provided and it differs from `clubId`, a club-only switch registers as an
+   *  eligible/chargeable change. Defaults to `clubId` (no club change). */
+  originalClubId?: string;
   existing: Registration[]; // all regs for this athlete+meet (may be [])
   allAthletes: Athlete[];
   levels: Level[];
@@ -272,6 +276,7 @@ export function RegistrationEditor({
   meet,
   athlete,
   clubId,
+  originalClubId,
   existing,
   allAthletes,
   levels,
@@ -386,12 +391,14 @@ export function RegistrationEditor({
 
   const eligible = useMemo(() => {
     if (!isEditingExisting) return true; // new registration — always enabled
-    const before: RegChangeState = { clubId, athleteId: athlete.id, disciplines: draftToEntries(true) };
+    // `before` uses the ORIGINAL club so a club-only switch (originalClubId !==
+    // clubId) is recognized as an eligible change; `after` uses the live clubId.
+    const before: RegChangeState = { clubId: originalClubId ?? clubId, athleteId: athlete.id, disciplines: draftToEntries(true) };
     const after: RegChangeState = { clubId, athleteId: athlete.id, disciplines: draftToEntries(false) };
     return changeIsEligible(before, after);
     // draftToEntries closes over `drafts` + `existing`; recompute on draft change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drafts, existing, clubId, athlete.id, isEditingExisting]);
+  }, [drafts, existing, clubId, originalClubId, athlete.id, isEditingExisting]);
 
   const saveDisabled = !anyEnabled || (isEditingExisting && !eligible);
   const saveLabel = isEditingExisting

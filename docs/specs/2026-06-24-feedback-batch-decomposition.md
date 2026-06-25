@@ -64,27 +64,27 @@ Central files: `src/pages/Membership.tsx`, `src/pages/Club.tsx`,
 `supabase/functions/request-guardian-waiver`, `create-waiver-link`,
 `request-manager-access`, new edge function for the no-club welcome email.
 
-- [ ] **2a. Admin-override grant waiver routing:** send **athlete** self-waiver if ≥18,
+- [x] **2a. Admin-override grant waiver routing:** send **athlete** self-waiver if ≥18,
   **guardian** waiver if <18 (currently always guardian). Compute age from DOB at grant time.
   `Membership.tsx`/admin grant path + `create-waiver-link`/`request-guardian-waiver`.
-- [ ] **2b. Proof-of-waiver PDF lost HTML formatting** — render the waiver with the same HTML
+- [x] **2b. Proof-of-waiver PDF lost HTML formatting** — render the waiver with the same HTML
   formatting used elsewhere (sanitized HTML → styled PDF). `src/lib/waiver-proof.ts`,
   `sanitize-html.ts`, `waiver-default.ts`.
-- [ ] **2c. No-club first membership-only purchase → welcome email** with regional team CC'd
+- [x] **2c. No-club first membership-only purchase → welcome email** with regional team CC'd
   (skip if Outside US). Names from Regional Rep role (1f); CC = corrected plus-addresses per
   region. Email body per spec (Welcome to UCG, hyperlinks). New edge function
   `send-membership-welcome` (or extend an existing notify fn) + invoker in `supabase.ts`.
   Fire once, on first membership-only purchase for a no-club account.
-- [ ] **2d. Club-cart push link fix:** remove "Return to membership purchasing →" (goes to
+- [x] **2d. Club-cart push link fix:** remove "Return to membership purchasing →" (goes to
   owner's membership page). Replace with **"Checkout Memberships →"** → a memberships-only
   checkout page. On completion: account owner gets confirmation email + receipt PDF.
   `Cart.tsx`/`Club.tsx` memberships card, new checkout route, `receipt.ts`.
-- [ ] **2e. BUG: "Confirmation emailed" but no email sent** (club-cart pay). Wire the real
+- [x] **2e. BUG: "Confirmation emailed" but no email sent** (club-cart pay). Wire the real
   send (now that 2d adds a real checkout + receipt). `Club.tsx`/`Membership.tsx` pay buttons.
-- [ ] **2f. BUG: membership paid in cart but user still shows "Athlete membership — pending
+- [x] **2f. BUG: membership paid in cart but user still shows "Athlete membership — pending
   payment by your club".** Status not refreshing after club-cart payment. Fix status
   derivation. `Membership.tsx`, membership status logic, `capabilities-core.ts`.
-- [ ] **2g. Status bubble on club-cart push:** "Pending Payment by [Club Name] (Athlete)".
+- [x] **2g. Status bubble on club-cart push:** "Pending Payment by [Club Name] (Athlete)".
   If also under-18 waiver hold → **two** bubbles: "Pending guardian waiver (Athlete)" +
   "Pending Payment by [Club Name] (Athlete)". Currently one bubble. `Membership.tsx` status
   rendering.
@@ -183,9 +183,13 @@ accounting codes + meet-host payment records.
 
 Central files: `src/pages/MyRegistrations.tsx`, `src/components/RegistrationEditor.tsx`.
 
-- [ ] **6a. Edit ALL registration details** (not just club) — reuse the full registration
-  editor. `MyRegistrations.tsx`.
-- [ ] **6b. Clear EDITING vs new** affordance (shares 3i). `MyRegistrations.tsx`.
+- [x] **6a. Edit ALL registration details** (not just club) — reuse the full registration
+  editor. `MyRegistrations.tsx`. (Member edits via the shared `RegistrationEditor`; club
+  selector when >1 affiliated club; edits only while registration is open; change fee →
+  member's own cart with `refRegIds`; deselected disciplines are retained-but-blanked, never
+  deleted — deletion stays a refund action.)
+- [x] **6b. Clear EDITING vs new** affordance (shares 3i). `MyRegistrations.tsx`. (Free via
+  the reused editor's "Editing registration" / "New registration" badge.)
 
 ---
 

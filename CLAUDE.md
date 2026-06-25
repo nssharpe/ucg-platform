@@ -312,6 +312,20 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
   managers + settings) and `/club/:id/registrations` (Club Registrations — meet-reg grid);
   bare `/club/:id` redirects to `/roster`. `ClubPage` branches on a `view` prop; nav links
   + `navHistory.labelFor` updated.
+- **Member self-edit reuses the registration editor (Phase 6, 6a/6b).** `MyRegistrations.tsx`
+  lets a member edit ALL of their own registration (disciplines/levels/events/synchro + club),
+  not just club, by embedding the shared `RegistrationEditor` in the edit modal (with a club
+  `Combo` shown only when they have >1 affiliated club). The "Editing registration" vs "New
+  registration" badge (6b) comes free from the editor. Editing is offered **only while
+  registration is open** (`tab==='upcoming' && meet.regCloses >= today`), regardless of club
+  count. The save handler mirrors `Club.tsx` `saveRegs`/`addToCart` but **targets the member's
+  OWN cart** (`pushCart(personId, cart, false)`) — `Cart.tsx` `completePurchase` already flips
+  the `refRegIds`-linked regs to paid. Same paid/`updatedPending` semantics as Club.tsx.
+  `RegistrationEditor` gained an optional `originalClubId` prop so a club-only switch is seen
+  as an eligible/chargeable change (its eligibility `before` uses `originalClubId ?? clubId`;
+  Club/Meets callers omit it → unchanged). **CRITICAL divergence:** the member side NEVER
+  deletes a registration — a fully-deselected discipline is retained-but-blanked (`events:[]`,
+  cleared `eventLevels`/partner) rather than deleted; deletion stays a refund action.
 - **Membership holds are INDEPENDENT (waiver + club-payment can co-exist).** The
   `MembershipStatus` enum (`active`/`pending-waiver`/`pending-club-payment`/`none`) is a
   single value and CANNOT represent both holds at once (a minor who pushes their fee to
