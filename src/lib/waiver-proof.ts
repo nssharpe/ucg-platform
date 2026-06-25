@@ -63,7 +63,7 @@ function collectRuns(node: Node, bold: boolean, italic: boolean, out: Run[]): vo
   });
 }
 
-const styleOf = (r: Run): 'bold' | 'italic' | 'bolditalic' | 'normal' =>
+const styleOf = (r: { bold: boolean; italic: boolean }): 'bold' | 'italic' | 'bolditalic' | 'normal' =>
   r.bold && r.italic ? 'bolditalic' : r.bold ? 'bold' : r.italic ? 'italic' : 'normal';
 
 /** A layout token: a single word carrying its style, or a hard line break. */
