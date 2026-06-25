@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { fetchManagerAccessRequest, decideManagerAccess } from '../lib/supabase';
+import { fetchManagerAccessRequest, decideManagerAccess, notifyManagerAccessDenied } from '../lib/supabase';
 
 /** No-login review page for a "Request Club Admin Role" request. A club manager
  *  or league admin opens the emailed link and approves or denies. The first
@@ -26,6 +26,16 @@ export default function ManagerAccessReview() {
   const decide = async (decision: 'approve' | 'deny') => {
     setBusy(true);
     const res = await decideManagerAccess(token, decision, decider.trim());
+    // On an actual denial, notify the requester (best-effort; approval needs no
+    // email — they're added to club_managers). The email is sent server-side by
+    // a token-gated Edge Function (the reviewer here is anonymous, so the
+    // admin-gated send-email path is unavailable). Only fire on a fresh 'denied'
+    // decision, never on 'already'/'invalid'/'error' or on page load.
+    if (decision === 'deny' && res === 'denied') {
+      await notifyManagerAccessDenied(token).catch(() => {
+        /* best-effort: the decision is already recorded */
+      });
+    }
     setBusy(false);
     setOutcome(res);
     setState('done');

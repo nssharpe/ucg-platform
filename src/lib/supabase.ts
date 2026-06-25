@@ -834,6 +834,16 @@ export async function decideManagerAccess(token: string, decision: 'approve' | '
   return (data as string) ?? 'error';
 }
 
+/** No-login, token-gated denial notification: emails the requester that their
+ *  Club Admin request was not approved. Recipients are resolved server-side from
+ *  the token (the reviewer page is anonymous), so no auth/admin gate is needed. */
+export async function notifyManagerAccessDenied(token: string): Promise<{ ok: boolean; sentCount?: number; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('notify-manager-access-denied', { body: { token } });
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  return data as { ok: boolean; sentCount?: number; error?: string };
+}
+
 /** Admin/club-manager mints a no-login waiver signing link for a member (tied to
  *  their athlete record). Returns the link to email and/or copy. */
 export async function createWaiverLink(args: {
