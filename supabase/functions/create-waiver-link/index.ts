@@ -33,13 +33,16 @@ Deno.serve(async (req) => {
   const { data: userData, error: userErr } = await db.auth.getUser(token);
   if (userErr || !userData.user) return json({ ok: false, error: 'Invalid or expired session.' }, 401);
 
-  let body: { personId?: string; seasonId?: string; waiverType?: string; membershipType?: string };
+  let body: { personId?: string; seasonId?: string; waiverType?: string; membershipType?: string; signerRole?: string };
   try { body = await req.json(); } catch { return json({ ok: false, error: 'Invalid JSON body.' }, 400); }
 
   const personId = (body.personId ?? '').trim();
   const seasonId = (body.seasonId ?? '').trim();
   const waiverType = (body.waiverType ?? '').trim();
   const membershipType = (body.membershipType ?? 'all').trim();
+  // 'self' (adult signs their own) or 'guardian' (parent signs for a minor).
+  // Default 'guardian' for back-compat with the original minor flow.
+  const signerRole = body.signerRole === 'self' ? 'self' : 'guardian';
   if (!personId || !seasonId || !waiverType) {
     return json({ ok: false, error: 'personId, seasonId and waiverType are required.' }, 400);
   }
@@ -73,9 +76,10 @@ Deno.serve(async (req) => {
     waiver_type: waiverType,
     membership_type: membershipType,
     guardian_email: person.email ?? '',
+    signer_role: signerRole,
     status: 'pending',
   });
   if (insErr) return json({ ok: false, error: insErr.message }, 500);
 
-  return json({ ok: true, token: signToken, link: `${appUrl}/#/waiver/sign/${signToken}` });
+  return json({ ok: true, token: signToken, link: `${appUrl}/#/waiver/sign/${signToken}`, signerRole });
 });

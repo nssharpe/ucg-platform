@@ -1070,13 +1070,16 @@ function WaiverLinkPopup({ person, seasonId, seasonName, onClose }: {
       const doc = await fetchPublishedWaiver(seasonId, GENERAL_WAIVER_TYPE);
       const waiverType = doc?.waiverType ?? GENERAL_WAIVER_TYPE;
       if (!doc) { if (!cancelled) setError(`No published waiver exists for ${seasonName}. Publish one in League Controls → Waivers first.`); return; }
-      const res = await createWaiverLink({ personId: person.id, seasonId, waiverType, membershipType: 'all' });
+      const res = await createWaiverLink({
+        personId: person.id, seasonId, waiverType, membershipType: 'all',
+        signerRole: isMinor ? 'guardian' : 'self',
+      });
       if (cancelled) return;
       if (res.ok && res.link) setLink(res.link);
       else setError(res.error ?? 'Could not create a signing link.');
     })();
     return () => { cancelled = true; };
-  }, [person.id, seasonId, seasonName]);
+  }, [person.id, seasonId, seasonName, isMinor]);
 
   const copy = async () => {
     if (!link) return;

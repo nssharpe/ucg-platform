@@ -1261,6 +1261,7 @@ export type Database = {
           membership_type: string
           person_id: string
           season_id: string
+          signer_role: string
           status: string
           token: string
           waiver_type: string
@@ -1273,6 +1274,7 @@ export type Database = {
           membership_type: string
           person_id: string
           season_id: string
+          signer_role?: string
           status?: string
           token: string
           waiver_type: string
@@ -1285,6 +1287,7 @@ export type Database = {
           membership_type?: string
           person_id?: string
           season_id?: string
+          signer_role?: string
           status?: string
           token?: string
           waiver_type?: string
@@ -1440,6 +1443,7 @@ export type Database = {
           membership_type: string
           person_id: string
           season_id: string
+          signer_role: string
           status: string
           waiver_type: string
         }[]

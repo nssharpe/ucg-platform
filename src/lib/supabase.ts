@@ -838,11 +838,12 @@ export async function decideManagerAccess(token: string, decision: 'approve' | '
  *  their athlete record). Returns the link to email and/or copy. */
 export async function createWaiverLink(args: {
   personId: string; seasonId: string; waiverType: string; membershipType?: string;
-}): Promise<{ ok: boolean; token?: string; link?: string; error?: string }> {
+  signerRole?: 'self' | 'guardian';
+}): Promise<{ ok: boolean; token?: string; link?: string; signerRole?: 'self' | 'guardian'; error?: string }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('create-waiver-link', { body: args });
   if (error) return { ok: false, error: await edgeErrorMessage(error) };
-  return data as { ok: boolean; token?: string; link?: string; error?: string };
+  return data as { ok: boolean; token?: string; link?: string; signerRole?: 'self' | 'guardian'; error?: string };
 }
 
 /** Token lookup for the guardian signing page via SECURITY DEFINER RPC
