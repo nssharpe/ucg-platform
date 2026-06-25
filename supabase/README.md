@@ -86,7 +86,8 @@ is the only admin-gated sender.
 | `notify-club-cart` | Emails a club's managers when a member pushes fees to the cart. | any signed-in member |
 | `send-club-invite` | Invite a coach (signup) or a member (purchase membership) by email. | club manager / admin |
 | `invite-account` | Create an account + email a branded set-password link (Resend). Used by club "Add athlete"/"Add coach" (`roles` set to match kind). | club manager / admin |
-| `request-manager-access` | "Request Club Admin Role": records `manager_access_requests` + emails managers/admins a no-login review link; first responder approves/denies. | any signed-in member |
+| `request-manager-access` | "Request Club Admin Role": records `manager_access_requests` + emails the requested club's managers (admins only if the club has none yet) a no-login review link; first responder approves/denies. | any signed-in member |
+| `notify-manager-access-denied` | Emails the requester that their Club Admin request was not approved. Token-gated (deploy `--no-verify-jwt`); resolves recipient server-side; fails closed unless the request is `denied`. | no-login (secret token) |
 | `notify-sanction` | Sanction lifecycle emails (submitted → team+admins; approved/rejected → requester). | any signed-in member |
 
 ## Stand it up

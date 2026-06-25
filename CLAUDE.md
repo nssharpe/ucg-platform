@@ -155,9 +155,18 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
     club page "Add athlete" / "Add coach" buttons (`kind` sets `people.roles` to match —
     coach inserts are coach-only). The link's `redirectTo` carries `?setpw=1` (see set-password note).
   - `request-manager-access` — "Request Club Admin Role": records a
-    `manager_access_requests` row + emails managers/admins a **no-login** review link
-    (`#/manager-access/<token>` → `ManagerAccessReview`). First responder approves
-    (adds them to `club_managers` via `decide_manager_access`) or denies; idempotent.
+    `manager_access_requests` row + emails the **requested club's managers ONLY** a
+    **no-login** review link (`#/manager-access/<token>` → `ManagerAccessReview`). Falls
+    back to league admins ONLY if the club has no managers yet (so the request isn't
+    lost). First responder approves (adds them to `club_managers` via
+    `decide_manager_access`) or denies; idempotent.
+  - `notify-manager-access-denied` — token-gated (no-login, deploy `--no-verify-jwt`)
+    denial notification: when a reviewer DENIES a request, `ManagerAccessReview` calls
+    this with the token; it resolves the requester + club server-side (service role) and
+    emails the requester "your Club Admin request was not approved". Fails closed (only
+    sends for a request actually in `denied` status). Approval sends no email (they're
+    added to `club_managers`). Anonymous caller, so it can't use the admin-gated
+    `send-email`.
   - `create-waiver-link` — admin/club-manager mints a **no-login** waiver signing link
     (`#/waiver/sign/<token>`) for a member. Used by the League → member "Activate" popup
     (email or copy). Returns `{token, link}`; emailing is done client-side via `send-email`.
@@ -168,7 +177,7 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
     are the only admin-gated senders.
 - Front-end invokers in `src/lib/supabase.ts`: `sendEmail`, `sendSms`, `requestGuardianWaiver`,
   `notifyClubCart`, `sendClubInvite`, `inviteAccount`, `requestManagerAccess`, `notifySanction`,
-  `createWaiverLink`, `fetchManagerAccessRequest`, `decideManagerAccess`.
+  `createWaiverLink`, `fetchManagerAccessRequest`, `decideManagerAccess`, `notifyManagerAccessDenied`.
   Deploy: `supabase functions deploy <name> --project-ref wkyerxlgricfphopocoz` (sandbox
   disabled; Docker NOT required) — the deploy bundles `_shared/resend.ts` automatically.
 - **Edge Function error surfacing:** invokers must unwrap the JSON `error` body via
