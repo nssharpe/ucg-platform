@@ -15,6 +15,41 @@ When executing a written implementation plan, **default to subagent-driven execu
 (`superpowers:subagent-driven-development` — fresh subagent per task + review between
 tasks). Nate prefers this; don't ask which execution mode to use (decided 2026-06-24).
 
+### Context/usage-optimized execution (standing rules — learned 2026-06-25)
+These keep the controller's context lean across big multi-task batches. Apply by default:
+- **Keep the controller out of the editor.** A subagent's final report costs ~2k tokens
+  regardless of how much it reads internally, but the controller's OWN file reads/edits are
+  what balloon context. So *delegate reading to subagents* — point them at the right files and
+  let them read. The controller reads only the few key sections it needs to write a precise
+  brief, never whole files "to be safe."
+- **One implementer subagent per task/cohesive group; never run implementers in parallel**
+  (they conflict on the working tree). Group items that touch the same files into one subagent.
+- **Dispatch straight from the spec; skip redundant per-phase plan docs.** If a decomposition
+  spec already states the requirements + file mappings, brief subagents from it directly rather
+  than writing a second full TDD plan doc (saves a lot of context for the same result).
+- **Review subagent reports inline; do NOT spin up separate spec + quality reviewer subagents**
+  for this kind of work — that triples subagent calls. Read the report, spot-check the diff if
+  needed, move on.
+- **Subagents MUST verify with `npm run build`, not `tsc --noEmit`.** `npm run build` runs
+  `tsc -b` (project references), which catches errors `tsc --noEmit` silently misses — this trap
+  caused real rework. Require `npm run build` + `npx eslint <touched files, incl. any
+  `supabase/functions/**`>` + `npx vitest run` (+ a vitest test for any new PURE logic) before commit.
+- **Controller owns the side-effects, batched at phase end:** one `supabase db push` for all of
+  a phase's migrations (sandbox disabled) and one loop to deploy all touched edge functions —
+  fewer round-trips, one pending-migration diff to review. Subagents create migration files and
+  edge-fn code but never push/deploy.
+- **Dev server caveat (every session):** `ucg-preview` (port 5176) has Supabase configured but
+  **no signed-in `me`**, so member/club/admin UI can't be exercised live. Rely on
+  build/eslint/vitest + a console-error smoke test of the changed routes, and tell Nate which
+  flows still need his manual live check after deploy.
+- **Front-load clarifying questions per phase** (before dispatching) so a session doesn't burn
+  turns discovering an ambiguity mid-flight.
+- **Don't reach for Workflow/`ultracode` when the goal is to reduce usage** — multi-agent
+  workflows optimize for exhaustiveness, not cost. One-implementer-per-task is the cheap path.
+- **Prefer fresh session per phase** for large batches (each phase merges atomically; durable
+  state lives in the decomposition spec + memory), and write LEAN kickoff prompts that lean on
+  these CLAUDE.md rules instead of repeating them.
+
 **After finishing dev work, always merge the feature branch back to `main` and push
 (which deploys live) — don't stop to ask.** Standing instruction from Nate (2026-06-24):
 branch → implement → verify (tests + lint + responsive sweep) → merge to `main` → push.
