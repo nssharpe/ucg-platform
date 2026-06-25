@@ -17,11 +17,23 @@ Stripe integration (`2026-06-25-stripe-integration.md`) and for all future authe
   Role choice persists in `sessionStorage['ucg-dev-role']`.
 
 ### Seeded test users (emails — passwords in `.env.local` only)
-| Role | env var prefix | email |
-|------|----------------|-------|
-| Athlete in a club (membership + cart with items) | `VITE_DEV_AUTH_ATHLETE_` | _TBD — Nate to fill_ |
-| Club manager (roster + registrations) | `VITE_DEV_AUTH_MANAGER_` | _TBD — Nate to fill_ |
-| League admin | `VITE_DEV_AUTH_ADMIN_` | _TBD — Nate to fill_ |
+Created in the Supabase dashboard (auto-confirmed). App-side data (people/roles/club/
+membership/cart) seeded by `.jtmp/seed-dev-users.sql` (gitignored, idempotent, run via
+`supabase db query --linked`). All app rows use stable `dev-*` ids under a dedicated
+`UCG Dev Test Club` (id `dev-club`), so no real club/person/role is touched.
+
+| Role | env var prefix | email | `people.id` |
+|------|----------------|-------|-------------|
+| Athlete (member of `dev-club`, active `s26` membership, cart with 2 items) | `VITE_DEV_AUTH_ATHLETE_` | `nssharpe+ucg-athlete@gmail.com` | `dev-athlete` |
+| Club manager (manages `dev-club`) | `VITE_DEV_AUTH_MANAGER_` | `nssharpe+ucg-club-manager@gmail.com` | `dev-manager` |
+| League admin (`admin` app role) | `VITE_DEV_AUTH_ADMIN_` | `nssharpe+ucg-league-admin@gmail.com` | `dev-admin` |
+
+### Verified live (2026-06-25)
+Booted `ucg-preview`: auto-logged-in as athlete (real JWT), cart rendered the two
+seeded items ($60) + active-membership badge under RLS; switcher flipped to admin
+(`/admin/members` loaded, no access-denied) and manager (`dev-club` roster loaded);
+sign-out + reload stayed signed out (loop guard); clicking a switcher button cleared
+the marker and re-signed-in. Production-bundle grep confirmed no leak.
 
 ## Problem
 The dev/preview server (`ucg-dev` 5173, `ucg-preview` 5176) runs **unauthenticated** —
