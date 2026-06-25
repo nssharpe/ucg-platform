@@ -9,6 +9,7 @@ import { pushCartItem, redeemCoupon, pushInvoice, pushMembership, fetchPublished
 import type { Athlete, InvoiceItem, Membership, MembershipType, WaiverDocument } from '../lib/types';
 import { GENERAL_WAIVER_TYPE } from '../lib/types';
 import { isMinorAt } from '../lib/waivers-core';
+import { membershipHolds } from '../lib/capabilities-core';
 import { sanitizeWaiverHtml } from '../lib/sanitize-html';
 import {
   offeredMembershipTypes,
@@ -195,6 +196,9 @@ function MembershipInner({ me }: { me: Athlete }) {
           waiverSignedAt: isMinor ? null : new Date().toISOString(),
           waiverSignedBy: isMinor ? null : waiverSig,
           paidVia: via === 'comp' ? 'comp' : via === 'card' ? 'card' : 'club',
+          // Payment hold is independent of the waiver hold: a club-pushed fee is
+          // pending until the club pays, even while a minor's waiver is still open.
+          ...(via === 'club' ? { clubCartPending: true } : {}),
           ...(via === 'comp' ? { activatedByAdmin: true } : {}),
         };
         p.memberships.push(membership);
@@ -237,6 +241,8 @@ function MembershipInner({ me }: { me: Athlete }) {
             amount: pricePerType(t),
             kind: 'membership' as const,
             refUserId: me.id,
+            refSeasonId: seasonId,
+            refType: t,
           };
           cart.push(item);
           // Append only this member's own row — a member can't replace the whole
@@ -363,34 +369,49 @@ function MembershipInner({ me }: { me: Athlete }) {
       {/* "Done" state — all active memberships for this season */}
       {step === 'done' && existingForSeason.length > 0 ? (
         <div className="card card-pad">
-          {existingForSeason.map((m) => (
-            <div key={m.type} style={{ marginBottom: 10 }}>
-              {m.status === 'active' ? (
-                <>
-                  <Badge tone="ok">✓ {typeLabel(m.type)} Active</Badge>
+          {existingForSeason.map((m) => {
+            // The two holds are INDEPENDENT and can apply at once (e.g. a minor
+            // who pushed their fee to the club cart awaits BOTH a guardian waiver
+            // AND the club's payment). Derive each from the membership's own
+            // fields rather than the single status enum.
+            const { waiverHold, paymentHold, active } = membershipHolds(m);
+            return (
+              <div key={m.type} style={{ marginBottom: 10 }}>
+                {active ? (
+                  <>
+                    <Badge tone="ok">✓ {typeLabel(m.type)} Active</Badge>
+                    <p style={{ margin: '4px 0 0' }}>
+                      Your {season.name} {m.type} membership is active.
+                      Waiver signed by {m.waiverSignedBy} on {m.waiverSignedAt?.slice(0, 10)}.
+                      {m.activatedByAdmin && <span style={{ color: 'var(--ink-soft)', fontSize: 13 }}> (Admin override)</span>}
+                    </p>
+                  </>
+                ) : (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {waiverHold && (
+                      <Badge tone="warn">
+                        {isMinor ? 'Pending guardian waiver' : 'Pending waiver'} ({typeLabel(m.type)})
+                      </Badge>
+                    )}
+                    {paymentHold && (
+                      <Badge tone="warn">
+                        Pending Payment by {club?.name ?? 'your club'} ({typeLabel(m.type)})
+                      </Badge>
+                    )}
+                  </div>
+                )}
+                {!active && (
                   <p style={{ margin: '4px 0 0' }}>
-                    Your {season.name} {m.type} membership is active.
-                    Waiver signed by {m.waiverSignedBy} on {m.waiverSignedAt?.slice(0, 10)}.
-                    {m.activatedByAdmin && <span style={{ color: 'var(--ink-soft)', fontSize: 13 }}> (Admin override)</span>}
+                    {waiverHold && (isMinor
+                      ? 'A guardian signing link has been sent. '
+                      : 'Sign your waiver to continue. ')}
+                    {paymentHold && `Your ${m.type} membership activates once ${club?.name ?? 'your club'} pays the fee from their club cart.`}
+                    {waiverHold && !paymentHold && `Your ${m.type} membership activates once the waiver is signed.`}
                   </p>
-                </>
-              ) : m.status === 'pending-waiver' ? (
-                <>
-                  <Badge tone="warn">Pending guardian waiver ({typeLabel(m.type)})</Badge>
-                  <p style={{ margin: '4px 0 0' }}>
-                    A guardian signing link has been sent. Your {m.type} membership activates once the guardian signs the waiver.
-                  </p>
-                </>
-              ) : (
-                <>
-                  <Badge tone="warn">Pending payment by {club?.shortName ?? club?.name ?? 'club'} ({typeLabel(m.type)})</Badge>
-                  <p style={{ margin: '4px 0 0' }}>
-                    Waiver signed. Your {m.type} membership activates once {club?.name ?? 'your club'} pays the fee from their club cart.
-                  </p>
-                </>
-              )}
-            </div>
-          ))}
+                )}
+              </div>
+            );
+          })}
 
           {/* Allow purchasing additional type if one is still missing */}
           {purchasableTypes.length > 0 && (
