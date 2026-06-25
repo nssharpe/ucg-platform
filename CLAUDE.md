@@ -60,8 +60,15 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
 ## Supabase / migrations
 - Project ref `wkyerxlgricfphopocoz` (org NAIGC). Migrations in `supabase/migrations/`.
   CLI is linked (`supabase link` done 2026-06-19). Latest migration is
-  `20260625001248_waiver_sign_request_signer_role.sql` — all migrations through it are
-  **applied** as of 2026-06-25. Phase 2 (feedback batch) added
+  `20260625180951_registrations_paid.sql` — all migrations through it are
+  **applied** as of 2026-06-25. Phase 3 (feedback batch) added it:
+  `registrations.paid` (boolean, default false — the explicit "entry fee paid" flag;
+  new regs land FALSE = "Pending Purchase", flipped TRUE by the pay paths; historical
+  rows backfilled TRUE) + `registrations.updated_pending` (distinguishes a never-paid
+  "Pending Purchase" from an already-paid reg edited back to re-pending by a change fee
+  = "Updated pending purchase") + `cart_items.ref_reg_ids`/`invoice_items.ref_reg_ids`
+  (`text[]` linking a meet-entry/change-fee line to the EXACT registration id(s) it pays
+  for, so paying flips precisely those regs). Phase 2 (feedback batch) added
   `20260625000509_membership_club_cart_pending.sql` (`memberships.club_cart_pending` +
   `cart_items.ref_season_id`/`ref_type` — the independent payment-hold flag and the cart→
   membership ref the club-pay activation matches on) and `20260625001248_…signer_role.sql`
@@ -285,6 +292,26 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
   `clubHasActiveMembership`/`seasonForDate` (`capabilities-core.ts`). New registration
   paths MUST apply this gate. A migration backfills the current season for clubs with
   active members; future seasons require purchase/grant.
+- **Registration paid-state (Phase 3, 3f/3g).** `Registration.paid` is the explicit
+  "entry fee paid" flag: new regs are created `paid:false` ("Pending Purchase") and the
+  pay paths (`Cart.tsx` `completePurchase`, `Club.tsx` `payClubItems`) flip the EXACT
+  linked regs to `paid:true` ("Registered"). The link is `refRegIds` (on `InvoiceItem`/
+  `CartItem`): a meet-entry/change-fee line carries the registration id(s) it pays for —
+  match on that, not a heuristic. `updatedPending` marks an already-paid reg edited back
+  to re-pending by a change fee ("Updated pending purchase"). **Host-club $0 (3g):** when
+  the competing-for club IS the meet host, all reg fees are $0 via `registrationEntryFee`/
+  `registrationChangeFee` (`pricing.ts`, pure, unit-tested) — such regs are created
+  `paid:true` immediately with NO cart line. **3d cross-club lock:** `paidRegistrationClub`
+  (`capabilities-core.ts`) blocks registering an athlete already *paid*-registered under
+  another club for the same meet (pending regs don't lock); the club-cart mount effect
+  removes now-moot pending lines (athlete since paid elsewhere) and toasts once.
+  **3h eligibility:** `changeIsEligible(before,after)` (`pricing.ts`) gates the editor's
+  "Add change to cart" button (eligible = add discipline / change level / change club /
+  swap athlete; NOT add/remove apparatus within an existing discipline).
+- **Club page is two routes (3c):** `/club/:id/roster` (Club Roster — members + coaches +
+  managers + settings) and `/club/:id/registrations` (Club Registrations — meet-reg grid);
+  bare `/club/:id` redirects to `/roster`. `ClubPage` branches on a `view` prop; nav links
+  + `navHistory.labelFor` updated.
 - **Membership holds are INDEPENDENT (waiver + club-payment can co-exist).** The
   `MembershipStatus` enum (`active`/`pending-waiver`/`pending-club-payment`/`none`) is a
   single value and CANNOT represent both holds at once (a minor who pushes their fee to

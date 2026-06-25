@@ -106,31 +106,31 @@ Central files: `src/pages/Membership.tsx`, `src/pages/Club.tsx`,
 Central files: `src/pages/Club.tsx`, `src/pages/Meets.tsx`, `src/components/Layout.tsx`,
 `src/components/RegistrationEditor.tsx`, `src/lib/capabilities-core.ts`, `src/lib/pricing.ts`.
 
-- [ ] **3a. Coaches listed on club page** — a coach who selected coach + affiliated with the
+- [x] **3a. Coaches listed on club page** — a coach who selected coach + affiliated with the
   club shows in the club whether or not they have active membership, with a membership-status
   line (like athletes) and an "invite to purchase membership" email option. `Club.tsx`.
-- [ ] **3b. "Add coach" button** (right of "Add athlete") — first/last/email → creates account,
+- [x] **3b. "Add coach" button** (right of "Add athlete") — first/last/email → creates account,
   sends set-password → membership-purchase page; their profile pre-checks coach-only + this
   club as main. Replace the "invite a new coach" line in Club Managers. `Club.tsx`,
   `invite-account` edge fn (`kind:'coach'`).
-- [ ] **3c. Split "Roster & Meet Reg" into "Club Roster" + "Club Registrations"** — two nav
+- [x] **3c. Split "Roster & Meet Reg" into "Club Roster" + "Club Registrations"** — two nav
   links, two pages/views. `Layout.tsx` nav, `Club.tsx` (split or route param), `navHistory.ts`.
-- [ ] **3d. Already-registered-with-another-club:** such a member is NOT selectable to register
+- [x] **3d. Already-registered-with-another-club:** such a member is NOT selectable to register
   again; show note "Already registered with [Club]". `Meets.tsx`/registration picker,
   cross-club registration lookup.
-- [ ] **3e. Synchro-partner reassignment on swap:** swapping athlete2 for athlete1, if athlete1
+- [x] **3e. Synchro-partner reassignment on swap:** swapping athlete2 for athlete1, if athlete1
   is athlete3's synchro partner, athlete2 becomes athlete3's partner. `RegistrationEditor.tsx`
   / swap logic.
-- [ ] **3f. Added members go to "Pending Purchase", not straight to "Registered".** Paid edits
+- [x] **3f. Added members go to "Pending Purchase", not straight to "Registered".** Paid edits
   → "Updated pending purchase". Keep them in the registered section but clearly mark
   paid-vs-pending. `Meets.tsx`/`Club.tsx` registration status, pricing.
-- [ ] **3g. Registration fee always $0 for host club.** `pricing.ts` + registration fee calc,
+- [x] **3g. Registration fee always $0 for host club.** `pricing.ts` + registration fee calc,
   host-club detection.
-- [ ] **3h. Edit registration "Add change to cart" disabled until an ELIGIBLE change.** Eligible
+- [x] **3h. Edit registration "Add change to cart" disabled until an ELIGIBLE change.** Eligible
   = add discipline, change level (discipline or T&T events), change club, swap athlete. NOT
   eligible = add/remove apparatus within an existing discipline. Diff logic + button enabled
   state. `RegistrationEditor.tsx`, `pricing.ts` (change-fee eligibility — pure logic, unit-test).
-- [ ] **3i. Clearer EDITING vs new registration** (UI affordance). `RegistrationEditor.tsx`,
+- [x] **3i. Clearer EDITING vs new registration** (UI affordance). `RegistrationEditor.tsx`,
   `Meets.tsx`.
 
 ## Phase 4 — Carts & Invoices rework + Purchase History + Promo codes

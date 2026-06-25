@@ -60,6 +60,7 @@ sequence numbers used in conversation. In order:
 | `20260624233241_app_role_finance_admin.sql` | Adds the `finance_admin` app role (own file — enum-add must commit before use). |
 | `20260624233242_regional_rep_regions.sql` | `regional_rep_regions` (user_id → region, one per rep) for Regional Representatives. RLS: admins manage all; a rep reads own row. |
 | `20260625001248_waiver_sign_request_signer_role.sql` | Adds `waiver_sign_requests.signer_role` (`'self'`\|`'guardian'`, default `'guardian'`) so a no-login link can carry the intended signer; recreates `get_waiver_sign_request` to return it. Lets an 18+ athlete sign their OWN waiver via the no-login path instead of being recorded as their own guardian. |
+| `20260625180951_registrations_paid.sql` | Phase 3 (3f/3g): `registrations.paid` (boolean, default false — explicit "entry fee paid" flag; new regs land false = "Pending Purchase", pay paths flip true; historical rows backfilled true) + `registrations.updated_pending` (already-paid reg edited back to re-pending by a change fee = "Updated pending purchase") + `cart_items.ref_reg_ids` / `invoice_items.ref_reg_ids` (`text[]` linking a meet-entry/change-fee line to the exact registration id(s) it pays for). RLS unchanged. |
 
 All migrations are applied to the live project and tracked by the linked CLI
 (`supabase db push`). Migrations are append-only — add new ones rather than editing
