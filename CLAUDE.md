@@ -148,6 +148,18 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
     auto re-opt-in). Webhook URL goes in the messaging profile's Webhook URL field.
   - `request-guardian-waiver` — minor waiver signing link. `record-waiver-signature`.
   - `notify-club-cart` — emails a club's managers when a member pushes fees to the cart.
+  - `send-membership-welcome` — "Welcome to UCG" email for a **no-club** member's
+    **first** membership-only purchase (card/comp, NOT a club-cart push). To = member;
+    **CC = the region's regional-team address ONLY** (reps' personal emails are NOT
+    cc'd — their NAMES appear in the body). Resolves region via `STATE_REGIONS[state]`,
+    its CC address, and its Regional Leader(s) (`regional_rep` role ∩
+    `regional_rep_regions`, names from `people`) server-side. Re-checks the
+    server-validatable skip conditions (no-club + NOT Outside US) and sends nothing if
+    either fails, so it can't be misused. Multi-rep ⇒ "Regional Leaders, A, B,";
+    zero-rep ⇒ drops the name list (never an empty list) but still CCs the team. The
+    **"first membership" once-only guard is CLIENT-side** (`Membership.tsx` computes it
+    from the pre-purchase membership list: no prior active/paid/club-pending row). Uses
+    `sendOne` with the new optional `cc` field on `EmailMessage` (`_shared/resend.ts`).
   - `send-club-invite` — club manager invites a coach (`kind:'coach'`) or a member to
     purchase membership (`kind:'membership'`); authorizes the caller manages the club.
   - `invite-account` — admin-create a real auth user + email a branded **set-password**
@@ -176,7 +188,7 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
     server-side with the service role (pattern: `notify-club-cart`). `send-email`/`send-sms`
     are the only admin-gated senders.
 - Front-end invokers in `src/lib/supabase.ts`: `sendEmail`, `sendSms`, `requestGuardianWaiver`,
-  `notifyClubCart`, `sendClubInvite`, `inviteAccount`, `requestManagerAccess`, `notifySanction`,
+  `notifyClubCart`, `sendMembershipWelcome`, `sendClubInvite`, `inviteAccount`, `requestManagerAccess`, `notifySanction`,
   `createWaiverLink`, `fetchManagerAccessRequest`, `decideManagerAccess`, `notifyManagerAccessDenied`.
   Deploy: `supabase functions deploy <name> --project-ref wkyerxlgricfphopocoz` (sandbox
   disabled; Docker NOT required) — the deploy bundles `_shared/resend.ts` automatically.

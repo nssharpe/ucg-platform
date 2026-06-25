@@ -84,6 +84,7 @@ is the only admin-gated sender.
 | `request-guardian-waiver` | Creates a signing token + emails a minor's guardian the link. | signed-in owner |
 | `create-waiver-link` | Mints a no-login waiver signing link for a member (admin "Activate" popup — email or copy). Takes optional `signerRole: 'self'\|'guardian'` (default `'guardian'`) stored on the request row. Returns `{token, link, signerRole}`. | admin / club manager |
 | `notify-club-cart` | Emails a club's managers when a member pushes fees to the cart. | any signed-in member |
+| `send-membership-welcome` | "Welcome to UCG" email for a no-club member's FIRST membership-only purchase, CC'ing the region's regional-team address and naming its Regional Leader(s). Re-checks no-club + not-Outside-US server-side; resolves region (`STATE_REGIONS[state]`), reps (`regional_rep` role ∩ `regional_rep_regions`), and CC address server-side. | any signed-in member (self only) |
 | `send-club-invite` | Invite a coach (signup) or a member (purchase membership) by email. | club manager / admin |
 | `invite-account` | Create an account + email a branded set-password link (Resend). Used by club "Add athlete"/"Add coach" (`roles` set to match kind). | club manager / admin |
 | `request-manager-access` | "Request Club Admin Role": records `manager_access_requests` + emails the requested club's managers (admins only if the club has none yet) a no-login review link; first responder approves/denies. | any signed-in member |

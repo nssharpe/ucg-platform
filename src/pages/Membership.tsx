@@ -5,7 +5,7 @@ import { useCapabilities } from '../lib/capabilities';
 import { Badge, Field } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 import { fmtMoney } from '../lib/scoring';
-import { pushCartItem, redeemCoupon, pushInvoice, pushMembership, fetchPublishedWaiver, recordWaiverSignature, requestGuardianWaiver, notifyClubCart } from '../lib/supabase';
+import { pushCartItem, redeemCoupon, pushInvoice, pushMembership, fetchPublishedWaiver, recordWaiverSignature, requestGuardianWaiver, notifyClubCart, sendMembershipWelcome } from '../lib/supabase';
 import type { Athlete, InvoiceItem, Membership, MembershipType, WaiverDocument } from '../lib/types';
 import { GENERAL_WAIVER_TYPE } from '../lib/types';
 import { isMinorAt } from '../lib/waivers-core';
@@ -182,6 +182,15 @@ function MembershipInner({ me }: { me: Athlete }) {
   };
 
   const complete = (via: 'card' | 'club' | 'comp') => {
+    // "First membership" signal — computed from the PRE-purchase membership list.
+    // Welcome fires once: only when the member held no prior active/paid (or
+    // club-payment-pending) membership before this purchase. Pending-waiver-only
+    // rows don't count as a completed purchase. (Server re-checks no-club +
+    // Outside-US; this guard is the once-only gate.)
+    const hadPriorMembership = me.memberships.some(
+      (m) => m.status === 'active' || m.status === 'pending-club-payment' || m.clubCartPending || m.paidVia != null,
+    );
+
     mutate((d) => {
       const p = d.people.find((x) => x.id === me.id)!;
 
@@ -287,6 +296,14 @@ function MembershipInner({ me }: { me: Athlete }) {
       toast(`Sent to ${club?.name} club cart — your membership activates once the club pays.`);
     } else {
       toast(`Membership active! Confirmation emailed to ${me.email} and ${club?.name ?? 'your club'}.`);
+    }
+
+    // "Welcome to UCG" email for a no-club member's FIRST membership-only
+    // purchase (card/comp — NOT the club-cart push). Best-effort; never blocks
+    // the UX. Conditions checked here: no-club + not Outside US + first
+    // membership. The server re-validates no-club + Outside-US before sending.
+    if (via !== 'club' && me.mainClubId == null && !me.outsideUs && !hadPriorMembership) {
+      void sendMembershipWelcome(me.id).catch(() => { /* non-fatal */ });
     }
   };
 

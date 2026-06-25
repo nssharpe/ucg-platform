@@ -26,6 +26,7 @@ function apiKey(): string {
 
 export interface EmailMessage {
   to: string | string[];
+  cc?: string | string[];
   subject: string;
   html?: string;
   text?: string;
@@ -46,7 +47,7 @@ export async function sendOne(msg: EmailMessage): Promise<{ id: string }> {
   const res = await fetch(EMAILS_URL, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey()}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: resendFrom(), to: msg.to, subject: msg.subject, html: msg.html, text: msg.text }),
+    body: JSON.stringify({ from: resendFrom(), to: msg.to, cc: msg.cc, subject: msg.subject, html: msg.html, text: msg.text }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body?.message ?? `Resend error (${res.status})`);
@@ -61,7 +62,7 @@ export async function sendOne(msg: EmailMessage): Promise<{ id: string }> {
  *  bounces are not reflected here (they'd need Resend webhooks). */
 export async function sendBatch(messages: EmailMessage[]): Promise<BatchResult> {
   if (messages.length === 0) return { ok: true, sentCount: 0, failedCount: 0, sent: [], failed: [] };
-  const payload = messages.map((m) => ({ from: resendFrom(), to: m.to, subject: m.subject, html: m.html, text: m.text }));
+  const payload = messages.map((m) => ({ from: resendFrom(), to: m.to, cc: m.cc, subject: m.subject, html: m.html, text: m.text }));
   const res = await fetch(BATCH_URL, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey()}`, 'Content-Type': 'application/json' },

@@ -619,6 +619,22 @@ export async function notifyClubCart(args: {
   return data as { ok: boolean; sentCount?: number; error?: string };
 }
 
+/** Send the "Welcome to UCG" email (CC'ing the member's regional team) after a
+ *  no-club member's FIRST membership-only purchase. The CLIENT decides "first
+ *  membership"; the function re-checks no-club + not-Outside-US server-side and
+ *  sends nothing if either fails. Best-effort — never blocks the purchase UX.
+ *  Pass nothing (or omit personId) to welcome the caller's own account. */
+export async function sendMembershipWelcome(
+  personId?: string,
+): Promise<{ ok: boolean; sent?: boolean; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('send-membership-welcome', {
+    body: personId ? { personId } : {},
+  });
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  return data as { ok: boolean; sent?: boolean; error?: string };
+}
+
 /** Invite someone to a club by email (coach invite or membership purchase).
  *  Caller must manage the club (the function re-checks). */
 export async function sendClubInvite(args: {
