@@ -1038,7 +1038,7 @@ export async function loadAll(): Promise<DB | null> {
       const arr = carts[ownerKey] ?? (carts[ownerKey] = []);
       arr.push({ id: r.id, label: r.label, amount: Number(r.amount), kind: r.kind, refUserId: r.ref_user_id ?? undefined,
         refSeasonId: (r as { ref_season_id?: string | null }).ref_season_id ?? undefined,
-        refType: ((r as { ref_type?: string | null }).ref_type ?? undefined) as MembershipType | undefined });
+        refType: ((r as { ref_type?: string | null }).ref_type ?? undefined) as MembershipType | 'club' | undefined });
     }
 
     const clubRequests: ClubRequest[] = (clubRequestsR.error ? [] : clubRequestsR.data ?? []).map(rowToClubRequest);

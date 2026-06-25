@@ -5,8 +5,8 @@ import { useCapabilities } from '../lib/capabilities';
 import { clubHasActiveMembership, seasonForDate, membershipHolds } from '../lib/capabilities-core';
 import { Badge, Combo, Field, Modal, Tabs } from '../components/ui';
 import { useToast, useFmtDate } from '../components/ui-hooks';
-import { CLUB_ACCESS_LABELS } from '../lib/types';
-import type { Athlete, Club, ClubAccess, Registration } from '../lib/types';
+import { CLUB_ACCESS_LABELS, STATE_REGIONS } from '../lib/types';
+import type { Athlete, Club, ClubAccess, Registration, Season } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
 import {
   deleteRegistration, pushCart, pushClub, pushClubManager, pushInvoice,
@@ -253,20 +253,29 @@ function ClubSettings({ club }: { club: Club }) {
 }
 
 // ---- ClubMembershipCard -----------------------------------------------------
-// Shows the club's membership status per season; managers purchase (after a
-// required settings review); league admins grant/revoke for any season.
+// Shows the club's membership status per season. Managers PURCHASE by first
+// reviewing/editing club info on a dedicated screen, then confirming — which
+// adds a club-membership line to the club cart (NOT an instant active row) and
+// routes to the cart. The `club_memberships` row is created only when that cart
+// line is PAID (ClubCart pay handler), so the registration/hosting gate
+// (clubHasActiveMembership) stays false until payment. League admins may still
+// grant/revoke an active row directly for any season (an admin override).
 function ClubMembershipCard({ club }: { club: Club }) {
   const db = useDB();
   const caps = useCapabilities();
   const toast = useToast();
+  const navigate = useNavigate();
   const [reviewSeason, setReviewSeason] = useState<string | null>(null);
-  const [reviewed, setReviewed] = useState(false);
 
   const isAdmin = caps.actingAsAdmin;
   const canManage = isAdmin || caps.managedClubIds.includes(club.id);
   const currentSeason = db.seasons.find((s) => s.current);
   const seasons = db.seasons.filter((s) => s.active).slice().sort((a, b) => a.startsOn.localeCompare(b.startsOn));
   const seasonName = (id: string) => db.seasons.find((s) => s.id === id)?.name ?? id;
+
+  // A club-membership line for this season is already waiting in the club cart.
+  const cartHasSeason = (seasonId: string) =>
+    (db.carts[club.id] ?? []).some((i) => i.kind === 'membership' && i.refType === 'club' && i.refSeasonId === seasonId);
 
   const grant = (seasonId: string, byAdmin: boolean) => {
     const cm: ClubMembership = { id: crypto.randomUUID(), clubId: club.id, seasonId, status: 'active', grantedByAdmin: byAdmin, createdAt: new Date().toISOString() };
@@ -278,6 +287,34 @@ function ClubMembershipCard({ club }: { club: Club }) {
     if (!cm) return;
     mutate((d) => { d.clubMemberships = (d.clubMemberships ?? []).filter((x) => x.id !== cm.id); deleteClubMembership(cm.id); });
     toast(`Club membership revoked for ${seasonName(seasonId)}.`);
+  };
+
+  // Confirm step: persist any club-info edits, add the club-membership line to
+  // the club cart, then route to the cart. No active row is created here.
+  const addToCart = (seasonId: string) => {
+    const season = db.seasons.find((s) => s.id === seasonId);
+    if (!season) return;
+    if (cartHasSeason(seasonId)) {
+      toast(`A ${seasonName(seasonId)} club membership is already in the cart.`);
+      navigate(`/club/${club.id}/cart`);
+      setReviewSeason(null);
+      return;
+    }
+    mutate((d) => {
+      const cart = d.carts[club.id] ?? (d.carts[club.id] = []);
+      cart.push({
+        id: `ci-clubmem-${Date.now()}-${seasonId}`,
+        label: `${club.shortName} club membership — ${season.name}`,
+        amount: season.clubFee,
+        kind: 'membership',
+        refSeasonId: seasonId,
+        refType: 'club',
+      });
+      pushCart(club.id, cart, true);
+    });
+    toast(`${seasonName(seasonId)} club membership added to the cart. Pay to activate it.`);
+    setReviewSeason(null);
+    navigate(`/club/${club.id}/cart`);
   };
 
   const currentActive = currentSeason ? clubHasActiveMembership(db, club.id, currentSeason.id) : false;
@@ -292,24 +329,25 @@ function ClubMembershipCard({ club }: { club: Club }) {
       </div>
       <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginTop: 0 }}>
         A club must hold an active membership for a season before its athletes can register or it can host that season.
-        Membership runs July 1 – June 30.
+        Membership runs July 1 – June 30. Membership is not active until payment is made.
       </p>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {seasons.map((s) => {
           const active = clubHasActiveMembership(db, club.id, s.id);
+          const inCart = cartHasSeason(s.id);
           return (
             <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 14, padding: '4px 0', borderBottom: '1px solid var(--line)' }}>
               <span style={{ minWidth: 150 }}>
                 {s.name}{s.current ? ' (current season)' : ' (upcoming season)'}
               </span>
-              {active ? <Badge tone="ok">Active</Badge> : <Badge tone="warn">None</Badge>}
+              {active ? <Badge tone="ok">Active</Badge> : inCart ? <Badge tone="info">In cart</Badge> : <Badge tone="warn">None</Badge>}
               <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-                {!active && canManage && (
-                  <button className="btn small primary" onClick={() => { setReviewSeason(s.id); setReviewed(false); }}>
-                    Purchase
-                  </button>
-                )}
+                {!active && canManage && (inCart
+                  ? <Link className="btn small ghost" to={`/club/${club.id}/cart`}>View in cart →</Link>
+                  : <button className="btn small primary" onClick={() => setReviewSeason(s.id)}>
+                      Purchase
+                    </button>)}
                 {isAdmin && (active
                   ? <button className="btn small ghost" onClick={() => revoke(s.id)}>Revoke</button>
                   : <button className="btn small ghost" onClick={() => grant(s.id, true)}>Grant (admin)</button>)}
@@ -320,36 +358,91 @@ function ClubMembershipCard({ club }: { club: Club }) {
       </div>
 
       {reviewSeason && (
-        <Modal title={`Purchase ${seasonName(reviewSeason)} club membership`} onClose={() => setReviewSeason(null)}>
-          {!db.seasons.find((s) => s.id === reviewSeason)?.current && (
-            <div className="card card-pad" style={{ borderLeft: '4px solid var(--amber-600)', marginBottom: 12 }}>
-              ⚠ You are purchasing for <strong>{seasonName(reviewSeason)}</strong>, which is not the current season.
-            </div>
-          )}
-          <p style={{ fontSize: 14, marginTop: 0 }}>Review your club’s details before purchasing — they must be correct for the season:</p>
-          <table className="tbl" style={{ marginBottom: 12 }}>
-            <tbody>
-              <tr><td>Name</td><td><strong>{club.name}</strong> ({club.shortName})</td></tr>
-              <tr><td>Location</td><td>{club.state} · {club.region} region</td></tr>
-              <tr><td>Contact email</td><td>{club.email || <em>none set</em>}</td></tr>
-              <tr><td>Eligibility</td><td>{club.access ?? 'open'}</td></tr>
-              <tr><td>Club payments</td><td>{club.allowClubPay ? 'Athletes may push fees to club cart' : 'Off'}</td></tr>
-              <tr><td>Managers</td><td>{club.managerIds.length}</td></tr>
-            </tbody>
-          </table>
-          <label className="checkrow" style={{ marginBottom: 12 }}>
-            <input type="checkbox" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} />
-            I have reviewed the club’s settings and details above and confirm they are correct.
-          </label>
-          <div style={{ display: 'flex', gap: 10 }}>
-            <button className="btn primary" disabled={!reviewed} onClick={() => { grant(reviewSeason, false); setReviewSeason(null); setReviewed(false); }}>
-              Complete purchase
-            </button>
-            <button className="btn ghost" onClick={() => setReviewSeason(null)}>Cancel</button>
-          </div>
-        </Modal>
+        <ClubMembershipReview
+          club={club}
+          season={db.seasons.find((s) => s.id === reviewSeason)!}
+          isCurrent={!!db.seasons.find((s) => s.id === reviewSeason)?.current}
+          onConfirm={() => addToCart(reviewSeason)}
+          onClose={() => setReviewSeason(null)}
+        />
       )}
     </div>
+  );
+}
+
+// ---- ClubMembershipReview ---------------------------------------------------
+// The review/edit-club-info step shown before a club membership is added to the
+// cart. Reuses ClubForm's field subset (name, short name, state→region, email)
+// so the manager can correct details and SAVE them to the club, then confirm
+// "everything's correct" to add the membership to the cart. Saving persists via
+// the same pushClub path ClubForm uses.
+function ClubMembershipReview({ club, season, isCurrent, onConfirm, onClose }: {
+  club: Club; season: Season; isCurrent: boolean; onConfirm: () => void; onClose: () => void;
+}) {
+  const toast = useToast();
+  const [draft, setDraft] = useState({ name: club.name, shortName: club.shortName, state: club.state, email: club.email });
+  const set = (patch: Partial<typeof draft>) => setDraft({ ...draft, ...patch });
+  const region = STATE_REGIONS[draft.state] ?? 'Other';
+  const states = Object.keys(STATE_REGIONS);
+  const valid = draft.name.trim() && draft.shortName.trim() && draft.state;
+
+  // True when the draft differs from the saved club (so we know to persist).
+  const dirty = draft.name !== club.name || draft.shortName !== club.shortName
+    || draft.state !== club.state || draft.email !== club.email;
+
+  const persistEdits = () => {
+    if (!dirty) return;
+    mutate((d) => {
+      const c = d.clubs.find((x) => x.id === club.id);
+      if (!c) return;
+      c.name = draft.name.trim();
+      c.shortName = draft.shortName.trim();
+      c.state = draft.state;
+      c.region = region;
+      c.email = draft.email;
+      pushClub(c);
+    });
+  };
+
+  const saveOnly = () => {
+    if (!valid) { toast('Name, short name, and state are required.'); return; }
+    persistEdits();
+    toast('Club details saved.');
+  };
+
+  const confirm = () => {
+    if (!valid) { toast('Name, short name, and state are required.'); return; }
+    persistEdits();
+    onConfirm();
+  };
+
+  return (
+    <Modal title={`Review club info — ${season.name} membership`} onClose={onClose}>
+      {!isCurrent && (
+        <div className="card card-pad" style={{ borderLeft: '4px solid var(--amber-600)', marginBottom: 12 }}>
+          ⚠ You are purchasing for <strong>{season.name}</strong>, which is not the current season.
+        </div>
+      )}
+      <p style={{ fontSize: 14, marginTop: 0 }}>
+        Review and correct your club’s details — they must be right for the season. Edits save to the club.
+        Confirming adds a <strong>{fmtMoney(season.clubFee)}</strong> club membership to your cart;
+        it activates once the cart is paid.
+      </p>
+      <div className="grid cols-2">
+        <Field label="Club name"><input type="text" value={draft.name} onChange={(e) => set({ name: e.target.value })} /></Field>
+        <Field label="Short name"><input type="text" value={draft.shortName} onChange={(e) => set({ shortName: e.target.value })} /></Field>
+        <Field label="State">
+          <Combo options={states.map((s) => ({ value: s, label: s, sub: STATE_REGIONS[s] }))} value={draft.state || null} onChange={(v) => set({ state: v })} />
+        </Field>
+        <Field label="Region" hint="Derived from state."><input type="text" disabled value={draft.state ? region : '—'} /></Field>
+        <Field label="Club email"><input type="email" value={draft.email} onChange={(e) => set({ email: e.target.value })} /></Field>
+      </div>
+      <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
+        <button className="btn primary" disabled={!valid} onClick={confirm}>Everything’s correct — add to cart</button>
+        <button className="btn ghost" disabled={!valid || !dirty} onClick={saveOnly}>Save edits</button>
+        <button className="btn ghost" onClick={onClose}>Cancel</button>
+      </div>
+    </Modal>
   );
 }
 
@@ -1056,14 +1149,14 @@ export function ClubCart() {
             <div className="card card-pad" style={{ marginBottom: 18 }}>
               <h3 className="card-title">Memberships</h3>
               <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 10 }}>
-                Memberships pushed to the club cart by members.{' '}
+                The club’s own seasonal membership and any member fees pushed to the cart.{' '}
                 <Link to="/membership">Return to membership purchasing →</Link>
               </p>
               <table className="tbl">
                 <tbody>
                   {membershipItems.map((i) => (
                     <tr key={i.id}>
-                      <td>{i.label} <Badge tone="info">membership</Badge></td>
+                      <td>{i.label} <Badge tone="info">{i.refType === 'club' ? 'club membership' : 'membership'}</Badge></td>
                       <td className="num">{fmtMoney(i.amount)}</td>
                       <td style={{ width: 40 }}>
                         <button className="btn small ghost" onClick={() => mutate((d) => {
@@ -1130,6 +1223,23 @@ export function ClubCart() {
                   d.invoices.push(invoice);
                   pushInvoice(invoice);
                   for (const item of items) {
+                    // Club membership line: create/activate the club_memberships
+                    // row for the season now that it's paid (the gate that lets
+                    // the club register athletes & host that season).
+                    if (item.kind === 'membership' && item.refType === 'club' && item.refSeasonId) {
+                      const already = (d.clubMemberships ?? []).some(
+                        (x) => x.clubId === club.id && x.seasonId === item.refSeasonId && x.status === 'active',
+                      );
+                      if (!already) {
+                        const cm: ClubMembership = {
+                          id: crypto.randomUUID(), clubId: club.id, seasonId: item.refSeasonId,
+                          status: 'active', grantedByAdmin: false, createdAt: new Date().toISOString(),
+                        };
+                        (d.clubMemberships ??= []).push(cm);
+                        pushClubMembership(cm);
+                      }
+                      continue;
+                    }
                     if (item.kind === 'membership' && item.refUserId) {
                       const person = d.people.find((p) => p.id === item.refUserId);
                       // Target the EXACT membership this line covers (season + type).

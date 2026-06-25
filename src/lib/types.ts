@@ -336,9 +336,12 @@ export interface InvoiceItem {
   refUserId?: string;
   /** For membership cart/invoice lines: the exact season + type this fee covers,
    *  so paying the line activates the RIGHT membership (a person may hold several
-   *  across seasons/types). */
+   *  across seasons/types). The `'club'` sentinel marks a CLUB membership line
+   *  (a club buying its own seasonal membership) — paying it activates the
+   *  `club_memberships` row for `refSeasonId`; `refUserId` is unset (the cart is
+   *  the club's own cart, and `ref_user_id` FKs `people`, not `clubs`). */
   refSeasonId?: string;
-  refType?: MembershipType;
+  refType?: MembershipType | 'club';
   refunded?: boolean;
 }
 
