@@ -4,7 +4,7 @@ import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { useToast } from '../components/ui-hooks';
 import { fmtMoney } from '../lib/scoring';
-import { pushInvoice, pushCart, sendReceipt } from '../lib/supabase';
+import { pushInvoice, pushCart, pushRegistration, sendReceipt } from '../lib/supabase';
 import { downloadReceipt } from '../lib/receipt';
 import type { CartItem, Invoice } from '../lib/types';
 
@@ -26,6 +26,17 @@ function completePurchase(personId: string, items: CartItem[]): Invoice | null {
     };
     d.invoices.push(inv);
     pushInvoice(inv);
+    // 3f: flip the exact registrations this purchase covers to paid.
+    const regIds = new Set(items.flatMap((i) => i.refRegIds ?? []));
+    if (regIds.size > 0) {
+      for (const reg of d.registrations) {
+        if (regIds.has(reg.id)) {
+          reg.paid = true;
+          reg.updatedPending = false;
+          pushRegistration(reg);
+        }
+      }
+    }
     const ids = new Set(items.map((i) => i.id));
     d.carts[personId] = (d.carts[personId] ?? []).filter((i) => !ids.has(i.id));
     pushCart(personId, d.carts[personId], false);

@@ -6,7 +6,10 @@ import {
   offeredMembershipTypes,
   couponValid,
   applyCoupon,
+  newRegistrationEntryTotal,
+  reassignPartners,
 } from '../src/lib/pricing';
+import type { PartnerReg, RegFeeMeet } from '../src/lib/pricing';
 import type { Coupon, Membership, Season } from '../src/lib/types';
 
 const season: Season = {
@@ -119,5 +122,64 @@ describe('applyCoupon', () => {
   });
   it('no discount fields → unchanged', () => {
     expect(applyCoupon(40, { code: 'N', appliesTo: 'any' })).toBe(40);
+  });
+});
+
+describe('newRegistrationEntryTotal (3f/3g host-club $0)', () => {
+  const meet: RegFeeMeet = { hostClubId: 'host', entryFee: 60, secondDisciplineFee: 25 };
+
+  it('host club pays $0 for any number of disciplines', () => {
+    expect(newRegistrationEntryTotal(meet, { competingClubId: 'host', priorDisciplineCount: 0, newDisciplineCount: 1 })).toBe(0);
+    expect(newRegistrationEntryTotal(meet, { competingClubId: 'host', priorDisciplineCount: 0, newDisciplineCount: 3 })).toBe(0);
+    expect(newRegistrationEntryTotal(meet, { competingClubId: 'host', priorDisciplineCount: 2, newDisciplineCount: 1 })).toBe(0);
+  });
+
+  it('non-host: first discipline = entry fee, additional = second-discipline fee', () => {
+    expect(newRegistrationEntryTotal(meet, { competingClubId: 'other', priorDisciplineCount: 0, newDisciplineCount: 1 })).toBe(60);
+    expect(newRegistrationEntryTotal(meet, { competingClubId: 'other', priorDisciplineCount: 0, newDisciplineCount: 2 })).toBe(85);
+    expect(newRegistrationEntryTotal(meet, { competingClubId: 'other', priorDisciplineCount: 0, newDisciplineCount: 3 })).toBe(110);
+  });
+
+  it('non-host: a discipline added when others already exist is a second discipline', () => {
+    expect(newRegistrationEntryTotal(meet, { competingClubId: 'other', priorDisciplineCount: 1, newDisciplineCount: 1 })).toBe(25);
+    expect(newRegistrationEntryTotal(meet, { competingClubId: 'other', priorDisciplineCount: 2, newDisciplineCount: 2 })).toBe(50);
+  });
+
+  it('zero new disciplines = $0', () => {
+    expect(newRegistrationEntryTotal(meet, { competingClubId: 'other', priorDisciplineCount: 0, newDisciplineCount: 0 })).toBe(0);
+  });
+});
+
+describe('reassignPartners (synchro swap, 3e)', () => {
+  const reg = (id: string, athleteId: string, partner?: string | null): PartnerReg =>
+    ({ id, athleteId, partnerAthleteId: partner ?? null });
+
+  it('repoints a partner that named the swapped-out athlete', () => {
+    const regs = [
+      reg('r1', 'a1'),               // swapped-out athlete's own reg
+      reg('r3', 'a3', 'a1'),          // a3 named a1 as partner → must become a2
+      reg('r4', 'a4', 'a9'),          // unrelated partner → untouched
+      reg('r5', 'a5'),                // no partner → untouched
+    ];
+    const out = reassignPartners(regs, 'a1', 'a2');
+    expect(out).toEqual([{ id: 'r3', athleteId: 'a3', partnerAthleteId: 'a2' }]);
+  });
+
+  it('does not touch the swapped athletes own rows', () => {
+    // a1's reg points at itself somehow / a2 already present — never returned.
+    const regs = [reg('r1', 'a1', 'a1'), reg('r2', 'a2', 'a1')];
+    expect(reassignPartners(regs, 'a1', 'a2')).toEqual([]);
+  });
+
+  it('is a no-op when from === to', () => {
+    expect(reassignPartners([reg('r3', 'a3', 'a1')], 'a1', 'a1')).toEqual([]);
+  });
+
+  it('returns shallow copies, leaving the input untouched', () => {
+    const r = reg('r3', 'a3', 'a1');
+    const out = reassignPartners([r], 'a1', 'a2');
+    expect(r.partnerAthleteId).toBe('a1'); // original unchanged
+    expect(out[0].partnerAthleteId).toBe('a2');
+    expect(out[0]).not.toBe(r);
   });
 });

@@ -1,14 +1,15 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
-import { clubHasActiveMembership, seasonForDate, membershipHolds } from '../lib/capabilities-core';
-import { Badge, Combo, Field, Modal, Tabs } from '../components/ui';
+import { clubHasActiveMembership, seasonForDate, membershipHolds, paidRegistrationClub } from '../lib/capabilities-core';
+import { Badge, Combo, Field, Modal } from '../components/ui';
 import { useToast, useFmtDate } from '../components/ui-hooks';
 import type { ToastOptions } from '../components/ui-hooks';
 import { CLUB_ACCESS_LABELS, STATE_REGIONS } from '../lib/types';
 import type { Athlete, CartItem, Club, ClubAccess, DB, Invoice, Registration, Season } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
+import { newRegistrationEntryTotal, reassignPartners, registrationChangeFee } from '../lib/pricing';
 import {
   deleteRegistration, pushCart, pushClub, pushClubManager, pushInvoice,
   pushMembership, pushRegistration, requestManagerAccess, sendClubInvite,
@@ -55,14 +56,15 @@ function sortRoster(
 
 // ---- ClubPage ---------------------------------------------------------------
 
-export function ClubPage() {
+type ClubView = 'roster' | 'registrations';
+
+export function ClubPage({ view }: { view: ClubView }) {
   const { clubId } = useParams();
   const db = useDB();
   const caps = useCapabilities();
   const toast = useToast();
   const navigate = useNavigate();
   const club = db.clubs.find((c) => c.id === clubId);
-  const [tab, setTab] = useState<'roster' | 'meetreg'>('roster');
   const [editingClub, setEditingClub] = useState(false);
   const [addingAthlete, setAddingAthlete] = useState(false);
   const [addingCoach, setAddingCoach] = useState(false);
@@ -102,7 +104,7 @@ export function ClubPage() {
               options={switchableClubs.map((c) => ({ value: c.id, label: c.name, sub: `${c.state} · ${c.region}` }))}
               value={club.id}
               placeholder="Switch club…"
-              onChange={(v) => { if (v && v !== club.id) navigate(`/club/${v}`); }}
+              onChange={(v) => { if (v && v !== club.id) navigate(`/club/${v}/${view}`); }}
             />
           </div>
         )}
@@ -144,16 +146,17 @@ export function ClubPage() {
         )}
       </div>
 
-      <ClubMembershipCard club={club} />
-      {canManage && <ClubManagers club={club} />}
-      {canManage && <ClubSettings club={club} />}
-
-      <Tabs
-        tabs={[{ id: 'roster' as const, label: `Roster (${rosterSize})` }, { id: 'meetreg' as const, label: 'Meet registration' }]}
-        active={tab}
-        onChange={setTab}
-      />
-      {tab === 'roster' ? <Roster clubId={club.id} canManage={canManage} /> : <MeetRegGrid clubId={club.id} canManage={canManage} />}
+      {view === 'roster' ? (
+        <>
+          <ClubMembershipCard club={club} />
+          {canManage && <ClubManagers club={club} />}
+          {canManage && <ClubSettings club={club} />}
+          <h2 className="card-title" style={{ marginBottom: 10 }}>Roster ({rosterSize})</h2>
+          <Roster clubId={club.id} canManage={canManage} />
+        </>
+      ) : (
+        <MeetRegGrid clubId={club.id} canManage={canManage} />
+      )}
 
       {editingClub && <ClubForm club={club} onClose={() => setEditingClub(false)} />}
       {addingAthlete && <AddPersonModal clubId={club.id} clubName={club.name} kind="athlete" onClose={() => setAddingAthlete(false)} />}
@@ -533,9 +536,22 @@ function Roster({ clubId, canManage }: { clubId: string; canManage: boolean }) {
       )
     : allRoster;
 
-  const roster = useMemo(
+  const sorted = useMemo(
     () => sortRoster(filtered, sortCol, sortDir, lvlName),
     [filtered, sortCol, sortDir, db.levels],
+  );
+
+  // A person appears under Athletes if they hold the athlete role, and under
+  // Coaches if they hold the coach role — a dual-role person shows in BOTH
+  // sections (each row reflects the same membership status). `roles` is the
+  // canonical signal; fall back to the legacy `kind` only if roles is unset.
+  const athletes = useMemo(
+    () => sorted.filter((p) => (p.roles ? p.roles.athlete : p.kind === 'athlete')),
+    [sorted],
+  );
+  const coaches = useMemo(
+    () => sorted.filter((p) => (p.roles ? p.roles.coach : p.kind === 'coach')),
+    [sorted],
   );
 
   const handleSort = (col: SortCol) => {
@@ -558,73 +574,195 @@ function Roster({ clubId, canManage }: { clubId: string; canManage: boolean }) {
           style={{ maxWidth: 260 }}
         />
       </div>
-      <div className="card" style={{ overflow: 'hidden' }}>
-        <table className="tbl">
-          <thead>
-            <tr>
-              <th style={{ cursor: 'pointer' }} onClick={() => handleSort('firstName')}>First{sortIcon('firstName')}</th>
-              <th style={{ cursor: 'pointer' }} onClick={() => handleSort('lastName')}>Last{sortIcon('lastName')}</th>
-              <th>Type</th>
-              <th>Membership</th>
-              <th style={{ cursor: 'pointer' }} onClick={() => handleSort('WAG')}>WAG{sortIcon('WAG')}</th>
-              <th style={{ cursor: 'pointer' }} onClick={() => handleSort('MAG')}>MAG{sortIcon('MAG')}</th>
-              <th style={{ cursor: 'pointer' }} onClick={() => handleSort('TNT')}>T&amp;T{sortIcon('TNT')}</th>
-              <th style={{ cursor: 'pointer' }} onClick={() => handleSort('studentStatus')}>Student{sortIcon('studentStatus')}</th>
-              {canManage && <th></th>}
-            </tr>
-          </thead>
-          <tbody>
-            {roster.map((p) => {
-              const m = p.memberships.find((x) => x.seasonId === season?.id);
-              return (
-                <tr key={p.id}>
-                  <td>
-                    {caps.isAdmin
-                      ? <Link to={`/admin/members/${p.id}`}>{p.firstName}</Link>
-                      : p.firstName}
-                  </td>
-                  <td>
-                    {caps.isAdmin
-                      ? <Link to={`/admin/members/${p.id}`} style={{ fontWeight: 600 }}>{p.lastName}</Link>
-                      : <strong>{p.lastName}</strong>}
-                  </td>
-                  <td>{p.kind === 'coach' ? <Badge tone="navy">Coach</Badge> : 'Athlete'}</td>
-                  <td>
-                    {(() => {
-                      if (!m) return <Badge tone="err">None</Badge>;
-                      const h = membershipHolds(m);
-                      if (h.active) return <Badge tone="ok">✓ {season?.name}</Badge>;
-                      if (h.paymentHold) return <Badge tone="warn">Pending club $</Badge>;
-                      if (h.waiverHold) return <Badge tone="warn">Pending waiver</Badge>;
-                      return <Badge tone="err">None</Badge>;
-                    })()}
-                  </td>
-                  <td>{lvlName(p.levels.WAG)}</td>
-                  <td>{lvlName(p.levels.MAG)}</td>
-                  <td>{lvlName(p.levels.TNT)}</td>
-                  <td>{p.studentStatus === 'Student' ? '🎓' : '—'}</td>
-                  {canManage && (
-                    <td style={{ textAlign: 'right' }}>
-                      {m?.status !== 'active' && (
-                        <button
-                          className="btn ghost small"
-                          disabled={inviting === p.id || !p.email}
-                          data-tip={p.email ? 'Email a link to purchase membership' : 'No email on file'}
-                          onClick={() => invite(p)}
-                        >
-                          {inviting === p.id ? 'Sending…' : 'Invite'}
-                        </button>
-                      )}
-                    </td>
-                  )}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <RosterTable
+        heading={`Athletes (${athletes.length})`}
+        people={athletes}
+        emptyText="No athletes on the roster yet."
+        season={season}
+        canManage={canManage}
+        isAdmin={caps.isAdmin}
+        inviting={inviting}
+        onInvite={invite}
+        lvlName={lvlName}
+        handleSort={handleSort}
+        sortIcon={sortIcon}
+      />
+      <RosterTable
+        heading={`Coaches (${coaches.length})`}
+        people={coaches}
+        emptyText="No coaches on the roster yet. Use “Add coach” above to invite one."
+        season={season}
+        canManage={canManage}
+        isAdmin={caps.isAdmin}
+        inviting={inviting}
+        onInvite={invite}
+        lvlName={lvlName}
+        handleSort={handleSort}
+        sortIcon={sortIcon}
+      />
     </div>
   );
+}
+
+// ---- RosterTable (shared by the Athletes + Coaches sections) ----------------
+// One sortable table of people with a membership-status line and (for managers)
+// an "invite to purchase membership" action — used identically for athletes and
+// coaches so coaches list with the same affordances regardless of membership.
+function RosterTable({
+  heading, people, emptyText, season, canManage, isAdmin, inviting, onInvite,
+  lvlName, handleSort, sortIcon,
+}: {
+  heading: string;
+  people: Athlete[];
+  emptyText: string;
+  season: Season | undefined;
+  canManage: boolean;
+  isAdmin: boolean;
+  inviting: string | null;
+  onInvite: (p: Athlete) => void;
+  lvlName: (id?: string) => string;
+  handleSort: (col: SortCol) => void;
+  sortIcon: (col: SortCol) => string;
+}) {
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <h3 className="card-title" style={{ marginBottom: 8 }}>{heading}</h3>
+      {people.length === 0 ? (
+        <p style={{ color: 'var(--ink-soft)', fontSize: 14, marginTop: 0 }}>{emptyText}</p>
+      ) : (
+        <div className="card" style={{ overflow: 'hidden' }}>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('firstName')}>First{sortIcon('firstName')}</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('lastName')}>Last{sortIcon('lastName')}</th>
+                <th>Type</th>
+                <th>Membership</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('WAG')}>WAG{sortIcon('WAG')}</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('MAG')}>MAG{sortIcon('MAG')}</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('TNT')}>T&amp;T{sortIcon('TNT')}</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('studentStatus')}>Student{sortIcon('studentStatus')}</th>
+                {canManage && <th></th>}
+              </tr>
+            </thead>
+            <tbody>
+              {people.map((p) => {
+                const m = p.memberships.find((x) => x.seasonId === season?.id);
+                const isCoach = p.roles ? p.roles.coach : p.kind === 'coach';
+                const isAthlete = p.roles ? p.roles.athlete : p.kind === 'athlete';
+                return (
+                  <tr key={p.id}>
+                    <td>
+                      {isAdmin
+                        ? <Link to={`/admin/members/${p.id}`}>{p.firstName}</Link>
+                        : p.firstName}
+                    </td>
+                    <td>
+                      {isAdmin
+                        ? <Link to={`/admin/members/${p.id}`} style={{ fontWeight: 600 }}>{p.lastName}</Link>
+                        : <strong>{p.lastName}</strong>}
+                    </td>
+                    <td>
+                      {isCoach && <Badge tone="navy">Coach</Badge>}
+                      {isCoach && isAthlete && ' '}
+                      {isAthlete && (isCoach ? <Badge tone="info">Athlete</Badge> : 'Athlete')}
+                    </td>
+                    <td>
+                      {(() => {
+                        if (!m) return <Badge tone="err">None</Badge>;
+                        const h = membershipHolds(m);
+                        if (h.active) return <Badge tone="ok">✓ {season?.name}</Badge>;
+                        if (h.paymentHold) return <Badge tone="warn">Pending club $</Badge>;
+                        if (h.waiverHold) return <Badge tone="warn">Pending waiver</Badge>;
+                        return <Badge tone="err">None</Badge>;
+                      })()}
+                    </td>
+                    <td>{lvlName(p.levels.WAG)}</td>
+                    <td>{lvlName(p.levels.MAG)}</td>
+                    <td>{lvlName(p.levels.TNT)}</td>
+                    <td>{p.studentStatus === 'Student' ? '🎓' : '—'}</td>
+                    {canManage && (
+                      <td style={{ textAlign: 'right' }}>
+                        {m?.status !== 'active' && (
+                          <button
+                            className="btn ghost small"
+                            disabled={inviting === p.id || !p.email}
+                            data-tip={p.email ? 'Email a link to purchase membership' : 'No email on file'}
+                            onClick={() => onInvite(p)}
+                          >
+                            {inviting === p.id ? 'Sending…' : 'Invite'}
+                          </button>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- Cross-club cart cleanup (3d) -------------------------------------------
+
+/** Resolve the meetId a club-cart meet-entry line is for: prefer the linked
+ *  registration(s) (`refRegIds`), else fall back to the "<meet name> entry —"
+ *  label parse. */
+function cartItemMeetId(db: DB, item: CartItem): string | null {
+  if (item.refRegIds && item.refRegIds.length > 0) {
+    const reg = db.registrations.find((r) => item.refRegIds!.includes(r.id));
+    if (reg) return reg.meetId;
+  }
+  const m = item.label.match(/^(.+?) entry —/);
+  if (m) return db.meets.find((mt) => mt.name === m[1])?.id ?? null;
+  return null;
+}
+
+/** The club-cart meet-entry lines for `clubId` whose athlete has SINCE become
+ *  PAID-registered under a DIFFERENT club for that meet (pending line is moot).
+ *  Excludes THIS club so a legitimate same-club pending line is never flagged. */
+function staleCrossClubCartItems(db: DB, clubId: string): CartItem[] {
+  const cart = db.carts[clubId] ?? [];
+  return cart.filter((i) => {
+    if (i.kind !== 'meet-entry' || !i.refUserId) return false;
+    const meetId = cartItemMeetId(db, i);
+    if (!meetId) return false;
+    return paidRegistrationClub(db.registrations, {
+      athleteId: i.refUserId, meetId, excludeClubId: clubId,
+    }) !== null;
+  });
+}
+
+/** Remove the stale cross-club cart lines for `clubId` and toast the manager
+ *  once per removed athlete. Idempotent: after removal the next pass finds
+ *  nothing, so it never re-toasts. Call from a mount effect. No-op when clean. */
+function cleanupCrossClubCart(
+  db: DB,
+  clubId: string,
+  toast: (msg: string, opts?: ToastOptions) => void,
+): void {
+  const removable = staleCrossClubCartItems(db, clubId);
+  if (removable.length === 0) return;
+  const removeIds = new Set(removable.map((i) => i.id));
+  mutate((d) => {
+    d.carts[clubId] = (d.carts[clubId] ?? []).filter((x) => !removeIds.has(x.id));
+    pushCart(clubId, d.carts[clubId], true);
+  });
+  for (const i of removable) {
+    const athlete = db.people.find((p) => p.id === i.refUserId);
+    const name = athlete ? `${athlete.firstName} ${athlete.lastName}` : 'An athlete';
+    const meetId = cartItemMeetId(db, i);
+    const otherClubId = meetId && i.refUserId
+      ? paidRegistrationClub(db.registrations, { athleteId: i.refUserId, meetId, excludeClubId: clubId })
+      : null;
+    const otherShort = otherClubId
+      ? db.clubs.find((c) => c.id === otherClubId)?.shortName ?? 'another club'
+      : 'another club';
+    toast(`${name} was removed from the cart — they're now registered with ${otherShort}.`, { variant: 'info' });
+  }
 }
 
 // ---- MeetRegGrid (three-card layout) ----------------------------------------
@@ -644,6 +782,13 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
   const athletes = useMemo(() => db.people.filter(
     (p) => p.kind === 'athlete' && p.mainClubId === clubId,
   ).sort((a, b) => a.lastName.localeCompare(b.lastName)), [db, clubId]);
+
+  // Cross-club cart cleanup (3d): also run when a manager opens the registrations
+  // view (not only the cart), so the moot pending line + its toast surface here.
+  useEffect(() => {
+    cleanupCrossClubCart(db, clubId, toast);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [db, clubId]);
 
   if (!meet) return <p>No meets accepting registration.</p>;
 
@@ -697,6 +842,16 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
     return regs.map((r) => `${r.discipline === 'TNT' ? 'T&T' : r.discipline} – ${lvlName(r.levelId)} – ${eventsText(r, nameOf)}`).join(' / ');
   };
 
+  // Cross-club lock (3d): the OTHER club this athlete is already PAID-registered
+  // with for this meet. Non-null ⇒ not selectable here. shortName for the note.
+  const lockedToClubShortName = (athleteId: string): string | null => {
+    const otherClubId = paidRegistrationClub(db.registrations, {
+      athleteId, meetId: meet.id, excludeClubId: clubId,
+    });
+    if (!otherClubId) return null;
+    return db.clubs.find((c) => c.id === otherClubId)?.shortName ?? 'another club';
+  };
+
   // Persist registration changes from RegistrationEditor
   const saveRegs = (athleteId: string, newRegs: Registration[]) => {
     if (clubMembershipBlocked()) return;
@@ -716,8 +871,27 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
         }
       }
 
-      // Upsert each new reg
+      // A chargeable edit (change fee applies, editing existing regs, and the
+      // fee is non-zero — i.e. NOT the host club's own athletes).
+      const changeFee = changeFeeApplies && existingForAthlete.length > 0
+        ? registrationChangeFee(meet, { competingClubId: clubId })
+        : 0;
+
+      // Upsert each new reg. A chargeable edit flips a previously-PAID reg back
+      // to "Updated pending purchase"; otherwise preserve its payment state
+      // (new regs created here get their paid flag set in addToCart's pass).
+      const priorById = new Map(existingForAthlete.map((r) => [r.id, r]));
       for (const reg of newRegs) {
+        const prior = priorById.get(reg.id);
+        if (prior) {
+          if (changeFee > 0 && prior.paid) {
+            reg.paid = false;
+            reg.updatedPending = true;
+          } else {
+            reg.paid = prior.paid ?? false;
+            reg.updatedPending = prior.updatedPending ?? false;
+          }
+        }
         const idx = d.registrations.findIndex((r) => r.id === reg.id);
         if (idx >= 0) {
           d.registrations[idx] = reg;
@@ -727,16 +901,18 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
         pushRegistration(reg);
       }
 
-      // If changeFee applies and we're editing, add a fee line to the club cart
-      if (changeFeeApplies && existingForAthlete.length > 0 && meet.changeFee) {
+      // If a (non-host) change fee applies on an edit, add a fee line linked to
+      // the affected regs so paying it flips them back to paid.
+      if (changeFee > 0 && meet.changeFee) {
         const cart = d.carts[clubId] ?? (d.carts[clubId] = []);
         const athlete = d.people.find((p) => p.id === athleteId)!;
         cart.push({
           id: `ci-change-${Date.now()}-${athleteId}`,
           label: `${meet.name} change fee — ${athlete.firstName} ${athlete.lastName}`,
-          amount: meet.changeFee.amount,
+          amount: changeFee,
           kind: 'meet-entry',
           refUserId: athleteId,
+          refRegIds: newRegs.map((r) => r.id),
         });
         pushCart(clubId, cart, true);
       }
@@ -744,29 +920,63 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
 
     setEditingAthleteId(null);
     setRegisterAthleteId(null);
-    toast(changeFeeApplies ? 'Registration updated. Change fee added to club cart.' : 'Registration saved.');
+    const editedHostFree = changeFeeApplies && registrationChangeFee(meet, { competingClubId: clubId }) === 0;
+    toast(
+      changeFeeApplies && !editedHostFree
+        ? 'Registration updated. Change fee added to club cart.'
+        : 'Registration saved.',
+    );
   };
 
-  // Add entries to club cart (for unregistered athletes after editor saves)
+  // Add entries to club cart (for unregistered athletes after editor saves).
+  // Host-club athletes pay $0 for all entry fees (3g): no cart line, and the
+  // registration is created already paid ("Registered"). Otherwise the entry
+  // total is queued and the regs stay "Pending Purchase" (paid:false) until
+  // the club pays the cart line.
   const addToCart = (athleteId: string, regs: Registration[]) => {
     if (clubMembershipBlocked()) return;
-    saveRegs(athleteId, regs);
-    // Queue cart items for the newly registered disciplines
+    let hostFree = false;
     mutate((d) => {
+      const existingForAthlete = d.registrations.filter(
+        (r) => r.meetId === meet.id && r.athleteId === athleteId && r.clubId === clubId && !r.refunded,
+      );
+      const priorDisciplineCount = existingForAthlete.length;
+      const entryTotal = newRegistrationEntryTotal(meet, {
+        competingClubId: clubId,
+        priorDisciplineCount,
+        newDisciplineCount: regs.length,
+      });
+      hostFree = entryTotal === 0;
+      // Stamp paid status on the new regs (saveRegs upserts them below).
+      for (const reg of regs) {
+        reg.paid = hostFree;
+        reg.updatedPending = false;
+      }
+    });
+
+    saveRegs(athleteId, regs);
+
+    // Queue the entry-fee line only when something is owed.
+    mutate((d) => {
+      if (hostFree) return;
       const cart = d.carts[clubId] ?? (d.carts[clubId] = []);
       const already = new Set(cart.filter((c) => c.kind === 'meet-entry').map((c) => c.refUserId));
       const athlete = d.people.find((p) => p.id === athleteId)!;
-      const allMeetRegs = d.registrations.filter(
-        (r) => r.meetId === meet.id && r.athleteId === athleteId && !r.refunded,
-      );
       if (!already.has(athleteId)) {
-        const isSecond = allMeetRegs.length > 1;
         cart.push({
           id: `ci-${Date.now()}-${athleteId}`,
           label: `${meet.name} entry — ${athlete.firstName} ${athlete.lastName} (${regs.map((r) => r.discipline).join('+')})`,
-          amount: isSecond ? meet.secondDisciplineFee : meet.entryFee,
+          amount: newRegistrationEntryTotal(meet, {
+            competingClubId: clubId,
+            priorDisciplineCount: d.registrations.filter(
+              (r) => r.meetId === meet.id && r.athleteId === athleteId && r.clubId === clubId && !r.refunded
+                && !regs.some((nr) => nr.id === r.id),
+            ).length,
+            newDisciplineCount: regs.length,
+          }),
           kind: 'meet-entry',
           refUserId: athleteId,
+          refRegIds: regs.map((r) => r.id),
         });
         pushCart(clubId, cart, true);
       }
@@ -788,20 +998,46 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
   const swapAthlete = (fromId: string, toId: string) => {
     const to = db.people.find((p) => p.id === toId);
     if (!to) return;
+    const swapFee = changeFeeApplies ? registrationChangeFee(meet, { competingClubId: clubId }) : 0;
     mutate((d) => {
+      const swappedRegIds: string[] = [];
       for (const r of d.registrations) {
         if (r.meetId === meet.id && r.athleteId === fromId && r.clubId === clubId && !r.refunded) {
           r.athleteId = toId;
+          // A chargeable swap re-pends a previously-paid registration.
+          if (swapFee > 0 && r.paid) {
+            r.paid = false;
+            r.updatedPending = true;
+          }
+          swappedRegIds.push(r.id);
           pushRegistration(r, r.sessionId);
         }
       }
-      if (changeFeeApplies && meet.changeFee) {
+      // 3e: any OTHER (meet-scoped, non-refunded) registration that named the
+      // swapped-OUT athlete as its synchro partner must now point at the
+      // swapped-IN athlete. Scope mirrors the partner model (same meet, not
+      // refunded). reassignPartners skips the swapped athletes' own rows.
+      const meetRegs = d.registrations.filter((r) => r.meetId === meet.id && !r.refunded);
+      const repointed = reassignPartners(
+        meetRegs.map((r) => ({ id: r.id, athleteId: r.athleteId, partnerAthleteId: r.partnerAthleteId ?? null })),
+        fromId,
+        toId,
+      );
+      for (const rp of repointed) {
+        const reg = d.registrations.find((r) => r.id === rp.id);
+        if (reg) {
+          reg.partnerAthleteId = rp.partnerAthleteId;
+          pushRegistration(reg, reg.sessionId);
+        }
+      }
+
+      if (swapFee > 0 && meet.changeFee) {
         const cart = d.carts[clubId] ?? (d.carts[clubId] = []);
-        cart.push({ id: `ci-change-${Date.now()}-${toId}`, label: `${meet.name} change fee — swap to ${to.firstName} ${to.lastName}`, amount: meet.changeFee.amount, kind: 'meet-entry', refUserId: toId });
+        cart.push({ id: `ci-change-${Date.now()}-${toId}`, label: `${meet.name} change fee — swap to ${to.firstName} ${to.lastName}`, amount: swapFee, kind: 'meet-entry', refUserId: toId, refRegIds: swappedRegIds });
         pushCart(clubId, cart, true);
       }
     });
-    toast(`Registration swapped to ${to.firstName} ${to.lastName}.${changeFeeApplies && meet.changeFee ? ` Change fee ${fmtMoney(meet.changeFee.amount)} added to club cart.` : ''}`);
+    toast(`Registration swapped to ${to.firstName} ${to.lastName}.${swapFee > 0 ? ` Change fee ${fmtMoney(swapFee)} added to club cart.` : ''}`);
     setEditingAthleteId(null);
   };
 
@@ -821,7 +1057,7 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
           <div style={{ paddingTop: 8, fontSize: 14 }}>
             {fmtMoney(meet.entryFee)} first discipline · {fmtMoney(meet.secondDisciplineFee)} additional
             {meet.changeFee && (
-              <span style={{ color: 'var(--warn-600, #a16207)', marginLeft: 8 }}>
+              <span style={{ color: 'var(--warn)', marginLeft: 8 }}>
                 · Change fee {fmtMoney(meet.changeFee.amount)} after {new Date(meet.changeFee.startsAt).toLocaleDateString()}
               </span>
             )}
@@ -859,6 +1095,8 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
               {registered.map((a) => {
                 const regs = regsFor(a.id);
                 const anyRefundReq = regs.some((r) => r.refundRequested);
+                const anyUnpaid = regs.some((r) => r.paid === false);
+                const anyUpdatedPending = regs.some((r) => r.paid === false && r.updatedPending);
                 const summary = regSummary(a.id);
                 return (
                   <tr key={a.id}>
@@ -867,7 +1105,11 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
                     <td>
                       {anyRefundReq
                         ? <Badge tone="warn">Refund requested</Badge>
-                        : <Badge tone="ok">Registered</Badge>}
+                        : anyUpdatedPending
+                          ? <Badge tone="warn">Updated pending purchase</Badge>
+                          : anyUnpaid
+                            ? <Badge tone="warn">Pending purchase</Badge>
+                            : <Badge tone="ok">Registered</Badge>}
                     </td>
                     {canManage && (
                       <td style={{ whiteSpace: 'nowrap', display: 'flex', gap: 6 }}>
@@ -917,23 +1159,29 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
                 </tr>
               </thead>
               <tbody>
-                {unregisteredWithMembership.map((a) => (
-                  <tr key={a.id}>
-                    <td><strong>{a.firstName} {a.lastName}</strong></td>
-                    <td style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
-                      {meet.disciplines.map((d) => (d === 'TNT' ? 'T&T' : d)).join(', ')}
-                    </td>
-                    <td>
-                      <button
-                        className="btn small primary"
-                        disabled={regClosed}
-                        onClick={() => setRegisterAthleteId(a.id)}
-                      >
-                        Register
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {unregisteredWithMembership.map((a) => {
+                  const lockedTo = lockedToClubShortName(a.id);
+                  return (
+                    <tr key={a.id}>
+                      <td><strong>{a.firstName} {a.lastName}</strong></td>
+                      <td style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
+                        {lockedTo
+                          ? <span style={{ color: 'var(--warn)' }}>Already registered with {lockedTo}</span>
+                          : meet.disciplines.map((d) => (d === 'TNT' ? 'T&T' : d)).join(', ')}
+                      </td>
+                      <td>
+                        <button
+                          className="btn small primary"
+                          disabled={regClosed || !!lockedTo}
+                          title={lockedTo ? `Already registered with ${lockedTo} for this meet` : undefined}
+                          onClick={() => setRegisterAthleteId(a.id)}
+                        >
+                          Register
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
@@ -1065,6 +1313,17 @@ function payClubItems(
   };
   d.invoices.push(invoice);
   pushInvoice(invoice);
+  // 3f: flip the exact registrations these meet-entry / change-fee lines cover.
+  const regIds = new Set(items.flatMap((i) => i.refRegIds ?? []));
+  if (regIds.size > 0) {
+    for (const reg of d.registrations) {
+      if (regIds.has(reg.id)) {
+        reg.paid = true;
+        reg.updatedPending = false;
+        pushRegistration(reg);
+      }
+    }
+  }
   for (const item of items) {
     // Club membership line: create/activate the club_memberships row for the
     // season now that it's paid (the gate that lets the club register athletes
@@ -1140,6 +1399,15 @@ export function ClubCart() {
   const fmtDate = useFmtDate();
   const [coupon, setCoupon] = useState('');
   const club = db.clubs.find((c) => c.id === clubId);
+
+  // Cross-club cart cleanup (3d): when this cart loads, drop any pending meet-entry
+  // line for an athlete who has SINCE become PAID-registered under a DIFFERENT club
+  // for that meet, and notify the manager. Idempotent (see cleanupCrossClubCart).
+  useEffect(() => {
+    if (club) cleanupCrossClubCart(db, club.id, toast);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [db, club?.id]);
+
   if (!club) return <p>Club not found.</p>;
   const cart = db.carts[club.id] ?? [];
   const invoices = db.invoices.filter((i) => i.clubId === club.id);
@@ -1201,7 +1469,7 @@ export function ClubCart() {
               <div key={meetName} className="card card-pad" style={{ marginBottom: 18 }}>
                 <h3 className="card-title">{meetName}</h3>
                 <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 10 }}>
-                  Meet entries · <Link to={`/club/${club.id}`}>Return to registration →</Link>
+                  Meet entries · <Link to={`/club/${club.id}/registrations`}>Return to registration →</Link>
                 </p>
                 <table className="tbl">
                   <tbody>

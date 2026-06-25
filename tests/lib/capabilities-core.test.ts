@@ -1,6 +1,20 @@
 import { describe, it, expect } from 'vitest';
-import { deriveCapabilities, currentSeasonId, membershipHolds } from '../../src/lib/capabilities-core';
-import type { Athlete, Club, DB, Meet, Membership, Season } from '../../src/lib/types';
+import { deriveCapabilities, currentSeasonId, membershipHolds, paidRegistrationClub } from '../../src/lib/capabilities-core';
+import type { Athlete, Club, DB, Meet, Membership, Registration, Season } from '../../src/lib/types';
+
+function makeReg(overrides: Partial<Registration>): Registration {
+  return {
+    id: 'r-x',
+    meetId: 'meet-1',
+    athleteId: 'a-1',
+    clubId: 'club-A',
+    discipline: 'WAG',
+    levelId: 'lvl-1',
+    events: ['VT'],
+    sessionId: null,
+    ...overrides,
+  };
+}
 
 // --- Fixture helpers --------------------------------------------------------
 
@@ -294,5 +308,46 @@ describe('membershipHolds', () => {
       paidVia: 'club',
     }));
     expect(h.paymentHold).toBe(true);
+  });
+});
+
+describe('paidRegistrationClub (3d cross-club lock)', () => {
+  const args = { athleteId: 'a-1', meetId: 'meet-1' };
+
+  it('returns null when there are no registrations', () => {
+    expect(paidRegistrationClub([], { ...args, excludeClubId: 'club-A' })).toBeNull();
+  });
+
+  it('a PAID reg under another club locks the athlete (returns that clubId)', () => {
+    const regs = [makeReg({ clubId: 'club-B', paid: true })];
+    expect(paidRegistrationClub(regs, { ...args, excludeClubId: 'club-A' })).toBe('club-B');
+  });
+
+  it('a PENDING (paid !== true) reg under another club does NOT lock', () => {
+    expect(paidRegistrationClub([makeReg({ clubId: 'club-B', paid: false })], { ...args, excludeClubId: 'club-A' })).toBeNull();
+    expect(paidRegistrationClub([makeReg({ clubId: 'club-B' })], { ...args, excludeClubId: 'club-A' })).toBeNull();
+  });
+
+  it('a paid reg under the SAME (excluded) club is not a conflict — normal edit', () => {
+    const regs = [makeReg({ clubId: 'club-A', paid: true })];
+    expect(paidRegistrationClub(regs, { ...args, excludeClubId: 'club-A' })).toBeNull();
+  });
+
+  it('a REFUNDED paid reg under another club does not lock', () => {
+    const regs = [makeReg({ clubId: 'club-B', paid: true, refunded: true })];
+    expect(paidRegistrationClub(regs, { ...args, excludeClubId: 'club-A' })).toBeNull();
+  });
+
+  it('ignores other meets and other athletes', () => {
+    const regs = [
+      makeReg({ clubId: 'club-B', paid: true, meetId: 'meet-2' }),
+      makeReg({ clubId: 'club-B', paid: true, athleteId: 'a-2' }),
+    ];
+    expect(paidRegistrationClub(regs, { ...args, excludeClubId: 'club-A' })).toBeNull();
+  });
+
+  it('omitting excludeClubId returns ANY paid-reg club (self-reg lock probe)', () => {
+    const regs = [makeReg({ clubId: 'club-A', paid: true })];
+    expect(paidRegistrationClub(regs, args)).toBe('club-A');
   });
 });

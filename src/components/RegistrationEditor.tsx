@@ -27,6 +27,8 @@ import { useState, useMemo } from 'react';
 import { Combo, Field } from './ui';
 import { EVENTS } from '../lib/types';
 import type { Athlete, Discipline, Level, Meet, Registration, Season } from '../lib/types';
+import { changeIsEligible } from '../lib/pricing';
+import type { RegChangeState, RegDisciplineEntry } from '../lib/pricing';
 
 // ---- per-discipline section -------------------------------------------------
 
@@ -236,7 +238,7 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
                 </Field>
               )}
               {!draft.partnerUnknown && !draft.partnerAthleteId && (
-                <p style={{ fontSize: 12, color: 'var(--warn-600, #a16207)', marginTop: 4 }}>
+                <p style={{ fontSize: 12, color: 'var(--warn)', marginTop: 4 }}>
                   A synchro meet can't go live until all entries have partners assigned.
                 </p>
               )}
@@ -347,11 +349,76 @@ export function RegistrationEditor({
 
   const anyEnabled = (meet.disciplines as Discipline[]).some((d) => drafts[d]?.enabled && drafts[d].events.length > 0);
 
+  // Are we editing an EXISTING registration (vs creating a brand-new one)? An
+  // existing-reg edit must make an ELIGIBLE (chargeable) change before it can be
+  // added to the cart (3h). A brand-new registration has no `existing` rows and
+  // stays enabled as today.
+  const isEditingExisting = existing.some((r) => !r.refunded);
+
+  // Build before/after RegChangeState for the eligibility predicate (3h).
+  const draftToEntries = (
+    fromExisting: boolean,
+  ): RegDisciplineEntry[] => {
+    const out: RegDisciplineEntry[] = [];
+    for (const disc of meet.disciplines as Discipline[]) {
+      if (fromExisting) {
+        const reg = existing.find((r) => r.discipline === disc && !r.refunded);
+        if (!reg) continue;
+        out.push({
+          discipline: disc,
+          levelId: reg.levelId,
+          events: [...reg.events],
+          ...(reg.eventLevels ? { eventLevels: reg.eventLevels } : {}),
+        });
+      } else {
+        const d = drafts[disc];
+        if (!d?.enabled || d.events.length === 0) continue;
+        out.push({
+          discipline: disc,
+          levelId: d.levelId,
+          events: [...d.events],
+          ...(Object.keys(d.eventLevels).length > 0 ? { eventLevels: d.eventLevels } : {}),
+        });
+      }
+    }
+    return out;
+  };
+
+  const eligible = useMemo(() => {
+    if (!isEditingExisting) return true; // new registration — always enabled
+    const before: RegChangeState = { clubId, athleteId: athlete.id, disciplines: draftToEntries(true) };
+    const after: RegChangeState = { clubId, athleteId: athlete.id, disciplines: draftToEntries(false) };
+    return changeIsEligible(before, after);
+    // draftToEntries closes over `drafts` + `existing`; recompute on draft change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drafts, existing, clubId, athlete.id, isEditingExisting]);
+
+  const saveDisabled = !anyEnabled || (isEditingExisting && !eligible);
+  const saveLabel = isEditingExisting
+    ? 'Add change to cart'
+    : (changeFeeApplies ? 'Add to cart' : 'Register');
+
   return (
     <div>
-      <div style={{ marginBottom: 8 }}>
+      <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span
+          className="badge"
+          style={{
+            fontSize: 11,
+            fontWeight: 700,
+            textTransform: 'uppercase',
+            letterSpacing: '0.04em',
+            padding: '2px 8px',
+            borderRadius: 999,
+            color: 'var(--ink-soft)',
+            background: 'var(--surface-raised, var(--surface))',
+            border: '1px solid var(--border)',
+          }}
+        >
+          {isEditingExisting ? 'Editing registration' : 'New registration'}
+        </span>
         <strong style={{ fontSize: 16 }}>{athlete.firstName} {athlete.lastName}</strong>
-        <span style={{ fontSize: 13, color: 'var(--ink-soft)', marginLeft: 8 }}>{meet.name}</span>
+        <span style={{ fontSize: 13, color: 'var(--ink-soft)' }}>{meet.name}</span>
       </div>
 
       {(meet.disciplines as Discipline[]).map((disc) => (
@@ -370,16 +437,26 @@ export function RegistrationEditor({
         />
       ))}
 
-      <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
+      <div style={{ display: 'flex', gap: 10, marginTop: 18, alignItems: 'center' }}>
         <button
           className="btn primary"
-          disabled={!anyEnabled}
+          disabled={saveDisabled}
           onClick={handleSave}
         >
-          {changeFeeApplies ? 'Add change to cart' : 'Save registration'}
+          {saveLabel}
         </button>
         <button className="btn ghost" onClick={onCancel}>Cancel</button>
       </div>
+
+      {/* Why the change can't be added yet (3h). Shown only while editing an
+          existing registration that hasn't made a chargeable change. */}
+      {isEditingExisting && anyEnabled && !eligible && (
+        <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', marginTop: 8, maxWidth: 560 }}>
+          Make a chargeable change — add a discipline, change a level, change club,
+          or swap athlete — to continue. Adding or removing apparatus within a
+          discipline you&apos;re already registered for isn&apos;t a chargeable change.
+        </p>
+      )}
     </div>
   );
 }

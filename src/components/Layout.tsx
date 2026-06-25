@@ -32,7 +32,8 @@ function navFor(caps: ReturnType<typeof useCapabilities>): NavGroup[] {
   if (caps.managedClubIds.length > 0) {
     const cid = caps.managedClubIds[0];
     groups.push({ group: 'My Club', items: [
-      { to: `/club/${cid}`, label: 'Roster & Meet Reg' },
+      { to: `/club/${cid}/roster`, label: 'Club Roster' },
+      { to: `/club/${cid}/registrations`, label: 'Club Registrations' },
       { to: `/club/${cid}/cart`, label: 'Club Cart & Invoices' },
       { to: '/sanction', label: 'Request a Sanction' },
     ]});

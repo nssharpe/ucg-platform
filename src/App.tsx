@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { HashRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { WriteStatus } from './components/WriteStatus';
@@ -32,8 +32,15 @@ const loaders = {
 const Membership = lazy(() => loaders.Membership().then((m) => ({ default: m.Membership })));
 const Profile = lazy(() => loaders.Profile().then((m) => ({ default: m.Profile })));
 const AdminProfile = lazy(() => loaders.Profile().then((m) => ({ default: () => <m.Profile adminView /> })));
-const ClubPage = lazy(() => loaders.Club().then((m) => ({ default: m.ClubPage })));
+const ClubRoster = lazy(() => loaders.Club().then((m) => ({ default: () => <m.ClubPage view="roster" /> })));
+const ClubRegistrations = lazy(() => loaders.Club().then((m) => ({ default: () => <m.ClubPage view="registrations" /> })));
 const ClubCart = lazy(() => loaders.Club().then((m) => ({ default: m.ClubCart })));
+
+/** Redirect bare /club/:clubId → /club/:clubId/roster (default view). */
+function ClubIndexRedirect() {
+  const { clubId } = useParams();
+  return <Navigate to={`/club/${clubId}/roster`} replace />;
+}
 const Clubs = lazy(() => loaders.Clubs().then((m) => ({ default: m.Clubs })));
 const SanctionRequestForm = lazy(() => loaders.Sanction().then((m) => ({ default: m.SanctionRequestForm })));
 const SanctioningQueue = lazy(() => loaders.Sanction().then((m) => ({ default: m.SanctioningQueue })));
@@ -190,7 +197,9 @@ export default function App() {
               <Route path="/sanction" element={<RequireAccount><SanctionRequestForm /></RequireAccount>} />
               <Route path="/sanctioning" element={<RequireAccount><SanctioningQueue /></RequireAccount>} />
               <Route path="/sanctioning/:requestId" element={<RequireAccount><SanctionVotePage /></RequireAccount>} />
-              <Route path="/club/:clubId" element={<RequireAccount><ClubPage /></RequireAccount>} />
+              <Route path="/club/:clubId" element={<RequireAccount><ClubIndexRedirect /></RequireAccount>} />
+              <Route path="/club/:clubId/roster" element={<RequireAccount><ClubRoster /></RequireAccount>} />
+              <Route path="/club/:clubId/registrations" element={<RequireAccount><ClubRegistrations /></RequireAccount>} />
               <Route path="/club/:clubId/cart" element={<RequireAccount><ClubCart /></RequireAccount>} />
               <Route path="/meets/:slug/manage" element={<RequireAccount><MeetManage /></RequireAccount>} />
               <Route path="/meets/:slug/nationals" element={<RequireAccount><Nationals /></RequireAccount>} />
