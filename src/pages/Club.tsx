@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
-import { clubHasActiveMembership, seasonForDate, membershipHolds } from '../lib/capabilities-core';
+import { clubHasActiveMembership, seasonForDate, membershipHolds, paidRegistrationClub } from '../lib/capabilities-core';
 import { Badge, Combo, Field, Modal } from '../components/ui';
 import { useToast, useFmtDate } from '../components/ui-hooks';
 import type { ToastOptions } from '../components/ui-hooks';
@@ -706,6 +706,65 @@ function RosterTable({
   );
 }
 
+// ---- Cross-club cart cleanup (3d) -------------------------------------------
+
+/** Resolve the meetId a club-cart meet-entry line is for: prefer the linked
+ *  registration(s) (`refRegIds`), else fall back to the "<meet name> entry —"
+ *  label parse. */
+function cartItemMeetId(db: DB, item: CartItem): string | null {
+  if (item.refRegIds && item.refRegIds.length > 0) {
+    const reg = db.registrations.find((r) => item.refRegIds!.includes(r.id));
+    if (reg) return reg.meetId;
+  }
+  const m = item.label.match(/^(.+?) entry —/);
+  if (m) return db.meets.find((mt) => mt.name === m[1])?.id ?? null;
+  return null;
+}
+
+/** The club-cart meet-entry lines for `clubId` whose athlete has SINCE become
+ *  PAID-registered under a DIFFERENT club for that meet (pending line is moot).
+ *  Excludes THIS club so a legitimate same-club pending line is never flagged. */
+function staleCrossClubCartItems(db: DB, clubId: string): CartItem[] {
+  const cart = db.carts[clubId] ?? [];
+  return cart.filter((i) => {
+    if (i.kind !== 'meet-entry' || !i.refUserId) return false;
+    const meetId = cartItemMeetId(db, i);
+    if (!meetId) return false;
+    return paidRegistrationClub(db.registrations, {
+      athleteId: i.refUserId, meetId, excludeClubId: clubId,
+    }) !== null;
+  });
+}
+
+/** Remove the stale cross-club cart lines for `clubId` and toast the manager
+ *  once per removed athlete. Idempotent: after removal the next pass finds
+ *  nothing, so it never re-toasts. Call from a mount effect. No-op when clean. */
+function cleanupCrossClubCart(
+  db: DB,
+  clubId: string,
+  toast: (msg: string, opts?: ToastOptions) => void,
+): void {
+  const removable = staleCrossClubCartItems(db, clubId);
+  if (removable.length === 0) return;
+  const removeIds = new Set(removable.map((i) => i.id));
+  mutate((d) => {
+    d.carts[clubId] = (d.carts[clubId] ?? []).filter((x) => !removeIds.has(x.id));
+    pushCart(clubId, d.carts[clubId], true);
+  });
+  for (const i of removable) {
+    const athlete = db.people.find((p) => p.id === i.refUserId);
+    const name = athlete ? `${athlete.firstName} ${athlete.lastName}` : 'An athlete';
+    const meetId = cartItemMeetId(db, i);
+    const otherClubId = meetId && i.refUserId
+      ? paidRegistrationClub(db.registrations, { athleteId: i.refUserId, meetId, excludeClubId: clubId })
+      : null;
+    const otherShort = otherClubId
+      ? db.clubs.find((c) => c.id === otherClubId)?.shortName ?? 'another club'
+      : 'another club';
+    toast(`${name} was removed from the cart — they're now registered with ${otherShort}.`, { variant: 'info' });
+  }
+}
+
 // ---- MeetRegGrid (three-card layout) ----------------------------------------
 
 function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean }) {
@@ -723,6 +782,13 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
   const athletes = useMemo(() => db.people.filter(
     (p) => p.kind === 'athlete' && p.mainClubId === clubId,
   ).sort((a, b) => a.lastName.localeCompare(b.lastName)), [db, clubId]);
+
+  // Cross-club cart cleanup (3d): also run when a manager opens the registrations
+  // view (not only the cart), so the moot pending line + its toast surface here.
+  useEffect(() => {
+    cleanupCrossClubCart(db, clubId, toast);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [db, clubId]);
 
   if (!meet) return <p>No meets accepting registration.</p>;
 
@@ -774,6 +840,16 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
     const regs = regsFor(athleteId);
     if (regs.length === 0) return null;
     return regs.map((r) => `${r.discipline === 'TNT' ? 'T&T' : r.discipline} – ${lvlName(r.levelId)} – ${eventsText(r, nameOf)}`).join(' / ');
+  };
+
+  // Cross-club lock (3d): the OTHER club this athlete is already PAID-registered
+  // with for this meet. Non-null ⇒ not selectable here. shortName for the note.
+  const lockedToClubShortName = (athleteId: string): string | null => {
+    const otherClubId = paidRegistrationClub(db.registrations, {
+      athleteId, meetId: meet.id, excludeClubId: clubId,
+    });
+    if (!otherClubId) return null;
+    return db.clubs.find((c) => c.id === otherClubId)?.shortName ?? 'another club';
   };
 
   // Persist registration changes from RegistrationEditor
@@ -981,7 +1057,7 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
           <div style={{ paddingTop: 8, fontSize: 14 }}>
             {fmtMoney(meet.entryFee)} first discipline · {fmtMoney(meet.secondDisciplineFee)} additional
             {meet.changeFee && (
-              <span style={{ color: 'var(--warn-600, #a16207)', marginLeft: 8 }}>
+              <span style={{ color: 'var(--warn)', marginLeft: 8 }}>
                 · Change fee {fmtMoney(meet.changeFee.amount)} after {new Date(meet.changeFee.startsAt).toLocaleDateString()}
               </span>
             )}
@@ -1083,23 +1159,29 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
                 </tr>
               </thead>
               <tbody>
-                {unregisteredWithMembership.map((a) => (
-                  <tr key={a.id}>
-                    <td><strong>{a.firstName} {a.lastName}</strong></td>
-                    <td style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
-                      {meet.disciplines.map((d) => (d === 'TNT' ? 'T&T' : d)).join(', ')}
-                    </td>
-                    <td>
-                      <button
-                        className="btn small primary"
-                        disabled={regClosed}
-                        onClick={() => setRegisterAthleteId(a.id)}
-                      >
-                        Register
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {unregisteredWithMembership.map((a) => {
+                  const lockedTo = lockedToClubShortName(a.id);
+                  return (
+                    <tr key={a.id}>
+                      <td><strong>{a.firstName} {a.lastName}</strong></td>
+                      <td style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
+                        {lockedTo
+                          ? <span style={{ color: 'var(--warn)' }}>Already registered with {lockedTo}</span>
+                          : meet.disciplines.map((d) => (d === 'TNT' ? 'T&T' : d)).join(', ')}
+                      </td>
+                      <td>
+                        <button
+                          className="btn small primary"
+                          disabled={regClosed || !!lockedTo}
+                          title={lockedTo ? `Already registered with ${lockedTo} for this meet` : undefined}
+                          onClick={() => setRegisterAthleteId(a.id)}
+                        >
+                          Register
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
@@ -1317,6 +1399,15 @@ export function ClubCart() {
   const fmtDate = useFmtDate();
   const [coupon, setCoupon] = useState('');
   const club = db.clubs.find((c) => c.id === clubId);
+
+  // Cross-club cart cleanup (3d): when this cart loads, drop any pending meet-entry
+  // line for an athlete who has SINCE become PAID-registered under a DIFFERENT club
+  // for that meet, and notify the manager. Idempotent (see cleanupCrossClubCart).
+  useEffect(() => {
+    if (club) cleanupCrossClubCart(db, club.id, toast);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [db, club?.id]);
+
   if (!club) return <p>Club not found.</p>;
   const cart = db.carts[club.id] ?? [];
   const invoices = db.invoices.filter((i) => i.clubId === club.id);

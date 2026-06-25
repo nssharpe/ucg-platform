@@ -2,7 +2,7 @@
 // types, which erase at compile time). This is the security-critical core, kept
 // importable in a plain Node test environment. The React hooks that feed it the
 // live session/DB/impersonation live in capabilities.ts.
-import type { Athlete, DB, Membership, MembershipStatus } from './types';
+import type { Athlete, DB, Membership, MembershipStatus, Registration } from './types';
 
 export interface Capabilities {
   signedIn: boolean;
@@ -78,6 +78,33 @@ export function membershipHolds(m: Pick<Membership, 'status' | 'waiverSignedAt' 
   // created before the flag existed.
   const paymentHold = m.clubCartPending === true || m.status === 'pending-club-payment';
   return { waiverHold, paymentHold, active: !waiverHold && !paymentHold };
+}
+
+/** Cross-club registration lock (3d): the club a member is already PAID-registered
+ *  with for a meet — so they can't be registered again under a DIFFERENT club.
+ *
+ *  Only a non-refunded, PAID registration locks the member. A merely
+ *  pending-purchase (paid !== true) registration sitting in some club's cart does
+ *  NOT block another club from registering them. Registrations under the club
+ *  currently being registered for (`excludeClubId`) are ignored — that's a normal
+ *  edit of an existing registration, not a cross-club conflict.
+ *
+ *  Returns the locking club's id, or null when the member is free to register
+ *  under `excludeClubId`. */
+export function paidRegistrationClub(
+  registrations: Registration[],
+  opts: { athleteId: string; meetId: string; excludeClubId?: string | null },
+): string | null {
+  const { athleteId, meetId, excludeClubId } = opts;
+  const hit = registrations.find(
+    (r) =>
+      r.meetId === meetId &&
+      r.athleteId === athleteId &&
+      r.paid === true &&
+      !r.refunded &&
+      r.clubId !== excludeClubId,
+  );
+  return hit ? hit.clubId : null;
 }
 
 /** Derive what the current (possibly impersonated) user can do.

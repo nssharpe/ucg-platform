@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
-import { seasonForDate, clubHasActiveMembership } from '../lib/capabilities-core';
+import { seasonForDate, clubHasActiveMembership, paidRegistrationClub } from '../lib/capabilities-core';
 import { Badge, Field, Modal, Tabs } from '../components/ui';
 import { useToast, useFmtDate } from '../components/ui-hooks';
 import { MeetWizard } from '../components/MeetWizard';
@@ -114,7 +114,7 @@ export function MeetDetail() {
             {meet.tshirtAddon && <><br />T-shirt: {fmtMoney(meet.tshirtAddon.price)}</>}
             {meet.bannerAddon && <><br />Club banner: {fmtMoney(meet.bannerAddon.price)}</>}
             {meet.changeFee && (
-              <><br /><span style={{ color: 'var(--warn-600, #a16207)' }}>Change fee {fmtMoney(meet.changeFee.amount)} after {new Date(meet.changeFee.startsAt).toLocaleDateString()}</span></>
+              <><br /><span style={{ color: 'var(--warn)' }}>Change fee {fmtMoney(meet.changeFee.amount)} after {new Date(meet.changeFee.startsAt).toLocaleDateString()}</span></>
             )}
           </p>
           {meet.status === 'reg-open' ? (
@@ -213,7 +213,18 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
     ...athlete.altClubIds.map((id) => db.clubs.find((c) => c.id === id)),
   ].filter((c): c is NonNullable<typeof c> => !!c);
 
-  const [selectedClubId, setSelectedClubId] = useState(myClubs[0]?.id ?? '');
+  // Cross-club lock (3d): if the athlete already has a PAID, non-refunded reg for
+  // this meet under one of their clubs, they're locked to it — they can't compete
+  // for a DIFFERENT club. (excludeClubId omitted ⇒ returns ANY paid-reg club.)
+  const lockedClubId = paidRegistrationClub(db.registrations, {
+    athleteId: athlete.id, meetId: meet.id,
+  });
+  const lockedClubShort = lockedClubId
+    ? db.clubs.find((c) => c.id === lockedClubId)?.shortName ?? 'another club'
+    : null;
+
+  // Default to the locked club when one applies, else the athlete's first club.
+  const [selectedClubId, setSelectedClubId] = useState(lockedClubId ?? myClubs[0]?.id ?? '');
   const [step, setStep] = useState<'reg' | 'addons'>('reg');
   // Add-on selections
   const [tshirtSize, setTshirtSize] = useState('');
@@ -234,6 +245,13 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
 
   // Called by RegistrationEditor when the athlete confirms their selections
   const handleRegSave = (regs: Registration[]) => {
+    // Cross-club lock (3d): block registering under a DIFFERENT club than the one
+    // this athlete is already paid-registered with. (Belt-and-suspenders for the
+    // single-club case where the selector — and its disabled options — isn't shown.)
+    if (lockedClubId && selectedClubId !== lockedClubId) {
+      toast(`You're already registered with ${lockedClubShort} for this meet — you can't register under a different club. Edit your existing registration instead.`, { variant: 'error' });
+      return;
+    }
     // Gate: the competing club must hold an active membership for the meet's season.
     const seasonId = seasonForDate(db, meet.startDate);
     if (!clubHasActiveMembership(db, selectedClubId, seasonId)) {
@@ -409,8 +427,17 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
             value={selectedClubId}
             onChange={(e) => setSelectedClubId(e.target.value)}
           >
-            {myClubs.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {myClubs.map((c) => (
+              <option key={c.id} value={c.id} disabled={!!lockedClubId && c.id !== lockedClubId}>
+                {c.name}{!!lockedClubId && c.id !== lockedClubId ? ' — unavailable' : ''}
+              </option>
+            ))}
           </select>
+          {lockedClubShort && (
+            <p style={{ fontSize: 13, color: 'var(--warn)', marginTop: 6 }}>
+              Already registered with {lockedClubShort} for this meet — you can only edit that registration.
+            </p>
+          )}
         </Field>
       )}
 

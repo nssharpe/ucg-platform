@@ -238,7 +238,7 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
                 </Field>
               )}
               {!draft.partnerUnknown && !draft.partnerAthleteId && (
-                <p style={{ fontSize: 12, color: 'var(--warn-600, #a16207)', marginTop: 4 }}>
+                <p style={{ fontSize: 12, color: 'var(--warn)', marginTop: 4 }}>
                   A synchro meet can't go live until all entries have partners assigned.
                 </p>
               )}
