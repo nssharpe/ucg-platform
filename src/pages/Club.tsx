@@ -9,7 +9,7 @@ import type { ToastOptions } from '../components/ui-hooks';
 import { CLUB_ACCESS_LABELS, STATE_REGIONS } from '../lib/types';
 import type { Athlete, CartItem, Club, ClubAccess, DB, Invoice, Registration, Season } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
-import { newRegistrationEntryTotal, registrationChangeFee } from '../lib/pricing';
+import { newRegistrationEntryTotal, reassignPartners, registrationChangeFee } from '../lib/pricing';
 import {
   deleteRegistration, pushCart, pushClub, pushClubManager, pushInvoice,
   pushMembership, pushRegistration, requestManagerAccess, sendClubInvite,
@@ -937,6 +937,24 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
           pushRegistration(r, r.sessionId);
         }
       }
+      // 3e: any OTHER (meet-scoped, non-refunded) registration that named the
+      // swapped-OUT athlete as its synchro partner must now point at the
+      // swapped-IN athlete. Scope mirrors the partner model (same meet, not
+      // refunded). reassignPartners skips the swapped athletes' own rows.
+      const meetRegs = d.registrations.filter((r) => r.meetId === meet.id && !r.refunded);
+      const repointed = reassignPartners(
+        meetRegs.map((r) => ({ id: r.id, athleteId: r.athleteId, partnerAthleteId: r.partnerAthleteId ?? null })),
+        fromId,
+        toId,
+      );
+      for (const rp of repointed) {
+        const reg = d.registrations.find((r) => r.id === rp.id);
+        if (reg) {
+          reg.partnerAthleteId = rp.partnerAthleteId;
+          pushRegistration(reg, reg.sessionId);
+        }
+      }
+
       if (swapFee > 0 && meet.changeFee) {
         const cart = d.carts[clubId] ?? (d.carts[clubId] = []);
         cart.push({ id: `ci-change-${Date.now()}-${toId}`, label: `${meet.name} change fee — swap to ${to.firstName} ${to.lastName}`, amount: swapFee, kind: 'meet-entry', refUserId: toId, refRegIds: swappedRegIds });

@@ -216,6 +216,44 @@ export function changeIsEligible(before: RegChangeState, after: RegChangeState):
   return false;
 }
 
+// --- Synchro-partner reassignment on athlete swap (3e) ---------------------
+// When athlete `fromId` is swapped out for `toId` on their registrations, any
+// OTHER registration that named `fromId` as its synchro partner must be
+// repointed to `toId`. Pure: takes the registration slice it needs and returns
+// the subset that CHANGED (so the caller can persist only those). Scope is the
+// same one the partner model uses — the caller passes the registrations already
+// filtered to the relevant meet & non-refunded set.
+
+/** Minimal slice of a registration the partner-reassign logic needs. */
+export type PartnerReg = {
+  id: string;
+  athleteId: string;
+  partnerAthleteId?: string | null;
+};
+
+/**
+ * Of `regs`, return (a shallow copy of) each whose `partnerAthleteId` pointed at
+ * `fromId`, with `partnerAthleteId` repointed to `toId`. Registrations belonging
+ * to the swapped athlete themselves (athleteId === fromId/toId) are left for the
+ * caller's swap logic and never returned here, so we don't clobber a self-link.
+ * Only partners that pointed at the swapped-OUT athlete are touched.
+ */
+export function reassignPartners<T extends PartnerReg>(
+  regs: T[],
+  fromId: string,
+  toId: string,
+): T[] {
+  if (fromId === toId) return [];
+  const out: T[] = [];
+  for (const r of regs) {
+    if (r.athleteId === fromId || r.athleteId === toId) continue;
+    if (r.partnerAthleteId === fromId) {
+      out.push({ ...r, partnerAthleteId: toId });
+    }
+  }
+  return out;
+}
+
 /** Is a coupon usable at `nowISO`? Checks time window + usage cap. */
 export function couponValid(coupon: Coupon, nowISO: string): boolean {
   const now = Date.parse(nowISO);
