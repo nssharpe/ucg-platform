@@ -227,6 +227,7 @@ const registrationToRow = (r: Registration, squadId: string | null = null) => ({
   refunded: r.refunded ?? false, refund_requested: r.refundRequested ?? false,
   keep_listed: r.keepListed ?? false,
   partner_athlete_id: r.partnerAthleteId ?? null, event_levels: r.eventLevels ?? null,
+  paid: r.paid ?? false, updated_pending: r.updatedPending ?? false,
 });
 
 /** squad_id for every registration, derived from session.squads[].athleteRegIds. */
@@ -239,6 +240,8 @@ const rowToRegistration = (r: Row<'registrations'>): Registration => ({
   id: r.id, meetId: r.meet_id, athleteId: r.athlete_id, clubId: r.club_id ?? '', discipline: r.discipline as Registration['discipline'],
   levelId: r.level_id ?? '', events: (r.events ?? []) as Registration['events'], sessionId: r.session_id ?? '',
   refunded: r.refunded, keepListed: r.keep_listed,
+  paid: (r as { paid?: boolean | null }).paid ?? false,
+  ...((r as { updated_pending?: boolean | null }).updated_pending ? { updatedPending: true } : {}),
   ...(r.refund_requested ? { refundRequested: true } : {}),
   ...(r.partner_athlete_id ? { partnerAthleteId: r.partner_athlete_id } : {}),
   ...(r.event_levels ? { eventLevels: r.event_levels as Registration['eventLevels'] } : {}),
@@ -271,6 +274,7 @@ function cartItemToRow(ownerKey: string, item: DB['carts'][string][number], isCl
     id: item.id, club_id: isClub ? ownerKey : null, person_id: isClub ? null : ownerKey,
     label: item.label, amount: item.amount, kind: item.kind, ref_user_id: item.refUserId ?? null,
     ref_season_id: item.refSeasonId ?? null, ref_type: item.refType ?? null,
+    ref_reg_ids: item.refRegIds ?? null,
   };
 }
 
@@ -281,6 +285,7 @@ const invoiceToRow = (i: Invoice) => ({
 const invoiceItemToRow = (invoiceId: string, it: Invoice['items'][number]) => ({
   id: it.id, invoice_id: invoiceId, label: it.label, amount: it.amount, kind: it.kind,
   ref_user_id: it.refUserId ?? null, refunded: it.refunded ?? false,
+  ref_reg_ids: it.refRegIds ?? null,
 });
 
 const clubRequestToRow = (r: ClubRequest) => ({
@@ -1038,7 +1043,8 @@ export async function loadAll(): Promise<DB | null> {
     const itemsByInvoice = new Map<string, Invoice['items']>();
     for (const r of invoiceItemsR.data ?? []) {
       const arr = itemsByInvoice.get(r.invoice_id) ?? [];
-      arr.push({ id: r.id, label: r.label, amount: Number(r.amount), kind: r.kind, refUserId: r.ref_user_id ?? undefined, refunded: r.refunded });
+      arr.push({ id: r.id, label: r.label, amount: Number(r.amount), kind: r.kind, refUserId: r.ref_user_id ?? undefined, refunded: r.refunded,
+        ...((r as { ref_reg_ids?: string[] | null }).ref_reg_ids ? { refRegIds: (r as { ref_reg_ids?: string[] | null }).ref_reg_ids ?? undefined } : {}) });
       itemsByInvoice.set(r.invoice_id, arr);
     }
     const invoices: Invoice[] = (invoicesR.data ?? []).map((r: Row<'invoices'>) => ({
@@ -1054,7 +1060,8 @@ export async function loadAll(): Promise<DB | null> {
       const arr = carts[ownerKey] ?? (carts[ownerKey] = []);
       arr.push({ id: r.id, label: r.label, amount: Number(r.amount), kind: r.kind, refUserId: r.ref_user_id ?? undefined,
         refSeasonId: (r as { ref_season_id?: string | null }).ref_season_id ?? undefined,
-        refType: ((r as { ref_type?: string | null }).ref_type ?? undefined) as MembershipType | 'club' | undefined });
+        refType: ((r as { ref_type?: string | null }).ref_type ?? undefined) as MembershipType | 'club' | undefined,
+        ...((r as { ref_reg_ids?: string[] | null }).ref_reg_ids ? { refRegIds: (r as { ref_reg_ids?: string[] | null }).ref_reg_ids ?? undefined } : {}) });
     }
 
     const clubRequests: ClubRequest[] = (clubRequestsR.error ? [] : clubRequestsR.data ?? []).map(rowToClubRequest);

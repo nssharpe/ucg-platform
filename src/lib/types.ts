@@ -290,6 +290,16 @@ export interface Registration {
   /** Qualifier flags per event code (+ "AA"/"Team") — drives green/gold
    *  highlighting on results, mirroring the Nationals results viewer. */
   quals?: Record<string, boolean>;
+  /** True once the registration's entry/change fee is actually paid through a
+   *  pay path (3f). Defaults FALSE on create ⇒ "Pending Purchase". Host-club
+   *  ($0) registrations are created `paid: true` (nothing to purchase). Treat a
+   *  missing value as false. */
+  paid?: boolean;
+  /** Set when an already-PAID registration is edited in a way that incurs a
+   *  change fee: `paid` flips back to false AND this flips true, so the UI can
+   *  show "Updated pending purchase" (vs a never-paid "Pending Purchase").
+   *  Cleared when the change fee is paid (back to paid:true). */
+  updatedPending?: boolean;
   refunded?: boolean;
   refundRequested?: boolean; // athlete/club asked for a refund; admin reviews
   keepListed?: boolean; // refunded but keep for shirt/gift
@@ -342,6 +352,10 @@ export interface InvoiceItem {
    *  the club's own cart, and `ref_user_id` FKs `people`, not `clubs`). */
   refSeasonId?: string;
   refType?: MembershipType | 'club';
+  /** For meet-entry / change-fee lines (3f): the registration id(s) this line
+   *  pays for, so the pay path can flip exactly those registrations to
+   *  `paid: true`. */
+  refRegIds?: string[];
   refunded?: boolean;
 }
 

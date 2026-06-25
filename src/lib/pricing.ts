@@ -111,6 +111,34 @@ export function registrationChangeFee(
   return meet.changeFee?.amount ?? 0;
 }
 
+/**
+ * Total entry fee owed for a brand-new registration purchase (3f/3g): the base
+ * entry fee for the FIRST discipline plus the second-discipline fee for each
+ * additional discipline, all zeroed for the host club's own athletes.
+ *
+ * `priorDisciplineCount` is how many disciplines the athlete is ALREADY
+ * registered for at this meet (so a discipline added when others exist counts as
+ * a second discipline). `newDisciplineCount` is how many are being added now.
+ * Returns 0 for the host club (every fee waived) — the caller treats a 0 total
+ * as "nothing to purchase ⇒ create the registration already paid".
+ */
+export function newRegistrationEntryTotal(
+  meet: RegFeeMeet,
+  { competingClubId, priorDisciplineCount, newDisciplineCount }: {
+    competingClubId: string;
+    priorDisciplineCount: number;
+    newDisciplineCount: number;
+  },
+): number {
+  if (competingClubId === meet.hostClubId) return 0;
+  let total = 0;
+  for (let i = 0; i < newDisciplineCount; i++) {
+    const isSecond = priorDisciplineCount + i > 0;
+    total += isSecond ? meet.secondDisciplineFee : meet.entryFee;
+  }
+  return total;
+}
+
 // --- Change-fee eligibility (3h) -------------------------------------------
 // A pure predicate: given the BEFORE and AFTER state of an athlete's
 // registration for a meet, is the change "meaningful" enough to be chargeable

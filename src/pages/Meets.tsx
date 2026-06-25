@@ -12,6 +12,7 @@ import { EVENTS, SHIRT_SIZES } from '../lib/types';
 import type { Athlete, CartItem, Meet, MeetSession, Registration } from '../lib/types';
 import { deleteRegistration, pushCart, pushInvoice, pushMeet, pushMeetSessions, pushRegistration } from '../lib/supabase';
 import { fmtMoney } from '../lib/scoring';
+import { newRegistrationEntryTotal, registrationChangeFee } from '../lib/pricing';
 
 export function Meets() {
   const db = useDB();
@@ -250,11 +251,31 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
   };
 
   const persistRegs = (regs: Registration[], tshirtItems: CartItem[], bannerItems: CartItem[]) => {
+    let hostFree = false;
     mutate((d) => {
       const existingForAthlete = d.registrations.filter(
         (r) => r.meetId === meet.id && r.athleteId === athlete.id && !r.refunded,
       );
       const newDiscSet = new Set(regs.map((r) => r.discipline));
+      const alreadyHadRegs = existingForAthlete.length > 0;
+      const competingClubId = selectedClubId;
+
+      // Disciplines already registered for that we are KEEPING (count toward
+      // "second discipline" pricing for the ones being added now).
+      const priorDisciplineCount = existingForAthlete.filter((r) => newDiscSet.has(r.discipline)).length;
+      // Brand-new disciplines (not previously registered).
+      const addedRegs = regs.filter((r) => !existingForAthlete.some((e) => e.discipline === r.discipline));
+
+      // Entry total for the newly-added disciplines, host-club aware ($0 ⇒ free).
+      const entryTotal = newRegistrationEntryTotal(meet, {
+        competingClubId,
+        priorDisciplineCount,
+        newDisciplineCount: addedRegs.length,
+      });
+      const changeFee = changeFeeApplies && alreadyHadRegs
+        ? registrationChangeFee(meet, { competingClubId })
+        : 0;
+      hostFree = !alreadyHadRegs && entryTotal === 0;
 
       // Remove dropped disciplines
       for (const old of existingForAthlete) {
@@ -264,41 +285,52 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
         }
       }
 
-      // Upsert regs
+      // Upsert regs. New regs: paid=true when nothing is owed (host club / $0),
+      // else paid=false ("Pending Purchase"). For a chargeable EDIT, flip any
+      // previously-paid reg back to a re-pending state ("Updated pending
+      // purchase") so paying the change fee restores it.
+      const addedIds = new Set(addedRegs.map((r) => r.id));
       for (const reg of regs) {
+        const prior = existingForAthlete.find((e) => e.id === reg.id);
+        if (addedIds.has(reg.id) || !prior) {
+          reg.paid = entryTotal === 0; // host-club / $0 ⇒ immediately registered
+          reg.updatedPending = false;
+        } else if (changeFee > 0 && prior.paid) {
+          reg.paid = false;
+          reg.updatedPending = true;
+        } else {
+          // Preserve prior payment state on a non-chargeable edit.
+          reg.paid = prior.paid ?? false;
+          reg.updatedPending = prior.updatedPending ?? false;
+        }
         const idx = d.registrations.findIndex((r) => r.id === reg.id);
         if (idx >= 0) d.registrations[idx] = reg;
         else d.registrations.push(reg);
         pushRegistration(reg);
       }
 
-      // Cart: entry fee(s) for new registrations
+      // Cart: entry / change fee for new or re-pending registrations.
       const cart = d.carts[athlete.id] ?? (d.carts[athlete.id] = []);
-      const alreadyHadRegs = existingForAthlete.length > 0;
 
-      if (!alreadyHadRegs || changeFeeApplies) {
-        if (!alreadyHadRegs) {
-          const allMeetRegs = d.registrations.filter(
-            (r) => r.meetId === meet.id && r.athleteId === athlete.id && !r.refunded,
-          );
-          const isMulti = allMeetRegs.length > 1;
-          cart.push({
-            id: `ci-self-${Date.now()}-${athlete.id}`,
-            label: `${meet.name} entry — ${athlete.firstName} ${athlete.lastName} (${regs.map((r) => r.discipline).join('+')})`,
-            amount: isMulti ? meet.secondDisciplineFee : meet.entryFee,
-            kind: 'meet-entry',
-            refUserId: athlete.id,
-          });
-        }
-        if (changeFeeApplies && alreadyHadRegs && meet.changeFee) {
-          cart.push({
-            id: `ci-change-${Date.now()}-${athlete.id}`,
-            label: `${meet.name} change fee — ${athlete.firstName} ${athlete.lastName}`,
-            amount: meet.changeFee.amount,
-            kind: 'meet-entry',
-            refUserId: athlete.id,
-          });
-        }
+      if (!alreadyHadRegs && entryTotal > 0) {
+        cart.push({
+          id: `ci-self-${Date.now()}-${athlete.id}`,
+          label: `${meet.name} entry — ${athlete.firstName} ${athlete.lastName} (${addedRegs.map((r) => r.discipline).join('+')})`,
+          amount: entryTotal,
+          kind: 'meet-entry',
+          refUserId: athlete.id,
+          refRegIds: addedRegs.map((r) => r.id),
+        });
+      }
+      if (changeFee > 0) {
+        cart.push({
+          id: `ci-change-${Date.now()}-${athlete.id}`,
+          label: `${meet.name} change fee — ${athlete.firstName} ${athlete.lastName}`,
+          amount: changeFee,
+          kind: 'meet-entry',
+          refUserId: athlete.id,
+          refRegIds: regs.map((r) => r.id),
+        });
       }
 
       // Add-on cart items
@@ -308,7 +340,7 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
 
       pushCart(athlete.id, cart, false);
 
-      // Create an invoice stub if paying individually
+      // Create an unpaid invoice stub if anything is owed (paying individually).
       const allItems = [...cart];
       if (allItems.length > 0) {
         const invoice = {
@@ -325,7 +357,13 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
       }
     });
 
-    toast(changeFeeApplies ? 'Registration updated. Change fee added to your cart.' : 'Registration saved! Check your cart to complete payment.');
+    toast(
+      hostFree
+        ? 'Registration complete — no entry fee for your host club.'
+        : changeFeeApplies
+          ? 'Registration updated. Change fee added to your cart.'
+          : 'Registration saved! Check your cart to complete payment.',
+    );
     onClose();
   };
 

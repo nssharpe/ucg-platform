@@ -9,6 +9,7 @@ import type { ToastOptions } from '../components/ui-hooks';
 import { CLUB_ACCESS_LABELS, STATE_REGIONS } from '../lib/types';
 import type { Athlete, CartItem, Club, ClubAccess, DB, Invoice, Registration, Season } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
+import { newRegistrationEntryTotal, registrationChangeFee } from '../lib/pricing';
 import {
   deleteRegistration, pushCart, pushClub, pushClubManager, pushInvoice,
   pushMembership, pushRegistration, requestManagerAccess, sendClubInvite,
@@ -794,8 +795,27 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
         }
       }
 
-      // Upsert each new reg
+      // A chargeable edit (change fee applies, editing existing regs, and the
+      // fee is non-zero — i.e. NOT the host club's own athletes).
+      const changeFee = changeFeeApplies && existingForAthlete.length > 0
+        ? registrationChangeFee(meet, { competingClubId: clubId })
+        : 0;
+
+      // Upsert each new reg. A chargeable edit flips a previously-PAID reg back
+      // to "Updated pending purchase"; otherwise preserve its payment state
+      // (new regs created here get their paid flag set in addToCart's pass).
+      const priorById = new Map(existingForAthlete.map((r) => [r.id, r]));
       for (const reg of newRegs) {
+        const prior = priorById.get(reg.id);
+        if (prior) {
+          if (changeFee > 0 && prior.paid) {
+            reg.paid = false;
+            reg.updatedPending = true;
+          } else {
+            reg.paid = prior.paid ?? false;
+            reg.updatedPending = prior.updatedPending ?? false;
+          }
+        }
         const idx = d.registrations.findIndex((r) => r.id === reg.id);
         if (idx >= 0) {
           d.registrations[idx] = reg;
@@ -805,16 +825,18 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
         pushRegistration(reg);
       }
 
-      // If changeFee applies and we're editing, add a fee line to the club cart
-      if (changeFeeApplies && existingForAthlete.length > 0 && meet.changeFee) {
+      // If a (non-host) change fee applies on an edit, add a fee line linked to
+      // the affected regs so paying it flips them back to paid.
+      if (changeFee > 0 && meet.changeFee) {
         const cart = d.carts[clubId] ?? (d.carts[clubId] = []);
         const athlete = d.people.find((p) => p.id === athleteId)!;
         cart.push({
           id: `ci-change-${Date.now()}-${athleteId}`,
           label: `${meet.name} change fee — ${athlete.firstName} ${athlete.lastName}`,
-          amount: meet.changeFee.amount,
+          amount: changeFee,
           kind: 'meet-entry',
           refUserId: athleteId,
+          refRegIds: newRegs.map((r) => r.id),
         });
         pushCart(clubId, cart, true);
       }
@@ -822,29 +844,63 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
 
     setEditingAthleteId(null);
     setRegisterAthleteId(null);
-    toast(changeFeeApplies ? 'Registration updated. Change fee added to club cart.' : 'Registration saved.');
+    const editedHostFree = changeFeeApplies && registrationChangeFee(meet, { competingClubId: clubId }) === 0;
+    toast(
+      changeFeeApplies && !editedHostFree
+        ? 'Registration updated. Change fee added to club cart.'
+        : 'Registration saved.',
+    );
   };
 
-  // Add entries to club cart (for unregistered athletes after editor saves)
+  // Add entries to club cart (for unregistered athletes after editor saves).
+  // Host-club athletes pay $0 for all entry fees (3g): no cart line, and the
+  // registration is created already paid ("Registered"). Otherwise the entry
+  // total is queued and the regs stay "Pending Purchase" (paid:false) until
+  // the club pays the cart line.
   const addToCart = (athleteId: string, regs: Registration[]) => {
     if (clubMembershipBlocked()) return;
-    saveRegs(athleteId, regs);
-    // Queue cart items for the newly registered disciplines
+    let hostFree = false;
     mutate((d) => {
+      const existingForAthlete = d.registrations.filter(
+        (r) => r.meetId === meet.id && r.athleteId === athleteId && r.clubId === clubId && !r.refunded,
+      );
+      const priorDisciplineCount = existingForAthlete.length;
+      const entryTotal = newRegistrationEntryTotal(meet, {
+        competingClubId: clubId,
+        priorDisciplineCount,
+        newDisciplineCount: regs.length,
+      });
+      hostFree = entryTotal === 0;
+      // Stamp paid status on the new regs (saveRegs upserts them below).
+      for (const reg of regs) {
+        reg.paid = hostFree;
+        reg.updatedPending = false;
+      }
+    });
+
+    saveRegs(athleteId, regs);
+
+    // Queue the entry-fee line only when something is owed.
+    mutate((d) => {
+      if (hostFree) return;
       const cart = d.carts[clubId] ?? (d.carts[clubId] = []);
       const already = new Set(cart.filter((c) => c.kind === 'meet-entry').map((c) => c.refUserId));
       const athlete = d.people.find((p) => p.id === athleteId)!;
-      const allMeetRegs = d.registrations.filter(
-        (r) => r.meetId === meet.id && r.athleteId === athleteId && !r.refunded,
-      );
       if (!already.has(athleteId)) {
-        const isSecond = allMeetRegs.length > 1;
         cart.push({
           id: `ci-${Date.now()}-${athleteId}`,
           label: `${meet.name} entry — ${athlete.firstName} ${athlete.lastName} (${regs.map((r) => r.discipline).join('+')})`,
-          amount: isSecond ? meet.secondDisciplineFee : meet.entryFee,
+          amount: newRegistrationEntryTotal(meet, {
+            competingClubId: clubId,
+            priorDisciplineCount: d.registrations.filter(
+              (r) => r.meetId === meet.id && r.athleteId === athleteId && r.clubId === clubId && !r.refunded
+                && !regs.some((nr) => nr.id === r.id),
+            ).length,
+            newDisciplineCount: regs.length,
+          }),
           kind: 'meet-entry',
           refUserId: athleteId,
+          refRegIds: regs.map((r) => r.id),
         });
         pushCart(clubId, cart, true);
       }
@@ -866,20 +922,28 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
   const swapAthlete = (fromId: string, toId: string) => {
     const to = db.people.find((p) => p.id === toId);
     if (!to) return;
+    const swapFee = changeFeeApplies ? registrationChangeFee(meet, { competingClubId: clubId }) : 0;
     mutate((d) => {
+      const swappedRegIds: string[] = [];
       for (const r of d.registrations) {
         if (r.meetId === meet.id && r.athleteId === fromId && r.clubId === clubId && !r.refunded) {
           r.athleteId = toId;
+          // A chargeable swap re-pends a previously-paid registration.
+          if (swapFee > 0 && r.paid) {
+            r.paid = false;
+            r.updatedPending = true;
+          }
+          swappedRegIds.push(r.id);
           pushRegistration(r, r.sessionId);
         }
       }
-      if (changeFeeApplies && meet.changeFee) {
+      if (swapFee > 0 && meet.changeFee) {
         const cart = d.carts[clubId] ?? (d.carts[clubId] = []);
-        cart.push({ id: `ci-change-${Date.now()}-${toId}`, label: `${meet.name} change fee — swap to ${to.firstName} ${to.lastName}`, amount: meet.changeFee.amount, kind: 'meet-entry', refUserId: toId });
+        cart.push({ id: `ci-change-${Date.now()}-${toId}`, label: `${meet.name} change fee — swap to ${to.firstName} ${to.lastName}`, amount: swapFee, kind: 'meet-entry', refUserId: toId, refRegIds: swappedRegIds });
         pushCart(clubId, cart, true);
       }
     });
-    toast(`Registration swapped to ${to.firstName} ${to.lastName}.${changeFeeApplies && meet.changeFee ? ` Change fee ${fmtMoney(meet.changeFee.amount)} added to club cart.` : ''}`);
+    toast(`Registration swapped to ${to.firstName} ${to.lastName}.${swapFee > 0 ? ` Change fee ${fmtMoney(swapFee)} added to club cart.` : ''}`);
     setEditingAthleteId(null);
   };
 
@@ -937,6 +1001,8 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
               {registered.map((a) => {
                 const regs = regsFor(a.id);
                 const anyRefundReq = regs.some((r) => r.refundRequested);
+                const anyUnpaid = regs.some((r) => r.paid === false);
+                const anyUpdatedPending = regs.some((r) => r.paid === false && r.updatedPending);
                 const summary = regSummary(a.id);
                 return (
                   <tr key={a.id}>
@@ -945,7 +1011,11 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
                     <td>
                       {anyRefundReq
                         ? <Badge tone="warn">Refund requested</Badge>
-                        : <Badge tone="ok">Registered</Badge>}
+                        : anyUpdatedPending
+                          ? <Badge tone="warn">Updated pending purchase</Badge>
+                          : anyUnpaid
+                            ? <Badge tone="warn">Pending purchase</Badge>
+                            : <Badge tone="ok">Registered</Badge>}
                     </td>
                     {canManage && (
                       <td style={{ whiteSpace: 'nowrap', display: 'flex', gap: 6 }}>
@@ -1143,6 +1213,17 @@ function payClubItems(
   };
   d.invoices.push(invoice);
   pushInvoice(invoice);
+  // 3f: flip the exact registrations these meet-entry / change-fee lines cover.
+  const regIds = new Set(items.flatMap((i) => i.refRegIds ?? []));
+  if (regIds.size > 0) {
+    for (const reg of d.registrations) {
+      if (regIds.has(reg.id)) {
+        reg.paid = true;
+        reg.updatedPending = false;
+        pushRegistration(reg);
+      }
+    }
+  }
   for (const item of items) {
     // Club membership line: create/activate the club_memberships row for the
     // season now that it's paid (the gate that lets the club register athletes
