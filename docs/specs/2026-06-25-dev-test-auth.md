@@ -1,7 +1,27 @@
 # Dev Test-Auth (Option C) — seeded auto-login for local verification
 
-Date: 2026-06-25. Status: spec, not yet built. Prerequisite for verifying the Stripe
-integration (`2026-06-25-stripe-integration.md`) and for all future authenticated-UI work.
+Date: 2026-06-25. Status: ✅ built (branch `feat/dev-test-auth`). Prerequisite for verifying the
+Stripe integration (`2026-06-25-stripe-integration.md`) and for all future authenticated-UI work.
+
+## As built
+- `src/lib/dev-auth.ts` — dev-only module: real `signInWithPassword` of a seeded user + a tiny
+  vanilla-DOM bottom-left role switcher. Loaded ONLY via `import('./dev-auth')` behind
+  `if (import.meta.env.DEV)` in `src/lib/auth.ts`'s boot block, so it is dead-code-eliminated and
+  never bundled in production (verified: `grep dist/assets` for `VITE_DEV_AUTH`/`initDevAuth` =
+  NONE). Awaits the boot `getSession()`; no-op if already signed in.
+- Env vars (gitignored `.env.local`; names in `.env.example`, typed in `src/vite-env.d.ts`):
+  `VITE_DEV_AUTH_{ATHLETE,MANAGER,ADMIN}_{EMAIL,PASSWORD}`. Any subset may be set; only configured
+  roles appear in the switcher.
+- Sign-out loop guard: Layout's sign-out button sets `sessionStorage['ucg-dev-signed-out']`
+  (inline `import.meta.env.DEV` guard); dev-auth skips auto-login while set; the switcher clears it.
+  Role choice persists in `sessionStorage['ucg-dev-role']`.
+
+### Seeded test users (emails — passwords in `.env.local` only)
+| Role | env var prefix | email |
+|------|----------------|-------|
+| Athlete in a club (membership + cart with items) | `VITE_DEV_AUTH_ATHLETE_` | _TBD — Nate to fill_ |
+| Club manager (roster + registrations) | `VITE_DEV_AUTH_MANAGER_` | _TBD — Nate to fill_ |
+| League admin | `VITE_DEV_AUTH_ADMIN_` | _TBD — Nate to fill_ |
 
 ## Problem
 The dev/preview server (`ucg-dev` 5173, `ucg-preview` 5176) runs **unauthenticated** —

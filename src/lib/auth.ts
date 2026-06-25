@@ -96,8 +96,17 @@ function applySession(next: Session | null) {
 }
 
 if (isSupabaseConfigured && supabase) {
-  supabase.auth.getSession().then(({ data }) => applySession(data.session));
+  const bootSession = supabase.auth.getSession().then(({ data }) => {
+    applySession(data.session);
+    return data.session;
+  });
   supabase.auth.onAuthStateChange((_event, newSession) => applySession(newSession));
+  // DEV-ONLY seeded auto-login. Dynamic import behind `import.meta.env.DEV` so
+  // the dev-auth module (and its VITE_DEV_AUTH_* literals) is dead-code
+  // eliminated from production builds — it is never bundled when DEV is false.
+  if (import.meta.env.DEV) {
+    void import('./dev-auth').then((m) => m.initDevAuth(bootSession));
+  }
 }
 
 function subscribe(cb: () => void) {

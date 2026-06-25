@@ -183,7 +183,13 @@ export function Layout({ children }: { children: ReactNode }) {
               type="button"
               className="btn small ghost signout-btn"
               style={{ width: '100%', justifyContent: 'center', marginTop: 8 }}
-              onClick={() => supabase!.auth.signOut()}
+              onClick={() => {
+                // Dev-only: mark an intentional sign-out so the seeded dev
+                // auto-login (src/lib/dev-auth.ts) doesn't immediately log back
+                // in on the next reload, letting the signed-out gate be tested.
+                if (import.meta.env.DEV) sessionStorage.setItem('ucg-dev-signed-out', '1');
+                void supabase!.auth.signOut();
+              }}
             >
               Sign out
             </button>

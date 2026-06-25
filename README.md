@@ -75,6 +75,19 @@ Without Supabase env vars the app uses the password gate `fortheloveofthesport`
 (SHA-256 in `src/lib/store.ts` `GATE_HASH`) — obfuscation for private demos, not
 real security.
 
+### Dev auto-login (authenticated local testing)
+
+The dev server normally has no signed-in user, so member/club/admin/checkout UI
+can't be exercised locally. To fix that, copy [`.env.example`](.env.example) to
+`.env.local` and fill the `VITE_DEV_AUTH_*` vars with the credentials of **real
+seeded Supabase test users** (athlete / club-manager / admin). On dev boot the app
+then performs a real `signInWithPassword`, yielding a real JWT so RLS and Edge
+Functions work exactly as in production. A small bottom-left switcher flips between
+the seeded roles. This path is **dev-only** — it's dynamic-imported behind
+`import.meta.env.DEV` (see [`src/lib/dev-auth.ts`](src/lib/dev-auth.ts)) and is never
+bundled into a production build. Passwords live only in `.env.local` (gitignored);
+leave the vars blank to keep the dev server unauthenticated.
+
 ## Status & roadmap
 
 **Done:** Supabase backend (write-through + realtime live results) · real auth +

@@ -38,10 +38,15 @@ These keep the controller's context lean across big multi-task batches. Apply by
   a phase's migrations (sandbox disabled) and one loop to deploy all touched edge functions —
   fewer round-trips, one pending-migration diff to review. Subagents create migration files and
   edge-fn code but never push/deploy.
-- **Dev server caveat (every session):** `ucg-preview` (port 5176) has Supabase configured but
-  **no signed-in `me`**, so member/club/admin UI can't be exercised live. Rely on
-  build/eslint/vitest + a console-error smoke test of the changed routes, and tell Nate which
-  flows still need his manual live check after deploy.
+- **Dev auto-login (seeded test user) — authenticated UI IS exercisable locally:** when the
+  `VITE_DEV_AUTH_*` vars are set in `.env.local`, the dev server (`ucg-dev` 5173 / `ucg-preview`
+  5176, both `import.meta.env.DEV`) boots already signed in as a **real** seeded Supabase test
+  user — real JWT, so RLS, Edge Functions, and member/club/admin/checkout UI all work live (see
+  the "Dev test-auth" entry under Patterns & gotchas). A tiny bottom-left switcher flips between
+  the athlete / club-manager / admin seeded users. So preview-tool verification of authenticated
+  flows no longer stalls — exercise them directly. If the vars are blank (e.g. a fresh clone, or
+  CI), the dev server falls back to unauthenticated and that UI can't render — then rely on
+  build/eslint/vitest + a console-error smoke test and flag flows for Nate's manual check.
 - **Front-load clarifying questions per phase** (before dispatching) so a session doesn't burn
   turns discovering an ambiguity mid-flight.
 - **Don't reach for Workflow/`ultracode` when the goal is to reduce usage** — multi-agent
@@ -138,12 +143,13 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
     coach-left/athlete-right via CSS `order` (holds for a lone badge too), and the
     `@media (max-width:600px/520px)` rules (avatar-only chip, compact badges) keep a
     dual-role pair on one second line on phones.
-  - **No-session gotcha:** the dev server runs unauthenticated (env-gated), so
-    membership badges (which need a signed-in `me`) don't render. To verify badge
-    degradation without auth, inject a realistic topbar via `preview_eval` (build the
-    `.topbar` innerHTML with `.topbar-membership` + dual `.member-banner` badges, a cart
-    chip, and a long user name = worst case) and exercise the live CSS/measurement at
-    each width. The drawer/hamburger itself needs no auth.
+  - **No-session fallback (only when `VITE_DEV_AUTH_*` are blank):** with dev auto-login set up
+    (above), a signed-in `me` and the membership badges render normally, so verify them directly.
+    Only if the dev-auth vars are unset does the server run unauthenticated and the badges not
+    render — in that case inject a realistic topbar via `preview_eval` (build the `.topbar`
+    innerHTML with `.topbar-membership` + dual `.member-banner` badges, a cart chip, and a long
+    user name = worst case) and exercise the live CSS/measurement at each width. The
+    drawer/hamburger itself needs no auth.
 - **CI gate:** the GitHub Actions "Deploy to GitHub Pages" workflow runs `npm run lint`
   and **fails the deploy on any lint _error_** (the few pre-existing _warnings_ are
   tolerated, exit 0). `npm run build` does NOT run eslint, so a clean build can still
@@ -262,6 +268,22 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
   flows may still over-claim until payments land; check the specific toast.
 
 ## Patterns & gotchas (learned in build)
+- **Dev test-auth (seeded auto-login).** `src/lib/dev-auth.ts` performs a **real**
+  `signInWithPassword` of a seeded Supabase test user on dev boot, so local/preview runs are
+  authenticated (real JWT → RLS + Edge Functions + member/club/admin/checkout UI all work).
+  **Firewall:** the module is loaded ONLY via a dynamic `import('./dev-auth')` behind an
+  `if (import.meta.env.DEV)` guard in `auth.ts`'s boot block — Vite sets `DEV=false` in a
+  production build, the dead `if` is eliminated, and the module (with every `VITE_DEV_AUTH_*`
+  literal) is never bundled. Always re-confirm after a build by grepping `dist/assets` for
+  `VITE_DEV_AUTH`/`initDevAuth` (must be NONE). Credentials come from gitignored `.env.local`
+  (`VITE_DEV_AUTH_{ATHLETE,MANAGER,ADMIN}_{EMAIL,PASSWORD}`; names in `.env.example`, typed in
+  `src/vite-env.d.ts`). It awaits the boot `getSession()` and skips if already signed in. A tiny
+  vanilla-DOM bottom-left switcher (also inside the dev-only chunk, no React) flips between the
+  athlete / manager / admin seeded users and persists the choice in `sessionStorage` (`ucg-dev-role`).
+  **Sign-out loop guard:** the Layout sign-out button sets `sessionStorage['ucg-dev-signed-out']`
+  (inline `import.meta.env.DEV` guard, also DCE'd in prod) so a manual dev sign-out isn't undone
+  by an instant re-login on reload; the switcher clears it. Seeded user emails (passwords in
+  `.env.local` only) are recorded in `docs/specs/2026-06-25-dev-test-auth.md`.
 - **Auth/set-password round-trip with HashRouter.** Supabase uses implicit flow
   (`detectSessionInUrl`), which puts the token in the URL **hash** — clashing with
   HashRouter. The invite/set-password flow works around it: `redirectTo` is the app base
