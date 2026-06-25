@@ -57,6 +57,7 @@ const MyRegistrations = lazy(() => import('./pages/MyRegistrations').then((m) =>
 const PurchaseHistory = lazy(() => import('./pages/PurchaseHistory').then((m) => ({ default: m.PurchaseHistory })));
 const ErrorLog = lazy(() => import('./pages/ErrorLog').then((m) => ({ default: m.ErrorLog })));
 const Cart = lazy(() => import('./pages/Cart').then((m) => ({ default: m.Cart })));
+const MembershipsCheckout = lazy(() => import('./pages/Cart').then((m) => ({ default: m.MembershipsCheckout })));
 
 /** Prefetch all route chunks once the browser is idle after first paint. */
 function usePrefetchRoutes() {
@@ -184,6 +185,7 @@ export default function App() {
               <Route path="/me/registrations" element={<RequireAccount><MyRegistrations /></RequireAccount>} />
               <Route path="/me/purchases" element={<RequireAccount><PurchaseHistory /></RequireAccount>} />
               <Route path="/cart" element={<RequireAccount><Cart /></RequireAccount>} />
+              <Route path="/cart/memberships" element={<RequireAccount><MembershipsCheckout /></RequireAccount>} />
               <Route path="/clubs" element={<RequireAccount><Clubs /></RequireAccount>} />
               <Route path="/sanction" element={<RequireAccount><SanctionRequestForm /></RequireAccount>} />
               <Route path="/sanctioning" element={<RequireAccount><SanctioningQueue /></RequireAccount>} />

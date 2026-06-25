@@ -635,6 +635,22 @@ export async function sendMembershipWelcome(
   return data as { ok: boolean; sent?: boolean; error?: string };
 }
 
+/** Email the CALLER their own purchase confirmation + HTML receipt. Used after a
+ *  membership checkout. The recipient is resolved server-side as the caller's own
+ *  people.email (a member can only receipt themselves), so it works for a regular
+ *  member — unlike the admin-gated `send-email`. Best-effort; never blocks the UX. */
+export async function sendReceipt(args: {
+  items: { label: string; amount: number; kind?: string }[];
+  total?: number;
+  invoiceNumber?: string;
+  couponCode?: string;
+}): Promise<{ ok: boolean; sent?: boolean; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('send-receipt', { body: args });
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  return data as { ok: boolean; sent?: boolean; error?: string };
+}
+
 /** Invite someone to a club by email (coach invite or membership purchase).
  *  Caller must manage the club (the function re-checks). */
 export async function sendClubInvite(args: {

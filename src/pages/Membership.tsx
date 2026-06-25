@@ -5,7 +5,7 @@ import { useCapabilities } from '../lib/capabilities';
 import { Badge, Field } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 import { fmtMoney } from '../lib/scoring';
-import { pushCartItem, redeemCoupon, pushInvoice, pushMembership, fetchPublishedWaiver, recordWaiverSignature, requestGuardianWaiver, notifyClubCart, sendMembershipWelcome } from '../lib/supabase';
+import { pushCartItem, redeemCoupon, pushInvoice, pushMembership, fetchPublishedWaiver, recordWaiverSignature, requestGuardianWaiver, notifyClubCart, sendMembershipWelcome, sendReceipt } from '../lib/supabase';
 import type { Athlete, InvoiceItem, Membership, MembershipType, WaiverDocument } from '../lib/types';
 import { GENERAL_WAIVER_TYPE } from '../lib/types';
 import { isMinorAt } from '../lib/waivers-core';
@@ -191,6 +191,11 @@ function MembershipInner({ me }: { me: Athlete }) {
       (m) => m.status === 'active' || m.status === 'pending-club-payment' || m.clubCartPending || m.paidVia != null,
     );
 
+    // Direct-pay (card/comp) invoice, captured so we can email the receipt after
+    // the mutate. Null for the club-cart push (no personal invoice is created).
+    type DirectInvoice = { number: string; items: InvoiceItem[]; couponCode?: string };
+    let directInvoice: DirectInvoice | null = null;
+
     mutate((d) => {
       const p = d.people.find((x) => x.id === me.id)!;
 
@@ -274,6 +279,7 @@ function MembershipInner({ me }: { me: Athlete }) {
         };
         d.invoices.push(invoice);
         pushInvoice(invoice);
+        directInvoice = { number: invoice.number, items: invoice.items, couponCode: invoice.couponCode };
       }
 
       // Increment coupon usedCount. The remote write goes through a security-
@@ -294,8 +300,24 @@ function MembershipInner({ me }: { me: Athlete }) {
       toast(`Membership granted by admin override. Activated at $0.`);
     } else if (via === 'club') {
       toast(`Sent to ${club?.name} club cart — your membership activates once the club pays.`);
+    } else if (directInvoice) {
+      // Real send: email the account owner their confirmation + HTML receipt
+      // (service-role `send-receipt`, works for a non-admin member). Best-effort;
+      // the toast only claims "emailed" when the send actually succeeds.
+      const inv: DirectInvoice = directInvoice;
+      void sendReceipt({
+        items: inv.items.map((i) => ({ label: i.label, amount: i.amount, kind: i.kind })),
+        total: inv.items.reduce((s, i) => s + i.amount, 0),
+        invoiceNumber: inv.number,
+        couponCode: inv.couponCode,
+      })
+        .then((r) => {
+          if (r.ok && r.sent) toast(`Membership active! Confirmation emailed to ${me.email}.`);
+          else toast('Membership active! Your receipt is saved in Purchase History.');
+        })
+        .catch(() => toast('Membership active! Your receipt is saved in Purchase History.'));
     } else {
-      toast(`Membership active! Confirmation emailed to ${me.email} and ${club?.name ?? 'your club'}.`);
+      toast('Membership active!');
     }
 
     // "Welcome to UCG" email for a no-club member's FIRST membership-only

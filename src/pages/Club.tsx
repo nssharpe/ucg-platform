@@ -5,13 +5,14 @@ import { useCapabilities } from '../lib/capabilities';
 import { clubHasActiveMembership, seasonForDate, membershipHolds } from '../lib/capabilities-core';
 import { Badge, Combo, Field, Modal, Tabs } from '../components/ui';
 import { useToast, useFmtDate } from '../components/ui-hooks';
+import type { ToastOptions } from '../components/ui-hooks';
 import { CLUB_ACCESS_LABELS, STATE_REGIONS } from '../lib/types';
-import type { Athlete, Club, ClubAccess, Registration, Season } from '../lib/types';
+import type { Athlete, CartItem, Club, ClubAccess, DB, Invoice, Registration, Season } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
 import {
   deleteRegistration, pushCart, pushClub, pushClubManager, pushInvoice,
   pushMembership, pushRegistration, requestManagerAccess, sendClubInvite,
-  inviteAccount, pushClubMembership, deleteClubMembership,
+  inviteAccount, pushClubMembership, deleteClubMembership, sendReceipt,
 } from '../lib/supabase';
 import type { ClubMembership } from '../lib/types';
 import { ClubForm } from '../components/ClubForm';
@@ -1044,6 +1045,94 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
 
 // ---- ClubCart ---------------------------------------------------------------
 
+/** Pay a set of club-cart `items`: create the paid invoice, activate the
+ *  memberships each line covers (club seasonal membership rows and member
+ *  membership rows alike), and remove exactly those items from the club cart.
+ *  Runs inside a `mutate` draft `d`; returns the created invoice so the caller
+ *  can email a receipt. Shared by the full-cart Pay button and the
+ *  memberships-only checkout so activation logic is never duplicated. */
+function payClubItems(
+  d: DB,
+  clubId: string,
+  items: CartItem[],
+  couponCode: string | undefined,
+): Invoice | null {
+  if (items.length === 0) return null;
+  const invoice: Invoice = {
+    id: `inv-${Date.now()}`, number: `UCG-2026-${String(d.invoices.length + 1).padStart(4, '0')}`,
+    clubId, athleteId: null, createdAt: new Date().toISOString(), paidAt: new Date().toISOString(),
+    items: items.map((i) => ({ ...i })), ...(couponCode ? { couponCode } : {}),
+  };
+  d.invoices.push(invoice);
+  pushInvoice(invoice);
+  for (const item of items) {
+    // Club membership line: create/activate the club_memberships row for the
+    // season now that it's paid (the gate that lets the club register athletes
+    // & host that season).
+    if (item.kind === 'membership' && item.refType === 'club' && item.refSeasonId) {
+      const already = (d.clubMemberships ?? []).some(
+        (x) => x.clubId === clubId && x.seasonId === item.refSeasonId && x.status === 'active',
+      );
+      if (!already) {
+        const cm: ClubMembership = {
+          id: crypto.randomUUID(), clubId, seasonId: item.refSeasonId,
+          status: 'active', grantedByAdmin: false, createdAt: new Date().toISOString(),
+        };
+        (d.clubMemberships ??= []).push(cm);
+        pushClubMembership(cm);
+      }
+      continue;
+    }
+    if (item.kind === 'membership' && item.refUserId) {
+      const person = d.people.find((p) => p.id === item.refUserId);
+      // Target the EXACT membership this line covers (season + type). Older cart
+      // items lack the refs — fall back to the first payment-pending membership.
+      const m = person?.memberships.find((x) =>
+        item.refSeasonId
+          ? x.seasonId === item.refSeasonId && (!item.refType || x.type === item.refType)
+          : x.clubCartPending || x.status === 'pending-club-payment',
+      );
+      if (m) {
+        // Payment clears the PAYMENT hold. Fully active only if the waiver is
+        // also signed; an under-18 whose guardian waiver is still open drops to
+        // a waiver-only hold.
+        m.clubCartPending = false;
+        m.paidVia = 'club';
+        m.status = m.waiverSignedAt ? 'active' : 'pending-waiver';
+        pushMembership(person!.id, m);
+      }
+    }
+  }
+  const ids = new Set(items.map((i) => i.id));
+  d.carts[clubId] = (d.carts[clubId] ?? []).filter((i) => !ids.has(i.id));
+  pushCart(clubId, d.carts[clubId], true);
+  return invoice;
+}
+
+/** After a club-cart payment, email the PAYER (the signed-in manager) a receipt
+ *  and surface an honest toast — only claiming "emailed" when the send actually
+ *  succeeds. Best-effort: a mail failure never undoes the completed payment. The
+ *  `send-receipt` fn resolves the recipient as the caller's own email, so this
+ *  works without admin rights (the admin-gated `send-email` would not). */
+function emailClubReceipt(
+  invoice: Invoice | null,
+  toast: (msg: string, opts?: ToastOptions) => void,
+  baseMsg: string,
+): void {
+  if (!invoice) return;
+  void sendReceipt({
+    items: invoice.items.map((i) => ({ label: i.label, amount: i.amount, kind: i.kind })),
+    total: invoice.items.reduce((s, i) => s + i.amount, 0),
+    invoiceNumber: invoice.number,
+    couponCode: invoice.couponCode,
+  })
+    .then((r) => {
+      if (r.ok && r.sent) toast(`${baseMsg} Receipt emailed to you.`);
+      else toast(`${baseMsg} Receipt saved to invoices below.`);
+    })
+    .catch(() => toast(`${baseMsg} Receipt saved to invoices below.`));
+}
+
 export function ClubCart() {
   const { clubId } = useParams();
   const db = useDB();
@@ -1147,10 +1236,25 @@ export function ClubCart() {
           {/* Memberships card */}
           {membershipItems.length > 0 && (
             <div className="card card-pad" style={{ marginBottom: 18 }}>
-              <h3 className="card-title">Memberships</h3>
-              <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 10 }}>
-                The club’s own seasonal membership and any member fees pushed to the cart.{' '}
-                <Link to="/membership">Return to membership purchasing →</Link>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+                <h3 className="card-title" style={{ margin: 0 }}>Memberships</h3>
+                <button
+                  className="btn primary small"
+                  style={{ marginLeft: 'auto' }}
+                  onClick={() => {
+                    let invoice: Invoice | null = null;
+                    mutate((d) => {
+                      const ms = (d.carts[club.id] ?? []).filter((i) => i.kind === 'membership');
+                      invoice = payClubItems(d, club.id, ms, couponDef?.code);
+                    });
+                    emailClubReceipt(invoice, toast, 'Memberships activated.');
+                  }}
+                >
+                  Checkout Memberships →
+                </button>
+              </div>
+              <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '6px 0 10px' }}>
+                The club’s own seasonal membership and any member fees pushed to the cart.
               </p>
               <table className="tbl">
                 <tbody>
@@ -1213,58 +1317,11 @@ export function ClubCart() {
               className="btn primary"
               style={{ marginBottom: 14 }}
               onClick={() => {
+                let invoice: Invoice | null = null;
                 mutate((d) => {
-                  const items = d.carts[club.id] ?? [];
-                  const invoice = {
-                    id: `inv-${Date.now()}`, number: `UCG-2026-${String(d.invoices.length + 1).padStart(4, '0')}`,
-                    clubId: club.id, athleteId: null, createdAt: new Date().toISOString(), paidAt: new Date().toISOString(),
-                    items: [...items], couponCode: couponDef?.code,
-                  };
-                  d.invoices.push(invoice);
-                  pushInvoice(invoice);
-                  for (const item of items) {
-                    // Club membership line: create/activate the club_memberships
-                    // row for the season now that it's paid (the gate that lets
-                    // the club register athletes & host that season).
-                    if (item.kind === 'membership' && item.refType === 'club' && item.refSeasonId) {
-                      const already = (d.clubMemberships ?? []).some(
-                        (x) => x.clubId === club.id && x.seasonId === item.refSeasonId && x.status === 'active',
-                      );
-                      if (!already) {
-                        const cm: ClubMembership = {
-                          id: crypto.randomUUID(), clubId: club.id, seasonId: item.refSeasonId,
-                          status: 'active', grantedByAdmin: false, createdAt: new Date().toISOString(),
-                        };
-                        (d.clubMemberships ??= []).push(cm);
-                        pushClubMembership(cm);
-                      }
-                      continue;
-                    }
-                    if (item.kind === 'membership' && item.refUserId) {
-                      const person = d.people.find((p) => p.id === item.refUserId);
-                      // Target the EXACT membership this line covers (season + type).
-                      // Older cart items lack the refs — fall back to the first
-                      // payment-pending membership for back-compat.
-                      const m = person?.memberships.find((x) =>
-                        item.refSeasonId
-                          ? x.seasonId === item.refSeasonId && (!item.refType || x.type === item.refType)
-                          : x.clubCartPending || x.status === 'pending-club-payment',
-                      );
-                      if (m) {
-                        // Payment clears the PAYMENT hold. The membership is fully
-                        // active only if the waiver is also signed; an under-18 whose
-                        // guardian waiver is still open drops to a waiver-only hold.
-                        m.clubCartPending = false;
-                        m.paidVia = 'club';
-                        m.status = m.waiverSignedAt ? 'active' : 'pending-waiver';
-                        pushMembership(person!.id, m);
-                      }
-                    }
-                  }
-                  d.carts[club.id] = [];
-                  pushCart(club.id, [], true);
+                  invoice = payClubItems(d, club.id, d.carts[club.id] ?? [], couponDef?.code);
                 });
-                toast('Payment processed — memberships activated, confirmations emailed.');
+                emailClubReceipt(invoice, toast, 'Payment processed — memberships activated.');
               }}
             >
               Pay {fmtMoney(total)} →
