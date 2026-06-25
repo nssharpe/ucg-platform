@@ -210,6 +210,22 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
   `clubHasActiveMembership`/`seasonForDate` (`capabilities-core.ts`). New registration
   paths MUST apply this gate. A migration backfills the current season for clubs with
   active members; future seasons require purchase/grant.
+- **Membership holds are INDEPENDENT (waiver + club-payment can co-exist).** The
+  `MembershipStatus` enum (`active`/`pending-waiver`/`pending-club-payment`/`none`) is a
+  single value and CANNOT represent both holds at once (a minor who pushes their fee to
+  the club cart is awaiting BOTH a guardian waiver AND club payment). Derive the two holds
+  from the membership's own fields via `membershipHolds(m)` in `capabilities-core.ts`:
+  `waiverHold = !waiverSignedAt`, `paymentHold = clubCartPending || status ===
+  'pending-club-payment'` (the status is the legacy/server fallback), `active = neither`.
+  `clubCartPending` (on `Membership`) is the explicit payment-hold flag: set `true` when a
+  member pushes a fee to a club cart (`Membership.complete`, `via==='club'`), cleared when
+  the club pays (`ClubCart` pay handler). The club-pay handler matches the EXACT membership
+  via the cart line's `refSeasonId`+`refType` (added to `InvoiceItem`) and sets `active`
+  only if the waiver is also signed (else `pending-waiver`). `Membership.tsx` and `Club.tsx`
+  render bubbles off `membershipHolds`, not the raw enum. NOTE: the `record-waiver-signature`
+  Edge Function still flips club-pay rows `pending-waiver`→`pending-club-payment` on signing
+  and does NOT touch `clubCartPending`; if the club pays BEFORE the guardian signs, that
+  server path can re-assert a (stale) payment hold — fix when payments land.
 - **`rolesLoaded` gate.** Roles load async *after* the session resolves; `RequireAdmin`
   (and role screens) must wait on `useRolesLoaded()` or they flash "access denied" on
   refresh. Reset it on sign-out / new user (`auth.ts`).
