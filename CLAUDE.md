@@ -184,11 +184,20 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
     (email or copy). Returns `{token, link}`; emailing is done client-side via `send-email`.
   - `notify-sanction` — sanction lifecycle (`event:'submitted'` → team+admins;
     `'approved'`/`'rejected'` → the requester).
+  - `send-receipt` — emails the CALLER their own purchase confirmation + inline
+    HTML receipt after a membership checkout. Notify-style: resolves the recipient
+    as the caller's OWN `people.email` (a member can only receipt themselves), so a
+    non-admin member can receipt their own checkout (the admin-gated `send-email`
+    can't). Takes `{items, total?, invoiceNumber?, couponCode?}`. Used by the
+    `/cart/memberships` checkout (`Cart.tsx` `MembershipsCheckout`), the club-cart
+    pay paths (`Club.tsx` — `payClubItems`/`emailClubReceipt`), and the direct
+    card-pay flow (`Membership.tsx`); the client also offers the jsPDF PDF receipt
+    download. Best-effort — toasts only claim "emailed" on a real (`ok && sent`) send.
   - The notify-style functions allow any signed-in caller and resolve recipients
     server-side with the service role (pattern: `notify-club-cart`). `send-email`/`send-sms`
     are the only admin-gated senders.
 - Front-end invokers in `src/lib/supabase.ts`: `sendEmail`, `sendSms`, `requestGuardianWaiver`,
-  `notifyClubCart`, `sendMembershipWelcome`, `sendClubInvite`, `inviteAccount`, `requestManagerAccess`, `notifySanction`,
+  `notifyClubCart`, `sendMembershipWelcome`, `sendReceipt`, `sendClubInvite`, `inviteAccount`, `requestManagerAccess`, `notifySanction`,
   `createWaiverLink`, `fetchManagerAccessRequest`, `decideManagerAccess`, `notifyManagerAccessDenied`.
   Deploy: `supabase functions deploy <name> --project-ref wkyerxlgricfphopocoz` (sandbox
   disabled; Docker NOT required) — the deploy bundles `_shared/resend.ts` automatically.
@@ -196,9 +205,13 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
   `edgeErrorMessage(error)` (returns the function's real message), NOT `error.message`
   (which is the generic "Edge Function returned a non-2xx status code"). Every invoker
   follows this — match it for new ones.
-- **Still over-claim** (deferred with Stripe — payment is itself a stub): the
-  "Confirmation emailed" toasts in `Membership.tsx` (direct-pay completion) and
-  `Club.tsx` (club-cart pay button) say email but send none. Wire when payments land.
+- **Membership receipts now send for real** (feedback 2d/2e, 2026-06-25): the
+  `/cart/memberships` checkout, the `Club.tsx` club-cart pay paths, and the
+  `Membership.tsx` direct card-pay flow all call `send-receipt` and show an honest
+  toast (only claim "emailed" on `ok && sent`). NOTE the recipient is always the
+  CALLER's own email — for a club-cart payment that's the paying MANAGER, not the
+  member whose fee was in the cart (acceptable: managers pay the club cart). Other
+  flows may still over-claim until payments land; check the specific toast.
 
 ## Patterns & gotchas (learned in build)
 - **Auth/set-password round-trip with HashRouter.** Supabase uses implicit flow
@@ -271,8 +284,10 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
 - **MFA / passkeys** — phased recommendation in
   `docs/research/2026-06-22-auth-2fa-passkeys.md` (TOTP opt-in → require for admins →
   passkeys). Not built.
-- **Still over-claims email** (deferred with Stripe — payment is a stub): the
-  "Confirmation emailed" toasts in `Membership.tsx` / `Club.tsx` pay buttons send no email.
+- **Membership "Confirmation emailed" toasts now send for real** via `send-receipt`
+  (`Membership.tsx` direct-pay, `Club.tsx` club-cart pay, `/cart/memberships`). Done
+  2026-06-25 — see the Email-infra note. Remaining payment-emailed PDF receipts (server
+  attachments) still wait on Stripe.
 - Stripe payments (memberships, meet entries, banquet) + server-emailed PDF receipts,
   per-season typed waivers, codeless judge access (URL / 6-digit / QR), multi-judge +
   score-entry-mode meet config, PDF certs, finals rosters. See `docs/specs/` + `docs/plans/`,
