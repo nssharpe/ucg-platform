@@ -25,8 +25,14 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
 ## Supabase / migrations
 - Project ref `wkyerxlgricfphopocoz` (org NAIGC). Migrations in `supabase/migrations/`.
   CLI is linked (`supabase link` done 2026-06-19). Latest migration is
-  `20260624233746_people_self_insert_by_email.sql` — all migrations through it are
-  **applied** as of 2026-06-24 (feedback-batch Phase 1). That batch added, in order:
+  `20260625001248_waiver_sign_request_signer_role.sql` — all migrations through it are
+  **applied** as of 2026-06-25. Phase 2 (feedback batch) added
+  `20260625000509_membership_club_cart_pending.sql` (`memberships.club_cart_pending` +
+  `cart_items.ref_season_id`/`ref_type` — the independent payment-hold flag and the cart→
+  membership ref the club-pay activation matches on) and `20260625001248_…signer_role.sql`
+  (`waiver_sign_requests.signer_role` self|guardian; `get_waiver_sign_request` recreated —
+  a RETURNS TABLE shape change needs `drop function` before recreate, not `create or replace`).
+  Phase 1 (feedback batch) added, in order:
   `20260624204707_people_outside_us.sql` (`people.outside_us` boolean — trains outside
   the US ⇒ state optional, Region = "Outside US"); `…233240_app_role_regional_rep.sql`
   + `…233241_app_role_finance_admin.sql` (two new `app_role` enum values — own files per
