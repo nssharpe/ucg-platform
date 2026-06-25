@@ -59,6 +59,7 @@ sequence numbers used in conversation. In order:
 | `20260624233240_app_role_regional_rep.sql` | Adds the `regional_rep` app role (own file — enum-add must commit before use). |
 | `20260624233241_app_role_finance_admin.sql` | Adds the `finance_admin` app role (own file — enum-add must commit before use). |
 | `20260624233242_regional_rep_regions.sql` | `regional_rep_regions` (user_id → region, one per rep) for Regional Representatives. RLS: admins manage all; a rep reads own row. |
+| `20260625001248_waiver_sign_request_signer_role.sql` | Adds `waiver_sign_requests.signer_role` (`'self'`\|`'guardian'`, default `'guardian'`) so a no-login link can carry the intended signer; recreates `get_waiver_sign_request` to return it. Lets an 18+ athlete sign their OWN waiver via the no-login path instead of being recorded as their own guardian. |
 
 All migrations are applied to the live project and tracked by the linked CLI
 (`supabase db push`). Migrations are append-only — add new ones rather than editing
@@ -79,9 +80,9 @@ is the only admin-gated sender.
 | `send-email` | Communicate broadcast / test sender (Resend batch, 50-recipient cap). | admin only |
 | `send-sms` | Communicate text sender (Telnyx); records sent messages to `sms_messages`. | admin only |
 | `sms-webhook` | Inbound Telnyx webhook: DLRs → `sms_messages` status, inbound replies → store + email admins, STOP → `sms_consent` off. Verifies Telnyx Ed25519 signature (`TELNYX_PUBLIC_KEY`). | Telnyx (no JWT; signature-verified) |
-| `record-waiver-signature` | Server-stamps real IP into `waiver_signatures`, activates membership (club-pay rows → `pending-club-payment`; returns `pendingPayment`). | signed-in owner (self) / guardian token |
+| `record-waiver-signature` | Server-stamps real IP into `waiver_signatures`, activates membership (club-pay rows → `pending-club-payment`; returns `pendingPayment`). The no-login (token) path stamps `signer_role` from the request row, not the request body. | signed-in owner (JWT, no token) / no-login token (self or guardian) |
 | `request-guardian-waiver` | Creates a signing token + emails a minor's guardian the link. | signed-in owner |
-| `create-waiver-link` | Mints a no-login waiver signing link for a member (admin "Activate" popup — email or copy). Returns `{token, link}`. | admin / club manager |
+| `create-waiver-link` | Mints a no-login waiver signing link for a member (admin "Activate" popup — email or copy). Takes optional `signerRole: 'self'\|'guardian'` (default `'guardian'`) stored on the request row. Returns `{token, link, signerRole}`. | admin / club manager |
 | `notify-club-cart` | Emails a club's managers when a member pushes fees to the cart. | any signed-in member |
 | `send-club-invite` | Invite a coach (signup) or a member (purchase membership) by email. | club manager / admin |
 | `invite-account` | Create an account + email a branded set-password link (Resend). Used by club "Add athlete"/"Add coach" (`roles` set to match kind). | club manager / admin |
