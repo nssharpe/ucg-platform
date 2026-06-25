@@ -7,7 +7,7 @@
 // block the UI) and are no-ops when `isSupabaseConfigured` is false.
 import { createClient, type SupabaseClient, type RealtimePostgresChangesPayload, type PostgrestError } from '@supabase/supabase-js';
 import type {
-  AccountInvite, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, Invoice, Level, Meet, Membership, Region, Registration, SanctionRequest, SanctionVote, Score, Season,
+  AccountInvite, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, Invoice, Level, Meet, Membership, MembershipType, Region, Registration, SanctionRequest, SanctionVote, Score, Season,
   WaiverDocument, WaiverSignature,
 } from './types';
 import { writeQueue, type WriteOp, type ExecResult } from './write-queue';
@@ -189,10 +189,12 @@ const membershipToRow = (personId: string, m: Membership) => ({
   person_id: personId, season_id: m.seasonId, type: m.type ?? 'athlete', status: m.status,
   waiver_signed_at: m.waiverSignedAt, waiver_signed_by: m.waiverSignedBy,
   paid_via: m.paidVia, activated_by_admin: m.activatedByAdmin ?? false,
+  club_cart_pending: m.clubCartPending ?? false,
 });
 const rowToMembership = (r: Row<'memberships'>): Membership => ({
   seasonId: r.season_id, type: (r.type ?? 'athlete') as Membership['type'], status: r.status as Membership['status'], waiverSignedAt: r.waiver_signed_at,
   waiverSignedBy: r.waiver_signed_by, paidVia: r.paid_via, activatedByAdmin: r.activated_by_admin,
+  clubCartPending: (r as { club_cart_pending?: boolean }).club_cart_pending ?? false,
 });
 
 const meetToRow = (m: Meet) => ({
@@ -268,6 +270,7 @@ function cartItemToRow(ownerKey: string, item: DB['carts'][string][number], isCl
   return {
     id: item.id, club_id: isClub ? ownerKey : null, person_id: isClub ? null : ownerKey,
     label: item.label, amount: item.amount, kind: item.kind, ref_user_id: item.refUserId ?? null,
+    ref_season_id: item.refSeasonId ?? null, ref_type: item.refType ?? null,
   };
 }
 
@@ -1006,7 +1009,9 @@ export async function loadAll(): Promise<DB | null> {
       const ownerKey = r.club_id ?? r.person_id;
       if (!ownerKey) continue;
       const arr = carts[ownerKey] ?? (carts[ownerKey] = []);
-      arr.push({ id: r.id, label: r.label, amount: Number(r.amount), kind: r.kind, refUserId: r.ref_user_id ?? undefined });
+      arr.push({ id: r.id, label: r.label, amount: Number(r.amount), kind: r.kind, refUserId: r.ref_user_id ?? undefined,
+        refSeasonId: (r as { ref_season_id?: string | null }).ref_season_id ?? undefined,
+        refType: ((r as { ref_type?: string | null }).ref_type ?? undefined) as MembershipType | undefined });
     }
 
     const clubRequests: ClubRequest[] = (clubRequestsR.error ? [] : clubRequestsR.data ?? []).map(rowToClubRequest);
