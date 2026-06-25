@@ -88,9 +88,14 @@ Central files: `src/pages/Membership.tsx`, `src/pages/Club.tsx`,
   If also under-18 waiver hold → **two** bubbles: "Pending guardian waiver (Athlete)" +
   "Pending Payment by [Club Name] (Athlete)". Currently one bubble. `Membership.tsx` status
   rendering.
-- [ ] **2h. Club membership purchase → review/edit club info screen first**, confirm button,
+- [x] **2h. Club membership purchase → review/edit club info screen first**, confirm button,
   then **add to Memberships cart** (not instant purchase) and land on cart. Active only after
-  payment. `Club.tsx`, `ClubForm.tsx`, cart.
+  payment. `Club.tsx`, `ClubForm.tsx`, cart. **Done:** Purchase opens `ClubMembershipReview`
+  (focused ClubForm subset — name/short/state→region/email, edits save via `pushClub`);
+  "Everything's correct — add to cart" adds a `cart_items` line (`kind:'membership'`,
+  `refType:'club'`, `refSeasonId`) and routes to the club cart. The `ClubCart` pay handler
+  creates the active `club_memberships` row on payment, so `clubHasActiveMembership` stays
+  false until paid. No new column/migration (reuses the free-text `ref_type`).
 - [ ] **2i. Request-club-admin email → only that club's managers** (not league admins).
   On **denial**, email the requester that access was denied.
   `supabase/functions/request-manager-access`, `decide_manager_access` RPC / migration,

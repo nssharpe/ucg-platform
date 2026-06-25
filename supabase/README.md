@@ -196,8 +196,13 @@ and `src/lib/auth.ts` handle Supabase Auth when it is.
 A club must hold an active `club_memberships` row for a season before its athletes can
 register or it can host that season. Enforced **client-side** at the registration and
 sanction-request entry points via the pure helpers `clubHasActiveMembership` /
-`seasonForDate` in `src/lib/capabilities-core.ts`. Managers purchase from the club page
-(after a settings review); league admins grant/revoke any season. The gate is ON.
+`seasonForDate` in `src/lib/capabilities-core.ts`. Managers purchase from the club page:
+clicking **Purchase** opens a review/edit-club-info screen (name, short name, state→region,
+email — edits save via `pushClub`), and confirming adds a club-membership **line to the club
+cart** (`cart_items` `kind:'membership'`, `ref_type:'club'`, `ref_season_id:<season>`) and
+routes to the cart — it does NOT create an active row. The `club_memberships` row is created
+(status `active`) only when that cart line is **paid** in `ClubCart` (so the gate stays false
+until payment). League admins still grant/revoke any season directly. The gate is ON.
 
 ## Observability
 
