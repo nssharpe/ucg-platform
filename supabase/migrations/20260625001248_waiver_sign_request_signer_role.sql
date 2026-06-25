@@ -8,6 +8,9 @@ alter table waiver_sign_requests
 
 -- Surface signer_role to the public (no-login) signing page, which looks the
 -- request up by its secret token via this SECURITY DEFINER function.
+-- Adding a column to the RETURNS TABLE shape changes the function's OUT signature,
+-- which `create or replace` cannot do — drop first, then recreate.
+drop function if exists get_waiver_sign_request(text);
 create or replace function get_waiver_sign_request(p_token text)
 returns table (
   person_id text, season_id text, waiver_type text,
