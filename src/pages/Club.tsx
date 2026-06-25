@@ -535,9 +535,22 @@ function Roster({ clubId, canManage }: { clubId: string; canManage: boolean }) {
       )
     : allRoster;
 
-  const roster = useMemo(
+  const sorted = useMemo(
     () => sortRoster(filtered, sortCol, sortDir, lvlName),
     [filtered, sortCol, sortDir, db.levels],
+  );
+
+  // A person appears under Athletes if they hold the athlete role, and under
+  // Coaches if they hold the coach role — a dual-role person shows in BOTH
+  // sections (each row reflects the same membership status). `roles` is the
+  // canonical signal; fall back to the legacy `kind` only if roles is unset.
+  const athletes = useMemo(
+    () => sorted.filter((p) => (p.roles ? p.roles.athlete : p.kind === 'athlete')),
+    [sorted],
+  );
+  const coaches = useMemo(
+    () => sorted.filter((p) => (p.roles ? p.roles.coach : p.kind === 'coach')),
+    [sorted],
   );
 
   const handleSort = (col: SortCol) => {
@@ -560,71 +573,134 @@ function Roster({ clubId, canManage }: { clubId: string; canManage: boolean }) {
           style={{ maxWidth: 260 }}
         />
       </div>
-      <div className="card" style={{ overflow: 'hidden' }}>
-        <table className="tbl">
-          <thead>
-            <tr>
-              <th style={{ cursor: 'pointer' }} onClick={() => handleSort('firstName')}>First{sortIcon('firstName')}</th>
-              <th style={{ cursor: 'pointer' }} onClick={() => handleSort('lastName')}>Last{sortIcon('lastName')}</th>
-              <th>Type</th>
-              <th>Membership</th>
-              <th style={{ cursor: 'pointer' }} onClick={() => handleSort('WAG')}>WAG{sortIcon('WAG')}</th>
-              <th style={{ cursor: 'pointer' }} onClick={() => handleSort('MAG')}>MAG{sortIcon('MAG')}</th>
-              <th style={{ cursor: 'pointer' }} onClick={() => handleSort('TNT')}>T&amp;T{sortIcon('TNT')}</th>
-              <th style={{ cursor: 'pointer' }} onClick={() => handleSort('studentStatus')}>Student{sortIcon('studentStatus')}</th>
-              {canManage && <th></th>}
-            </tr>
-          </thead>
-          <tbody>
-            {roster.map((p) => {
-              const m = p.memberships.find((x) => x.seasonId === season?.id);
-              return (
-                <tr key={p.id}>
-                  <td>
-                    {caps.isAdmin
-                      ? <Link to={`/admin/members/${p.id}`}>{p.firstName}</Link>
-                      : p.firstName}
-                  </td>
-                  <td>
-                    {caps.isAdmin
-                      ? <Link to={`/admin/members/${p.id}`} style={{ fontWeight: 600 }}>{p.lastName}</Link>
-                      : <strong>{p.lastName}</strong>}
-                  </td>
-                  <td>{p.kind === 'coach' ? <Badge tone="navy">Coach</Badge> : 'Athlete'}</td>
-                  <td>
-                    {(() => {
-                      if (!m) return <Badge tone="err">None</Badge>;
-                      const h = membershipHolds(m);
-                      if (h.active) return <Badge tone="ok">✓ {season?.name}</Badge>;
-                      if (h.paymentHold) return <Badge tone="warn">Pending club $</Badge>;
-                      if (h.waiverHold) return <Badge tone="warn">Pending waiver</Badge>;
-                      return <Badge tone="err">None</Badge>;
-                    })()}
-                  </td>
-                  <td>{lvlName(p.levels.WAG)}</td>
-                  <td>{lvlName(p.levels.MAG)}</td>
-                  <td>{lvlName(p.levels.TNT)}</td>
-                  <td>{p.studentStatus === 'Student' ? '🎓' : '—'}</td>
-                  {canManage && (
-                    <td style={{ textAlign: 'right' }}>
-                      {m?.status !== 'active' && (
-                        <button
-                          className="btn ghost small"
-                          disabled={inviting === p.id || !p.email}
-                          data-tip={p.email ? 'Email a link to purchase membership' : 'No email on file'}
-                          onClick={() => invite(p)}
-                        >
-                          {inviting === p.id ? 'Sending…' : 'Invite'}
-                        </button>
-                      )}
+      <RosterTable
+        heading={`Athletes (${athletes.length})`}
+        people={athletes}
+        emptyText="No athletes on the roster yet."
+        season={season}
+        canManage={canManage}
+        isAdmin={caps.isAdmin}
+        inviting={inviting}
+        onInvite={invite}
+        lvlName={lvlName}
+        handleSort={handleSort}
+        sortIcon={sortIcon}
+      />
+      <RosterTable
+        heading={`Coaches (${coaches.length})`}
+        people={coaches}
+        emptyText="No coaches on the roster yet. Use “Add coach” above to invite one."
+        season={season}
+        canManage={canManage}
+        isAdmin={caps.isAdmin}
+        inviting={inviting}
+        onInvite={invite}
+        lvlName={lvlName}
+        handleSort={handleSort}
+        sortIcon={sortIcon}
+      />
+    </div>
+  );
+}
+
+// ---- RosterTable (shared by the Athletes + Coaches sections) ----------------
+// One sortable table of people with a membership-status line and (for managers)
+// an "invite to purchase membership" action — used identically for athletes and
+// coaches so coaches list with the same affordances regardless of membership.
+function RosterTable({
+  heading, people, emptyText, season, canManage, isAdmin, inviting, onInvite,
+  lvlName, handleSort, sortIcon,
+}: {
+  heading: string;
+  people: Athlete[];
+  emptyText: string;
+  season: Season | undefined;
+  canManage: boolean;
+  isAdmin: boolean;
+  inviting: string | null;
+  onInvite: (p: Athlete) => void;
+  lvlName: (id?: string) => string;
+  handleSort: (col: SortCol) => void;
+  sortIcon: (col: SortCol) => string;
+}) {
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <h3 className="card-title" style={{ marginBottom: 8 }}>{heading}</h3>
+      {people.length === 0 ? (
+        <p style={{ color: 'var(--ink-soft)', fontSize: 14, marginTop: 0 }}>{emptyText}</p>
+      ) : (
+        <div className="card" style={{ overflow: 'hidden' }}>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('firstName')}>First{sortIcon('firstName')}</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('lastName')}>Last{sortIcon('lastName')}</th>
+                <th>Type</th>
+                <th>Membership</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('WAG')}>WAG{sortIcon('WAG')}</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('MAG')}>MAG{sortIcon('MAG')}</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('TNT')}>T&amp;T{sortIcon('TNT')}</th>
+                <th style={{ cursor: 'pointer' }} onClick={() => handleSort('studentStatus')}>Student{sortIcon('studentStatus')}</th>
+                {canManage && <th></th>}
+              </tr>
+            </thead>
+            <tbody>
+              {people.map((p) => {
+                const m = p.memberships.find((x) => x.seasonId === season?.id);
+                const isCoach = p.roles ? p.roles.coach : p.kind === 'coach';
+                const isAthlete = p.roles ? p.roles.athlete : p.kind === 'athlete';
+                return (
+                  <tr key={p.id}>
+                    <td>
+                      {isAdmin
+                        ? <Link to={`/admin/members/${p.id}`}>{p.firstName}</Link>
+                        : p.firstName}
                     </td>
-                  )}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+                    <td>
+                      {isAdmin
+                        ? <Link to={`/admin/members/${p.id}`} style={{ fontWeight: 600 }}>{p.lastName}</Link>
+                        : <strong>{p.lastName}</strong>}
+                    </td>
+                    <td>
+                      {isCoach && <Badge tone="navy">Coach</Badge>}
+                      {isCoach && isAthlete && ' '}
+                      {isAthlete && (isCoach ? <Badge tone="info">Athlete</Badge> : 'Athlete')}
+                    </td>
+                    <td>
+                      {(() => {
+                        if (!m) return <Badge tone="err">None</Badge>;
+                        const h = membershipHolds(m);
+                        if (h.active) return <Badge tone="ok">✓ {season?.name}</Badge>;
+                        if (h.paymentHold) return <Badge tone="warn">Pending club $</Badge>;
+                        if (h.waiverHold) return <Badge tone="warn">Pending waiver</Badge>;
+                        return <Badge tone="err">None</Badge>;
+                      })()}
+                    </td>
+                    <td>{lvlName(p.levels.WAG)}</td>
+                    <td>{lvlName(p.levels.MAG)}</td>
+                    <td>{lvlName(p.levels.TNT)}</td>
+                    <td>{p.studentStatus === 'Student' ? '🎓' : '—'}</td>
+                    {canManage && (
+                      <td style={{ textAlign: 'right' }}>
+                        {m?.status !== 'active' && (
+                          <button
+                            className="btn ghost small"
+                            disabled={inviting === p.id || !p.email}
+                            data-tip={p.email ? 'Email a link to purchase membership' : 'No email on file'}
+                            onClick={() => onInvite(p)}
+                          >
+                            {inviting === p.id ? 'Sending…' : 'Invite'}
+                          </button>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
