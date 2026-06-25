@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
-import { clubHasActiveMembership, seasonForDate } from '../lib/capabilities-core';
+import { clubHasActiveMembership, seasonForDate, membershipHolds } from '../lib/capabilities-core';
 import { Badge, Combo, Field, Modal, Tabs } from '../components/ui';
 import { useToast, useFmtDate } from '../components/ui-hooks';
 import { CLUB_ACCESS_LABELS } from '../lib/types';
@@ -496,9 +496,14 @@ function Roster({ clubId, canManage }: { clubId: string; canManage: boolean }) {
                   </td>
                   <td>{p.kind === 'coach' ? <Badge tone="navy">Coach</Badge> : 'Athlete'}</td>
                   <td>
-                    {m?.status === 'active' ? <Badge tone="ok">✓ {season?.name}</Badge>
-                      : m?.status === 'pending-club-payment' ? <Badge tone="warn">Pending club $</Badge>
-                      : <Badge tone="err">None</Badge>}
+                    {(() => {
+                      if (!m) return <Badge tone="err">None</Badge>;
+                      const h = membershipHolds(m);
+                      if (h.active) return <Badge tone="ok">✓ {season?.name}</Badge>;
+                      if (h.paymentHold) return <Badge tone="warn">Pending club $</Badge>;
+                      if (h.waiverHold) return <Badge tone="warn">Pending waiver</Badge>;
+                      return <Badge tone="err">None</Badge>;
+                    })()}
                   </td>
                   <td>{lvlName(p.levels.WAG)}</td>
                   <td>{lvlName(p.levels.MAG)}</td>
@@ -1127,8 +1132,23 @@ export function ClubCart() {
                   for (const item of items) {
                     if (item.kind === 'membership' && item.refUserId) {
                       const person = d.people.find((p) => p.id === item.refUserId);
-                      const m = person?.memberships.find((x) => x.status === 'pending-club-payment');
-                      if (m) { m.status = 'active'; m.paidVia = 'club'; pushMembership(person!.id, m); }
+                      // Target the EXACT membership this line covers (season + type).
+                      // Older cart items lack the refs — fall back to the first
+                      // payment-pending membership for back-compat.
+                      const m = person?.memberships.find((x) =>
+                        item.refSeasonId
+                          ? x.seasonId === item.refSeasonId && (!item.refType || x.type === item.refType)
+                          : x.clubCartPending || x.status === 'pending-club-payment',
+                      );
+                      if (m) {
+                        // Payment clears the PAYMENT hold. The membership is fully
+                        // active only if the waiver is also signed; an under-18 whose
+                        // guardian waiver is still open drops to a waiver-only hold.
+                        m.clubCartPending = false;
+                        m.paidVia = 'club';
+                        m.status = m.waiverSignedAt ? 'active' : 'pending-waiver';
+                        pushMembership(person!.id, m);
+                      }
                     }
                   }
                   d.carts[club.id] = [];

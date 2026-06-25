@@ -104,6 +104,11 @@ export interface Membership {
   waiverSignedBy: string | null; // self or guardian name
   paidVia: 'card' | 'club' | 'comp' | null;
   activatedByAdmin?: boolean;
+  /** True while this member's fee sits UNPAID in a club's cart (member pushed it
+   *  via the club-cart path). Independent of the waiver hold, so a minor whose
+   *  guardian waiver is still open can simultaneously be awaiting club payment.
+   *  Cleared (false) when the club pays the cart line item. */
+  clubCartPending?: boolean;
 }
 
 export interface Athlete {
@@ -329,6 +334,11 @@ export interface InvoiceItem {
   amount: number;
   kind: 'membership' | 'meet-entry' | 'banquet' | 'addon' | 'donation' | 'discount';
   refUserId?: string;
+  /** For membership cart/invoice lines: the exact season + type this fee covers,
+   *  so paying the line activates the RIGHT membership (a person may hold several
+   *  across seasons/types). */
+  refSeasonId?: string;
+  refType?: MembershipType;
   refunded?: boolean;
 }
 
