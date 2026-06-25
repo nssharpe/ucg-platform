@@ -368,9 +368,38 @@ export interface Invoice {
   paidAt: string | null;
   items: InvoiceItem[];
   couponCode?: string;
+  /** Stripe payment-intent id once the invoice is paid via Stripe (S1+). */
+  stripePaymentIntentId?: string | null;
+  /** Stripe's actual processing fee in CENTS, from the balance txn (S1+). */
+  stripeFee?: number | null;
 }
 
 export type CartItem = InvoiceItem;
+
+/** A Stripe Embedded Checkout payment record (server source of truth). All money
+ *  fields are in CENTS (Stripe's unit). A `pending` row is created when the
+ *  Checkout Session is opened; the verified webhook flips it to `paid` and runs
+ *  fulfillment. The browser only reads its OWN rows (self-read RLS) to poll for
+ *  `paid`. Mirrors the `payments` table (S1 migration). */
+export interface Payment {
+  id: string;
+  stripeSessionId: string | null;
+  stripePaymentIntentId: string | null;
+  personId: string | null;
+  status: 'pending' | 'paid' | 'failed' | 'refunded';
+  amountSubtotal: number | null;
+  serviceFee: number | null;
+  stripeFee: number | null;
+  currency: string;
+  cartItemIds: string[];
+  refRegIds: string[];
+  refSeasonId: string | null;
+  refType: string | null;
+  invoiceId: string | null;
+  stripeEventId: string | null;
+  createdAt: string;
+  fulfilledAt: string | null;
+}
 
 export interface Coupon {
   code: string;
@@ -471,6 +500,8 @@ export interface DB {
   waiverSignatures?: WaiverSignature[];
   /** Per-(club, season) club memberships — gate for registration & hosting. */
   clubMemberships?: ClubMembership[];
+  /** Stripe Embedded Checkout payment records (server source of truth). */
+  payments?: Payment[];
 }
 
 /** A club's membership for a season. Its presence (status 'active') is the gate

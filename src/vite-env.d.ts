@@ -4,6 +4,8 @@ interface ImportMetaEnv {
   readonly VITE_SUPABASE_URL?: string;
   readonly VITE_SUPABASE_ANON_KEY?: string;
   readonly VITE_APP_VERSION?: string;
+  // Stripe publishable key (test pk in dev; live pk swaps in at build with no code change).
+  readonly VITE_STRIPE_PUBLISHABLE_KEY?: string;
   // DEV-ONLY seeded test-user credentials (see .env.example, src/lib/dev-auth.ts).
   // Present only in local .env.local; absent in CI/production builds.
   readonly VITE_DEV_AUTH_ATHLETE_EMAIL?: string;

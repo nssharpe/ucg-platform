@@ -7,7 +7,7 @@
 // block the UI) and are no-ops when `isSupabaseConfigured` is false.
 import { createClient, type SupabaseClient, type RealtimePostgresChangesPayload, type PostgrestError } from '@supabase/supabase-js';
 import type {
-  AccountInvite, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, Invoice, Level, Meet, Membership, MembershipType, Region, Registration, SanctionRequest, SanctionVote, Score, Season,
+  AccountInvite, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, Invoice, Level, Meet, Membership, MembershipType, Payment, Region, Registration, SanctionRequest, SanctionVote, Score, Season,
   WaiverDocument, WaiverSignature,
 } from './types';
 import { writeQueue, type WriteOp, type ExecResult } from './write-queue';
@@ -308,6 +308,20 @@ const rowToClubMembership = (r: { id: string; club_id: string; season_id: string
   id: r.id, clubId: r.club_id, seasonId: r.season_id, status: 'active',
   grantedByAdmin: !!r.granted_by_admin, createdAt: r.created_at,
 });
+const rowToPayment = (r: {
+  id: string; stripe_session_id: string | null; stripe_payment_intent_id: string | null;
+  person_id: string | null; status: string; amount_subtotal: number | null; service_fee: number | null;
+  stripe_fee: number | null; currency: string; cart_item_ids: string[] | null; ref_reg_ids: string[] | null;
+  ref_season_id: string | null; ref_type: string | null; invoice_id: string | null;
+  stripe_event_id: string | null; created_at: string; fulfilled_at: string | null;
+}): Payment => ({
+  id: r.id, stripeSessionId: r.stripe_session_id, stripePaymentIntentId: r.stripe_payment_intent_id,
+  personId: r.person_id, status: r.status as Payment['status'],
+  amountSubtotal: r.amount_subtotal, serviceFee: r.service_fee, stripeFee: r.stripe_fee,
+  currency: r.currency ?? 'usd', cartItemIds: r.cart_item_ids ?? [], refRegIds: r.ref_reg_ids ?? [],
+  refSeasonId: r.ref_season_id, refType: r.ref_type, invoiceId: r.invoice_id,
+  stripeEventId: r.stripe_event_id, createdAt: r.created_at, fulfilledAt: r.fulfilled_at,
+});
 const rowToWaiverSignature = (r: Row<'waiver_signatures'>): WaiverSignature => ({
   id: r.id, personId: r.person_id, seasonId: r.season_id, waiverType: r.waiver_type as WaiverSignature['waiverType'],
   waiverDocumentId: r.waiver_document_id, contentHash: r.content_hash,
@@ -328,6 +342,18 @@ export function pushClubMembership(cm: ClubMembership) {
   remoteUpsert('club_memberships', [{ id: cm.id, club_id: cm.clubId, season_id: cm.seasonId, status: cm.status, granted_by_admin: cm.grantedByAdmin }]);
 }
 export function deleteClubMembership(id: string) { remoteDelete('club_memberships', id, 'id'); }
+/** Upsert a Stripe payment record. In practice the service-role Edge Functions
+ *  write these (clients only read own rows via RLS); this exists for symmetry +
+ *  any admin tooling. Money fields are CENTS. */
+export function pushPayment(p: Payment) {
+  remoteUpsert('payments', [{
+    id: p.id, stripe_session_id: p.stripeSessionId, stripe_payment_intent_id: p.stripePaymentIntentId,
+    person_id: p.personId, status: p.status, amount_subtotal: p.amountSubtotal, service_fee: p.serviceFee,
+    stripe_fee: p.stripeFee, currency: p.currency, cart_item_ids: p.cartItemIds, ref_reg_ids: p.refRegIds,
+    ref_season_id: p.refSeasonId, ref_type: p.refType, invoice_id: p.invoiceId,
+    stripe_event_id: p.stripeEventId, fulfilled_at: p.fulfilledAt,
+  }]);
+}
 /** Hard-delete a person remotely (used by account merge). Cascades remove the
  *  person's remaining child rows (memberships, alt clubs, signatures, etc.). */
 export function deletePerson(id: string) { remoteDelete('people', id, 'id'); }
@@ -922,7 +948,7 @@ export async function loadAll(): Promise<DB | null> {
       seasonsR, levelsR, clubsR, clubManagersR, peopleR, altClubsR, membershipsR,
       meetsR, sessionsR, squadsR, registrationsR, scoresR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
       clubRequestsR, appSettingsR, accountInvitesR, sanctionRequestsR, sanctionVotesR,
-      waiverDocsR, waiverSigsR, clubMembershipsR,
+      waiverDocsR, waiverSigsR, clubMembershipsR, paymentsR,
     ] = await Promise.all([
       supabase.from('seasons').select('*'),
       supabase.from('levels').select('*'),
@@ -948,6 +974,7 @@ export async function loadAll(): Promise<DB | null> {
       supabase.from('waiver_documents').select('*'),    // tolerated if absent
       supabase.from('waiver_signatures').select('*'),   // tolerated if absent
       supabase.from('club_memberships').select('*'),    // tolerated if absent
+      supabase.from('payments').select('*'),            // S1; tolerated if absent
     ]);
 
     // club_requests may not exist on a pre-0005 DB — tolerate its error, fail on the rest.
@@ -1096,6 +1123,8 @@ export async function loadAll(): Promise<DB | null> {
       .map(rowToWaiverSignature);
     const clubMemberships: ClubMembership[] = (clubMembershipsR.error ? [] : clubMembershipsR.data ?? [])
       .map(rowToClubMembership);
+    const payments: Payment[] = (paymentsR.error ? [] : paymentsR.data ?? [])
+      .map(rowToPayment);
 
     return {
       seasons, levels, clubs, people, meets, registrations, scores, invoices, coupons,
@@ -1107,6 +1136,7 @@ export async function loadAll(): Promise<DB | null> {
       ...(waiverDocuments.length ? { waiverDocuments } : {}),
       ...(waiverSignatures.length ? { waiverSignatures } : {}),
       ...(clubMemberships.length ? { clubMemberships } : {}),
+      ...(payments.length ? { payments } : {}),
     };
   } catch (e) {
     console.error('[supabase] loadAll threw:', e);

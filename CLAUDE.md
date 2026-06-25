@@ -65,8 +65,16 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
 ## Supabase / migrations
 - Project ref `wkyerxlgricfphopocoz` (org NAIGC). Migrations in `supabase/migrations/`.
   CLI is linked (`supabase link` done 2026-06-19). Latest migration is
-  `20260625180951_registrations_paid.sql` — all migrations through it are
-  **applied** as of 2026-06-25. Phase 3 (feedback batch) added it:
+  `20260625231808_payments_and_invoice_stripe_fields.sql` — all migrations through it
+  are **applied** as of 2026-06-25. Stripe Phase S1 added it: the `payments` table
+  (server-side record of a Stripe Embedded Checkout session — `pending` row on session
+  create, flipped `paid` by the verified webhook; all money cols in CENTS;
+  `stripe_session_id` unique + `stripe_event_id` for idempotency; FK cols `person_id`/
+  `invoice_id` are **text** to match the text ids; RLS = service-role writes only,
+  signed-in person self-reads own rows via `is_admin() or person_id = my_person_id()`)
+  + `invoices.stripe_payment_intent_id`/`invoices.stripe_fee` (nullable; feed Phase 5
+  finance with real fees). See `docs/specs/2026-06-25-stripe-integration.md`. The prior
+  `20260625180951_registrations_paid.sql` (Phase 3, feedback batch) added:
   `registrations.paid` (boolean, default false — the explicit "entry fee paid" flag;
   new regs land FALSE = "Pending Purchase", flipped TRUE by the pay paths; historical
   rows backfilled TRUE) + `registrations.updated_pending` (distinguishes a never-paid

@@ -270,6 +270,12 @@ export function applyCoupon(amount: number, coupon: Coupon): number {
   return amount;
 }
 
+/** Service fee passed to the payer: 3% + $0.30 of the order subtotal, in CENTS.
+ *  Operates in Stripe's cent unit (distinct from the dollar-based legacy fns above). */
+export function processingFee(subtotalCents: number): number {
+  return Math.round(subtotalCents * 0.03) + 30;
+}
+
 /** Generate a random uppercase promo code (default 8 chars, no ambiguous chars). */
 export function randomPromoCode(len = 8): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I,O,0,1
