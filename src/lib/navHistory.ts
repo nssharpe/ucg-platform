@@ -29,7 +29,9 @@ export function labelFor(pathname: string): string {
   if (pathname === '/admin/clubs') return 'Clubs';
   if (pathname === '/admin/league') return 'League Controls';
   if (pathname === '/admin/communicate') return 'Communicate';
-  if (/^\/club\/[^/]+$/.test(pathname)) return 'Roster & Meet Reg';
+  if (/^\/club\/[^/]+\/roster$/.test(pathname)) return 'Club Roster';
+  if (/^\/club\/[^/]+\/registrations$/.test(pathname)) return 'Club Registrations';
+  if (/^\/club\/[^/]+$/.test(pathname)) return 'Club Roster';
   if (/^\/club\/[^/]+\/cart$/.test(pathname)) return 'Club Cart & Invoices';
   if (/^\/meets\//.test(pathname)) return 'Meet';
   if (/^\/members\//.test(pathname)) return 'Member';

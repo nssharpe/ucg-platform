@@ -3,7 +3,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { clubHasActiveMembership, seasonForDate, membershipHolds } from '../lib/capabilities-core';
-import { Badge, Combo, Field, Modal, Tabs } from '../components/ui';
+import { Badge, Combo, Field, Modal } from '../components/ui';
 import { useToast, useFmtDate } from '../components/ui-hooks';
 import type { ToastOptions } from '../components/ui-hooks';
 import { CLUB_ACCESS_LABELS, STATE_REGIONS } from '../lib/types';
@@ -55,14 +55,15 @@ function sortRoster(
 
 // ---- ClubPage ---------------------------------------------------------------
 
-export function ClubPage() {
+type ClubView = 'roster' | 'registrations';
+
+export function ClubPage({ view }: { view: ClubView }) {
   const { clubId } = useParams();
   const db = useDB();
   const caps = useCapabilities();
   const toast = useToast();
   const navigate = useNavigate();
   const club = db.clubs.find((c) => c.id === clubId);
-  const [tab, setTab] = useState<'roster' | 'meetreg'>('roster');
   const [editingClub, setEditingClub] = useState(false);
   const [addingAthlete, setAddingAthlete] = useState(false);
   const [addingCoach, setAddingCoach] = useState(false);
@@ -102,7 +103,7 @@ export function ClubPage() {
               options={switchableClubs.map((c) => ({ value: c.id, label: c.name, sub: `${c.state} · ${c.region}` }))}
               value={club.id}
               placeholder="Switch club…"
-              onChange={(v) => { if (v && v !== club.id) navigate(`/club/${v}`); }}
+              onChange={(v) => { if (v && v !== club.id) navigate(`/club/${v}/${view}`); }}
             />
           </div>
         )}
@@ -144,16 +145,17 @@ export function ClubPage() {
         )}
       </div>
 
-      <ClubMembershipCard club={club} />
-      {canManage && <ClubManagers club={club} />}
-      {canManage && <ClubSettings club={club} />}
-
-      <Tabs
-        tabs={[{ id: 'roster' as const, label: `Roster (${rosterSize})` }, { id: 'meetreg' as const, label: 'Meet registration' }]}
-        active={tab}
-        onChange={setTab}
-      />
-      {tab === 'roster' ? <Roster clubId={club.id} canManage={canManage} /> : <MeetRegGrid clubId={club.id} canManage={canManage} />}
+      {view === 'roster' ? (
+        <>
+          <ClubMembershipCard club={club} />
+          {canManage && <ClubManagers club={club} />}
+          {canManage && <ClubSettings club={club} />}
+          <h2 className="card-title" style={{ marginBottom: 10 }}>Roster ({rosterSize})</h2>
+          <Roster clubId={club.id} canManage={canManage} />
+        </>
+      ) : (
+        <MeetRegGrid clubId={club.id} canManage={canManage} />
+      )}
 
       {editingClub && <ClubForm club={club} onClose={() => setEditingClub(false)} />}
       {addingAthlete && <AddPersonModal clubId={club.id} clubName={club.name} kind="athlete" onClose={() => setAddingAthlete(false)} />}
@@ -1201,7 +1203,7 @@ export function ClubCart() {
               <div key={meetName} className="card card-pad" style={{ marginBottom: 18 }}>
                 <h3 className="card-title">{meetName}</h3>
                 <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 10 }}>
-                  Meet entries · <Link to={`/club/${club.id}`}>Return to registration →</Link>
+                  Meet entries · <Link to={`/club/${club.id}/registrations`}>Return to registration →</Link>
                 </p>
                 <table className="tbl">
                   <tbody>
