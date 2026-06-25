@@ -5,10 +5,11 @@ import { useCapabilities } from '../lib/capabilities';
 import { Badge, Field } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 import { fmtMoney } from '../lib/scoring';
-import { pushCartItem, redeemCoupon, pushInvoice, pushMembership, fetchPublishedWaiver, recordWaiverSignature, requestGuardianWaiver, notifyClubCart } from '../lib/supabase';
+import { pushCartItem, redeemCoupon, pushInvoice, pushMembership, fetchPublishedWaiver, recordWaiverSignature, requestGuardianWaiver, notifyClubCart, sendMembershipWelcome, sendReceipt } from '../lib/supabase';
 import type { Athlete, InvoiceItem, Membership, MembershipType, WaiverDocument } from '../lib/types';
 import { GENERAL_WAIVER_TYPE } from '../lib/types';
 import { isMinorAt } from '../lib/waivers-core';
+import { membershipHolds } from '../lib/capabilities-core';
 import { sanitizeWaiverHtml } from '../lib/sanitize-html';
 import {
   offeredMembershipTypes,
@@ -181,6 +182,20 @@ function MembershipInner({ me }: { me: Athlete }) {
   };
 
   const complete = (via: 'card' | 'club' | 'comp') => {
+    // "First membership" signal — computed from the PRE-purchase membership list.
+    // Welcome fires once: only when the member held no prior active/paid (or
+    // club-payment-pending) membership before this purchase. Pending-waiver-only
+    // rows don't count as a completed purchase. (Server re-checks no-club +
+    // Outside-US; this guard is the once-only gate.)
+    const hadPriorMembership = me.memberships.some(
+      (m) => m.status === 'active' || m.status === 'pending-club-payment' || m.clubCartPending || m.paidVia != null,
+    );
+
+    // Direct-pay (card/comp) invoice, captured so we can email the receipt after
+    // the mutate. Null for the club-cart push (no personal invoice is created).
+    type DirectInvoice = { number: string; items: InvoiceItem[]; couponCode?: string };
+    let directInvoice: DirectInvoice | null = null;
+
     mutate((d) => {
       const p = d.people.find((x) => x.id === me.id)!;
 
@@ -195,6 +210,9 @@ function MembershipInner({ me }: { me: Athlete }) {
           waiverSignedAt: isMinor ? null : new Date().toISOString(),
           waiverSignedBy: isMinor ? null : waiverSig,
           paidVia: via === 'comp' ? 'comp' : via === 'card' ? 'card' : 'club',
+          // Payment hold is independent of the waiver hold: a club-pushed fee is
+          // pending until the club pays, even while a minor's waiver is still open.
+          ...(via === 'club' ? { clubCartPending: true } : {}),
           ...(via === 'comp' ? { activatedByAdmin: true } : {}),
         };
         p.memberships.push(membership);
@@ -237,6 +255,8 @@ function MembershipInner({ me }: { me: Athlete }) {
             amount: pricePerType(t),
             kind: 'membership' as const,
             refUserId: me.id,
+            refSeasonId: seasonId,
+            refType: t,
           };
           cart.push(item);
           // Append only this member's own row — a member can't replace the whole
@@ -259,6 +279,7 @@ function MembershipInner({ me }: { me: Athlete }) {
         };
         d.invoices.push(invoice);
         pushInvoice(invoice);
+        directInvoice = { number: invoice.number, items: invoice.items, couponCode: invoice.couponCode };
       }
 
       // Increment coupon usedCount. The remote write goes through a security-
@@ -279,8 +300,32 @@ function MembershipInner({ me }: { me: Athlete }) {
       toast(`Membership granted by admin override. Activated at $0.`);
     } else if (via === 'club') {
       toast(`Sent to ${club?.name} club cart — your membership activates once the club pays.`);
+    } else if (directInvoice) {
+      // Real send: email the account owner their confirmation + HTML receipt
+      // (service-role `send-receipt`, works for a non-admin member). Best-effort;
+      // the toast only claims "emailed" when the send actually succeeds.
+      const inv: DirectInvoice = directInvoice;
+      void sendReceipt({
+        items: inv.items.map((i) => ({ label: i.label, amount: i.amount, kind: i.kind })),
+        total: inv.items.reduce((s, i) => s + i.amount, 0),
+        invoiceNumber: inv.number,
+        couponCode: inv.couponCode,
+      })
+        .then((r) => {
+          if (r.ok && r.sent) toast(`Membership active! Confirmation emailed to ${me.email}.`);
+          else toast('Membership active! Your receipt is saved in Purchase History.');
+        })
+        .catch(() => toast('Membership active! Your receipt is saved in Purchase History.'));
     } else {
-      toast(`Membership active! Confirmation emailed to ${me.email} and ${club?.name ?? 'your club'}.`);
+      toast('Membership active!');
+    }
+
+    // "Welcome to UCG" email for a no-club member's FIRST membership-only
+    // purchase (card/comp — NOT the club-cart push). Best-effort; never blocks
+    // the UX. Conditions checked here: no-club + not Outside US + first
+    // membership. The server re-validates no-club + Outside-US before sending.
+    if (via !== 'club' && me.mainClubId == null && !me.outsideUs && !hadPriorMembership) {
+      void sendMembershipWelcome(me.id).catch(() => { /* non-fatal */ });
     }
   };
 
@@ -363,34 +408,49 @@ function MembershipInner({ me }: { me: Athlete }) {
       {/* "Done" state — all active memberships for this season */}
       {step === 'done' && existingForSeason.length > 0 ? (
         <div className="card card-pad">
-          {existingForSeason.map((m) => (
-            <div key={m.type} style={{ marginBottom: 10 }}>
-              {m.status === 'active' ? (
-                <>
-                  <Badge tone="ok">✓ {typeLabel(m.type)} Active</Badge>
+          {existingForSeason.map((m) => {
+            // The two holds are INDEPENDENT and can apply at once (e.g. a minor
+            // who pushed their fee to the club cart awaits BOTH a guardian waiver
+            // AND the club's payment). Derive each from the membership's own
+            // fields rather than the single status enum.
+            const { waiverHold, paymentHold, active } = membershipHolds(m);
+            return (
+              <div key={m.type} style={{ marginBottom: 10 }}>
+                {active ? (
+                  <>
+                    <Badge tone="ok">✓ {typeLabel(m.type)} Active</Badge>
+                    <p style={{ margin: '4px 0 0' }}>
+                      Your {season.name} {m.type} membership is active.
+                      Waiver signed by {m.waiverSignedBy} on {m.waiverSignedAt?.slice(0, 10)}.
+                      {m.activatedByAdmin && <span style={{ color: 'var(--ink-soft)', fontSize: 13 }}> (Admin override)</span>}
+                    </p>
+                  </>
+                ) : (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {waiverHold && (
+                      <Badge tone="warn">
+                        {isMinor ? 'Pending guardian waiver' : 'Pending waiver'} ({typeLabel(m.type)})
+                      </Badge>
+                    )}
+                    {paymentHold && (
+                      <Badge tone="warn">
+                        Pending Payment by {club?.name ?? 'your club'} ({typeLabel(m.type)})
+                      </Badge>
+                    )}
+                  </div>
+                )}
+                {!active && (
                   <p style={{ margin: '4px 0 0' }}>
-                    Your {season.name} {m.type} membership is active.
-                    Waiver signed by {m.waiverSignedBy} on {m.waiverSignedAt?.slice(0, 10)}.
-                    {m.activatedByAdmin && <span style={{ color: 'var(--ink-soft)', fontSize: 13 }}> (Admin override)</span>}
+                    {waiverHold && (isMinor
+                      ? 'A guardian signing link has been sent. '
+                      : 'Sign your waiver to continue. ')}
+                    {paymentHold && `Your ${m.type} membership activates once ${club?.name ?? 'your club'} pays the fee from their club cart.`}
+                    {waiverHold && !paymentHold && `Your ${m.type} membership activates once the waiver is signed.`}
                   </p>
-                </>
-              ) : m.status === 'pending-waiver' ? (
-                <>
-                  <Badge tone="warn">Pending guardian waiver ({typeLabel(m.type)})</Badge>
-                  <p style={{ margin: '4px 0 0' }}>
-                    A guardian signing link has been sent. Your {m.type} membership activates once the guardian signs the waiver.
-                  </p>
-                </>
-              ) : (
-                <>
-                  <Badge tone="warn">Pending payment by {club?.shortName ?? club?.name ?? 'club'} ({typeLabel(m.type)})</Badge>
-                  <p style={{ margin: '4px 0 0' }}>
-                    Waiver signed. Your {m.type} membership activates once {club?.name ?? 'your club'} pays the fee from their club cart.
-                  </p>
-                </>
-              )}
-            </div>
-          ))}
+                )}
+              </div>
+            );
+          })}
 
           {/* Allow purchasing additional type if one is still missing */}
           {purchasableTypes.length > 0 && (

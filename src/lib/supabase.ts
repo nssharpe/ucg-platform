@@ -7,7 +7,7 @@
 // block the UI) and are no-ops when `isSupabaseConfigured` is false.
 import { createClient, type SupabaseClient, type RealtimePostgresChangesPayload, type PostgrestError } from '@supabase/supabase-js';
 import type {
-  AccountInvite, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, Invoice, Level, Meet, Membership, Region, Registration, SanctionRequest, SanctionVote, Score, Season,
+  AccountInvite, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, Invoice, Level, Meet, Membership, MembershipType, Region, Registration, SanctionRequest, SanctionVote, Score, Season,
   WaiverDocument, WaiverSignature,
 } from './types';
 import { writeQueue, type WriteOp, type ExecResult } from './write-queue';
@@ -189,10 +189,12 @@ const membershipToRow = (personId: string, m: Membership) => ({
   person_id: personId, season_id: m.seasonId, type: m.type ?? 'athlete', status: m.status,
   waiver_signed_at: m.waiverSignedAt, waiver_signed_by: m.waiverSignedBy,
   paid_via: m.paidVia, activated_by_admin: m.activatedByAdmin ?? false,
+  club_cart_pending: m.clubCartPending ?? false,
 });
 const rowToMembership = (r: Row<'memberships'>): Membership => ({
   seasonId: r.season_id, type: (r.type ?? 'athlete') as Membership['type'], status: r.status as Membership['status'], waiverSignedAt: r.waiver_signed_at,
   waiverSignedBy: r.waiver_signed_by, paidVia: r.paid_via, activatedByAdmin: r.activated_by_admin,
+  clubCartPending: (r as { club_cart_pending?: boolean }).club_cart_pending ?? false,
 });
 
 const meetToRow = (m: Meet) => ({
@@ -268,6 +270,7 @@ function cartItemToRow(ownerKey: string, item: DB['carts'][string][number], isCl
   return {
     id: item.id, club_id: isClub ? ownerKey : null, person_id: isClub ? null : ownerKey,
     label: item.label, amount: item.amount, kind: item.kind, ref_user_id: item.refUserId ?? null,
+    ref_season_id: item.refSeasonId ?? null, ref_type: item.refType ?? null,
   };
 }
 
@@ -616,6 +619,38 @@ export async function notifyClubCart(args: {
   return data as { ok: boolean; sentCount?: number; error?: string };
 }
 
+/** Send the "Welcome to UCG" email (CC'ing the member's regional team) after a
+ *  no-club member's FIRST membership-only purchase. The CLIENT decides "first
+ *  membership"; the function re-checks no-club + not-Outside-US server-side and
+ *  sends nothing if either fails. Best-effort — never blocks the purchase UX.
+ *  Pass nothing (or omit personId) to welcome the caller's own account. */
+export async function sendMembershipWelcome(
+  personId?: string,
+): Promise<{ ok: boolean; sent?: boolean; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('send-membership-welcome', {
+    body: personId ? { personId } : {},
+  });
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  return data as { ok: boolean; sent?: boolean; error?: string };
+}
+
+/** Email the CALLER their own purchase confirmation + HTML receipt. Used after a
+ *  membership checkout. The recipient is resolved server-side as the caller's own
+ *  people.email (a member can only receipt themselves), so it works for a regular
+ *  member — unlike the admin-gated `send-email`. Best-effort; never blocks the UX. */
+export async function sendReceipt(args: {
+  items: { label: string; amount: number; kind?: string }[];
+  total?: number;
+  invoiceNumber?: string;
+  couponCode?: string;
+}): Promise<{ ok: boolean; sent?: boolean; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('send-receipt', { body: args });
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  return data as { ok: boolean; sent?: boolean; error?: string };
+}
+
 /** Invite someone to a club by email (coach invite or membership purchase).
  *  Caller must manage the club (the function re-checks). */
 export async function sendClubInvite(args: {
@@ -831,15 +866,26 @@ export async function decideManagerAccess(token: string, decision: 'approve' | '
   return (data as string) ?? 'error';
 }
 
+/** No-login, token-gated denial notification: emails the requester that their
+ *  Club Admin request was not approved. Recipients are resolved server-side from
+ *  the token (the reviewer page is anonymous), so no auth/admin gate is needed. */
+export async function notifyManagerAccessDenied(token: string): Promise<{ ok: boolean; sentCount?: number; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('notify-manager-access-denied', { body: { token } });
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  return data as { ok: boolean; sentCount?: number; error?: string };
+}
+
 /** Admin/club-manager mints a no-login waiver signing link for a member (tied to
  *  their athlete record). Returns the link to email and/or copy. */
 export async function createWaiverLink(args: {
   personId: string; seasonId: string; waiverType: string; membershipType?: string;
-}): Promise<{ ok: boolean; token?: string; link?: string; error?: string }> {
+  signerRole?: 'self' | 'guardian';
+}): Promise<{ ok: boolean; token?: string; link?: string; signerRole?: 'self' | 'guardian'; error?: string }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('create-waiver-link', { body: args });
   if (error) return { ok: false, error: await edgeErrorMessage(error) };
-  return data as { ok: boolean; token?: string; link?: string; error?: string };
+  return data as { ok: boolean; token?: string; link?: string; signerRole?: 'self' | 'guardian'; error?: string };
 }
 
 /** Token lookup for the guardian signing page via SECURITY DEFINER RPC
@@ -1006,7 +1052,9 @@ export async function loadAll(): Promise<DB | null> {
       const ownerKey = r.club_id ?? r.person_id;
       if (!ownerKey) continue;
       const arr = carts[ownerKey] ?? (carts[ownerKey] = []);
-      arr.push({ id: r.id, label: r.label, amount: Number(r.amount), kind: r.kind, refUserId: r.ref_user_id ?? undefined });
+      arr.push({ id: r.id, label: r.label, amount: Number(r.amount), kind: r.kind, refUserId: r.ref_user_id ?? undefined,
+        refSeasonId: (r as { ref_season_id?: string | null }).ref_season_id ?? undefined,
+        refType: ((r as { ref_type?: string | null }).ref_type ?? undefined) as MembershipType | 'club' | undefined });
     }
 
     const clubRequests: ClubRequest[] = (clubRequestsR.error ? [] : clubRequestsR.data ?? []).map(rowToClubRequest);

@@ -11,6 +11,7 @@ import { pushClubRequest, pushMembership, pushPerson, deleteRegistration, sendEm
 import { getSession, useAuthLoading, useRolesLoaded } from '../lib/auth';
 import { escapeHtml } from '../lib/sanitize-html';
 import { downloadWaiverProof, formatSignedAt } from '../lib/waiver-proof';
+import { isMinorAt } from '../lib/waivers-core';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1049,6 +1050,19 @@ function WaiverLinkPopup({ person, seasonId, seasonName, onClose }: {
   const [emailing, setEmailing] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  // Route the waiver by the athlete's age: a minor needs a parent/guardian to
+  // sign (email the guardian), an adult signs their own (email the athlete).
+  const isMinor = isMinorAt(person.dob ?? '', new Date());
+  const [guardianName, setGuardianName] = useState('');
+  const [guardianEmail, setGuardianEmail] = useState('');
+
+  // Who the link goes to. The minted token always resolves to the same no-login
+  // signing page; we only differ in the recipient + copy.
+  const recipientEmail = isMinor ? guardianEmail.trim() : (person.email ?? '');
+  const recipientValid = isMinor
+    ? guardianName.trim().length >= 2 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guardianEmail)
+    : !!person.email;
+
   // Mint the link once when the popup opens.
   useEffect(() => {
     let cancelled = false;
@@ -1056,13 +1070,16 @@ function WaiverLinkPopup({ person, seasonId, seasonName, onClose }: {
       const doc = await fetchPublishedWaiver(seasonId, GENERAL_WAIVER_TYPE);
       const waiverType = doc?.waiverType ?? GENERAL_WAIVER_TYPE;
       if (!doc) { if (!cancelled) setError(`No published waiver exists for ${seasonName}. Publish one in League Controls → Waivers first.`); return; }
-      const res = await createWaiverLink({ personId: person.id, seasonId, waiverType, membershipType: 'all' });
+      const res = await createWaiverLink({
+        personId: person.id, seasonId, waiverType, membershipType: 'all',
+        signerRole: isMinor ? 'guardian' : 'self',
+      });
       if (cancelled) return;
       if (res.ok && res.link) setLink(res.link);
       else setError(res.error ?? 'Could not create a signing link.');
     })();
     return () => { cancelled = true; };
-  }, [person.id, seasonId, seasonName]);
+  }, [person.id, seasonId, seasonName, isMinor]);
 
   const copy = async () => {
     if (!link) return;
@@ -1071,26 +1088,52 @@ function WaiverLinkPopup({ person, seasonId, seasonName, onClose }: {
   };
 
   const email = async () => {
-    if (!link || !person.email) { toast('No email on file for this member.', { variant: 'error' }); return; }
+    if (!link) return;
+    if (!recipientValid) {
+      toast(isMinor ? 'Enter the guardian name and a valid email.' : 'No email on file for this member.', { variant: 'error' });
+      return;
+    }
     setEmailing(true);
-    const subject = `Action needed: sign your ${seasonName} United Club Gymnastics waiver`;
-    const html = `<p>Hi ${escapeHtml(person.firstName)},</p>
+    const athleteName = `${person.firstName} ${person.lastName}`;
+    const subject = isMinor
+      ? `Action needed: sign the ${seasonName} waiver for ${athleteName}`
+      : `Action needed: sign your ${seasonName} United Club Gymnastics waiver`;
+    const html = isMinor
+      ? `<p>Hi ${escapeHtml(guardianName.trim())},</p>
+<p><strong>${escapeHtml(athleteName)}</strong>'s <strong>${escapeHtml(seasonName)}</strong> United Club Gymnastics
+membership has been activated, but it stays pending until a parent/guardian signs the waiver. No login is required.</p>
+<p><a href="${link}">Review &amp; sign the waiver &rarr;</a></p>
+<p>Once signed, the membership becomes active automatically.</p>`
+      : `<p>Hi ${escapeHtml(person.firstName)},</p>
 <p>Your <strong>${escapeHtml(seasonName)}</strong> membership has been activated, but it stays pending until your
 waiver is signed. No login is required.</p>
 <p><a href="${link}">Review &amp; sign your waiver &rarr;</a></p>
 <p>Once signed, your membership becomes active automatically.</p>`;
-    const res = await sendEmail(subject, html, [{ email: person.email, name: `${person.firstName} ${person.lastName}` }]);
+    const recipientName = isMinor ? guardianName.trim() : athleteName;
+    const res = await sendEmail(subject, html, [{ email: recipientEmail, name: recipientName }]);
     setEmailing(false);
-    if (res.ok && res.sentCount > 0) { toast(`Waiver link emailed to ${person.email}.`); onClose(); }
+    if (res.ok && res.sentCount > 0) { toast(`Waiver link emailed to ${recipientEmail}.`); onClose(); }
     else toast(`Email failed: ${res.error ?? 'unknown error'}.`, { variant: 'error' });
   };
 
   return (
     <Modal title={`Waiver required — ${person.firstName} ${person.lastName}`} onClose={onClose}>
       <p style={{ marginTop: 0, fontSize: 14, color: 'var(--ink-soft)' }}>
-        {seasonName} membership is <strong>pending a signed waiver</strong>. Send the member a no-login
-        signing link — once they sign, their membership activates automatically.
+        {seasonName} membership is <strong>pending a signed waiver</strong>.{' '}
+        {isMinor
+          ? <>This athlete is <strong>under 18</strong>, so a parent/guardian must sign. Email the guardian a no-login signing link — once they sign, the membership activates automatically.</>
+          : <>Send the member a no-login signing link — once they sign, their membership activates automatically.</>}
       </p>
+      {isMinor && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+          <Field label="Guardian name">
+            <input className="input" value={guardianName} onChange={(e) => setGuardianName(e.target.value)} placeholder="Parent / guardian full name" />
+          </Field>
+          <Field label="Guardian email">
+            <input className="input" type="email" value={guardianEmail} onChange={(e) => setGuardianEmail(e.target.value)} placeholder="guardian@example.com" />
+          </Field>
+        </div>
+      )}
       {error ? (
         <p style={{ color: 'var(--coral-600)', fontSize: 14 }}>{error}</p>
       ) : !link ? (
@@ -1101,8 +1144,13 @@ waiver is signed. No login is required.</p>
         </div>
       )}
       <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
-        <button className="btn primary" disabled={!link || emailing || !person.email} onClick={email} data-tip={person.email ? undefined : 'No email on file'}>
-          {emailing ? 'Emailing…' : '✉ Email waiver link'}
+        <button
+          className="btn primary"
+          disabled={!link || emailing || !recipientValid}
+          onClick={email}
+          data-tip={recipientValid ? undefined : (isMinor ? 'Enter the guardian name and email' : 'No email on file')}
+        >
+          {emailing ? 'Emailing…' : (isMinor ? '✉ Email guardian the link' : '✉ Email waiver link')}
         </button>
         <button className="btn ghost" disabled={!link} onClick={copy}>{copied ? '✓ Copied' : 'Copy link'}</button>
         <button className="btn ghost" onClick={onClose}>Close</button>

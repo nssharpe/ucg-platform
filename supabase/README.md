@@ -59,6 +59,7 @@ sequence numbers used in conversation. In order:
 | `20260624233240_app_role_regional_rep.sql` | Adds the `regional_rep` app role (own file — enum-add must commit before use). |
 | `20260624233241_app_role_finance_admin.sql` | Adds the `finance_admin` app role (own file — enum-add must commit before use). |
 | `20260624233242_regional_rep_regions.sql` | `regional_rep_regions` (user_id → region, one per rep) for Regional Representatives. RLS: admins manage all; a rep reads own row. |
+| `20260625001248_waiver_sign_request_signer_role.sql` | Adds `waiver_sign_requests.signer_role` (`'self'`\|`'guardian'`, default `'guardian'`) so a no-login link can carry the intended signer; recreates `get_waiver_sign_request` to return it. Lets an 18+ athlete sign their OWN waiver via the no-login path instead of being recorded as their own guardian. |
 
 All migrations are applied to the live project and tracked by the linked CLI
 (`supabase db push`). Migrations are append-only — add new ones rather than editing
@@ -79,13 +80,15 @@ is the only admin-gated sender.
 | `send-email` | Communicate broadcast / test sender (Resend batch, 50-recipient cap). | admin only |
 | `send-sms` | Communicate text sender (Telnyx); records sent messages to `sms_messages`. | admin only |
 | `sms-webhook` | Inbound Telnyx webhook: DLRs → `sms_messages` status, inbound replies → store + email admins, STOP → `sms_consent` off. Verifies Telnyx Ed25519 signature (`TELNYX_PUBLIC_KEY`). | Telnyx (no JWT; signature-verified) |
-| `record-waiver-signature` | Server-stamps real IP into `waiver_signatures`, activates membership (club-pay rows → `pending-club-payment`; returns `pendingPayment`). | signed-in owner (self) / guardian token |
+| `record-waiver-signature` | Server-stamps real IP into `waiver_signatures`, activates membership (club-pay rows → `pending-club-payment`; returns `pendingPayment`). The no-login (token) path stamps `signer_role` from the request row, not the request body. | signed-in owner (JWT, no token) / no-login token (self or guardian) |
 | `request-guardian-waiver` | Creates a signing token + emails a minor's guardian the link. | signed-in owner |
-| `create-waiver-link` | Mints a no-login waiver signing link for a member (admin "Activate" popup — email or copy). Returns `{token, link}`. | admin / club manager |
+| `create-waiver-link` | Mints a no-login waiver signing link for a member (admin "Activate" popup — email or copy). Takes optional `signerRole: 'self'\|'guardian'` (default `'guardian'`) stored on the request row. Returns `{token, link, signerRole}`. | admin / club manager |
 | `notify-club-cart` | Emails a club's managers when a member pushes fees to the cart. | any signed-in member |
+| `send-membership-welcome` | "Welcome to UCG" email for a no-club member's FIRST membership-only purchase, CC'ing the region's regional-team address and naming its Regional Leader(s). Re-checks no-club + not-Outside-US server-side; resolves region (`STATE_REGIONS[state]`), reps (`regional_rep` role ∩ `regional_rep_regions`), and CC address server-side. | any signed-in member (self only) |
 | `send-club-invite` | Invite a coach (signup) or a member (purchase membership) by email. | club manager / admin |
 | `invite-account` | Create an account + email a branded set-password link (Resend). Used by club "Add athlete"/"Add coach" (`roles` set to match kind). | club manager / admin |
-| `request-manager-access` | "Request Club Admin Role": records `manager_access_requests` + emails managers/admins a no-login review link; first responder approves/denies. | any signed-in member |
+| `request-manager-access` | "Request Club Admin Role": records `manager_access_requests` + emails the requested club's managers (admins only if the club has none yet) a no-login review link; first responder approves/denies. | any signed-in member |
+| `notify-manager-access-denied` | Emails the requester that their Club Admin request was not approved. Token-gated (deploy `--no-verify-jwt`); resolves recipient server-side; fails closed unless the request is `denied`. | no-login (secret token) |
 | `notify-sanction` | Sanction lifecycle emails (submitted → team+admins; approved/rejected → requester). | any signed-in member |
 
 ## Stand it up
@@ -193,8 +196,13 @@ and `src/lib/auth.ts` handle Supabase Auth when it is.
 A club must hold an active `club_memberships` row for a season before its athletes can
 register or it can host that season. Enforced **client-side** at the registration and
 sanction-request entry points via the pure helpers `clubHasActiveMembership` /
-`seasonForDate` in `src/lib/capabilities-core.ts`. Managers purchase from the club page
-(after a settings review); league admins grant/revoke any season. The gate is ON.
+`seasonForDate` in `src/lib/capabilities-core.ts`. Managers purchase from the club page:
+clicking **Purchase** opens a review/edit-club-info screen (name, short name, state→region,
+email — edits save via `pushClub`), and confirming adds a club-membership **line to the club
+cart** (`cart_items` `kind:'membership'`, `ref_type:'club'`, `ref_season_id:<season>`) and
+routes to the cart — it does NOT create an active row. The `club_memberships` row is created
+(status `active`) only when that cart line is **paid** in `ClubCart` (so the gate stays false
+until payment). League admins still grant/revoke any season directly. The gate is ON.
 
 ## Observability
 

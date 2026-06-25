@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { deriveCapabilities, currentSeasonId } from '../../src/lib/capabilities-core';
-import type { Athlete, Club, DB, Meet, Season } from '../../src/lib/types';
+import { deriveCapabilities, currentSeasonId, membershipHolds } from '../../src/lib/capabilities-core';
+import type { Athlete, Club, DB, Meet, Membership, Season } from '../../src/lib/types';
 
 // --- Fixture helpers --------------------------------------------------------
 
@@ -225,5 +225,74 @@ describe('deriveCapabilities', () => {
 describe('currentSeasonId', () => {
   it('7. returns the id of the season flagged current', () => {
     expect(currentSeasonId(db)).toBe('s1');
+  });
+});
+
+describe('membershipHolds', () => {
+  const base = (over: Partial<Membership>): Membership => ({
+    seasonId: 's1',
+    type: 'athlete',
+    status: 'pending-waiver',
+    waiverSignedAt: null,
+    waiverSignedBy: null,
+    paidVia: null,
+    ...over,
+  });
+
+  it('active when waiver signed and no club-cart payment pending', () => {
+    const h = membershipHolds(base({ status: 'active', waiverSignedAt: '2026-01-01T00:00:00Z' }));
+    expect(h).toEqual({ waiverHold: false, paymentHold: false, active: true });
+  });
+
+  it('waiver-only hold: adult card path before signing (no payment hold)', () => {
+    const h = membershipHolds(base({ status: 'pending-waiver', waiverSignedAt: null }));
+    expect(h.waiverHold).toBe(true);
+    expect(h.paymentHold).toBe(false);
+    expect(h.active).toBe(false);
+  });
+
+  it('payment-only hold: adult pushed fee to club cart, waiver already signed', () => {
+    const h = membershipHolds(base({
+      status: 'pending-club-payment',
+      waiverSignedAt: '2026-01-01T00:00:00Z',
+      paidVia: 'club',
+      clubCartPending: true,
+    }));
+    expect(h.waiverHold).toBe(false);
+    expect(h.paymentHold).toBe(true);
+    expect(h.active).toBe(false);
+  });
+
+  it('BOTH holds: minor pushed fee to club cart with an unsigned guardian waiver', () => {
+    const h = membershipHolds(base({
+      status: 'pending-waiver', // single enum can only show one; the flag carries the rest
+      waiverSignedAt: null,
+      paidVia: 'club',
+      clubCartPending: true,
+    }));
+    expect(h.waiverHold).toBe(true);
+    expect(h.paymentHold).toBe(true);
+    expect(h.active).toBe(false);
+  });
+
+  it('after club pays a minor: clubCartPending cleared but waiver still open → waiver-only', () => {
+    const h = membershipHolds(base({
+      status: 'pending-waiver',
+      waiverSignedAt: null,
+      paidVia: 'club',
+      clubCartPending: false,
+    }));
+    expect(h.waiverHold).toBe(true);
+    expect(h.paymentHold).toBe(false);
+    expect(h.active).toBe(false);
+  });
+
+  it('legacy back-compat: pending-club-payment status without the flag still reads as payment hold', () => {
+    const h = membershipHolds(base({
+      status: 'pending-club-payment',
+      waiverSignedAt: '2026-01-01T00:00:00Z',
+      paidVia: 'club',
+    }));
+    expect(h.paymentHold).toBe(true);
   });
 });

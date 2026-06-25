@@ -1,8 +1,10 @@
 // request-manager-access — a signed-in member asks to manage a club ("Request
 // Club Admin Role"). Records a manager_access_requests row with a secret token,
-// then emails the club's current managers + all league admins a no-login review
-// link. The first manager/admin to approve or deny decides it (idempotent).
-// Recipients are resolved server-side so the caller never sees them.
+// then emails the club's current managers a no-login review link. The first
+// manager to approve or deny decides it (idempotent). If the club has NO
+// managers yet (e.g. a brand-new club), we fall back to emailing league admins
+// so the request isn't lost. Recipients are resolved server-side so the caller
+// never sees them.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendBatch, type EmailMessage } from '../_shared/resend.ts';
@@ -66,21 +68,28 @@ Deno.serve(async (req) => {
     if (insErr) return json({ ok: false, error: insErr.message }, 500);
   }
 
-  // Recipients: club managers + league admins.
+  // Recipients: the requested club's managers ONLY. If the club has no managers
+  // yet, fall back to league admins so the request isn't lost.
   const { data: mgrRows } = await db.from('club_managers').select('person_id').eq('club_id', clubId);
   const managerIds = (mgrRows ?? []).map((r: { person_id: string }) => r.person_id);
-  const { data: adminRoleRows } = await db.from('user_roles').select('user_id').eq('role', 'admin');
-  const adminUserIds = (adminRoleRows ?? []).map((r: { user_id: string }) => r.user_id);
 
   const byManager = managerIds.length
     ? (await db.from('people').select('first_name, last_name, email').in('id', managerIds)).data ?? []
     : [];
-  const byAdmin = adminUserIds.length
-    ? (await db.from('people').select('first_name, last_name, email').in('auth_user_id', adminUserIds)).data ?? []
-    : [];
+
+  let people = byManager;
+  if (people.length === 0) {
+    // No-managers fallback: a brand-new club with no managers — email league
+    // admins so the request still reaches someone who can act on it.
+    const { data: adminRoleRows } = await db.from('user_roles').select('user_id').eq('role', 'admin');
+    const adminUserIds = (adminRoleRows ?? []).map((r: { user_id: string }) => r.user_id);
+    people = adminUserIds.length
+      ? (await db.from('people').select('first_name, last_name, email').in('auth_user_id', adminUserIds)).data ?? []
+      : [];
+  }
 
   const seen = new Set<string>();
-  const recipients = [...byManager, ...byAdmin].filter((p) => {
+  const recipients = people.filter((p) => {
     const e = (p.email ?? '').trim().toLowerCase();
     if (!EMAIL_RE.test(e) || seen.has(e)) return false;
     seen.add(e);

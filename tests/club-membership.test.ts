@@ -26,6 +26,17 @@ describe('club membership gate', () => {
     expect(clubHasActiveMembership(db, null, 's26')).toBe(false);
     expect(clubHasActiveMembership(db, 'c1', null)).toBe(false);
   });
+  it('stays inactive while only a club-membership cart line exists (not yet paid)', () => {
+    // A club-membership purchase adds a cart line (kind:'membership', refType:'club')
+    // but creates NO clubMemberships row until the cart is paid — so the gate must
+    // remain false for that season.
+    const pending = {
+      seasons: db.seasons,
+      clubMemberships: [], // nothing granted/paid yet
+      carts: { c1: [{ id: 'ci1', label: 'club membership', amount: 109, kind: 'membership', refSeasonId: 's26', refType: 'club' }] },
+    } as unknown as DB;
+    expect(clubHasActiveMembership(pending, 'c1', 's26')).toBe(false);
+  });
 });
 
 describe('seasonForDate', () => {

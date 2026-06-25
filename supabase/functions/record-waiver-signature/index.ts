@@ -2,8 +2,11 @@
 // real client IP server-side, then activates the membership.
 //
 // Two callers:
-//  - self  (signed-in member): validated by Authorization Bearer JWT.
-//  - guardian (anon): validated by a pending waiver_sign_requests token.
+//  - signed-in member (no token): validated by Authorization Bearer JWT.
+//  - no-login link (token present): validated by a pending waiver_sign_requests
+//    row. The row carries its own signer_role ('self' for an adult signing their
+//    own link, 'guardian' for a parent signing for a minor) — we stamp THAT on
+//    the signature rather than trusting the role in the request body.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const cors = {
@@ -47,8 +50,10 @@ Deno.serve(async (req) => {
   try { a = await req.json(); } catch { return json({ ok: false, error: 'Invalid JSON' }, 400); }
 
   // --- Authorize ---
-  if (a.signerRole === 'guardian') {
-    if (!a.token) return json({ ok: false, error: 'Missing token' }, 401);
+  // A token means the no-login link path (adult-self OR guardian); the stored
+  // row is the source of truth for both identity and signer_role. Without a
+  // token we require a signed-in member who owns the record (JWT path).
+  if (a.token) {
     const { data: reqRow } = await db.from('waiver_sign_requests')
       .select('*').eq('token', a.token).maybeSingle();
     if (!reqRow || reqRow.status !== 'pending') {
@@ -56,6 +61,8 @@ Deno.serve(async (req) => {
     }
     a.personId = reqRow.person_id; a.seasonId = reqRow.season_id;
     a.waiverType = reqRow.waiver_type; a.membershipType = reqRow.membership_type;
+    // Trust the mint, not the client: the role was fixed when the link was made.
+    a.signerRole = reqRow.signer_role === 'self' ? 'self' : 'guardian';
   } else {
     const token = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '');
     const { data: u, error } = await db.auth.getUser(token);
@@ -106,7 +113,7 @@ Deno.serve(async (req) => {
     .select('id');
   if (upClubErr) return json({ ok: false, error: upClubErr.message }, 500);
 
-  if (a.signerRole === 'guardian') {
+  if (a.token) {
     await db.from('waiver_sign_requests')
       .update({ status: 'completed', completed_at: new Date().toISOString() })
       .eq('token', a.token);

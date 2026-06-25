@@ -25,8 +25,14 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
 ## Supabase / migrations
 - Project ref `wkyerxlgricfphopocoz` (org NAIGC). Migrations in `supabase/migrations/`.
   CLI is linked (`supabase link` done 2026-06-19). Latest migration is
-  `20260624233746_people_self_insert_by_email.sql` — all migrations through it are
-  **applied** as of 2026-06-24 (feedback-batch Phase 1). That batch added, in order:
+  `20260625001248_waiver_sign_request_signer_role.sql` — all migrations through it are
+  **applied** as of 2026-06-25. Phase 2 (feedback batch) added
+  `20260625000509_membership_club_cart_pending.sql` (`memberships.club_cart_pending` +
+  `cart_items.ref_season_id`/`ref_type` — the independent payment-hold flag and the cart→
+  membership ref the club-pay activation matches on) and `20260625001248_…signer_role.sql`
+  (`waiver_sign_requests.signer_role` self|guardian; `get_waiver_sign_request` recreated —
+  a RETURNS TABLE shape change needs `drop function` before recreate, not `create or replace`).
+  Phase 1 (feedback batch) added, in order:
   `20260624204707_people_outside_us.sql` (`people.outside_us` boolean — trains outside
   the US ⇒ state optional, Region = "Outside US"); `…233240_app_role_regional_rep.sql`
   + `…233241_app_role_finance_admin.sql` (two new `app_role` enum values — own files per
@@ -148,6 +154,18 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
     auto re-opt-in). Webhook URL goes in the messaging profile's Webhook URL field.
   - `request-guardian-waiver` — minor waiver signing link. `record-waiver-signature`.
   - `notify-club-cart` — emails a club's managers when a member pushes fees to the cart.
+  - `send-membership-welcome` — "Welcome to UCG" email for a **no-club** member's
+    **first** membership-only purchase (card/comp, NOT a club-cart push). To = member;
+    **CC = the region's regional-team address ONLY** (reps' personal emails are NOT
+    cc'd — their NAMES appear in the body). Resolves region via `STATE_REGIONS[state]`,
+    its CC address, and its Regional Leader(s) (`regional_rep` role ∩
+    `regional_rep_regions`, names from `people`) server-side. Re-checks the
+    server-validatable skip conditions (no-club + NOT Outside US) and sends nothing if
+    either fails, so it can't be misused. Multi-rep ⇒ "Regional Leaders, A, B,";
+    zero-rep ⇒ drops the name list (never an empty list) but still CCs the team. The
+    **"first membership" once-only guard is CLIENT-side** (`Membership.tsx` computes it
+    from the pre-purchase membership list: no prior active/paid/club-pending row). Uses
+    `sendOne` with the new optional `cc` field on `EmailMessage` (`_shared/resend.ts`).
   - `send-club-invite` — club manager invites a coach (`kind:'coach'`) or a member to
     purchase membership (`kind:'membership'`); authorizes the caller manages the club.
   - `invite-account` — admin-create a real auth user + email a branded **set-password**
@@ -155,29 +173,51 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
     club page "Add athlete" / "Add coach" buttons (`kind` sets `people.roles` to match —
     coach inserts are coach-only). The link's `redirectTo` carries `?setpw=1` (see set-password note).
   - `request-manager-access` — "Request Club Admin Role": records a
-    `manager_access_requests` row + emails managers/admins a **no-login** review link
-    (`#/manager-access/<token>` → `ManagerAccessReview`). First responder approves
-    (adds them to `club_managers` via `decide_manager_access`) or denies; idempotent.
+    `manager_access_requests` row + emails the **requested club's managers ONLY** a
+    **no-login** review link (`#/manager-access/<token>` → `ManagerAccessReview`). Falls
+    back to league admins ONLY if the club has no managers yet (so the request isn't
+    lost). First responder approves (adds them to `club_managers` via
+    `decide_manager_access`) or denies; idempotent.
+  - `notify-manager-access-denied` — token-gated (no-login, deploy `--no-verify-jwt`)
+    denial notification: when a reviewer DENIES a request, `ManagerAccessReview` calls
+    this with the token; it resolves the requester + club server-side (service role) and
+    emails the requester "your Club Admin request was not approved". Fails closed (only
+    sends for a request actually in `denied` status). Approval sends no email (they're
+    added to `club_managers`). Anonymous caller, so it can't use the admin-gated
+    `send-email`.
   - `create-waiver-link` — admin/club-manager mints a **no-login** waiver signing link
     (`#/waiver/sign/<token>`) for a member. Used by the League → member "Activate" popup
     (email or copy). Returns `{token, link}`; emailing is done client-side via `send-email`.
   - `notify-sanction` — sanction lifecycle (`event:'submitted'` → team+admins;
     `'approved'`/`'rejected'` → the requester).
+  - `send-receipt` — emails the CALLER their own purchase confirmation + inline
+    HTML receipt after a membership checkout. Notify-style: resolves the recipient
+    as the caller's OWN `people.email` (a member can only receipt themselves), so a
+    non-admin member can receipt their own checkout (the admin-gated `send-email`
+    can't). Takes `{items, total?, invoiceNumber?, couponCode?}`. Used by the
+    `/cart/memberships` checkout (`Cart.tsx` `MembershipsCheckout`), the club-cart
+    pay paths (`Club.tsx` — `payClubItems`/`emailClubReceipt`), and the direct
+    card-pay flow (`Membership.tsx`); the client also offers the jsPDF PDF receipt
+    download. Best-effort — toasts only claim "emailed" on a real (`ok && sent`) send.
   - The notify-style functions allow any signed-in caller and resolve recipients
     server-side with the service role (pattern: `notify-club-cart`). `send-email`/`send-sms`
     are the only admin-gated senders.
 - Front-end invokers in `src/lib/supabase.ts`: `sendEmail`, `sendSms`, `requestGuardianWaiver`,
-  `notifyClubCart`, `sendClubInvite`, `inviteAccount`, `requestManagerAccess`, `notifySanction`,
-  `createWaiverLink`, `fetchManagerAccessRequest`, `decideManagerAccess`.
+  `notifyClubCart`, `sendMembershipWelcome`, `sendReceipt`, `sendClubInvite`, `inviteAccount`, `requestManagerAccess`, `notifySanction`,
+  `createWaiverLink`, `fetchManagerAccessRequest`, `decideManagerAccess`, `notifyManagerAccessDenied`.
   Deploy: `supabase functions deploy <name> --project-ref wkyerxlgricfphopocoz` (sandbox
   disabled; Docker NOT required) — the deploy bundles `_shared/resend.ts` automatically.
 - **Edge Function error surfacing:** invokers must unwrap the JSON `error` body via
   `edgeErrorMessage(error)` (returns the function's real message), NOT `error.message`
   (which is the generic "Edge Function returned a non-2xx status code"). Every invoker
   follows this — match it for new ones.
-- **Still over-claim** (deferred with Stripe — payment is itself a stub): the
-  "Confirmation emailed" toasts in `Membership.tsx` (direct-pay completion) and
-  `Club.tsx` (club-cart pay button) say email but send none. Wire when payments land.
+- **Membership receipts now send for real** (feedback 2d/2e, 2026-06-25): the
+  `/cart/memberships` checkout, the `Club.tsx` club-cart pay paths, and the
+  `Membership.tsx` direct card-pay flow all call `send-receipt` and show an honest
+  toast (only claim "emailed" on `ok && sent`). NOTE the recipient is always the
+  CALLER's own email — for a club-cart payment that's the paying MANAGER, not the
+  member whose fee was in the cart (acceptable: managers pay the club cart). Other
+  flows may still over-claim until payments land; check the specific toast.
 
 ## Patterns & gotchas (learned in build)
 - **Auth/set-password round-trip with HashRouter.** Supabase uses implicit flow
@@ -210,6 +250,22 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
   `clubHasActiveMembership`/`seasonForDate` (`capabilities-core.ts`). New registration
   paths MUST apply this gate. A migration backfills the current season for clubs with
   active members; future seasons require purchase/grant.
+- **Membership holds are INDEPENDENT (waiver + club-payment can co-exist).** The
+  `MembershipStatus` enum (`active`/`pending-waiver`/`pending-club-payment`/`none`) is a
+  single value and CANNOT represent both holds at once (a minor who pushes their fee to
+  the club cart is awaiting BOTH a guardian waiver AND club payment). Derive the two holds
+  from the membership's own fields via `membershipHolds(m)` in `capabilities-core.ts`:
+  `waiverHold = !waiverSignedAt`, `paymentHold = clubCartPending || status ===
+  'pending-club-payment'` (the status is the legacy/server fallback), `active = neither`.
+  `clubCartPending` (on `Membership`) is the explicit payment-hold flag: set `true` when a
+  member pushes a fee to a club cart (`Membership.complete`, `via==='club'`), cleared when
+  the club pays (`ClubCart` pay handler). The club-pay handler matches the EXACT membership
+  via the cart line's `refSeasonId`+`refType` (added to `InvoiceItem`) and sets `active`
+  only if the waiver is also signed (else `pending-waiver`). `Membership.tsx` and `Club.tsx`
+  render bubbles off `membershipHolds`, not the raw enum. NOTE: the `record-waiver-signature`
+  Edge Function still flips club-pay rows `pending-waiver`→`pending-club-payment` on signing
+  and does NOT touch `clubCartPending`; if the club pays BEFORE the guardian signs, that
+  server path can re-assert a (stale) payment hold — fix when payments land.
 - **`rolesLoaded` gate.** Roles load async *after* the session resolves; `RequireAdmin`
   (and role screens) must wait on `useRolesLoaded()` or they flash "access denied" on
   refresh. Reset it on sign-out / new user (`auth.ts`).
@@ -234,8 +290,10 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
 - **MFA / passkeys** — phased recommendation in
   `docs/research/2026-06-22-auth-2fa-passkeys.md` (TOTP opt-in → require for admins →
   passkeys). Not built.
-- **Still over-claims email** (deferred with Stripe — payment is a stub): the
-  "Confirmation emailed" toasts in `Membership.tsx` / `Club.tsx` pay buttons send no email.
+- **Membership "Confirmation emailed" toasts now send for real** via `send-receipt`
+  (`Membership.tsx` direct-pay, `Club.tsx` club-cart pay, `/cart/memberships`). Done
+  2026-06-25 — see the Email-infra note. Remaining payment-emailed PDF receipts (server
+  attachments) still wait on Stripe.
 - Stripe payments (memberships, meet entries, banquet) + server-emailed PDF receipts,
   per-season typed waivers, codeless judge access (URL / 6-digit / QR), multi-judge +
   score-entry-mode meet config, PDF certs, finals rosters. See `docs/specs/` + `docs/plans/`,

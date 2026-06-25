@@ -2,7 +2,7 @@
 // types, which erase at compile time). This is the security-critical core, kept
 // importable in a plain Node test environment. The React hooks that feed it the
 // live session/DB/impersonation live in capabilities.ts.
-import type { Athlete, DB, MembershipStatus } from './types';
+import type { Athlete, DB, Membership, MembershipStatus } from './types';
 
 export interface Capabilities {
   signedIn: boolean;
@@ -56,6 +56,28 @@ export function clubHasActiveMembership(db: DB, clubId: string | null, seasonId:
   return (db.clubMemberships ?? []).some(
     (cm) => cm.clubId === clubId && cm.seasonId === seasonId && cm.status === 'active',
   );
+}
+
+/** The independent holds keeping a membership from being fully active. Both can
+ *  apply at once: a minor athlete who pushed their fee to the club cart is BOTH
+ *  awaiting a guardian waiver AND awaiting the club's payment. Derived purely
+ *  from the membership's own fields so callers don't have to reason about the
+ *  single status enum (which can't represent both holds simultaneously).
+ *
+ *  - waiverHold: the waiver is not yet signed.
+ *  - paymentHold: the fee is sitting unpaid in a club cart (member-pushed).
+ *  When neither holds, the membership is active. */
+export function membershipHolds(m: Pick<Membership, 'status' | 'waiverSignedAt' | 'clubCartPending'>): {
+  waiverHold: boolean;
+  paymentHold: boolean;
+  active: boolean;
+} {
+  const waiverHold = !m.waiverSignedAt;
+  // A club-pushed fee is pending until paid. `clubCartPending` is the explicit
+  // flag; fall back to the legacy `pending-club-payment` status for memberships
+  // created before the flag existed.
+  const paymentHold = m.clubCartPending === true || m.status === 'pending-club-payment';
+  return { waiverHold, paymentHold, active: !waiverHold && !paymentHold };
 }
 
 /** Derive what the current (possibly impersonated) user can do.
