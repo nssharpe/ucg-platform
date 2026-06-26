@@ -299,10 +299,15 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
       until `status='paid'` → `onPaid`, or `failed` → `onError`, with a ~60s cap that NEVER
       falsely claims success. `loadStripe` is called once at module scope.
       `Cart.tsx` `MembershipsCheckout` was rewired: it **no longer fulfills client-side** —
-      the Pay button calls `createCheckoutSession` and mounts the embedded form; the webhook
-      fulfills + emails the receipt; `onPaid` re-syncs (`syncFromSupabase`) and shows success.
-      The cart card shows a **Subtotal / Service fee (card processing) / Total** breakdown via
-      `processingFee`. **NOTE:** `completePurchase` still fulfills client-side for the grouped
+      it **creates the Embedded Checkout session on mount** (`createCheckoutSession`, guarded by
+      a per-mount ref; dev StrictMode may create one extra throwaway session) and shows the
+      embedded form; the webhook fulfills + emails the receipt; `onPaid` re-syncs
+      (`syncFromSupabase`) and shows success. The summary's **Subtotal / Service fee (card
+      processing) / Total due** is driven by the session's **server-returned**
+      `amountSubtotal`/`serviceFee` (CENTS), so it always equals what Stripe collects — the
+      display-only cart `amount`s are NOT used for the total (membership lines are listed
+      without a per-line price to avoid a stale-amount mismatch). **NOTE:** `completePurchase`
+      still fulfills client-side for the grouped
       **Cart** page cards (meets/other) and the `Membership.tsx`/`Club.tsx` pay paths — those
       move to Stripe in **S4**. Verified live (seeded athlete) through the embedded-form render
       + server-authoritative amounts (trust boundary: client cart $ ignored) + RLS poll read +
