@@ -46,6 +46,7 @@ export interface SeasonFees {
   name: string;
   athlete_fee: number;
   coach_fee: number;
+  club_fee: number;
 }
 
 /** Minimal membership slice the pricing needs (snake_case DB columns). */
@@ -80,6 +81,62 @@ export function priceForTypesDollars(
     .map((m) => m.type as MembershipType);
   const union = Array.from(new Set<MembershipType>([...owned, ...types]));
   return Math.max(0, valueOf(union) - valueOf(owned));
+}
+
+// --- Meet registration fees (mirror of src/lib/pricing.ts § Registration fees) ---
+// The host club's own athletes pay $0 for ALL registration-side fees (entry,
+// second-discipline, change). All helpers return DOLLARS (use toCents to Stripe).
+
+/** Minimal meet slice the registration/addon pricing needs (snake_case DB cols).
+ *  `change_fee` / `tshirt_addon` / `banner_addon` are nullable jsonb. */
+export interface RegFeeMeet {
+  id: string;
+  host_club_id: string | null;
+  entry_fee: number;
+  second_discipline_fee: number;
+  change_fee: { amount: number; startsAt?: string } | null;
+  tshirt_addon: { price: number } | null;
+  banner_addon: { price: number } | null;
+}
+
+/**
+ * Total entry fee (DOLLARS) for a new registration purchase. Host club ⇒ 0.
+ * First discipline = entry_fee; each additional = second_discipline_fee, where
+ * "additional" means `priorDisciplineCount + i > 0`. Mirrors
+ * `newRegistrationEntryTotal` in pricing.ts exactly.
+ */
+export function newRegistrationEntryTotalDollars(
+  meet: RegFeeMeet,
+  { competingClubId, priorDisciplineCount, newDisciplineCount }: {
+    competingClubId: string;
+    priorDisciplineCount: number;
+    newDisciplineCount: number;
+  },
+): number {
+  if (competingClubId === meet.host_club_id) return 0;
+  let total = 0;
+  for (let i = 0; i < newDisciplineCount; i++) {
+    const isSecond = priorDisciplineCount + i > 0;
+    total += isSecond ? meet.second_discipline_fee : meet.entry_fee;
+  }
+  return total;
+}
+
+/** Change fee (DOLLARS) for a registration edit. Host club ⇒ 0; else the meet's
+ *  configured change-fee amount (0 if none). Mirrors `registrationChangeFee`. */
+export function registrationChangeFeeDollars(
+  meet: RegFeeMeet,
+  { competingClubId }: { competingClubId: string },
+): number {
+  if (competingClubId === meet.host_club_id) return 0;
+  return meet.change_fee?.amount ?? 0;
+}
+
+/** Addon price (DOLLARS) for a meet, by line type. Unknown/missing ⇒ 0. */
+export function addonPriceDollars(meet: RegFeeMeet, lineType: string | null): number {
+  if (lineType === 'tshirt') return meet.tshirt_addon?.price ?? 0;
+  if (lineType === 'banner') return meet.banner_addon?.price ?? 0;
+  return 0;
 }
 
 /** Dollars → integer cents (Stripe's unit). */

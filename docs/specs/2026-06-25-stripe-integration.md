@@ -123,7 +123,19 @@ Stripe test events / CLI), so it can land before S0 if desired.
   "Registered"/active; plus a decline-card path. Responsive sweep (375/768/1280) on the checkout UI.
 - Files: `src/pages/Cart.tsx`, new `src/components/StripeCheckout.tsx`, `pricing.ts` (fee line in UI).
 
-### S4 — Extend to meet entries, club cart, change fees
+### S4 — Extend to meet entries, club cart, change fees — ✅ BUILT 2026-06-26 (not yet deployed)
+> Both Edge Functions are now **general**: they recompute EVERY cart-line kind server-side
+> (membership / club-membership / member-membership / meet entry / change fee / addon) for BOTH
+> self carts and manager-paid club carts. All remaining client-side fulfillment is gone —
+> `Cart.tsx` `completePurchase` and `Club.tsx` `payClubItems`/`emailClubReceipt` are **deleted**;
+> both now launch the shared `src/components/CartCheckout.tsx` (Embedded Checkout). New migration
+> `20260626144305_s4_cart_line_tags.sql` adds `ref_meet_id` + `ref_line_type` to `cart_items` AND
+> `invoice_items` (server prices addons + distinguishes entry vs change deterministically) — **applied**.
+> The webhook emails the **payer** (the paying manager for club carts) and bills the **club**
+> (`invoices.club_id`) for club carts, the payer for self carts. **Deferral:** coupons are NOT applied
+> at Stripe checkout (server is the amount source-of-truth) — surfaced honestly in the club-cart UI;
+> revisit in S5. **Edge Functions await deploy** (Nate deploys at phase end; the new columns are live).
+
 Reuse S2's two functions; generalize `create-checkout-session` to the other item kinds and move the
 remaining client-side fulfillment server-side.
 - Generalize amount recomputation to meet-entry + change-fee + club-membership line types (honor
@@ -137,6 +149,12 @@ remaining client-side fulfillment server-side.
 ### S5 — Finance wiring + cleanup + go-live checklist
 - Ensure every fulfilled invoice carries the real `stripe_fee` + `stripe_payment_intent_id` (feeds
   Phase 5 finance). Remove now-dead client-side fulfillment paths.
+- **Move `Membership.tsx` direct card-pay to Stripe** (the one remaining client-side fulfillment
+  after S4 — it still flips memberships paid + calls `send-receipt` client-side). Confirmed S5 scope
+  with Nate 2026-06-26.
+- **Coupons at card checkout** (deferred from S4): the club-cart coupon field is shown but NOT
+  applied by Stripe checkout (server is the amount source of truth, no coupon path yet). Wire a
+  server-side discount path or remove the field.
 - Optional: admin **refund** path (`create-refund` function + `payments.status='refunded'`); may
   defer to the Phase 5 finance work.
 - Go-live checklist (doc): swap test→live keys + webhook secret, register the **live** webhook

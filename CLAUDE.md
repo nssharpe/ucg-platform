@@ -65,8 +65,11 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
 ## Supabase / migrations
 - Project ref `wkyerxlgricfphopocoz` (org NAIGC). Migrations in `supabase/migrations/`.
   CLI is linked (`supabase link` done 2026-06-19). Latest migration is
-  `20260625231808_payments_and_invoice_stripe_fields.sql` — all migrations through it
-  are **applied** as of 2026-06-25. Stripe Phase S1 added it: the `payments` table
+  `20260626144305_s4_cart_line_tags.sql` (Stripe Phase S4 — adds `ref_meet_id` +
+  `ref_line_type` to `cart_items`/`invoice_items` for server-side addon pricing +
+  entry/change discrimination; **applied 2026-06-26**) — all migrations through it
+  are **applied**. The prior `20260625231808_payments_and_invoice_stripe_fields.sql`
+  (Stripe Phase S1) added the `payments` table
   (server-side record of a Stripe Embedded Checkout session — `pending` row on session
   create, flipped `paid` by the verified webhook; all money cols in CENTS;
   `stripe_session_id` unique + `stripe_event_id` for idempotency; FK cols `person_id`/
@@ -292,6 +295,16 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
       **test** mode, account `acct_1TjNQ73b3Mn88V15` "UCG"); `VITE_STRIPE_PUBLISHABLE_KEY`
       in `.env.local`. Webhook signature path proven via `stripe trigger
       checkout.session.completed` (event delivered, `pending_webhooks: 0` ⇒ 2xx).
+    - **S4 — both functions now GENERAL (built, not yet deployed — Nate deploys).** They
+      recompute EVERY cart-line kind server-side (membership / club-membership /
+      member-targeted membership / meet entry / change fee / addon) for BOTH self carts
+      AND manager-paid club carts: meet-entry/change/addon amounts come from the meet
+      config (honoring host-club $0), distinguished via the new `ref_line_type`/`ref_meet_id`
+      tags. The webhook bills **club-vs-payer** (`invoices.club_id` for club carts, payer
+      for self carts), flips the exact `registrations.paid` via `ref_reg_ids`, activates
+      member-targeted memberships AND club memberships, and emails the **payer** the receipt
+      (the paying manager for a club cart). Coupons are **not** applied at Stripe checkout
+      (server is amount source-of-truth) — surfaced honestly in the club-cart UI; revisit S5.
     - **S3 — front-end membership checkout (deployed 2026-06-26).** `StripeCheckout`
       (`src/components/StripeCheckout.tsx`) renders Stripe **Embedded Checkout** from a
       server-created session and runs an on-page state machine: `onComplete` (no redirect)
@@ -306,10 +319,11 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
       processing) / Total due** is driven by the session's **server-returned**
       `amountSubtotal`/`serviceFee` (CENTS), so it always equals what Stripe collects — the
       display-only cart `amount`s are NOT used for the total (membership lines are listed
-      without a per-line price to avoid a stale-amount mismatch). **NOTE:** `completePurchase`
-      still fulfills client-side for the grouped
-      **Cart** page cards (meets/other) and the `Membership.tsx`/`Club.tsx` pay paths — those
-      move to Stripe in **S4**. Verified live (seeded athlete) through the embedded-form render
+      without a per-line price to avoid a stale-amount mismatch). **NOTE (superseded by S4):**
+      the grouped **Cart** page cards (meets/other) and the `Club.tsx` pay paths moved to
+      Stripe in **S4** — `completePurchase` and `Club.tsx` `payClubItems`/`emailClubReceipt`
+      are now deleted (shared `CartCheckout.tsx`). The `Membership.tsx` direct card-pay flow
+      still fulfills client-side + calls `send-receipt` (not part of S4). Verified live (seeded athlete) through the embedded-form render
       + server-authoritative amounts (trust boundary: client cart $ ignored) + RLS poll read +
       responsive 375/768/1280; the literal test-card submission into Stripe's cross-origin
       iframe isn't automatable with the preview/Chrome tooling here — manual `4242`/decline
@@ -469,15 +483,25 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
 - **MFA / passkeys** — phased recommendation in
   `docs/research/2026-06-22-auth-2fa-passkeys.md` (TOTP opt-in → require for admins →
   passkeys). Not built.
-- **Membership "Confirmation emailed" toasts send for real** via `send-receipt`
-  (`Membership.tsx` direct-pay, `Club.tsx` club-cart pay). The `/cart/memberships`
-  checkout now goes through **Stripe** (S3) — its receipt is emailed by the
-  `stripe-webhook` on fulfillment, not client-side. Remaining payment-emailed PDF
-  receipts (server attachments) still wait on later Stripe phases.
+- **Membership "Confirmation emailed" toasts send for real** via `send-receipt`. The
+  `/cart/memberships` checkout (S3) and the **Cart meet-entry / club-cart pay paths (S4)**
+  now go through **Stripe** — their receipt is emailed by the `stripe-webhook` on
+  fulfillment, not client-side (the client-side `send-receipt` calls in `Cart.tsx`
+  `completePurchase` / `Club.tsx` pay paths were removed when those paths were deleted in
+  S4). The `Membership.tsx` **direct card-pay** flow still calls `send-receipt`
+  client-side (not part of S4 — moves to Stripe in a later phase). Remaining
+  payment-emailed PDF receipts (server attachments) still wait on later Stripe phases.
 - **Stripe payments — IN PROGRESS.** S1–S2 (backend loop) + **S3 (front-end membership
-  checkout)** are built & deployed; **S4** extends Stripe to meet entries / club cart /
-  change fees (moves the remaining client-side fulfillment server-side), **S5** is finance
-  wiring + go-live (test→live keys + real $1 smoke test). Still TODO beyond Stripe:
+  checkout)** are built & deployed; **S4** (meet entries / club cart / change fees —
+  generalized both Edge Functions, deleted the `Cart.tsx` `completePurchase` + `Club.tsx`
+  `payClubItems`/`emailClubReceipt` client-side fulfillment, shared `CartCheckout.tsx`) is
+  **built, deploy-pending** (Nate deploys the two functions; the new
+  `ref_meet_id`/`ref_line_type` columns are already live). **S5** (finance wiring + go-live:
+  test→live keys + real $1 smoke test) is the remaining phase — it also (1) moves the **one
+  remaining client-side fulfillment**, `Membership.tsx` **direct card-pay**, to Stripe
+  (confirmed S5 scope w/ Nate 2026-06-26), and (2) adds the deferred **coupon-at-card-checkout**
+  path (S4 doesn't apply club-cart coupons at Stripe checkout since the server is the amount
+  source-of-truth). Still TODO beyond Stripe:
   per-season typed waivers, codeless judge access (URL / 6-digit / QR), multi-judge +
   score-entry-mode meet config, PDF certs, finals rosters. See `docs/specs/` + `docs/plans/`,
   and the roadmap in `docs/README.md`.

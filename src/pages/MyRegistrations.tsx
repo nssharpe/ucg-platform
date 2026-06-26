@@ -163,6 +163,8 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
           kind: 'meet-entry',
           refUserId: personId,
           refRegIds: newRegs.map((r) => r.id),
+          refMeetId: meet.id,
+          refLineType: 'change',
         });
         pushCart(personId, cart, false);
       } else if (entryTotal > 0) {
@@ -174,6 +176,8 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
           kind: 'meet-entry',
           refUserId: personId,
           refRegIds: newRegs.map((r) => r.id),
+          refMeetId: meet.id,
+          refLineType: 'entry',
         });
         pushCart(personId, cart, false);
       }

@@ -1,5 +1,6 @@
-// stripe-webhook — the SOLE source of truth that completes a payment (Phase S2,
-// membership scope).
+// stripe-webhook — the SOLE source of truth that completes a payment (Phase S4,
+// generalized: memberships, club memberships, meet entries, change fees, addons;
+// self OR club carts).
 //
 // Deploy with `--no-verify-jwt` (Stripe is the caller; it cannot send a Supabase
 // JWT). Authenticity is the Stripe signature, verified with `constructEventAsync`
@@ -13,11 +14,11 @@
 // RESEND_FROM).
 //
 // On `checkout.session.completed` (+ `async_payment_succeeded`) it runs the
-// server-side membership fulfillment — write the invoice, activate the
-// membership(s), record Stripe's actual fee, clear the paid cart lines, email
-// the real payer a receipt — IDEMPOTENTLY on the Stripe event id (and short-
-// circuits if the payment row is already fulfilled). On `expired`/payment-failed
-// it marks the payment `failed` and leaves the memberships pending.
+// server-side fulfillment — activate membership(s)/club membership, flip paid
+// registrations, write the invoice, record Stripe's actual fee, clear the paid
+// cart lines, email the real payer a receipt — IDEMPOTENTLY on the Stripe event
+// id (and short-circuits if the payment row is already fulfilled). On
+// `expired`/payment-failed it marks the payment `failed` and leaves items pending.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { getStripe, getCryptoProvider } from '../_shared/stripe.ts';
 import { sendOne } from '../_shared/resend.ts';
@@ -45,12 +46,16 @@ interface PaymentRow {
 }
 interface CartItemRow {
   id: string;
+  club_id: string | null;
   label: string;
   amount: number;
   kind: string;
   ref_user_id: string | null;
   ref_season_id: string | null;
   ref_type: string | null;
+  ref_reg_ids: string[] | null;
+  ref_meet_id: string | null;
+  ref_line_type: string | null;
 }
 
 type DB = ReturnType<typeof createClient>;
@@ -118,8 +123,9 @@ Deno.serve(async (req) => {
   }
 });
 
-/** Complete a membership purchase. Idempotent on the Stripe event id and on the
- *  payment row's `fulfilled_at` — a redelivered event is a no-op. */
+/** Complete a cart purchase (memberships, registrations, addons). Idempotent on
+ *  the Stripe event id and on the payment row's `fulfilled_at` — a redelivered
+ *  event is a no-op. */
 async function fulfill(
   db: DB,
   stripe: ReturnType<typeof getStripe>,
@@ -164,38 +170,67 @@ async function fulfill(
   const cartItemIds = payment.cart_item_ids ?? [];
   const { data: itemRows } = cartItemIds.length
     ? await db.from('cart_items')
-      .select('id, label, amount, kind, ref_user_id, ref_season_id, ref_type')
+      .select('id, club_id, label, amount, kind, ref_user_id, ref_season_id, ref_type, ref_reg_ids, ref_meet_id, ref_line_type')
       .in('id', cartItemIds)
     : { data: [] as CartItemRow[] };
   const items = (itemRows ?? []) as CartItemRow[];
-  const membershipItems = items.filter((i) => i.kind === 'membership' && i.ref_season_id && i.ref_type);
-
-  // --- Activate the membership(s) ---
-  // Waiver state is resolved server-side from waiver_signatures: a signed waiver
-  // for (person, season) ⇒ active; otherwise pending-waiver (minors whose
-  // guardian hasn't signed yet). paid_via 'card'; the club-cart hold is cleared.
+  // A club cart ⇒ any item carries the club_id (person carts have it null).
+  const clubId = items.find((i) => i.club_id)?.club_id ?? null;
   const now = new Date().toISOString();
-  for (const item of membershipItems) {
-    const seasonId = item.ref_season_id!;
-    const type = item.ref_type!;
-    const { data: sig } = await db.from('waiver_signatures')
-      .select('signer_name, signed_at')
-      .eq('person_id', personId).eq('season_id', seasonId)
-      .order('signed_at', { ascending: false }).limit(1).maybeSingle();
-    const signed = !!sig;
-    await db.from('memberships').upsert({
-      id: `${personId}:${seasonId}:${type}`,
-      person_id: personId, season_id: seasonId, type,
-      status: signed ? 'active' : 'pending-waiver',
-      waiver_signed_at: (sig as { signed_at?: string } | null)?.signed_at ?? null,
-      waiver_signed_by: (sig as { signer_name?: string } | null)?.signer_name ?? null,
-      paid_via: 'card',
-      activated_by_admin: false,
-      club_cart_pending: false,
-    }, { onConflict: 'person_id,season_id,type' });
+
+  // --- Fulfill memberships + club memberships -------------------------------
+  // Waiver state is resolved server-side from waiver_signatures for the TARGET
+  // person: signed ⇒ active, else pending-waiver. paid_via reflects who paid
+  // (card for a self cart, club for a club cart); the club-cart hold is cleared.
+  for (const item of items) {
+    if (item.kind !== 'membership' || !item.ref_season_id) continue;
+    const seasonId = item.ref_season_id;
+
+    if (item.ref_type === 'club') {
+      if (!clubId) continue;
+      const { data: existingCm } = await db.from('club_memberships')
+        .select('id').eq('club_id', clubId).eq('season_id', seasonId).eq('status', 'active').maybeSingle();
+      if (!existingCm) {
+        await db.from('club_memberships').insert({
+          id: crypto.randomUUID(),
+          club_id: clubId, season_id: seasonId,
+          status: 'active', granted_by_admin: false, created_at: now,
+        });
+      }
+      continue;
+    }
+
+    if (item.ref_type === 'athlete' || item.ref_type === 'coach') {
+      const targetPerson = item.ref_user_id ?? personId;
+      const type = item.ref_type;
+      const { data: sig } = await db.from('waiver_signatures')
+        .select('signer_name, signed_at')
+        .eq('person_id', targetPerson).eq('season_id', seasonId)
+        .order('signed_at', { ascending: false }).limit(1).maybeSingle();
+      const signed = !!sig;
+      await db.from('memberships').upsert({
+        id: `${targetPerson}:${seasonId}:${type}`,
+        person_id: targetPerson, season_id: seasonId, type,
+        status: signed ? 'active' : 'pending-waiver',
+        waiver_signed_at: (sig as { signed_at?: string } | null)?.signed_at ?? null,
+        waiver_signed_by: (sig as { signer_name?: string } | null)?.signer_name ?? null,
+        paid_via: clubId ? 'club' : 'card',
+        activated_by_admin: false,
+        club_cart_pending: false,
+      }, { onConflict: 'person_id,season_id,type' });
+    }
+  }
+
+  // --- Flip the paid registrations (meet entries + change fees) -------------
+  const paidRegIds = Array.from(new Set(items.flatMap((i) => i.ref_reg_ids ?? [])));
+  if (paidRegIds.length) {
+    await db.from('registrations')
+      .update({ paid: true, updated_pending: false })
+      .in('id', paidRegIds);
   }
 
   // --- Write the paid invoice (idempotent: id derived from the payment row) ---
+  // Club cart ⇒ billed to the club; self cart ⇒ billed to the payer.
   const invoiceId = payment.invoice_id ?? `inv-${payment.id}`;
   let number: string;
   if (!payment.invoice_id) {
@@ -206,19 +241,23 @@ async function fulfill(
     number = (existingInv as { number?: string } | null)?.number ?? `UCG-${payment.id}`;
   }
   await db.from('invoices').upsert({
-    id: invoiceId, number, club_id: null, athlete_id: personId,
+    id: invoiceId, number,
+    club_id: clubId, athlete_id: clubId ? null : personId,
     coupon_code: null, created_at: now, paid_at: now,
     stripe_payment_intent_id: piId, stripe_fee: stripeFeeCents,
   }, { onConflict: 'id' });
-  // Invoice lines mirror the membership cart items (human-readable detail). The
+  // Invoice lines mirror ALL paid cart items (human-readable detail). The
   // financial source of truth stays the payment row (server-recomputed subtotal
   // + Stripe's real fee) — these per-line amounts are display.
-  if (membershipItems.length) {
+  if (items.length) {
     await db.from('invoice_items').upsert(
-      membershipItems.map((i, idx) => ({
+      items.map((i, idx) => ({
         id: `ii-${payment.id}-${idx}`, invoice_id: invoiceId,
-        label: i.label, amount: i.amount, kind: 'membership',
-        ref_user_id: i.ref_user_id ?? personId, refunded: false,
+        label: i.label, amount: i.amount, kind: i.kind,
+        ref_user_id: i.ref_user_id ?? null,
+        ref_season_id: i.ref_season_id, ref_type: i.ref_type,
+        ref_reg_ids: i.ref_reg_ids, ref_meet_id: i.ref_meet_id, ref_line_type: i.ref_line_type,
+        refunded: false,
       })),
       { onConflict: 'id' },
     );
@@ -240,8 +279,9 @@ async function fulfill(
   }).eq('id', payment.id);
 
   // --- Email the REAL payer a receipt (best-effort; never fails fulfillment) ---
+  // Payer = payment.person_id (the manager for a club cart).
   try {
-    await emailReceipt(db, personId, membershipItems, payment, number);
+    await emailReceipt(db, personId, items, payment, number);
   } catch (e) {
     console.error('[stripe-webhook] receipt email failed:', e);
   }
@@ -274,10 +314,10 @@ async function emailReceipt(
   const feeRow = `<tr><td style="padding:6px 16px 6px 0;color:#5b6b7a;">Service fee (card processing)</td>` +
     `<td style="padding:6px 0;text-align:right;white-space:nowrap;color:#5b6b7a;">${fmtMoney(fee)}</td></tr>`;
 
-  const subject = 'Your United Club Gymnastics membership receipt';
+  const subject = 'Your United Club Gymnastics receipt';
   const html = `<div style="color:#1d2a38;font-size:15px;line-height:1.55;">
 <p>Hi ${esc(forName)},</p>
-<p>Thanks for your purchase. Here's your receipt — your membership is now active (or pending your waiver, if one is still outstanding).</p>
+<p>Thanks for your purchase. Here's your receipt for the items below.</p>
 <p style="color:#5b6b7a;font-size:13px;margin:0 0 12px;">Receipt ${esc(invoiceNumber)}</p>
 <table style="border-collapse:collapse;margin:8px 0;font-size:14px;">
 ${rows}${feeRow}

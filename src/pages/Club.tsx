@@ -1,23 +1,24 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { useDB, mutate } from '../lib/store';
+import { useDB, mutate, syncFromSupabase } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { clubHasActiveMembership, seasonForDate, membershipHolds, paidRegistrationClub } from '../lib/capabilities-core';
 import { Badge, Combo, Field, Modal } from '../components/ui';
 import { useToast, useFmtDate } from '../components/ui-hooks';
 import type { ToastOptions } from '../components/ui-hooks';
 import { CLUB_ACCESS_LABELS, STATE_REGIONS } from '../lib/types';
-import type { Athlete, CartItem, Club, ClubAccess, DB, Invoice, Registration, Season } from '../lib/types';
+import type { Athlete, CartItem, Club, ClubAccess, DB, Registration, Season } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
 import { newRegistrationEntryTotal, reassignPartners, registrationChangeFee } from '../lib/pricing';
 import {
-  deleteRegistration, pushCart, pushClub, pushClubManager, pushInvoice,
-  pushMembership, pushRegistration, requestManagerAccess, sendClubInvite,
-  inviteAccount, pushClubMembership, deleteClubMembership, sendReceipt,
+  deleteRegistration, pushCart, pushClub, pushClubManager,
+  pushRegistration, requestManagerAccess, sendClubInvite,
+  inviteAccount, pushClubMembership, deleteClubMembership,
 } from '../lib/supabase';
 import type { ClubMembership } from '../lib/types';
 import { ClubForm } from '../components/ClubForm';
 import { RegistrationEditor } from '../components/RegistrationEditor';
+import { CartCheckout } from '../components/CartCheckout';
 
 // ---- sort helpers -----------------------------------------------------------
 
@@ -913,6 +914,8 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
           kind: 'meet-entry',
           refUserId: athleteId,
           refRegIds: newRegs.map((r) => r.id),
+          refMeetId: meet.id,
+          refLineType: 'change',
         });
         pushCart(clubId, cart, true);
       }
@@ -977,6 +980,8 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
           kind: 'meet-entry',
           refUserId: athleteId,
           refRegIds: regs.map((r) => r.id),
+          refMeetId: meet.id,
+          refLineType: 'entry',
         });
         pushCart(clubId, cart, true);
       }
@@ -1033,7 +1038,7 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
 
       if (swapFee > 0 && meet.changeFee) {
         const cart = d.carts[clubId] ?? (d.carts[clubId] = []);
-        cart.push({ id: `ci-change-${Date.now()}-${toId}`, label: `${meet.name} change fee — swap to ${to.firstName} ${to.lastName}`, amount: swapFee, kind: 'meet-entry', refUserId: toId, refRegIds: swappedRegIds });
+        cart.push({ id: `ci-change-${Date.now()}-${toId}`, label: `${meet.name} change fee — swap to ${to.firstName} ${to.lastName}`, amount: swapFee, kind: 'meet-entry', refUserId: toId, refRegIds: swappedRegIds, refMeetId: meet.id, refLineType: 'change' });
         pushCart(clubId, cart, true);
       }
     });
@@ -1293,112 +1298,24 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
 
 // ---- ClubCart ---------------------------------------------------------------
 
-/** Pay a set of club-cart `items`: create the paid invoice, activate the
- *  memberships each line covers (club seasonal membership rows and member
- *  membership rows alike), and remove exactly those items from the club cart.
- *  Runs inside a `mutate` draft `d`; returns the created invoice so the caller
- *  can email a receipt. Shared by the full-cart Pay button and the
- *  memberships-only checkout so activation logic is never duplicated. */
-function payClubItems(
-  d: DB,
-  clubId: string,
-  items: CartItem[],
-  couponCode: string | undefined,
-): Invoice | null {
-  if (items.length === 0) return null;
-  const invoice: Invoice = {
-    id: `inv-${Date.now()}`, number: `UCG-2026-${String(d.invoices.length + 1).padStart(4, '0')}`,
-    clubId, athleteId: null, createdAt: new Date().toISOString(), paidAt: new Date().toISOString(),
-    items: items.map((i) => ({ ...i })), ...(couponCode ? { couponCode } : {}),
-  };
-  d.invoices.push(invoice);
-  pushInvoice(invoice);
-  // 3f: flip the exact registrations these meet-entry / change-fee lines cover.
-  const regIds = new Set(items.flatMap((i) => i.refRegIds ?? []));
-  if (regIds.size > 0) {
-    for (const reg of d.registrations) {
-      if (regIds.has(reg.id)) {
-        reg.paid = true;
-        reg.updatedPending = false;
-        pushRegistration(reg);
-      }
-    }
-  }
-  for (const item of items) {
-    // Club membership line: create/activate the club_memberships row for the
-    // season now that it's paid (the gate that lets the club register athletes
-    // & host that season).
-    if (item.kind === 'membership' && item.refType === 'club' && item.refSeasonId) {
-      const already = (d.clubMemberships ?? []).some(
-        (x) => x.clubId === clubId && x.seasonId === item.refSeasonId && x.status === 'active',
-      );
-      if (!already) {
-        const cm: ClubMembership = {
-          id: crypto.randomUUID(), clubId, seasonId: item.refSeasonId,
-          status: 'active', grantedByAdmin: false, createdAt: new Date().toISOString(),
-        };
-        (d.clubMemberships ??= []).push(cm);
-        pushClubMembership(cm);
-      }
-      continue;
-    }
-    if (item.kind === 'membership' && item.refUserId) {
-      const person = d.people.find((p) => p.id === item.refUserId);
-      // Target the EXACT membership this line covers (season + type). Older cart
-      // items lack the refs — fall back to the first payment-pending membership.
-      const m = person?.memberships.find((x) =>
-        item.refSeasonId
-          ? x.seasonId === item.refSeasonId && (!item.refType || x.type === item.refType)
-          : x.clubCartPending || x.status === 'pending-club-payment',
-      );
-      if (m) {
-        // Payment clears the PAYMENT hold. Fully active only if the waiver is
-        // also signed; an under-18 whose guardian waiver is still open drops to
-        // a waiver-only hold.
-        m.clubCartPending = false;
-        m.paidVia = 'club';
-        m.status = m.waiverSignedAt ? 'active' : 'pending-waiver';
-        pushMembership(person!.id, m);
-      }
-    }
-  }
-  const ids = new Set(items.map((i) => i.id));
-  d.carts[clubId] = (d.carts[clubId] ?? []).filter((i) => !ids.has(i.id));
-  pushCart(clubId, d.carts[clubId], true);
-  return invoice;
-}
-
-/** After a club-cart payment, email the PAYER (the signed-in manager) a receipt
- *  and surface an honest toast — only claiming "emailed" when the send actually
- *  succeeds. Best-effort: a mail failure never undoes the completed payment. The
- *  `send-receipt` fn resolves the recipient as the caller's own email, so this
- *  works without admin rights (the admin-gated `send-email` would not). */
-function emailClubReceipt(
-  invoice: Invoice | null,
-  toast: (msg: string, opts?: ToastOptions) => void,
-  baseMsg: string,
-): void {
-  if (!invoice) return;
-  void sendReceipt({
-    items: invoice.items.map((i) => ({ label: i.label, amount: i.amount, kind: i.kind })),
-    total: invoice.items.reduce((s, i) => s + i.amount, 0),
-    invoiceNumber: invoice.number,
-    couponCode: invoice.couponCode,
-  })
-    .then((r) => {
-      if (r.ok && r.sent) toast(`${baseMsg} Receipt emailed to you.`);
-      else toast(`${baseMsg} Receipt saved to invoices below.`);
-    })
-    .catch(() => toast(`${baseMsg} Receipt saved to invoices below.`));
-}
-
 export function ClubCart() {
   const { clubId } = useParams();
   const db = useDB();
   const toast = useToast();
   const fmtDate = useFmtDate();
   const [coupon, setCoupon] = useState('');
+  const [checkout, setCheckout] = useState<{ items: CartItem[]; title: string } | null>(null);
   const club = db.clubs.find((c) => c.id === clubId);
+
+  // The webhook bills the club, activates every membership/registration, clears
+  // the club cart, and emails the paying manager a receipt — the FE only re-syncs.
+  const onPaid = () => {
+    void syncFromSupabase().finally(() => {
+      setCheckout(null);
+      toast('Payment complete — memberships/registrations activated. Receipt emailed to you.');
+    });
+  };
+  const onError = (msg: string) => toast(msg, { variant: 'error' });
 
   // Cross-club cart cleanup (3d): when this cart loads, drop any pending meet-entry
   // line for an athlete who has SINCE become PAID-registered under a DIFFERENT club
@@ -1447,6 +1364,24 @@ export function ClubCart() {
       return `${r.discipline === 'TNT' ? 'T&T' : r.discipline} – ${lvl} – ${eventsText(r, nameOf)}`;
     }).join(' / ');
   };
+
+  if (checkout) {
+    return (
+      <div style={{ maxWidth: 620 }}>
+        <h1 className="page-title display">Checkout — {checkout.title}</h1>
+        <p className="page-sub">Billed to {club.shortName}.</p>
+        <div style={{ marginBottom: 14 }}>
+          <button className="btn ghost small" onClick={() => setCheckout(null)}>← Back to cart</button>
+        </div>
+        <CartCheckout
+          items={checkout.items}
+          title={checkout.title}
+          onPaid={onPaid}
+          onError={onError}
+        />
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: 820 }}>
@@ -1509,14 +1444,7 @@ export function ClubCart() {
                 <button
                   className="btn primary small"
                   style={{ marginLeft: 'auto' }}
-                  onClick={() => {
-                    let invoice: Invoice | null = null;
-                    mutate((d) => {
-                      const ms = (d.carts[club.id] ?? []).filter((i) => i.kind === 'membership');
-                      invoice = payClubItems(d, club.id, ms, couponDef?.code);
-                    });
-                    emailClubReceipt(invoice, toast, 'Memberships activated.');
-                  }}
+                  onClick={() => setCheckout({ items: membershipItems, title: 'Memberships' })}
                 >
                   Checkout Memberships →
                 </button>
@@ -1575,6 +1503,11 @@ export function ClubCart() {
           <div style={{ display: 'flex', gap: 14, alignItems: 'end', marginTop: 14, flexWrap: 'wrap' }}>
             <div style={{ flex: 1, minWidth: 180 }}>
               <Field label="Coupon code"><input type="text" value={coupon} onChange={(e) => setCoupon(e.target.value)} placeholder="EARLYBIRD" /></Field>
+              {coupon.trim() !== '' && (
+                <div style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 4 }}>
+                  Coupon codes aren’t applied to card checkout yet.
+                </div>
+              )}
             </div>
             <div style={{ textAlign: 'right', marginBottom: 14 }}>
               <div style={{ fontSize: 14 }}>{cart.length} item{cart.length !== 1 ? 's' : ''} · Subtotal {fmtMoney(subtotal)}</div>
@@ -1584,13 +1517,7 @@ export function ClubCart() {
             <button
               className="btn primary"
               style={{ marginBottom: 14 }}
-              onClick={() => {
-                let invoice: Invoice | null = null;
-                mutate((d) => {
-                  invoice = payClubItems(d, club.id, d.carts[club.id] ?? [], couponDef?.code);
-                });
-                emailClubReceipt(invoice, toast, 'Payment processed — memberships activated.');
-              }}
+              onClick={() => setCheckout({ items: cart, title: `${club.shortName} cart` })}
             >
               Pay {fmtMoney(total)} →
             </button>

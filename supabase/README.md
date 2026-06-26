@@ -62,6 +62,7 @@ sequence numbers used in conversation. In order:
 | `20260625001248_waiver_sign_request_signer_role.sql` | Adds `waiver_sign_requests.signer_role` (`'self'`\|`'guardian'`, default `'guardian'`) so a no-login link can carry the intended signer; recreates `get_waiver_sign_request` to return it. Lets an 18+ athlete sign their OWN waiver via the no-login path instead of being recorded as their own guardian. |
 | `20260625180951_registrations_paid.sql` | Phase 3 (3f/3g): `registrations.paid` (boolean, default false — explicit "entry fee paid" flag; new regs land false = "Pending Purchase", pay paths flip true; historical rows backfilled true) + `registrations.updated_pending` (already-paid reg edited back to re-pending by a change fee = "Updated pending purchase") + `cart_items.ref_reg_ids` / `invoice_items.ref_reg_ids` (`text[]` linking a meet-entry/change-fee line to the exact registration id(s) it pays for). RLS unchanged. |
 | `20260625231808_payments_and_invoice_stripe_fields.sql` | Stripe Phase S1: `payments` table — the server-side record of a Stripe Embedded Checkout session (`pending` row on session create, flipped `paid` by the verified webhook). All money cols in **cents**; idempotency via unique `stripe_session_id` + `stripe_event_id`; item refs (`cart_item_ids`/`ref_reg_ids`/`ref_season_id`/`ref_type`); FK cols `person_id`/`invoice_id` are **text** (match the text ids). RLS: **service-role writes only** (no client write policy), signed-in person self-reads own rows (`is_admin() or person_id = my_person_id()`). Adds `invoices.stripe_payment_intent_id` + `invoices.stripe_fee` (nullable; feed Phase 5 finance with real fees). The two Edge Functions land in S2 — see `docs/specs/2026-06-25-stripe-integration.md`. |
+| `20260626144305_s4_cart_line_tags.sql` | Stripe Phase S4: adds `ref_meet_id` + `ref_line_type` to **both** `cart_items` and `invoice_items` so the server can price addons + distinguish entry vs change fees deterministically when recomputing every cart-line kind (memberships, meet entries, change fees, addons) for self and club carts. RLS unchanged. |
 
 All migrations are applied to the live project and tracked by the linked CLI
 (`supabase db push`). Migrations are append-only — add new ones rather than editing
@@ -92,15 +93,19 @@ is the only admin-gated sender.
 | `request-manager-access` | "Request Club Admin Role": records `manager_access_requests` + emails the requested club's managers (admins only if the club has none yet) a no-login review link; first responder approves/denies. | any signed-in member |
 | `notify-manager-access-denied` | Emails the requester that their Club Admin request was not approved. Token-gated (deploy `--no-verify-jwt`); resolves recipient server-side; fails closed unless the request is `denied`. | no-login (secret token) |
 | `notify-sanction` | Sanction lifecycle emails (submitted → team+admins; approved/rejected → requester). | any signed-in member |
-| `create-checkout-session` | Stripe Embedded Checkout for **membership** cart items (Phase S2). **Recomputes** all amounts server-side from season fees + existing memberships (cart `amount` never trusted), adds the service fee (`processingFee`), creates the session (`ui_mode:'embedded'`, no redirect), inserts a `pending` `payments` row. Returns `{ clientSecret, sessionId, paymentId }`. | any signed-in member (own cart items only) |
-| `stripe-webhook` | The sole completer. Verifies the Stripe signature with `constructEventAsync` against `STRIPE_WEBHOOK_SECRET` (**fail-closed** if unset). On `session.completed`/`async_payment_succeeded` runs **idempotent** membership fulfillment (event-id + `fulfilled_at` guarded): activate membership(s), write the paid invoice with the **real** `stripe_fee`, clear cart lines, email the payer a receipt. On `expired`/`async_payment_failed` → mark `failed`. | Stripe (no JWT; deploy `--no-verify-jwt`; signature-verified) |
+| `create-checkout-session` | Stripe Embedded Checkout. As of **S4** generalized to **every** cart-line kind (membership / club-membership / member-targeted membership / meet entry / change fee / addon) for **both** self carts and manager-paid club carts. **Recomputes** all amounts server-side (cart `amount` never trusted) — season fees + existing memberships for memberships; meet config (honoring host-club $0) keyed on the new `ref_meet_id`/`ref_line_type` tags for entries/changes/addons — adds the service fee (`processingFee`), creates the session (`ui_mode:'embedded'`, no redirect), inserts a `pending` `payments` row. Returns `{ clientSecret, sessionId, paymentId }`. | any signed-in member (own cart) / club manager (club cart) |
+| `stripe-webhook` | The sole completer. Verifies the Stripe signature with `constructEventAsync` against `STRIPE_WEBHOOK_SECRET` (**fail-closed** if unset). On `session.completed`/`async_payment_succeeded` runs **idempotent** fulfillment (event-id + `fulfilled_at` guarded) for all line kinds (S4): flip the exact `registrations.paid` via `ref_reg_ids`, activate membership(s) + club memberships, write the paid invoice with the **real** `stripe_fee` (billed to the **club** via `invoices.club_id` for club carts, to the payer for self carts), clear cart lines, email the **payer** a receipt (the paying manager for a club cart). On `expired`/`async_payment_failed` → mark `failed`. | Stripe (no JWT; deploy `--no-verify-jwt`; signature-verified) |
 
 Stripe functions share `functions/_shared/stripe.ts` (Stripe client via `npm:stripe`,
-fetch HTTP client, SubtleCrypto provider, and `processingFee`/membership pricing
-mirroring `src/lib/pricing.ts`). Secrets: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
-(test values first). Register the webhook endpoint
+fetch HTTP client, SubtleCrypto provider, and `processingFee`/all-line-kind pricing
+mirroring `src/lib/pricing.ts` + the meet config). Secrets: `STRIPE_SECRET_KEY`,
+`STRIPE_WEBHOOK_SECRET` (test values first). Register the webhook endpoint
 `https://<ref>.supabase.co/functions/v1/stripe-webhook` for events
 `checkout.session.{completed,async_payment_succeeded,async_payment_failed,expired}`.
+**S4 status:** both functions are generalized to all cart-line kinds + club carts but are
+**built, not yet deployed** (Nate deploys at phase end); the new `cart_items`/`invoice_items`
+`ref_meet_id` + `ref_line_type` columns are already live. Coupons are not yet applied at
+Stripe checkout (deferred to S5).
 
 ## Stand it up
 
@@ -224,8 +229,10 @@ until payment). League admins still grant/revoke any season directly. The gate i
 
 ## Not covered yet (future migrations)
 
-Payments (Stripe via an Edge Function — `invoices`/`cart_items` tables already exist),
-the membership-expiry notification cron, scheduled database backups, and the public API
+Payments are **largely built** (Stripe Embedded Checkout, Phases S1–S4 — `payments`/`invoices`/
+`cart_items` tables + the `create-checkout-session`/`stripe-webhook` functions above; S5 finance
+wiring + go-live remains). Still future: the membership-expiry notification cron, scheduled
+database backups, and the public API
 surface for other leagues. (Waiver e-signature **is** built — migrations 0010–0030 +
 `record-waiver-signature` / `request-guardian-waiver`; it stores a structured signature
 evidence record. PDF proof and receipts are generated **client-side** (jsPDF) on demand;
