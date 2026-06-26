@@ -63,7 +63,8 @@ in [`../CLAUDE.md`](../CLAUDE.md).
 
 ## Roadmap (sub-projects)
 
-A ✅ accounts & roles → **Stripe payments** (next; see the research note) →
+A ✅ accounts & roles → **Stripe payments** (🟡 S1–S4 built — membership + meet-entry +
+club-cart Embedded Checkout; S4 deploy-pending; S5 finance + go-live remains) →
 B typed memberships + per-season waiver → C club-based registration multi-club picker →
 D codeless judge access (URL / 6-digit / QR) → E meet scoring config (1-vs-2 panels,
 calculator vs. simple entry). Further out: PDF certs, banquet tickets, finals rosters,
