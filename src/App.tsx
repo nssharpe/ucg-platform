@@ -21,7 +21,7 @@ const loaders = {
   Club: () => import('./pages/Club'),
   Clubs: () => import('./pages/Clubs'),
   Sanction: () => import('./pages/Sanction'),
-  Meets: () => import('./pages/Meets'),
+  Events: () => import('./pages/Events'),
   Judge: () => import('./pages/Judge'),
   ScoreDetail: () => import('./pages/ScoreDetail'),
   Results: () => import('./pages/Results'),
@@ -41,18 +41,36 @@ function ClubIndexRedirect() {
   const { clubId } = useParams();
   return <Navigate to={`/club/${clubId}/roster`} replace />;
 }
+
+/** Legacy /meets* → /events* redirects (the Meet→Event rename keeps old links
+ *  alive). Each preserves the `:slug` param. */
+function MeetsRedirect() {
+  return <Navigate to="/events" replace />;
+}
+function MeetDetailRedirect() {
+  const { slug } = useParams();
+  return <Navigate to={`/events/${slug}`} replace />;
+}
+function MeetManageRedirect() {
+  const { slug } = useParams();
+  return <Navigate to={`/events/${slug}/manage`} replace />;
+}
+function MeetNationalsRedirect() {
+  const { slug } = useParams();
+  return <Navigate to={`/events/${slug}/nationals`} replace />;
+}
 const Clubs = lazy(() => loaders.Clubs().then((m) => ({ default: m.Clubs })));
 const SanctionRequestForm = lazy(() => loaders.Sanction().then((m) => ({ default: m.SanctionRequestForm })));
 const SanctioningQueue = lazy(() => loaders.Sanction().then((m) => ({ default: m.SanctioningQueue })));
 const SanctionVotePage = lazy(() => loaders.Sanction().then((m) => ({ default: m.SanctionVotePage })));
-const Meets = lazy(() => loaders.Meets().then((m) => ({ default: m.Meets })));
-const MeetDetail = lazy(() => loaders.Meets().then((m) => ({ default: m.MeetDetail })));
-const MeetManage = lazy(() => loaders.Meets().then((m) => ({ default: m.MeetManage })));
+const Events = lazy(() => loaders.Events().then((m) => ({ default: m.Events })));
+const EventDetail = lazy(() => loaders.Events().then((m) => ({ default: m.EventDetail })));
+const EventManage = lazy(() => loaders.Events().then((m) => ({ default: m.EventManage })));
 const Nationals = lazy(() => loaders.Nationals().then((m) => ({ default: m.Nationals })));
 const Judge = lazy(() => loaders.Judge().then((m) => ({ default: m.Judge })));
 const ScoreDetail = lazy(() => loaders.ScoreDetail().then((m) => ({ default: m.ScoreDetail })));
 const ResultsIndex = lazy(() => loaders.Results().then((m) => ({ default: m.ResultsIndex })));
-const MeetResults = lazy(() => loaders.Results().then((m) => ({ default: m.MeetResults })));
+const EventResults = lazy(() => loaders.Results().then((m) => ({ default: m.EventResults })));
 const AdminMembers = lazy(() => loaders.Admin().then((m) => ({ default: m.AdminMembers })));
 const AdminClubs = lazy(() => loaders.Admin().then((m) => ({ default: m.AdminClubs })));
 const AdminLeague = lazy(() => loaders.Admin().then((m) => ({ default: m.AdminLeague })));
@@ -90,7 +108,7 @@ function RouteErrorBoundary({ children }: { children: ReactNode }) {
   );
 }
 
-/** Gate account-only pages: guests can browse public routes (results, meets),
+/** Gate account-only pages: guests can browse public routes (results, events),
  *  but reaching a member page shows the sign-in screen. In the unconfigured
  *  prototype `signedIn` is always true, so this is a no-op there. */
 function RequireAccount({ children }: { children: ReactNode }) {
@@ -182,10 +200,13 @@ export default function App() {
             <Routes>
               {/* Public — no account required */}
               <Route path="/" element={<Home />} />
-              <Route path="/meets" element={<Meets />} />
-              <Route path="/meets/:slug" element={<MeetDetail />} />
+              <Route path="/events" element={<Events />} />
+              <Route path="/events/:slug" element={<EventDetail />} />
+              {/* Legacy /meets* redirects (preserve old links post-rename). */}
+              <Route path="/meets" element={<MeetsRedirect />} />
+              <Route path="/meets/:slug" element={<MeetDetailRedirect />} />
               <Route path="/results" element={<ResultsIndex />} />
-              <Route path="/results/:slug" element={<MeetResults />} />
+              <Route path="/results/:slug" element={<EventResults />} />
               {/* Account required */}
               <Route path="/me" element={<RequireAccount><Profile /></RequireAccount>} />
               <Route path="/membership" element={<RequireAccount><Membership /></RequireAccount>} />
@@ -201,8 +222,10 @@ export default function App() {
               <Route path="/club/:clubId/roster" element={<RequireAccount><ClubRoster /></RequireAccount>} />
               <Route path="/club/:clubId/registrations" element={<RequireAccount><ClubRegistrations /></RequireAccount>} />
               <Route path="/club/:clubId/cart" element={<RequireAccount><ClubCart /></RequireAccount>} />
-              <Route path="/meets/:slug/manage" element={<RequireAccount><MeetManage /></RequireAccount>} />
-              <Route path="/meets/:slug/nationals" element={<RequireAccount><Nationals /></RequireAccount>} />
+              <Route path="/events/:slug/manage" element={<RequireAccount><EventManage /></RequireAccount>} />
+              <Route path="/events/:slug/nationals" element={<RequireAccount><Nationals /></RequireAccount>} />
+              <Route path="/meets/:slug/manage" element={<MeetManageRedirect />} />
+              <Route path="/meets/:slug/nationals" element={<MeetNationalsRedirect />} />
               <Route path="/judge" element={<RequireAccount><Judge /></RequireAccount>} />
               <Route path="/scores/:scoreId" element={<RequireAccount><ScoreDetail /></RequireAccount>} />
               <Route path="/admin/members" element={<RequireAdmin><AdminMembers /></RequireAdmin>} />

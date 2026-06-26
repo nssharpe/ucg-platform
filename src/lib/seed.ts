@@ -1,5 +1,5 @@
 import type {
-  DB, Athlete, Club, Level, Meet, Registration, Score, Season, Discipline, Invoice,
+  DB, Athlete, Club, Level, Event, Registration, Score, Season, Discipline, Invoice,
   WaiverDocument,
 } from './types';
 import { EVENTS, STATE_REGIONS, GENERAL_WAIVER_TYPE } from './types';
@@ -129,16 +129,16 @@ export function buildSeed(): DB {
   people[0].levels = { WAG: 'wag-plat' };
   people[0].memberships = [{ seasonId: 's26', type: 'athlete', status: 'active', waiverSignedAt: '2025-08-02T12:00:00Z', waiverSignedBy: 'Maya Okafor', paidVia: 'card' }];
 
-  // ---- Meets ----
+  // ---- Events ----
   const tz = 'America/Chicago';
-  const mkSessions = (meetId: string): Meet['sessions'] => [
-    { id: `${meetId}-s1`, name: 'Session 1 — WAG Xcel Silver & Platinum', discipline: 'WAG', date: '2026-04-10', time: '09:00', levelIds: ['wag-silver', 'wag-plat'], squads: [] },
-    { id: `${meetId}-s2`, name: 'Session 2 — WAG Diamond / L9 / Open', discipline: 'WAG', date: '2026-04-10', time: '14:00', levelIds: ['wag-diamond', 'wag-l9', 'wag-open'], squads: [] },
-    { id: `${meetId}-s3`, name: 'Session 3 — MAG All Levels', discipline: 'MAG', date: '2026-04-11', time: '09:00', levelIds: ['mag-dev', 'mag-int', 'mag-adv', 'mag-masters'], squads: [] },
-    { id: `${meetId}-s4`, name: 'Session 4 — T&T All Flights', discipline: 'TNT', date: '2026-04-11', time: '15:00', levelIds: ['tnt-new', 'tnt-int', 'tnt-high'], squads: [] },
+  const mkSessions = (eventId: string): Event['sessions'] => [
+    { id: `${eventId}-s1`, name: 'Session 1 — WAG Xcel Silver & Platinum', discipline: 'WAG', date: '2026-04-10', time: '09:00', levelIds: ['wag-silver', 'wag-plat'], squads: [] },
+    { id: `${eventId}-s2`, name: 'Session 2 — WAG Diamond / L9 / Open', discipline: 'WAG', date: '2026-04-10', time: '14:00', levelIds: ['wag-diamond', 'wag-l9', 'wag-open'], squads: [] },
+    { id: `${eventId}-s3`, name: 'Session 3 — MAG All Levels', discipline: 'MAG', date: '2026-04-11', time: '09:00', levelIds: ['mag-dev', 'mag-int', 'mag-adv', 'mag-masters'], squads: [] },
+    { id: `${eventId}-s4`, name: 'Session 4 — T&T All Flights', discipline: 'TNT', date: '2026-04-11', time: '15:00', levelIds: ['tnt-new', 'tnt-int', 'tnt-high'], squads: [] },
   ];
 
-  const meets: Meet[] = [
+  const events: Event[] = [
     {
       id: 'meet-nat26', slug: 'ucg-nationals-2026', name: 'UCG Nationals 2026',
       hostClubId: 'club-1', city: 'Minneapolis', state: 'Minnesota', timezone: tz,
@@ -179,18 +179,18 @@ export function buildSeed(): DB {
   // ---- Registrations ----
   const registrations: Registration[] = [];
   let rid = 0;
-  const register = (meet: Meet, a: Athlete, intoSquads: boolean) => {
+  const register = (event: Event, a: Athlete, intoSquads: boolean) => {
     for (const d of Object.keys(a.levels) as Discipline[]) {
-      if (!meet.disciplines.includes(d)) continue;
+      if (!event.disciplines.includes(d)) continue;
       const levelId = a.levels[d]!;
-      const session = meet.sessions.find((s) => s.discipline === d && s.levelIds.includes(levelId))
-        ?? meet.sessions.find((s) => s.discipline === d);
+      const session = event.sessions.find((s) => s.discipline === d && s.levelIds.includes(levelId))
+        ?? event.sessions.find((s) => s.discipline === d);
       if (!session) continue;
       rid += 1;
       const evts = EVENTS[d].map((e) => e.code).filter(() => rnd() < 0.92);
       registrations.push({
         id: `reg-${rid}`,
-        meetId: meet.id, athleteId: a.id, clubId: a.mainClubId!,
+        eventId: event.id, athleteId: a.id, clubId: a.mainClubId!,
         discipline: d, levelId,
         events: evts.length ? evts : [EVENTS[d][0].code],
         sessionId: session.id,
@@ -208,15 +208,15 @@ export function buildSeed(): DB {
 
   const members = people.filter((p) => p.kind === 'athlete' && p.memberships.some((m) => m.seasonId === 's26' && m.status === 'active'));
   members.forEach((a, i) => {
-    if (i % 3 !== 2) register(meets[0], a, false); // Nationals: open reg, no squads yet
-    register(meets[1], a, true); // Midwest regional: squadded, in progress
-    if (i % 2 === 0) register(meets[2], a, true); // Past meet
+    if (i % 3 !== 2) register(events[0], a, false); // Nationals: open reg, no squads yet
+    register(events[1], a, true); // Midwest regional: squadded, in progress
+    if (i % 2 === 0) register(events[2], a, true); // Past event
   });
 
   // ---- Scores ----
   const scores: Score[] = [];
-  const scoreMeet = (meet: Meet, complete: boolean) => {
-    for (const session of meet.sessions) {
+  const scoreEvent = (event: Event, complete: boolean) => {
+    for (const session of event.sessions) {
       for (const sq of session.squads) {
         for (const regId of sq.athleteRegIds) {
           const reg = registrations.find((r) => r.id === regId)!;
@@ -227,8 +227,8 @@ export function buildSeed(): DB {
             const sv = round(Math.min(svCap, svCap - rnd() * 1.6), 1);
             const ded = round(0.7 + rnd() * 1.9, 3);
             scores.push({
-              id: `${meet.id}|${regId}|${ev}`,
-              meetId: meet.id, sessionId: session.id, regId, event: ev,
+              id: `${event.id}|${regId}|${ev}`,
+              eventId: event.id, sessionId: session.id, regId, event: ev,
               sv, deductions: ded, final: round(Math.max(0, sv - ded)),
               enteredBy: 'judge-demo', enteredAt: new Date().toISOString(), flashed: true,
             });
@@ -237,8 +237,8 @@ export function buildSeed(): DB {
       }
     }
   };
-  scoreMeet(meets[2], true);
-  scoreMeet(meets[1], false);
+  scoreEvent(events[2], true);
+  scoreEvent(events[1], false);
 
   // ---- Invoices ----
   const invoices: Invoice[] = [];
@@ -267,7 +267,7 @@ export function buildSeed(): DB {
   }];
 
   return {
-    seasons, levels, clubs, people, meets, registrations, scores, invoices,
+    seasons, levels, clubs, people, events, registrations, scores, invoices,
     waiverDocuments,
     waiverSignatures: [],
     coupons: [

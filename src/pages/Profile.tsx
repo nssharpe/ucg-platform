@@ -462,7 +462,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
               </Field>
               <Field
                 label={isCoach ? 'Other clubs you coach for' : 'Other clubs'}
-                hint={isCoach ? 'Additional clubs you coach or affiliate with.' : 'Clubs you also belong to — choose which one you compete for per meet at registration.'}
+                hint={isCoach ? 'Additional clubs you coach or affiliate with.' : 'Clubs you also belong to — choose which one you compete for per event at registration.'}
               >
                 <Combo
                   options={clubOptions.filter((c) => c.value !== p.mainClubId && !p.altClubIds.includes(c.value))}
@@ -507,7 +507,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
           </div>
 
           <div className="card card-pad" style={{ marginBottom: 16 }}>
-            <h3 className="card-title">Meet-day</h3>
+            <h3 className="card-title">Event-day</h3>
             <div className="grid cols-2">
               <Field label="Emergency contact"><input type="text" value={p.emergency.contact} onChange={(e) => set({ emergency: { ...p.emergency, contact: e.target.value } })} style={missingStyle('emergency.contact')} /></Field>
               <Field label="Relation"><input type="text" value={p.emergency.relation} onChange={(e) => set({ emergency: { ...p.emergency, relation: e.target.value } })} /></Field>
@@ -629,7 +629,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
           </div>
 
           <div className="card card-pad" style={{ marginBottom: 16 }}>
-            <h3 className="card-title">Meet-day</h3>
+            <h3 className="card-title">Event-day</h3>
             <div className="grid cols-2">
               <ViewRow label="Emergency contact" value={person.emergency.contact} />
               <ViewRow label="Relation" value={person.emergency.relation} />
@@ -950,13 +950,13 @@ function AdminMembershipControls({
         em.status = 'none';
         pushMembership(personInDraft.id, em);
       }
-      // Remove from upcoming meets
+      // Remove from upcoming events
       const openStatuses = new Set(['draft', 'reg-open', 'reg-closed']);
-      const openMeetIds = new Set(d.meets.filter((m) => openStatuses.has(m.status)).map((m) => m.id));
-      const toRemove = d.registrations.filter((r) => r.athleteId === personId && openMeetIds.has(r.meetId));
+      const openEventIds = new Set(d.events.filter((m) => openStatuses.has(m.status)).map((m) => m.id));
+      const toRemove = d.registrations.filter((r) => r.athleteId === personId && openEventIds.has(r.eventId));
       removedCount = toRemove.length;
       toRemove.forEach((r) => deleteRegistration(r.id));
-      d.registrations = d.registrations.filter((r) => !(r.athleteId === personId && openMeetIds.has(r.meetId)));
+      d.registrations = d.registrations.filter((r) => !(r.athleteId === personId && openEventIds.has(r.eventId)));
     });
     toast(`Membership revoked; removed from ${removedCount} upcoming competition${removedCount !== 1 ? 's' : ''}.`);
     setRevokeSeasonId(null);

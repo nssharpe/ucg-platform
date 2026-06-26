@@ -4,7 +4,7 @@
  * Deliberately platform-agnostic: the engine works on generic level/category
  * strings + a config object, so it can be tested directly against the reference
  * tool's fixtures (its level codes + its config.ini). The platform adapter
- * (src/lib/nationals-*) maps UCG `Athlete`/`Registration`/`Score`/`MeetSession`
+ * (src/lib/nationals-*) maps UCG `Athlete`/`Registration`/`Score`/`EventSession`
  * onto these shapes. See docs/specs/2026-06-13-nationals-qual-awards.md.
  */
 

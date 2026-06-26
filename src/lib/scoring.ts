@@ -1,4 +1,4 @@
-import type { DB, Discipline, Meet, Registration, Score } from './types';
+import type { DB, Discipline, Event, Registration, Score } from './types';
 import { EVENTS } from './types';
 
 export interface AthleteResult {
@@ -13,15 +13,15 @@ export interface EventRanking {
   rows: { reg: Registration; score: Score; rank: number }[];
 }
 
-export function sessionResults(db: DB, meet: Meet, sessionId: string): {
+export function sessionResults(db: DB, event: Event, sessionId: string): {
   byLevel: Map<string, AthleteResult[]>;
   eventRankings: EventRanking[];
   teamScores: { clubId: string; total: number; perEvent: Record<string, number> }[];
   discipline: Discipline;
 } {
-  const session = meet.sessions.find((s) => s.id === sessionId)!;
-  const regs = db.registrations.filter((r) => r.meetId === meet.id && r.sessionId === sessionId && !r.refunded);
-  const scores = db.scores.filter((s) => s.meetId === meet.id && s.sessionId === sessionId);
+  const session = event.sessions.find((s) => s.id === sessionId)!;
+  const regs = db.registrations.filter((r) => r.eventId === event.id && r.sessionId === sessionId && !r.refunded);
+  const scores = db.scores.filter((s) => s.eventId === event.id && s.sessionId === sessionId);
   const scoreMap = new Map<string, Score>();
   for (const s of scores) scoreMap.set(`${s.regId}|${s.event}`, s);
 

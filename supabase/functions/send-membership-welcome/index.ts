@@ -166,7 +166,7 @@ Deno.serve(async (req) => {
     `We know it can be hard to find competition opportunities as an Independent athlete, ` +
     `so we've copied your ${esc(region)} ${leaderWord}${namesPart} ` +
     `who can help you connect with nearby UCG clubs and add you to the regional contact list. ` +
-    `Local meets are hosted by various clubs and usually announced through regional communication channels.`;
+    `Local events are hosted by various clubs and usually announced through regional communication channels.`;
 
   const link = (href: string, text: string) =>
     `<a href="${href}" style="color:#1d4ed8;text-decoration:underline;">${text}</a>`;
@@ -175,7 +175,7 @@ Deno.serve(async (req) => {
   const html = `<div style="color:#1d2a38;font-size:15px;line-height:1.55;">
 <p>Hi ${esc(firstName)},</p>
 <p>Welcome to United Club Gymnastics (UCG)! ${copiedSentence}</p>
-<p>Upcoming meets will also be posted ${link('https://naigc.org/upcoming-events/', 'here')} as they are scheduled. Season usually starts around November, with the majority of competitions in January&ndash;March. Regionals are hosted around late February to early March, and then UCG Nationals are held in early to mid-April.</p>
+<p>Upcoming events will also be posted ${link('https://naigc.org/upcoming-events/', 'here')} as they are scheduled. Season usually starts around November, with the majority of competitions in January&ndash;March. Regionals are hosted around late February to early March, and then UCG Nationals are held in early to mid-April.</p>
 <p>Please sign up for our ${link('https://naigc.org/email-sign-up/', 'announcement')} email list to stay up-to-date on important NAIGC information! You can also follow our ${link('https://www.instagram.com/naigcgymnastics/?hl=en', 'Instagram')} as a good way to learn more and connect with NAIGC members.</p>
 <p>For the Love of the Sport,<br>UCG Volunteer Team</p>
 </div>`;

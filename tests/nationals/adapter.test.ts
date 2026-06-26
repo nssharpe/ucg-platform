@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { DB, Meet, NationalsConfig } from '../../src/lib/types';
+import type { DB, Event, NationalsConfig } from '../../src/lib/types';
 import {
   platformCategory,
   buildEntries,
@@ -18,7 +18,7 @@ function scenario() {
       teamMixed: {},
     },
   };
-  const meet = {
+  const event = {
     id: 'm1', slug: 'nats', name: 'Nationals', hostClubId: 'c1', city: '', state: '', timezone: 'UTC',
     startDate: '', endDate: '', status: 'in-progress', regOpens: '', regCloses: '', entryFee: 0,
     secondDisciplineFee: 0, disciplines: ['WAG'], kind: 'nationals', nationalsConfig: config,
@@ -26,7 +26,7 @@ function scenario() {
       { id: 'sp', name: 'WAG Prelims', discipline: 'WAG', date: '', time: '', levelIds: ['wag-open'], squads: [], phase: 'prelim' },
       { id: 'sf', name: 'WAG Finals', discipline: 'WAG', date: '', time: '', levelIds: ['wag-open'], squads: [], phase: 'final' },
     ],
-  } as unknown as Meet;
+  } as unknown as Event;
 
   // 4 Community Women+ athletes; AA ranks A>B>C>D, cutoff 3 ⇒ A,B,C qualify.
   const names = ['A', 'B', 'C', 'D'];
@@ -45,19 +45,19 @@ function scenario() {
   const registrations: unknown[] = [];
   const scores: unknown[] = [];
   people.forEach((p, i) => {
-    const reg = { id: `r${i}`, meetId: 'm1', athleteId: p.id, clubId: p.mainClubId, discipline: 'WAG', levelId: 'wag-open', events: evs, sessionId: 'sp' };
+    const reg = { id: `r${i}`, eventId: 'm1', athleteId: p.id, clubId: p.mainClubId, discipline: 'WAG', levelId: 'wag-open', events: evs, sessionId: 'sp' };
     registrations.push(reg);
-    for (const ev of evs) scores.push({ id: `${reg.id}|${ev}`, meetId: 'm1', sessionId: 'sp', regId: reg.id, event: ev, sv: null, deductions: null, final: totals[i] / 4, enteredBy: 't', enteredAt: '', flashed: true });
+    for (const ev of evs) scores.push({ id: `${reg.id}|${ev}`, eventId: 'm1', sessionId: 'sp', regId: reg.id, event: ev, sv: null, deductions: null, final: totals[i] / 4, enteredBy: 't', enteredAt: '', flashed: true });
   });
   // Finals scores for the three qualifiers (A,B,C) in the finals session.
   people.slice(0, 3).forEach((p, i) => {
-    const reg = { id: `rf${i}`, meetId: 'm1', athleteId: p.id, clubId: p.mainClubId, discipline: 'WAG', levelId: 'wag-open', events: evs, sessionId: 'sf' };
+    const reg = { id: `rf${i}`, eventId: 'm1', athleteId: p.id, clubId: p.mainClubId, discipline: 'WAG', levelId: 'wag-open', events: evs, sessionId: 'sf' };
     registrations.push(reg);
-    for (const ev of evs) scores.push({ id: `${reg.id}|${ev}`, meetId: 'm1', sessionId: 'sf', regId: reg.id, event: ev, sv: null, deductions: null, final: (38 - i * 2) / 4, enteredBy: 't', enteredAt: '', flashed: true });
+    for (const ev of evs) scores.push({ id: `${reg.id}|${ev}`, eventId: 'm1', sessionId: 'sf', regId: reg.id, event: ev, sv: null, deductions: null, final: (38 - i * 2) / 4, enteredBy: 't', enteredAt: '', flashed: true });
   });
 
-  const db = { levels: [], clubs, people, meets: [meet], registrations, scores } as unknown as DB;
-  return { db, meet };
+  const db = { levels: [], clubs, people, events: [event], registrations, scores } as unknown as DB;
+  return { db, event };
 }
 
 describe('nationals adapter', () => {
@@ -68,8 +68,8 @@ describe('nationals adapter', () => {
   });
 
   it('builds engine entries from registrations + scores', () => {
-    const { db, meet } = scenario();
-    const entries = buildEntries(db, meet, 'WAG', 'prelim');
+    const { db, event } = scenario();
+    const entries = buildEntries(db, event, 'WAG', 'prelim');
     expect(entries).toHaveLength(4);
     const a = entries.find((e) => e.first === 'A')!;
     expect(a.category).toBe('Community Women+');
@@ -79,8 +79,8 @@ describe('nationals adapter', () => {
   });
 
   it('computes prelim AA placement + qualification through the engine', () => {
-    const { db, meet } = scenario();
-    const { prelims } = computeArtisticDiscipline(db, meet, 'WAG');
+    const { db, event } = scenario();
+    const { prelims } = computeArtisticDiscipline(db, event, 'WAG');
     const byName = new Map(prelims.results.map((r) => [r.entry.first, r]));
     expect(byName.get('A')!.aa!.place).toBe(1);
     expect(byName.get('D')!.aa!.place).toBe(4);
@@ -90,18 +90,18 @@ describe('nationals adapter', () => {
   });
 
   it('scratched scores are excluded from placement', () => {
-    const { db, meet } = scenario();
+    const { db, event } = scenario();
     // Scratch athlete A's vault — still place-eligible on other events, but VT place skips A.
     const aVault = (db.scores as { regId: string; event: string; scratched?: boolean }[]).find((s) => s.regId === 'r0' && s.event === 'VT')!;
     aVault.scratched = true;
-    const { prelims } = computeArtisticDiscipline(db, meet, 'WAG');
+    const { prelims } = computeArtisticDiscipline(db, event, 'WAG');
     const a = prelims.results.find((r) => r.entry.first === 'A')!;
     expect(a.events.VT.place).toBeNull();
   });
 
-  it('computeNationals returns a WAG bundle for a Nationals meet', () => {
-    const { db, meet } = scenario();
-    const bundle = computeNationals(db, meet);
+  it('computeNationals returns a WAG bundle for a Nationals event', () => {
+    const { db, event } = scenario();
+    const bundle = computeNationals(db, event);
     expect(bundle.wag).toBeTruthy();
     expect(bundle.wag!.awards.length).toBeGreaterThan(0);
   });

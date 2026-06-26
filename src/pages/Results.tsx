@@ -4,28 +4,28 @@ import { useDB } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { Tabs, Badge } from '../components/ui';
 import { useFmtDate } from '../components/ui-hooks';
-import { MeetStatusBadge } from './Home';
+import { EventStatusBadge } from './Home';
 import { sessionResults, fmtScore } from '../lib/scoring';
 import { scoreDetailPath } from '../lib/calculators';
 import { EVENTS } from '../lib/types';
 import type { Registration, Score, DB } from '../lib/types';
 import type { AthleteResult } from '../lib/scoring';
-import { isSupabaseConfigured, subscribeMeetScores, applyScorePatch } from '../lib/supabase';
+import { isSupabaseConfigured, subscribeEventScores, applyScorePatch } from '../lib/supabase';
 
 export function ResultsIndex() {
   const db = useDB();
   const fmtDate = useFmtDate();
-  const meets = db.meets.filter((m) => m.status === 'in-progress' || m.status === 'complete' || m.status === 'reg-closed');
+  const events = db.events.filter((m) => m.status === 'in-progress' || m.status === 'complete' || m.status === 'reg-closed');
   return (
     <div>
       <h1 className="page-title display">Live results</h1>
       <p className="page-sub">Public — no login needed. Scores appear the moment a judge posts them.</p>
       <div className="grid cols-2">
-        {meets.map((m) => (
+        {events.map((m) => (
           <div className="card card-pad" key={m.id}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
               <h3 style={{ fontSize: 18 }}>{m.status === 'in-progress' && <span className="pulse" />}{m.name}</h3>
-              <MeetStatusBadge status={m.status} />
+              <EventStatusBadge status={m.status} />
             </div>
             <p style={{ color: 'var(--ink-soft)', margin: '6px 0 12px' }}>{m.city}, {m.state} · {fmtDate(m.startDate)}</p>
             <Link className="btn small primary" to={`/results/${m.slug}`}>Open results →</Link>
@@ -37,18 +37,18 @@ export function ResultsIndex() {
 }
 
 // ---------------------------------------------------------------------------
-// Meet results — presentation ported from the Nationals 2026 results viewer:
+// Event results — presentation ported from the Nationals 2026 results viewer:
 // collapsible level groups, per-group column sorting, search/category/level
 // filters, tie-aware places (1,2,2,4), medal colors, qualifier highlighting.
 // ---------------------------------------------------------------------------
 
 type SortSpec = { key: string; dir: 1 | -1 };
 
-export function MeetResults() {
+export function EventResults() {
   const { slug } = useParams();
   const db = useDB();
   const caps = useCapabilities();
-  const meet = db.meets.find((m) => m.slug === slug);
+  const event = db.events.find((m) => m.slug === slug);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [view, setView] = useState<'aa' | 'events' | 'team'>('aa');
   const [search, setSearch] = useState('');
@@ -57,41 +57,41 @@ export function MeetResults() {
   const [sort, setSort] = useState<SortSpec>({ key: '_aa', dir: -1 });
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
-  const session = meet?.sessions.find((s) => s.id === sessionId) ?? meet?.sessions[0];
+  const session = event?.sessions.find((s) => s.id === sessionId) ?? event?.sessions[0];
 
   // Realtime score overlay: a patch map (id → Score | null) accumulated from
-  // `subscribeMeetScores` postgres_changes events, overlaid on the store's
+  // `subscribeEventScores` postgres_changes events, overlaid on the store's
   // scores at render time so store refreshes stay reconciled.
   const [livePatches, setLivePatches] = useState<ReadonlyMap<string, Score | null>>(new Map());
-  // Reset the overlay when the meet changes. Done during render (the documented
+  // Reset the overlay when the event changes. Done during render (the documented
   // "adjusting state on prop change" pattern) rather than in the effect below, so
   // it doesn't trigger a cascading render every time the subscription re-runs.
-  const patchedMeetId = useRef(meet?.id);
-  if (patchedMeetId.current !== meet?.id) {
-    patchedMeetId.current = meet?.id;
+  const patchedEventId = useRef(event?.id);
+  if (patchedEventId.current !== event?.id) {
+    patchedEventId.current = event?.id;
     setLivePatches(new Map());
   }
   useEffect(() => {
-    if (!isSupabaseConfigured || !meet) return;
-    const unsubscribe = subscribeMeetScores(meet.id, (payload) => {
+    if (!isSupabaseConfigured || !event) return;
+    const unsubscribe = subscribeEventScores(event.id, (payload) => {
       setLivePatches((prev) => applyScorePatch(prev, payload));
     });
     return unsubscribe;
-  }, [meet?.id]);
+  }, [event?.id]);
 
   const effectiveDb: DB = useMemo(() => {
-    if (livePatches.size === 0 || !meet) return db;
+    if (livePatches.size === 0 || !event) return db;
     const scores = db.scores
       .filter((s) => livePatches.get(s.id) !== null) // drop realtime-deleted rows
       .map((s) => livePatches.get(s.id) ?? s);
     const known = new Set(db.scores.map((s) => s.id));
     for (const [id, s] of livePatches) if (s && !known.has(id)) scores.push(s);
     return { ...db, scores };
-  }, [db, livePatches, meet]);
+  }, [db, livePatches, event]);
 
   const computed = useMemo(
-    () => (meet && session ? sessionResults(effectiveDb, meet, session.id) : null),
-    [effectiveDb, meet, session],
+    () => (event && session ? sessionResults(effectiveDb, event, session.id) : null),
+    [effectiveDb, event, session],
   );
 
   // Tie-aware places (1,2,2,4) per (level, category) group — the viewer's
@@ -118,7 +118,7 @@ export function MeetResults() {
     return { aa, ev };
   }, [computed, session]);
 
-  if (!meet || !session || !computed) return <p>Meet not found.</p>;
+  if (!event || !session || !computed) return <p>Event not found.</p>;
   const { byLevel, eventRankings, teamScores } = computed;
   const events = EVENTS[session.discipline];
   const clubName = (id: string) => db.clubs.find((c) => c.id === id)?.shortName ?? id;
@@ -131,7 +131,7 @@ export function MeetResults() {
   const categories = [...new Set([...byLevel.values()].flat().map((r) => r.reg.category).filter(Boolean))] as string[];
 
   const canOpenScore = (athleteId: string) =>
-    caps.isAdmin || caps.isMeetHost(meet?.id ?? '') || caps.personId === athleteId;
+    caps.isAdmin || caps.isEventHost(event?.id ?? '') || caps.personId === athleteId;
 
   const matchesFilters = (r: AthleteResult) => {
     if (catFilter && (r.reg.category ?? '') !== catFilter) return false;
@@ -169,18 +169,18 @@ export function MeetResults() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: 10, flexWrap: 'wrap' }}>
         <div>
-          <h1 className="page-title display">{meet.name}</h1>
+          <h1 className="page-title display">{event.name}</h1>
           <p className="page-sub">
-            {meet.status === 'in-progress' && <><span className="pulse" /><strong>Live</strong> — updates as judges post. </>}
-            Unique URL per meet & session: <code>#/results/{meet.slug}</code>
+            {event.status === 'in-progress' && <><span className="pulse" /><strong>Live</strong> — updates as judges post. </>}
+            Unique URL per event & session: <code>#/results/{event.slug}</code>
           </p>
         </div>
-        <MeetStatusBadge status={meet.status} />
+        <EventStatusBadge status={event.status} />
       </div>
 
       <div className="grid cols-2" style={{ marginBottom: 14 }}>
         <select className="input" value={session.id} onChange={(e) => { setSessionId(e.target.value); setLevelFilter(''); setCatFilter(''); }}>
-          {meet.sessions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          {event.sessions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
         <Tabs
           tabs={[{ id: 'aa' as const, label: 'All-Around' }, { id: 'events' as const, label: 'By event' }, { id: 'team' as const, label: 'Team' }]}

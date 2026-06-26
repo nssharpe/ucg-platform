@@ -7,7 +7,7 @@ import { downloadReceipt, invoiceTotal } from '../lib/receipt';
 import type { DB, Invoice } from '../lib/types';
 
 /** Purchases History (MY UCG): every invoice tied to this account — memberships
- *  and meet entries — with a plain-English summary, a details overlay, and a
+ *  and event entries — with a plain-English summary, a details overlay, and a
  *  downloadable PDF receipt. */
 export function PurchaseHistory() {
   const caps = useCapabilities();
@@ -25,14 +25,14 @@ export function PurchaseHistory() {
 function summarize(inv: Invoice, db: DB, personId: string): string {
   const items = inv.athleteId === personId ? inv.items : inv.items.filter((i) => i.refUserId === personId);
   const hasMembership = items.some((i) => i.kind === 'membership');
-  const meetNames = [...new Set(
-    db.meets.filter((m) => items.some((i) =>
+  const eventNames = [...new Set(
+    db.events.filter((m) => items.some((i) =>
       (i.kind === 'meet-entry' || i.kind === 'addon' || i.kind === 'banquet') && i.label.includes(m.name),
     )).map((m) => m.name),
   )];
   const parts: string[] = [];
   if (hasMembership) parts.push('Memberships');
-  if (meetNames.length) parts.push(`Registrations for ${meetNames.join(', ')}`);
+  if (eventNames.length) parts.push(`Registrations for ${eventNames.join(', ')}`);
   if (parts.length === 0) {
     // Fallback: list distinct item kinds.
     const kinds = [...new Set(items.map((i) => i.kind))];

@@ -48,12 +48,12 @@ function MergeAthletesModal({ onClose }: { onClose: () => void }) {
     // Compute what will change before mutating
     const dupRegs = db.registrations.filter((r) => r.athleteId === dup.id);
     const primaryRegKeys = new Set(
-      db.registrations.filter((r) => r.athleteId === primary.id).map((r) => `${r.meetId}|${r.discipline}|${r.levelId}`)
+      db.registrations.filter((r) => r.athleteId === primary.id).map((r) => `${r.eventId}|${r.discipline}|${r.levelId}`)
     );
     const regsToMove: typeof dupRegs = [];
     const regsToDrop: typeof dupRegs = [];
     for (const r of dupRegs) {
-      const key = `${r.meetId}|${r.discipline}|${r.levelId}`;
+      const key = `${r.eventId}|${r.discipline}|${r.levelId}`;
       if (primaryRegKeys.has(key)) {
         regsToDrop.push(r);
       } else {
@@ -847,15 +847,15 @@ function Levels() {
     toast('Level saved.');
   };
 
-  // W12 task 4: soft-delete (retire) instead of hard delete — preserves past meets.
+  // W12 task 4: soft-delete (retire) instead of hard delete — preserves past events.
   const retireLevel = (l: Level) => {
-    if (!window.confirm(`Retire level "${l.name}"? It will be hidden from new meets but preserved on past meets and results.`)) return;
+    if (!window.confirm(`Retire level "${l.name}"? It will be hidden from new events but preserved on past events and results.`)) return;
     mutate((d) => {
       const x = d.levels.find((y) => y.id === l.id)!;
       x.retired = true;
       pushLevel(x);
     });
-    toast(`"${l.name}" retired — won't appear in new meets. Unretire it to restore.`);
+    toast(`"${l.name}" retired — won't appear in new events. Unretire it to restore.`);
   };
 
   const unretireLevel = (l: Level) => {
@@ -1039,7 +1039,7 @@ function RegionsTab() {
         <p style={{ margin: 0, fontSize: 13.5 }}>
           <strong>Edit state→region assignments below.</strong> Changes are persisted via{' '}
           <code>db.regionOverrides</code> and override the built-in <code>STATE_REGIONS</code> map
-          everywhere — meet filtering, athlete grouping, and communications. Resetting returns to
+          everywhere — event filtering, athlete grouping, and communications. Resetting returns to
           the compiled defaults.
         </p>
       </div>
@@ -1355,7 +1355,7 @@ function Promos() {
           >
             <option value="any">Any purchase</option>
             <option value="membership">Membership only</option>
-            <option value="meet-entry">Meet entries only</option>
+            <option value="meet-entry">Event entries only</option>
           </select>
         </Field>
         {/* W14 task 9: start/end dates and max uses on creation */}
@@ -1440,7 +1440,7 @@ function Promos() {
                     {c.pctOff != null ? `${c.pctOff}% off` : c.amountOff != null ? `${fmtMoney(c.amountOff)} off` : '—'}
                   </td>
                   <td>
-                    {c.appliesTo === 'any' ? 'Any purchase' : c.appliesTo === 'membership' ? 'Membership' : 'Meet entries'}
+                    {c.appliesTo === 'any' ? 'Any purchase' : c.appliesTo === 'membership' ? 'Membership' : 'Event entries'}
                   </td>
                   {/* W14 task 9: editable start/end/maxUses */}
                   {isEditing ? (
@@ -1517,10 +1517,10 @@ function Promos() {
 
 // ---------- User Roles (W12 task 1) ----------
 // 'admin' = Full League Admin (only role that can emulate users / access all admin features).
-// 'sanctioning' = Sanctioning Team (will see meets to vote on — voting UI is a later wave).
+// 'sanctioning' = Sanctioning Team (will see events to vote on — voting UI is a later wave).
 const ROLE_DEFS = [
   { role: 'admin', label: 'Full League Admin', desc: 'Full admin access, including user emulation.' },
-  { role: 'sanctioning', label: 'Sanctioning Team', desc: 'Will see meets to vote on (voting UI coming in a later wave).' },
+  { role: 'sanctioning', label: 'Sanctioning Team', desc: 'Will see events to vote on (voting UI coming in a later wave).' },
   { role: 'regional_rep', label: 'Regional Representative', desc: 'Represents a region. Set each rep’s region below.' },
   { role: 'finance_admin', label: 'Finance Admin', desc: 'Access to finance tools (finance dashboard coming in a later phase).' },
 ] as const;
@@ -2049,7 +2049,7 @@ export function Communicate() {
   return (
     <div style={{ maxWidth: 920 }}>
       <h1 className="page-title display">Communicate</h1>
-      <p className="page-sub">HTML email to filtered groups — built to handle 2,000+ recipients, with meet/session targeting.</p>
+      <p className="page-sub">HTML email to filtered groups — built to handle 2,000+ recipients, with event/session targeting.</p>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'start' }}>
         {/* ---- Left: Audience ---- */}

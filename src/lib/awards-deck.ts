@@ -8,7 +8,7 @@
  * pptx lib isn't worth the risk yet). A future upgrade could emit a true .pptx via
  * pptxgenjs while keeping this structure.
  */
-import type { DB, Meet } from './types';
+import type { DB, Event } from './types';
 import type { NationalsBundle } from './nationals-adapter';
 import type { AwardTable } from '../nationals';
 import { fmtScore } from './scoring';
@@ -38,17 +38,17 @@ function disciplineSlides(label: string, tables: AwardTable[], levelName: (id: s
     .join('');
 }
 
-export function buildAwardsDeckHtml(db: DB, meet: Meet, bundle: NationalsBundle): string {
+export function buildAwardsDeckHtml(db: DB, event: Event, bundle: NationalsBundle): string {
   const levelName = (id: string) => db.levels.find((l) => l.id === id)?.name ?? id;
   const slides: string[] = [
-    `<section class="slide title"><h1>${esc(meet.name)}</h1><h2>Awards</h2></section>`,
+    `<section class="slide title"><h1>${esc(event.name)}</h1><h2>Awards</h2></section>`,
   ];
   if (bundle.wag) slides.push(disciplineSlides('WAG', bundle.wag.awards, levelName));
   if (bundle.mag) slides.push(disciplineSlides('MAG', bundle.mag.awards, levelName));
   const dec = bundle.decathlon.filter((r) => r.qual === 'Y');
   if (dec.length) slides.push(awardSlide('Decathlon', '2×WAG AA + MAG AA', dec.map((r) => ({ place: r.place ?? 0, name: `${r.first} ${r.last}`, club: r.club, score: r.overall }))));
 
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(meet.name)} — Awards</title>
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(event.name)} — Awards</title>
   <style>
     @page { size: landscape; margin: 0; }
     * { box-sizing: border-box; }
@@ -73,10 +73,10 @@ export function buildAwardsDeckHtml(db: DB, meet: Meet, bundle: NationalsBundle)
   </body></html>`;
 }
 
-export function exportAwardsDeck(db: DB, meet: Meet, bundle: NationalsBundle): void {
+export function exportAwardsDeck(db: DB, event: Event, bundle: NationalsBundle): void {
   // Blob URL (not document.write): the browser parses our own escaped HTML in a
   // fresh tab where the user can print/save as PDF.
-  const html = buildAwardsDeckHtml(db, meet, bundle);
+  const html = buildAwardsDeckHtml(db, event, bundle);
   const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
   window.open(url, '_blank');
   setTimeout(() => URL.revokeObjectURL(url), 60_000);

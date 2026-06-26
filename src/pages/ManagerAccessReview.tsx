@@ -68,7 +68,7 @@ export default function ManagerAccessReview() {
     <h2>Manager access request</h2>
     <p style={{ fontSize: 15 }}>
       <strong>{info?.requesterName}</strong> has requested admin/manager access to{' '}
-      <strong>{info?.clubName}</strong>. Approving lets them manage the club's roster, meet
+      <strong>{info?.clubName}</strong>. Approving lets them manage the club's roster, event
       registration, and club cart.
     </p>
     <label style={{ display: 'block', fontSize: 13, color: 'var(--ink-soft)', margin: '12px 0 6px' }}>

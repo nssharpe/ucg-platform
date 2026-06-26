@@ -83,13 +83,13 @@ export function priceForTypesDollars(
   return Math.max(0, valueOf(union) - valueOf(owned));
 }
 
-// --- Meet registration fees (mirror of src/lib/pricing.ts § Registration fees) ---
+// --- Event registration fees (mirror of src/lib/pricing.ts § Registration fees) ---
 // The host club's own athletes pay $0 for ALL registration-side fees (entry,
 // second-discipline, change). All helpers return DOLLARS (use toCents to Stripe).
 
-/** Minimal meet slice the registration/addon pricing needs (snake_case DB cols).
+/** Minimal event slice the registration/addon pricing needs (snake_case DB cols).
  *  `change_fee` / `tshirt_addon` / `banner_addon` are nullable jsonb. */
-export interface RegFeeMeet {
+export interface RegFeeEvent {
   id: string;
   host_club_id: string | null;
   entry_fee: number;
@@ -106,36 +106,36 @@ export interface RegFeeMeet {
  * `newRegistrationEntryTotal` in pricing.ts exactly.
  */
 export function newRegistrationEntryTotalDollars(
-  meet: RegFeeMeet,
+  event: RegFeeEvent,
   { competingClubId, priorDisciplineCount, newDisciplineCount }: {
     competingClubId: string;
     priorDisciplineCount: number;
     newDisciplineCount: number;
   },
 ): number {
-  if (competingClubId === meet.host_club_id) return 0;
+  if (competingClubId === event.host_club_id) return 0;
   let total = 0;
   for (let i = 0; i < newDisciplineCount; i++) {
     const isSecond = priorDisciplineCount + i > 0;
-    total += isSecond ? meet.second_discipline_fee : meet.entry_fee;
+    total += isSecond ? event.second_discipline_fee : event.entry_fee;
   }
   return total;
 }
 
-/** Change fee (DOLLARS) for a registration edit. Host club ⇒ 0; else the meet's
+/** Change fee (DOLLARS) for a registration edit. Host club ⇒ 0; else the event's
  *  configured change-fee amount (0 if none). Mirrors `registrationChangeFee`. */
 export function registrationChangeFeeDollars(
-  meet: RegFeeMeet,
+  event: RegFeeEvent,
   { competingClubId }: { competingClubId: string },
 ): number {
-  if (competingClubId === meet.host_club_id) return 0;
-  return meet.change_fee?.amount ?? 0;
+  if (competingClubId === event.host_club_id) return 0;
+  return event.change_fee?.amount ?? 0;
 }
 
-/** Addon price (DOLLARS) for a meet, by line type. Unknown/missing ⇒ 0. */
-export function addonPriceDollars(meet: RegFeeMeet, lineType: string | null): number {
-  if (lineType === 'tshirt') return meet.tshirt_addon?.price ?? 0;
-  if (lineType === 'banner') return meet.banner_addon?.price ?? 0;
+/** Addon price (DOLLARS) for an event, by line type. Unknown/missing ⇒ 0. */
+export function addonPriceDollars(event: RegFeeEvent, lineType: string | null): number {
+  if (lineType === 'tshirt') return event.tshirt_addon?.price ?? 0;
+  if (lineType === 'banner') return event.banner_addon?.price ?? 0;
   return 0;
 }
 

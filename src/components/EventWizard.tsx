@@ -1,13 +1,13 @@
 import { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { mutate, useDB } from '../lib/store';
-import { pushMeet } from '../lib/supabase';
+import { pushEvent } from '../lib/supabase';
 import { useCapabilities } from '../lib/capabilities';
 import { scaffoldNationalsConfig } from '../lib/nationals-adapter';
 import { Combo, Field, Modal } from './ui';
 import { useToast } from './ui-hooks';
 import { DISCIPLINES, SHIRT_SIZES, STATE_REGIONS } from '../lib/types';
-import type { Discipline, Level, Meet, MeetSession, MeetStatus } from '../lib/types';
+import type { Discipline, Level, Event, EventSession, EventStatus } from '../lib/types';
 
 const TIMEZONES = [
   'America/New_York', 'America/Chicago', 'America/Denver', 'America/Phoenix',
@@ -17,7 +17,7 @@ const TIMEZONES = [
 const slugify = (name: string) => name.toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
 function uniqueSlug(name: string, taken: string[]): string {
-  const base = slugify(name) || 'meet';
+  const base = slugify(name) || 'event';
   if (!taken.includes(base)) return base;
   let n = 2;
   while (taken.includes(`${base}-${n}`)) n++;
@@ -60,12 +60,12 @@ function defaultSessions(allLevels: Level[], d: Discipline, date: string, nextKe
 }
 
 /**
- * Derive SessionDraft[] from existing MeetSession[] for editing. Keys are
+ * Derive SessionDraft[] from existing EventSession[] for editing. Keys are
  * assigned by index (1..N) rather than from the component's keyRef, so this can
  * run as initial state without reading a ref during render; the caller seeds the
  * key counter to N+1 so later nextKey() calls don't collide.
  */
-function sessionsTodrafts(sessions: MeetSession[]): SessionDraft[] {
+function sessionsTodrafts(sessions: EventSession[]): SessionDraft[] {
   return sessions.map((s, i) => {
     // Strip the "Session N — " prefix from the stored name
     const label = s.name.replace(/^Session \d+ — /, '');
@@ -81,72 +81,72 @@ function sessionsTodrafts(sessions: MeetSession[]): SessionDraft[] {
   });
 }
 
-interface MeetWizardProps {
+interface EventWizardProps {
   onClose: () => void;
-  /** When provided, the wizard edits this meet rather than creating a new one. */
-  editMeet?: Meet;
+  /** When provided, the wizard edits this event rather than creating a new one. */
+  editEvent?: Event;
 }
 
-export function MeetWizard({ onClose, editMeet }: MeetWizardProps) {
+export function EventWizard({ onClose, editEvent }: EventWizardProps) {
   const db = useDB();
   const caps = useCapabilities();
   const toast = useToast();
   const navigate = useNavigate();
   // Initial sessions get keys 1..N (no ref read during render); the key counter
   // starts at N+1 so subsequently-added sessions get fresh, non-colliding keys.
-  const initialSessions = editMeet ? sessionsTodrafts(editMeet.sessions) : [];
+  const initialSessions = editEvent ? sessionsTodrafts(editEvent.sessions) : [];
   const keyRef = useRef(initialSessions.length + 1);
   const nextKey = () => keyRef.current++;
 
-  const isEdit = !!editMeet;
+  const isEdit = !!editEvent;
 
   // Nationals (admin only): adds prelim/finals phases + qualification config.
-  const [kind, setKind] = useState<'standard' | 'nationals'>(editMeet?.kind ?? 'standard');
-  const [finalsLevelIds, setFinalsLevelIds] = useState<string[]>(editMeet?.nationalsConfig?.finalsLevelIds ?? []);
+  const [kind, setKind] = useState<'standard' | 'nationals'>(editEvent?.kind ?? 'standard');
+  const [finalsLevelIds, setFinalsLevelIds] = useState<string[]>(editEvent?.nationalsConfig?.finalsLevelIds ?? []);
 
   // Basics
-  const [name, setName] = useState(editMeet?.name ?? '');
-  const [hostClubId, setHostClubId] = useState<string | null>(editMeet?.hostClubId ?? null);
-  const [city, setCity] = useState(editMeet?.city ?? '');
-  const [state, setState] = useState(editMeet?.state ?? '');
-  const [timezone, setTimezone] = useState(editMeet?.timezone ?? 'America/New_York');
+  const [name, setName] = useState(editEvent?.name ?? '');
+  const [hostClubId, setHostClubId] = useState<string | null>(editEvent?.hostClubId ?? null);
+  const [city, setCity] = useState(editEvent?.city ?? '');
+  const [state, setState] = useState(editEvent?.state ?? '');
+  const [timezone, setTimezone] = useState(editEvent?.timezone ?? 'America/New_York');
   // Dates
   const defaultStart = addDays(new Date().toISOString().slice(0, 10), 60);
-  const [startDate, setStartDate] = useState(editMeet?.startDate ?? defaultStart);
-  const [endDate, setEndDate] = useState(editMeet?.endDate ?? defaultStart);
-  const [regOpens, setRegOpens] = useState(editMeet?.regOpens ?? `${new Date().toISOString().slice(0, 10)}T12:00`);
-  const [regCloses, setRegCloses] = useState(editMeet?.regCloses ?? `${addDays(defaultStart, -14)}T23:59`);
+  const [startDate, setStartDate] = useState(editEvent?.startDate ?? defaultStart);
+  const [endDate, setEndDate] = useState(editEvent?.endDate ?? defaultStart);
+  const [regOpens, setRegOpens] = useState(editEvent?.regOpens ?? `${new Date().toISOString().slice(0, 10)}T12:00`);
+  const [regCloses, setRegCloses] = useState(editEvent?.regCloses ?? `${addDays(defaultStart, -14)}T23:59`);
   const regClosesDirty = useRef(isEdit);
   // Fees
-  const [entryFee, setEntryFee] = useState(String(editMeet?.entryFee ?? 60));
-  const [secondFee, setSecondFee] = useState(String(editMeet?.secondDisciplineFee ?? 30));
+  const [entryFee, setEntryFee] = useState(String(editEvent?.entryFee ?? 60));
+  const [secondFee, setSecondFee] = useState(String(editEvent?.secondDisciplineFee ?? 30));
   // Banquet
-  const [hasBanquet, setHasBanquet] = useState(!!editMeet?.banquet);
-  const [banquetName, setBanquetName] = useState(editMeet?.banquet?.name ?? 'Banquet');
-  const [banquetPrice, setBanquetPrice] = useState(String(editMeet?.banquet?.price ?? 45));
+  const [hasBanquet, setHasBanquet] = useState(!!editEvent?.banquet);
+  const [banquetName, setBanquetName] = useState(editEvent?.banquet?.name ?? 'Banquet');
+  const [banquetPrice, setBanquetPrice] = useState(String(editEvent?.banquet?.price ?? 45));
   // T-shirt add-on
-  const [hasTshirt, setHasTshirt] = useState(!!editMeet?.tshirtAddon);
-  const [tshirtPrice, setTshirtPrice] = useState(String(editMeet?.tshirtAddon?.price ?? 25));
-  const [tshirtSizes, setTshirtSizes] = useState<string[]>(editMeet?.tshirtAddon?.sizes ?? [...SHIRT_SIZES]);
+  const [hasTshirt, setHasTshirt] = useState(!!editEvent?.tshirtAddon);
+  const [tshirtPrice, setTshirtPrice] = useState(String(editEvent?.tshirtAddon?.price ?? 25));
+  const [tshirtSizes, setTshirtSizes] = useState<string[]>(editEvent?.tshirtAddon?.sizes ?? [...SHIRT_SIZES]);
   // Banner add-on
-  const [hasBanner, setHasBanner] = useState(!!editMeet?.bannerAddon);
-  const [bannerPrice, setBannerPrice] = useState(String(editMeet?.bannerAddon?.price ?? 30));
+  const [hasBanner, setHasBanner] = useState(!!editEvent?.bannerAddon);
+  const [bannerPrice, setBannerPrice] = useState(String(editEvent?.bannerAddon?.price ?? 30));
   // Change fee
-  const [hasChangeFee, setHasChangeFee] = useState(!!editMeet?.changeFee);
-  const [changeFeeAmount, setChangeFeeAmount] = useState(String(editMeet?.changeFee?.amount ?? 15));
+  const [hasChangeFee, setHasChangeFee] = useState(!!editEvent?.changeFee);
+  const [changeFeeAmount, setChangeFeeAmount] = useState(String(editEvent?.changeFee?.amount ?? 15));
   const [changeFeeStartsAt, setChangeFeeStartsAt] = useState(
-    editMeet?.changeFee?.startsAt ?? `${addDays(defaultStart, -21)}T00:00`,
+    editEvent?.changeFee?.startsAt ?? `${addDays(defaultStart, -21)}T00:00`,
   );
   // Disciplines & sessions
-  const [disciplines, setDisciplines] = useState<Discipline[]>(editMeet?.disciplines ?? []);
+  const [disciplines, setDisciplines] = useState<Discipline[]>(editEvent?.disciplines ?? []);
   const [sessions, setSessions] = useState<SessionDraft[]>(initialSessions);
   // Status — edit shows all statuses; create shows a subset
-  const [status, setStatus] = useState<MeetStatus>(editMeet?.status ?? 'reg-open');
+  const [status, setStatus] = useState<EventStatus>(editEvent?.status ?? 'reg-open');
   const [error, setError] = useState('');
 
-  const takenSlugs = db.meets.filter((m) => m.id !== editMeet?.id).map((m) => m.slug);
+  const takenSlugs = db.events.filter((m) => m.id !== editEvent?.id).map((m) => m.slug);
   const slug = useMemo(
-    () => isEdit ? editMeet!.slug : uniqueSlug(name, takenSlugs),
+    () => isEdit ? editEvent!.slug : uniqueSlug(name, takenSlugs),
     [name, takenSlugs, isEdit],
   );
 
@@ -188,11 +188,11 @@ export function MeetWizard({ onClose, editMeet }: MeetWizardProps) {
     setSessions(sessions.map((s) => (s.key === key ? { ...s, ...patch } : s)));
 
   const submit = () => {
-    if (!name.trim()) return setError('Meet name is required.');
+    if (!name.trim()) return setError('Event name is required.');
     if (!hostClubId) return setError('Pick a host club.');
     if (!city.trim() || !state) return setError('City and state are required.');
     if (!startDate || !endDate || endDate < startDate) return setError('End date must be on or after the start date.');
-    if (!regOpens || !regCloses || regCloses.slice(0, 10) > startDate) return setError('Registration must close on or before the meet start date.');
+    if (!regOpens || !regCloses || regCloses.slice(0, 10) > startDate) return setError('Registration must close on or before the event start date.');
     if (regOpens >= regCloses) return setError('Registration must open before it closes.');
     if (disciplines.length === 0) return setError('Select at least one discipline.');
     if (sessions.length === 0) return setError('Add at least one session.');
@@ -217,28 +217,28 @@ export function MeetWizard({ onClose, editMeet }: MeetWizardProps) {
     }
 
     const nationals = kind === 'nationals';
-    if (nationals && !sessions.some((s) => s.phase === 'prelim')) return setError('A Nationals meet needs at least one prelim session.');
+    if (nationals && !sessions.some((s) => s.phase === 'prelim')) return setError('A Nationals event needs at least one prelim session.');
 
-    const meetId = editMeet?.id ?? `meet-${Date.now()}`;
-    const meetSessions: MeetSession[] = sessions.map((s, i) => ({
-      id: editMeet?.sessions[i]?.id ?? `${meetId}-s${i + 1}`,
+    const eventId = editEvent?.id ?? `meet-${Date.now()}`;
+    const eventSessions: EventSession[] = sessions.map((s, i) => ({
+      id: editEvent?.sessions[i]?.id ?? `${eventId}-s${i + 1}`,
       name: `Session ${i + 1} — ${s.label.trim()}`,
       discipline: s.discipline, date: s.date, time: s.time, levelIds: s.levelIds,
-      squads: editMeet?.sessions[i]?.squads ?? [],
+      squads: editEvent?.sessions[i]?.squads ?? [],
       ...(nationals ? { phase: s.phase } : {}),
     }));
     const orderedDisciplines = DISCIPLINES.filter((d) => disciplines.includes(d));
-    const meet: Meet = {
-      ...(editMeet ?? {}),
-      id: meetId,
-      slug: editMeet?.slug ?? slug,
+    const event: Event = {
+      ...(editEvent ?? {}),
+      id: eventId,
+      slug: editEvent?.slug ?? slug,
       name: name.trim(),
       hostClubId: hostClubId!,
       city: city.trim(), state, timezone,
       startDate, endDate, status, regOpens, regCloses,
       entryFee: fee, secondDisciplineFee: fee2,
       disciplines: orderedDisciplines,
-      sessions: meetSessions,
+      sessions: eventSessions,
       ...(hasBanquet ? { banquet: { name: banquetName.trim(), price: bPrice } } : { banquet: undefined }),
       ...(hasTshirt ? { tshirtAddon: { price: Number(tshirtPrice), sizes: tshirtSizes } } : { tshirtAddon: undefined }),
       ...(hasBanner ? { bannerAddon: { price: Number(bannerPrice) } } : { bannerAddon: undefined }),
@@ -251,21 +251,21 @@ export function MeetWizard({ onClose, editMeet }: MeetWizardProps) {
         : { kind: 'standard' as const }),
     };
     if (isEdit) {
-      mutate((d) => { const idx = d.meets.findIndex((m) => m.id === meet.id); if (idx >= 0) d.meets[idx] = meet; pushMeet(meet); });
-      toast(`${meet.name} updated.`);
+      mutate((d) => { const idx = d.events.findIndex((m) => m.id === event.id); if (idx >= 0) d.events[idx] = event; pushEvent(event); });
+      toast(`${event.name} updated.`);
     } else {
-      mutate((d) => { d.meets.push(meet); pushMeet(meet); });
-      toast(`${meet.name} sanctioned — #/meets/${slug}`);
+      mutate((d) => { d.events.push(event); pushEvent(event); });
+      toast(`${event.name} sanctioned — #/events/${slug}`);
     }
     onClose();
-    navigate(`/meets/${meet.slug}`);
+    navigate(`/events/${event.slug}`);
   };
 
   const sectionTitle = (t: string) => (
     <h3 className="card-title" style={{ margin: '14px 0 8px', paddingTop: 10, borderTop: '1px solid var(--line)' }}>{t}</h3>
   );
 
-  const ALL_STATUSES: { value: MeetStatus; label: string }[] = [
+  const ALL_STATUSES: { value: EventStatus; label: string }[] = [
     { value: 'draft', label: 'Draft' },
     { value: 'reg-open', label: 'Registration open' },
     { value: 'reg-closed', label: 'Registration closed' },
@@ -274,12 +274,12 @@ export function MeetWizard({ onClose, editMeet }: MeetWizardProps) {
   ];
 
   return (
-    <Modal title={isEdit ? `Edit meet — ${editMeet!.name}` : 'Sanction a new meet'} onClose={onClose}>
+    <Modal title={isEdit ? `Edit event — ${editEvent!.name}` : 'Sanction a new event'} onClose={onClose}>
       {caps.isAdmin && (
         <div className="card card-pad" style={{ marginBottom: 12, background: 'var(--ice)', borderColor: 'var(--line)' }}>
           <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, fontWeight: 600 }}>
             <input type="checkbox" checked={kind === 'nationals'} onChange={(e) => setKind(e.target.checked ? 'nationals' : 'standard')} />
-            Nationals meet
+            Nationals event
           </label>
           <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '6px 0 0' }}>
             Unlocks prelim/finals sessions and automatic finals qualification &amp; awards. UCG-admin only.
@@ -287,7 +287,7 @@ export function MeetWizard({ onClose, editMeet }: MeetWizardProps) {
         </div>
       )}
       <h3 className="card-title" style={{ marginBottom: 8 }}>Basics</h3>
-      <Field label="Meet name" hint={name.trim() ? `URL: ucg.org/#/meets/${slug}` : 'The URL slug is derived automatically.'}>
+      <Field label="Event name" hint={name.trim() ? `URL: ucg.org/#/events/${slug}` : 'The URL slug is derived automatically.'}>
         <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Southeast Open 2027" autoFocus />
       </Field>
       <Field label="Host club">
@@ -451,7 +451,7 @@ export function MeetWizard({ onClose, editMeet }: MeetWizardProps) {
           {sectionTitle('Finals & qualification')}
           <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '0 0 8px' }}>
             Pick the levels that hold finals (awards come from finals results); every other level awards
-            straight from prelims. Set the qualification cutoffs (&ldquo;blue numbers&rdquo;) on the meet
+            straight from prelims. Set the qualification cutoffs (&ldquo;blue numbers&rdquo;) on the event
             page after creating it.
           </p>
           {finalsEligibleLevels.length === 0 && <p style={{ fontSize: 13, color: 'var(--ink-soft)' }}>Add WAG/MAG sessions with levels first.</p>}
@@ -471,7 +471,7 @@ export function MeetWizard({ onClose, editMeet }: MeetWizardProps) {
 
       {sectionTitle('Status')}
       {isEdit ? (
-        <select className="input" style={{ maxWidth: 260 }} value={status} onChange={(e) => setStatus(e.target.value as MeetStatus)}>
+        <select className="input" style={{ maxWidth: 260 }} value={status} onChange={(e) => setStatus(e.target.value as EventStatus)}>
           {ALL_STATUSES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
         </select>
       ) : (
@@ -488,7 +488,7 @@ export function MeetWizard({ onClose, editMeet }: MeetWizardProps) {
       {error && <p style={{ color: 'var(--coral-600)', fontSize: 13.5, fontWeight: 600, margin: '8px 0 0' }}>{error}</p>}
       <div style={{ display: 'flex', justifyContent: 'end', gap: 8, marginTop: 16 }}>
         <button className="btn ghost" onClick={onClose}>Cancel</button>
-        <button className="btn primary" onClick={submit}>{isEdit ? 'Save changes' : 'Sanction meet'}</button>
+        <button className="btn primary" onClick={submit}>{isEdit ? 'Save changes' : 'Sanction event'}</button>
       </div>
     </Modal>
   );

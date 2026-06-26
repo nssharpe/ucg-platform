@@ -11,7 +11,7 @@ import {
   type ArtisticDisciplineResult,
 } from '../lib/nationals-adapter';
 import { fmtScore } from '../lib/scoring';
-import type { Meet, NationalsConfig, PlacementCategory } from '../lib/types';
+import type { Event, NationalsConfig, PlacementCategory } from '../lib/types';
 import type { AwardTable } from '../nationals';
 
 const TABS = ['Config', 'Qualification', 'Awards', 'Validation'] as const;
@@ -23,21 +23,21 @@ export function Nationals() {
   const { slug } = useParams();
   const db = useDB();
   const caps = useCapabilities();
-  const meet = db.meets.find((m) => m.slug === slug);
+  const event = db.events.find((m) => m.slug === slug);
   const [tab, setTab] = useState<Tab>('Config');
 
-  const bundle = useMemo(() => (meet ? computeNationals(db, meet) : null), [db, meet]);
-  const validation = useMemo(() => (meet ? computeNationalsValidation(db, meet) : []), [db, meet]);
+  const bundle = useMemo(() => (event ? computeNationals(db, event) : null), [db, event]);
+  const validation = useMemo(() => (event ? computeNationalsValidation(db, event) : []), [db, event]);
 
-  if (!meet) return <div className="page"><p>Meet not found.</p></div>;
-  if (meet.kind !== 'nationals') return <div className="page"><p>This isn’t a Nationals meet.</p></div>;
-  if (!caps.isMeetHost(meet.id)) return <div className="page"><p>You don’t have access to manage this meet.</p></div>;
+  if (!event) return <div className="page"><p>Event not found.</p></div>;
+  if (event.kind !== 'nationals') return <div className="page"><p>This isn’t a Nationals event.</p></div>;
+  if (!caps.isEventHost(event.id)) return <div className="page"><p>You don’t have access to manage this event.</p></div>;
 
   return (
     <div className="page">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
-        <h1 className="page-title display">{meet.name} — Nationals</h1>
-        <Link className="btn ghost small" to={`/meets/${meet.slug}`}>← Meet page</Link>
+        <h1 className="page-title display">{event.name} — Nationals</h1>
+        <Link className="btn ghost small" to={`/events/${event.slug}`}>← Event page</Link>
       </div>
       <p className="page-sub">Finals qualification &amp; awards, computed on-platform.</p>
 
@@ -49,17 +49,17 @@ export function Nationals() {
         ))}
       </div>
 
-      {tab === 'Config' && <NationalsConfigEditor meet={meet} />}
-      {tab === 'Qualification' && bundle && <QualificationView meet={meet} db={db} />}
-      {tab === 'Awards' && bundle && <AwardsView meet={meet} db={db} bundle={bundle} />}
+      {tab === 'Config' && <NationalsConfigEditor event={event} />}
+      {tab === 'Qualification' && bundle && <QualificationView event={event} db={db} />}
+      {tab === 'Awards' && bundle && <AwardsView event={event} db={db} bundle={bundle} />}
       {tab === 'Validation' && <ValidationView issues={validation} />}
     </div>
   );
 }
 
-function QualificationView({ meet, db }: { meet: Meet; db: ReturnType<typeof useDB> }) {
-  const disciplines = (['WAG', 'MAG'] as const).filter((d) => meet.disciplines.includes(d));
-  const cfg = meet.nationalsConfig!;
+function QualificationView({ event, db }: { event: Event; db: ReturnType<typeof useDB> }) {
+  const disciplines = (['WAG', 'MAG'] as const).filter((d) => event.disciplines.includes(d));
+  const cfg = event.nationalsConfig!;
   return (
     <div>
       <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginTop: 0 }}>
@@ -67,10 +67,10 @@ function QualificationView({ meet, db }: { meet: Meet; db: ReturnType<typeof use
         were pulled in by the 50% cross-club rule (placed below the cutoff).
       </p>
       {disciplines.map((d) => {
-        const res = computeArtisticDiscipline(db, meet, d);
+        const res = computeArtisticDiscipline(db, event, d);
         return <DisciplineRoster key={d} discipline={d} res={res} cfg={cfg} db={db} />;
       })}
-      {disciplines.length === 0 && <p>No WAG/MAG disciplines in this meet.</p>}
+      {disciplines.length === 0 && <p>No WAG/MAG disciplines in this event.</p>}
     </div>
   );
 }
@@ -114,7 +114,7 @@ function DisciplineRoster({ discipline, res, cfg, db }: { discipline: string; re
   );
 }
 
-function AwardsView({ meet, db, bundle }: { meet: Meet; db: ReturnType<typeof useDB>; bundle: ReturnType<typeof computeNationals> }) {
+function AwardsView({ event, db, bundle }: { event: Event; db: ReturnType<typeof useDB>; bundle: ReturnType<typeof computeNationals> }) {
   const sections: { title: string; tables: AwardTable[] }[] = [];
   if (bundle.wag) sections.push({ title: 'WAG', tables: bundle.wag.awards });
   if (bundle.mag) sections.push({ title: 'MAG', tables: bundle.mag.awards });
@@ -122,7 +122,7 @@ function AwardsView({ meet, db, bundle }: { meet: Meet; db: ReturnType<typeof us
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
-        <button className="btn primary small" onClick={() => exportAwardsDeck(db, meet, bundle)}>Download awards deck (.pptx)</button>
+        <button className="btn primary small" onClick={() => exportAwardsDeck(db, event, bundle)}>Download awards deck (.pptx)</button>
       </div>
       {sections.map((s) => (
         <div key={s.title} style={{ marginBottom: 18 }}>

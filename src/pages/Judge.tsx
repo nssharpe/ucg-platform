@@ -20,30 +20,30 @@ export function Judge() {
   const caps = useCapabilities();
   const toast = useToast();
   const [searchParams] = useSearchParams();
-  const requestedMeet = searchParams.get('meet');
-  const liveMeets = db.meets.filter((m) => m.status === 'in-progress' || m.status === 'reg-closed');
-  const [meetId, setMeetId] = useState(
-    (requestedMeet && db.meets.find((m) => m.id === requestedMeet || m.slug === requestedMeet)?.id)
-    || liveMeets[0]?.id || db.meets[0]?.id || '',
+  const requestedEvent = searchParams.get('event');
+  const liveEvents = db.events.filter((m) => m.status === 'in-progress' || m.status === 'reg-closed');
+  const [eventId, setEventId] = useState(
+    (requestedEvent && db.events.find((m) => m.id === requestedEvent || m.slug === requestedEvent)?.id)
+    || liveEvents[0]?.id || db.events[0]?.id || '',
   );
-  const meet = db.meets.find((m) => m.id === meetId);
-  const [sessionId, setSessionId] = useState(meet?.sessions[0]?.id ?? '');
-  const session = meet?.sessions.find((s) => s.id === sessionId) ?? meet?.sessions[0];
+  const eventRec = db.events.find((m) => m.id === eventId);
+  const [sessionId, setSessionId] = useState(eventRec?.sessions[0]?.id ?? '');
+  const session = eventRec?.sessions.find((s) => s.id === sessionId) ?? eventRec?.sessions[0];
   const events = session ? EVENTS[session.discipline] : [];
   const [event, setEvent] = useState(events[0]?.code ?? '');
   const [flash, setFlash] = useState<{ name: string; score: number } | null>(null);
 
   const regs = useMemo(() => {
-    if (!meet || !session) return [];
-    const inSession = db.registrations.filter((r) => r.meetId === meet.id && r.sessionId === session.id && !r.refunded && r.events.includes(event));
+    if (!eventRec || !session) return [];
+    const inSession = db.registrations.filter((r) => r.eventId === eventRec.id && r.sessionId === session.id && !r.refunded && r.events.includes(event));
     return inSession.sort((a, b) => {
       const an = db.people.find((p) => p.id === a.athleteId)!;
       const bn = db.people.find((p) => p.id === b.athleteId)!;
       return an.lastName.localeCompare(bn.lastName);
     });
-  }, [db, meet, session, event]);
+  }, [db, eventRec, session, event]);
 
-  const scoreFor = (regId: string) => db.scores.find((s) => s.id === `${meet?.id}|${regId}|${event}`);
+  const scoreFor = (regId: string) => db.scores.find((s) => s.id === `${eventRec?.id}|${regId}|${event}`);
 
   const [activeReg, setActiveReg] = useState<string | null>(null);
   const [sv, setSv] = useState('');
@@ -54,12 +54,12 @@ export function Judge() {
   const [override, setOverride] = useState(false);
   const [calcSt, setCalcSt] = useState<unknown>(null);
 
-  if (!meet || !session) {
+  if (!eventRec || !session) {
     return (
       <div className="card card-pad" style={{ maxWidth: 520 }}>
-        <h2 className="display" style={{ fontSize: 22 }}>No meets yet</h2>
-        <p>Score entry needs at least one meet with a session. Create a meet under
-          Meets to get started.</p>
+        <h2 className="display" style={{ fontSize: 22 }}>No events yet</h2>
+        <p>Score entry needs at least one event with a session. Create an event under
+          Events to get started.</p>
       </div>
     );
   }
@@ -130,10 +130,10 @@ export function Judge() {
     }
     const calcState = calcCfg && calcSt != null ? { v: 2 as const, kind: calcCfg.kind, state: calcSt } : undefined;
     mutate((d) => {
-      const id = `${meet.id}|${active.id}|${event}`;
+      const id = `${eventRec.id}|${active.id}|${event}`;
       d.scores = d.scores.filter((s) => s.id !== id);
       const score = {
-        id, meetId: meet.id, sessionId: session.id, regId: active.id, event,
+        id, eventId: eventRec.id, sessionId: session.id, regId: active.id, event,
         sv: fields.sv ?? null, deductions: fields.deductions ?? null, eScore: fields.eScore ?? null,
         final: finalScore, source: fields.source,
         calc: calcCfg?.kind, calcState,
@@ -147,14 +147,14 @@ export function Judge() {
     toast(`Score posted: ${athleteName} — ${fmtScore(finalScore)}`);
   };
 
-  // Score entry is for the meet host / league admins. (RLS also blocks score
+  // Score entry is for the event host / league admins. (RLS also blocks score
   // writes for anyone without the privilege; this is the matching UI gate.)
   if (!caps.isAdmin && caps.managedClubIds.length === 0) {
     return (
       <div className="card card-pad" style={{ maxWidth: 520 }}>
         <h2 className="display" style={{ fontSize: 22 }}>Score entry is restricted</h2>
-        <p>Only the meet host and league admins can enter scores. Judges receive a
-          dedicated access code from the meet host (coming soon).</p>
+        <p>Only the event host and league admins can enter scores. Judges receive a
+          dedicated access code from the event host (coming soon).</p>
       </div>
     );
   }
@@ -165,20 +165,20 @@ export function Judge() {
       <p className="page-sub">Built for tablets at the judges' table. The level's calculator is part of the scoring view; posting flashes the score and pushes it to live results instantly.</p>
 
       <div className="grid cols-3" style={{ marginBottom: 14 }}>
-        <Field label="Meet">
-          {/* Opened from a specific meet's details page → lock the meet so a host
+        <Field label="Event">
+          {/* Opened from a specific event's details page → lock the event so a host
               can't accidentally switch contexts mid-entry. */}
-          {requestedMeet && meet ? (
-            <input type="text" className="input" value={meet.name} readOnly disabled data-tip="Locked to the meet you opened score entry from" />
+          {requestedEvent && eventRec ? (
+            <input type="text" className="input" value={eventRec.name} readOnly disabled data-tip="Locked to the event you opened score entry from" />
           ) : (
-            <select className="input" value={meetId} onChange={(e) => { setMeetId(e.target.value); const m = db.meets.find((x) => x.id === e.target.value)!; setSessionId(m.sessions[0].id); setEvent(EVENTS[m.sessions[0].discipline][0].code); close(); }}>
-              {db.meets.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+            <select className="input" value={eventId} onChange={(e) => { setEventId(e.target.value); const m = db.events.find((x) => x.id === e.target.value)!; setSessionId(m.sessions[0].id); setEvent(EVENTS[m.sessions[0].discipline][0].code); close(); }}>
+              {db.events.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
             </select>
           )}
         </Field>
         <Field label="Session">
-          <select className="input" value={sessionId} onChange={(e) => { setSessionId(e.target.value); const s = meet.sessions.find((x) => x.id === e.target.value)!; setEvent(EVENTS[s.discipline][0].code); close(); }}>
-            {meet.sessions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          <select className="input" value={sessionId} onChange={(e) => { setSessionId(e.target.value); const s = eventRec.sessions.find((x) => x.id === e.target.value)!; setEvent(EVENTS[s.discipline][0].code); close(); }}>
+            {eventRec.sessions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </Field>
         <Field label="Event">

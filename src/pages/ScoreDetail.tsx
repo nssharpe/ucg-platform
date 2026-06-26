@@ -47,12 +47,12 @@ function ScoreDetailInner({ score }: { score: Score }) {
   const [note, setNote] = useState('');
 
   const athlete = reg && db.people.find((p) => p.id === reg.athleteId);
-  const meet = db.meets.find((m) => m.id === score.meetId);
-  const session = meet?.sessions.find((s) => s.id === score.sessionId);
+  const event = db.events.find((m) => m.id === score.eventId);
+  const session = event?.sessions.find((s) => s.id === score.sessionId);
   const club = reg && db.clubs.find((c) => c.id === reg.clubId);
   const eventName = session ? EVENTS[session.discipline].find((e) => e.code === score.event)?.name ?? score.event : score.event;
 
-  const canView = caps.isAdmin || caps.isMeetHost(score.meetId)
+  const canView = caps.isAdmin || caps.isEventHost(score.eventId)
     || (!!reg && caps.personId === reg.athleteId);
   const canAdjust = caps.isAdmin;
 
@@ -103,7 +103,7 @@ function ScoreDetailInner({ score }: { score: Score }) {
     <div style={{ maxWidth: 860 }}>
       <h1 className="page-title display">{athlete ? `${athlete.firstName} ${athlete.lastName}` : 'Score'} — {eventName}</h1>
       <p className="page-sub">
-        {meet && <Link to={`/results/${meet.slug}`}>{meet.name}</Link>} · {session?.name} · {club?.shortName} · {level?.name}
+        {event && <Link to={`/results/${event.slug}`}>{event.name}</Link>} · {session?.name} · {club?.shortName} · {level?.name}
         {' '}· Unique URL: <code>#/scores/{encodeURIComponent(score.id)}</code>
       </p>
 
@@ -166,7 +166,7 @@ function ScoreDetailInner({ score }: { score: Score }) {
             {score.source === 'manual'
               ? 'This score was entered manually — there is no calculator breakdown to show.'
               : 'No calculator state was captured with this score (e.g. seeded demo data).'}
-            {canAdjust && <> Admins can re-score it from the <Link to={`/judge?meet=${score.meetId}`}>score entry pad</Link>.</>}
+            {canAdjust && <> Admins can re-score it from the <Link to={`/judge?event=${score.eventId}`}>score entry pad</Link>.</>}
           </p>
         </div>
       )}

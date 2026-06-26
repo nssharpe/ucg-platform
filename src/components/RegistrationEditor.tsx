@@ -1,13 +1,13 @@
 /**
- * RegistrationEditor — reusable registration editor for a single athlete at a meet.
+ * RegistrationEditor — reusable registration editor for a single athlete at an event.
  *
  * CONTRACT
  * --------
  * Props:
- *   meet        — the Meet being registered for
+ *   event        — the Event being registered for
  *   athlete     — the Athlete being registered
  *   clubId      — the club they are competing for
- *   existing    — current Registration[] for this athlete+meet (may be [])
+ *   existing    — current Registration[] for this athlete+event (may be [])
  *   allAthletes — full athlete list (for synchro partner combo)
  *   levels      — full Level[] from the DB
  *   season      — current Season (to check active memberships for partner search)
@@ -26,7 +26,7 @@
 import { useState, useMemo } from 'react';
 import { Combo, Field } from './ui';
 import { EVENTS } from '../lib/types';
-import type { Athlete, Discipline, Level, Meet, Registration, Season } from '../lib/types';
+import type { Athlete, Discipline, Level, Event, Registration, Season } from '../lib/types';
 import { changeIsEligible } from '../lib/pricing';
 import type { RegChangeState, RegDisciplineEntry } from '../lib/pricing';
 
@@ -34,7 +34,7 @@ import type { RegChangeState, RegDisciplineEntry } from '../lib/pricing';
 
 interface DiscSectionProps {
   disc: Discipline;
-  meet: Meet;
+  event: Event;
   athlete: Athlete;
   levels: Level[];
   existing: Registration | undefined; // existing reg for this disc, if any
@@ -239,7 +239,7 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
               )}
               {!draft.partnerUnknown && !draft.partnerAthleteId && (
                 <p style={{ fontSize: 12, color: 'var(--warn)', marginTop: 4 }}>
-                  A synchro meet can't go live until all entries have partners assigned.
+                  A synchro event can't go live until all entries have partners assigned.
                 </p>
               )}
             </div>
@@ -253,14 +253,14 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
 // ---- main component ---------------------------------------------------------
 
 export interface RegistrationEditorProps {
-  meet: Meet;
+  event: Event;
   athlete: Athlete;
   clubId: string;
   /** The club the athlete is CURRENTLY registered with (before any edit). When
    *  provided and it differs from `clubId`, a club-only switch registers as an
    *  eligible/chargeable change. Defaults to `clubId` (no club change). */
   originalClubId?: string;
-  existing: Registration[]; // all regs for this athlete+meet (may be [])
+  existing: Registration[]; // all regs for this athlete+event (may be [])
   allAthletes: Athlete[];
   levels: Level[];
   season: Season;
@@ -273,7 +273,7 @@ export interface RegistrationEditorProps {
 }
 
 export function RegistrationEditor({
-  meet,
+  event,
   athlete,
   clubId,
   originalClubId,
@@ -289,7 +289,7 @@ export function RegistrationEditor({
   // Build initial draft state from existing regs (or defaults from athlete.levels)
   const initDrafts = (): Record<Discipline, DraftReg> => {
     const out = {} as Record<Discipline, DraftReg>;
-    for (const disc of meet.disciplines as Discipline[]) {
+    for (const disc of event.disciplines as Discipline[]) {
       const reg = existing.find((r) => r.discipline === disc && !r.refunded);
       const discLevels = levels.filter((l) => l.discipline === disc && !l.retired);
       const defaultLevelId = athlete.levels[disc] ?? discLevels[0]?.id ?? '';
@@ -323,16 +323,16 @@ export function RegistrationEditor({
 
   const handleSave = () => {
     const regs: Registration[] = [];
-    for (const disc of meet.disciplines as Discipline[]) {
+    for (const disc of event.disciplines as Discipline[]) {
       const d = drafts[disc];
       if (!d.enabled || d.events.length === 0) continue;
       const existing_ = existing.find((r) => r.discipline === disc && !r.refunded);
-      const session = meet.sessions.find((s) => s.discipline === disc && s.levelIds.includes(d.levelId))
-        ?? meet.sessions.find((s) => s.discipline === disc);
+      const session = event.sessions.find((s) => s.discipline === disc && s.levelIds.includes(d.levelId))
+        ?? event.sessions.find((s) => s.discipline === disc);
 
       const reg: Registration = {
         id: existing_?.id ?? `reg-${Date.now()}-${athlete.id}-${disc}`,
-        meetId: meet.id,
+        eventId: event.id,
         athleteId: athlete.id,
         clubId,
         discipline: disc,
@@ -352,7 +352,7 @@ export function RegistrationEditor({
     onSave(regs);
   };
 
-  const anyEnabled = (meet.disciplines as Discipline[]).some((d) => drafts[d]?.enabled && drafts[d].events.length > 0);
+  const anyEnabled = (event.disciplines as Discipline[]).some((d) => drafts[d]?.enabled && drafts[d].events.length > 0);
 
   // Are we editing an EXISTING registration (vs creating a brand-new one)? An
   // existing-reg edit must make an ELIGIBLE (chargeable) change before it can be
@@ -365,7 +365,7 @@ export function RegistrationEditor({
     fromExisting: boolean,
   ): RegDisciplineEntry[] => {
     const out: RegDisciplineEntry[] = [];
-    for (const disc of meet.disciplines as Discipline[]) {
+    for (const disc of event.disciplines as Discipline[]) {
       if (fromExisting) {
         const reg = existing.find((r) => r.discipline === disc && !r.refunded);
         if (!reg) continue;
@@ -425,14 +425,14 @@ export function RegistrationEditor({
           {isEditingExisting ? 'Editing registration' : 'New registration'}
         </span>
         <strong style={{ fontSize: 16 }}>{athlete.firstName} {athlete.lastName}</strong>
-        <span style={{ fontSize: 13, color: 'var(--ink-soft)' }}>{meet.name}</span>
+        <span style={{ fontSize: 13, color: 'var(--ink-soft)' }}>{event.name}</span>
       </div>
 
-      {(meet.disciplines as Discipline[]).map((disc) => (
+      {(event.disciplines as Discipline[]).map((disc) => (
         <DiscSection
           key={disc}
           disc={disc}
-          meet={meet}
+          event={event}
           athlete={athlete}
           levels={levels}
           existing={existing.find((r) => r.discipline === disc && !r.refunded)}

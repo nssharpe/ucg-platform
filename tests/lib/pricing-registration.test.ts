@@ -3,14 +3,14 @@ import {
   registrationEntryFee,
   registrationChangeFee,
   changeIsEligible,
-  type RegFeeMeet,
+  type RegFeeEvent,
   type RegChangeState,
   type RegDisciplineEntry,
 } from '../../src/lib/pricing';
 
 // --- Fixtures ---------------------------------------------------------------
 
-const meet: RegFeeMeet = {
+const event: RegFeeEvent = {
   hostClubId: 'host-club',
   entryFee: 40,
   secondDisciplineFee: 25,
@@ -39,41 +39,41 @@ function state(overrides: Partial<RegChangeState> = {}): RegChangeState {
 
 describe('registrationEntryFee (3g)', () => {
   it('charges base entry fee for a non-host club', () => {
-    expect(registrationEntryFee(meet, { competingClubId: 'club-a' })).toBe(40);
+    expect(registrationEntryFee(event, { competingClubId: 'club-a' })).toBe(40);
   });
 
   it('charges second-discipline fee for a non-host club second discipline', () => {
     expect(
-      registrationEntryFee(meet, { competingClubId: 'club-a', isSecondDiscipline: true }),
+      registrationEntryFee(event, { competingClubId: 'club-a', isSecondDiscipline: true }),
     ).toBe(25);
   });
 
   it('is $0 for the host club (base entry)', () => {
-    expect(registrationEntryFee(meet, { competingClubId: 'host-club' })).toBe(0);
+    expect(registrationEntryFee(event, { competingClubId: 'host-club' })).toBe(0);
   });
 
   it('is $0 for the host club even as a second discipline', () => {
     expect(
-      registrationEntryFee(meet, { competingClubId: 'host-club', isSecondDiscipline: true }),
+      registrationEntryFee(event, { competingClubId: 'host-club', isSecondDiscipline: true }),
     ).toBe(0);
   });
 
   it('defaults isSecondDiscipline to false', () => {
-    expect(registrationEntryFee(meet, { competingClubId: 'club-a' })).toBe(40);
+    expect(registrationEntryFee(event, { competingClubId: 'club-a' })).toBe(40);
   });
 });
 
 describe('registrationChangeFee (3g)', () => {
   it('charges the configured change fee for a non-host club', () => {
-    expect(registrationChangeFee(meet, { competingClubId: 'club-a' })).toBe(15);
+    expect(registrationChangeFee(event, { competingClubId: 'club-a' })).toBe(15);
   });
 
   it('is $0 for the host club', () => {
-    expect(registrationChangeFee(meet, { competingClubId: 'host-club' })).toBe(0);
+    expect(registrationChangeFee(event, { competingClubId: 'host-club' })).toBe(0);
   });
 
-  it('is $0 when the meet has no change fee configured (non-host)', () => {
-    const noFee: RegFeeMeet = { ...meet, changeFee: undefined };
+  it('is $0 when the event has no change fee configured (non-host)', () => {
+    const noFee: RegFeeEvent = { ...event, changeFee: undefined };
     expect(registrationChangeFee(noFee, { competingClubId: 'club-a' })).toBe(0);
   });
 });

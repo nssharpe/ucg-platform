@@ -5,43 +5,43 @@ import { useCapabilities } from '../lib/capabilities';
 import { seasonForDate, clubHasActiveMembership, paidRegistrationClub } from '../lib/capabilities-core';
 import { Badge, Field, Modal, Tabs } from '../components/ui';
 import { useToast, useFmtDate } from '../components/ui-hooks';
-import { MeetWizard } from '../components/MeetWizard';
+import { EventWizard } from '../components/EventWizard';
 import { RegistrationEditor } from '../components/RegistrationEditor';
-import { MeetStatusBadge } from './Home';
+import { EventStatusBadge } from './Home';
 import { EVENTS, SHIRT_SIZES } from '../lib/types';
-import type { Athlete, CartItem, Meet, MeetSession, Registration } from '../lib/types';
-import { deleteRegistration, pushCart, pushMeet, pushMeetSessions, pushRegistration } from '../lib/supabase';
+import type { Athlete, CartItem, Event, EventSession, Registration } from '../lib/types';
+import { deleteRegistration, pushCart, pushEvent, pushEventSessions, pushRegistration } from '../lib/supabase';
 import { fmtMoney } from '../lib/scoring';
 import { newRegistrationEntryTotal, registrationChangeFee } from '../lib/pricing';
 
-export function Meets() {
+export function Events() {
   const db = useDB();
   const caps = useCapabilities();
   const fmtDate = useFmtDate();
   const [wizardOpen, setWizardOpen] = useState(false);
   return (
     <div>
-      <h1 className="page-title display">Meets</h1>
-      <p className="page-sub">Every meet gets its own unique URL, sessions, squads, and live results page.</p>
+      <h1 className="page-title display">Events</h1>
+      <p className="page-sub">Every event gets its own unique URL, sessions, squads, and live results page.</p>
       {caps.isAdmin && (
-        <button className="btn primary" style={{ marginBottom: 18 }} onClick={() => setWizardOpen(true)}>+ Sanction new meet</button>
+        <button className="btn primary" style={{ marginBottom: 18 }} onClick={() => setWizardOpen(true)}>+ Sanction new event</button>
       )}
-      {wizardOpen && <MeetWizard onClose={() => setWizardOpen(false)} />}
+      {wizardOpen && <EventWizard onClose={() => setWizardOpen(false)} />}
       <div className="grid cols-3">
-        {db.meets.map((m) => {
-          const regs = db.registrations.filter((r) => r.meetId === m.id && !r.refunded);
+        {db.events.map((m) => {
+          const regs = db.registrations.filter((r) => r.eventId === m.id && !r.refunded);
           return (
             <div className="card card-pad" key={m.id} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                <h3 style={{ fontSize: 17 }}><Link to={`/meets/${m.slug}`} style={{ textDecoration: 'none' }}>{m.name}</Link></h3>
-                <MeetStatusBadge status={m.status} />
+                <h3 style={{ fontSize: 17 }}><Link to={`/events/${m.slug}`} style={{ textDecoration: 'none' }}>{m.name}</Link></h3>
+                <EventStatusBadge status={m.status} />
               </div>
               <div style={{ fontSize: 13.5, color: 'var(--ink-soft)' }}>
                 {m.city}, {m.state} · {fmtDate(m.startDate)}<br />
                 {m.disciplines.join(' · ')} · {regs.length} athletes · hosted by {db.clubs.find((c) => c.id === m.hostClubId)?.shortName}
               </div>
               <div style={{ marginTop: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                <Link className="btn small" to={`/meets/${m.slug}`}>Details</Link>
+                <Link className="btn small" to={`/events/${m.slug}`}>Details</Link>
                 {(m.status === 'in-progress' || m.status === 'complete') && <Link className="btn small primary" to={`/results/${m.slug}`}>Results</Link>}
               </div>
             </div>
@@ -66,58 +66,58 @@ function tzAbbrev(timezone: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// MeetDetail
+// EventDetail
 // ---------------------------------------------------------------------------
-export function MeetDetail() {
+export function EventDetail() {
   const { slug } = useParams();
   const db = useDB();
   const caps = useCapabilities();
   const toast = useToast();
   const fmtDate = useFmtDate();
-  const meet = db.meets.find((m) => m.slug === slug);
+  const event = db.events.find((m) => m.slug === slug);
   const [editWizardOpen, setEditWizardOpen] = useState(false);
   const [selfRegOpen, setSelfRegOpen] = useState(false);
 
-  if (!meet) return <p>Meet not found.</p>;
-  const host = db.clubs.find((c) => c.id === meet.hostClubId);
-  const regs = db.registrations.filter((r) => r.meetId === meet.id && !r.refunded);
-  const canManage = caps.isMeetHost(meet.id);
-  const tz = tzAbbrev(meet.timezone);
+  if (!event) return <p>Event not found.</p>;
+  const host = db.clubs.find((c) => c.id === event.hostClubId);
+  const regs = db.registrations.filter((r) => r.eventId === event.id && !r.refunded);
+  const canManage = caps.isEventHost(event.id);
+  const tz = tzAbbrev(event.timezone);
 
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: 12, flexWrap: 'wrap' }}>
         <div>
-          <h1 className="page-title display">{meet.name}</h1>
+          <h1 className="page-title display">{event.name}</h1>
           <p className="page-sub">
-            {meet.city}, {meet.state} · {fmtDate(meet.startDate)}–{fmtDate(meet.endDate)} ({meet.timezone}) ·
-            hosted by {host?.name} · <code>#/meets/{meet.slug}</code>
+            {event.city}, {event.state} · {fmtDate(event.startDate)}–{fmtDate(event.endDate)} ({event.timezone}) ·
+            hosted by {host?.name} · <code>#/events/{event.slug}</code>
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <MeetStatusBadge status={meet.status} />
+          <EventStatusBadge status={event.status} />
           {canManage && (
-            <button className="btn small ghost" onClick={() => setEditWizardOpen(true)}>Edit meet</button>
+            <button className="btn small ghost" onClick={() => setEditWizardOpen(true)}>Edit event</button>
           )}
         </div>
       </div>
 
-      {editWizardOpen && <MeetWizard editMeet={meet} onClose={() => setEditWizardOpen(false)} />}
+      {editWizardOpen && <EventWizard editEvent={event} onClose={() => setEditWizardOpen(false)} />}
 
       <div className="grid cols-3" style={{ marginBottom: 18 }}>
         <div className="card card-pad">
           <h3 className="card-title">Registration</h3>
           <p style={{ margin: '0 0 8px', fontSize: 14 }}>
-            Opens {fmtDate(meet.regOpens.slice(0, 10))} · closes <strong>{fmtDate(meet.regCloses.slice(0, 10))}</strong> ({tz})<br />
-            {fmtMoney(meet.entryFee)} / discipline · {fmtMoney(meet.secondDisciplineFee)} each additional
-            {meet.banquet && <><br />{meet.banquet.name}: {fmtMoney(meet.banquet.price)}</>}
-            {meet.tshirtAddon && <><br />T-shirt: {fmtMoney(meet.tshirtAddon.price)}</>}
-            {meet.bannerAddon && <><br />Club banner: {fmtMoney(meet.bannerAddon.price)}</>}
-            {meet.changeFee && (
-              <><br /><span style={{ color: 'var(--warn)' }}>Change fee {fmtMoney(meet.changeFee.amount)} after {new Date(meet.changeFee.startsAt).toLocaleDateString()}</span></>
+            Opens {fmtDate(event.regOpens.slice(0, 10))} · closes <strong>{fmtDate(event.regCloses.slice(0, 10))}</strong> ({tz})<br />
+            {fmtMoney(event.entryFee)} / discipline · {fmtMoney(event.secondDisciplineFee)} each additional
+            {event.banquet && <><br />{event.banquet.name}: {fmtMoney(event.banquet.price)}</>}
+            {event.tshirtAddon && <><br />T-shirt: {fmtMoney(event.tshirtAddon.price)}</>}
+            {event.bannerAddon && <><br />Club banner: {fmtMoney(event.bannerAddon.price)}</>}
+            {event.changeFee && (
+              <><br /><span style={{ color: 'var(--warn)' }}>Change fee {fmtMoney(event.changeFee.amount)} after {new Date(event.changeFee.startsAt).toLocaleDateString()}</span></>
             )}
           </p>
-          {meet.status === 'reg-open' ? (
+          {event.status === 'reg-open' ? (
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {caps.managedClubIds.length > 0 && (
                 <Link className="btn primary small" to={`/club/${caps.managedClubIds[0]}`}>Register your club →</Link>
@@ -132,10 +132,10 @@ export function MeetDetail() {
           ) : (
             <Badge tone="warn">Registration closed{caps.isAdmin ? ' — admin can override below' : ''}</Badge>
           )}
-          {caps.isAdmin && meet.status !== 'reg-open' && (
+          {caps.isAdmin && event.status !== 'reg-open' && (
             <div style={{ marginTop: 10, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              <button className="btn small ghost" onClick={() => { mutate((d) => { const m = d.meets.find((m) => m.id === meet.id)!; m.status = 'reg-open'; pushMeet(m); }); toast('Deadline overridden — registration re-opened.'); }}>Override: reopen reg</button>
-              <button className="btn small ghost" data-tip="Generates a private reg link + password for late adds" onClick={() => toast(`Private link: ucg.org/#/meets/${meet.slug}?code=LATE26 (demo)`)}>Private reg link</button>
+              <button className="btn small ghost" onClick={() => { mutate((d) => { const m = d.events.find((m) => m.id === event.id)!; m.status = 'reg-open'; pushEvent(m); }); toast('Deadline overridden — registration re-opened.'); }}>Override: reopen reg</button>
+              <button className="btn small ghost" data-tip="Generates a private reg link + password for late adds" onClick={() => toast(`Private link: ucg.org/#/events/${event.slug}?code=LATE26 (demo)`)}>Private reg link</button>
             </div>
           )}
         </div>
@@ -147,14 +147,14 @@ export function MeetDetail() {
         <div className="card card-pad">
           <h3 className="card-title">Quick links</h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <Link to={`/results/${meet.slug}`}>→ Live results</Link>
-            {canManage && meet.kind === 'nationals' && (
-              <Link to={`/meets/${meet.slug}/nationals`} style={{ fontWeight: 700 }}>→ Finals qualification &amp; awards</Link>
+            <Link to={`/results/${event.slug}`}>→ Live results</Link>
+            {canManage && event.kind === 'nationals' && (
+              <Link to={`/events/${event.slug}/nationals`} style={{ fontWeight: 700 }}>→ Finals qualification &amp; awards</Link>
             )}
-            {canManage && <Link to={`/meets/${meet.slug}/manage`}>→ Manage sessions & squads</Link>}
-            {canManage && <Link to={`/judge?meet=${meet.id}`}>→ Score entry</Link>}
-            {canManage && <a href="#" onClick={(e) => { e.preventDefault(); exportCsv(db, meet); }}>→ Export registrations (CSV)</a>}
-            {canManage && <a href="#" onClick={(e) => { e.preventDefault(); exportScoresCsv(db, meet); }}>→ Export scores incl. calculator detail (CSV)</a>}
+            {canManage && <Link to={`/events/${event.slug}/manage`}>→ Manage sessions & squads</Link>}
+            {canManage && <Link to={`/judge?event=${event.id}`}>→ Score entry</Link>}
+            {canManage && <a href="#" onClick={(e) => { e.preventDefault(); exportCsv(db, event); }}>→ Export registrations (CSV)</a>}
+            {canManage && <a href="#" onClick={(e) => { e.preventDefault(); exportScoresCsv(db, event); }}>→ Export scores incl. calculator detail (CSV)</a>}
           </div>
         </div>
       </div>
@@ -163,7 +163,7 @@ export function MeetDetail() {
         <table className="tbl">
           <thead><tr><th>Session</th><th>Date</th><th>Levels</th><th className="num">Athletes</th><th className="num">Squads</th></tr></thead>
           <tbody>
-            {meet.sessions.map((s) => (
+            {event.sessions.map((s) => (
               <tr key={s.id}>
                 <td><strong>{s.name}</strong></td>
                 <td>{fmtDate(s.date)} {s.time}</td>
@@ -182,7 +182,7 @@ export function MeetDetail() {
         if (!athlete) return null;
         return (
           <SelfRegModal
-            meet={meet}
+            event={event}
             athlete={athlete}
             onClose={() => setSelfRegOpen(false)}
             toast={toast}
@@ -198,13 +198,13 @@ export function MeetDetail() {
 // ---------------------------------------------------------------------------
 
 interface SelfRegModalProps {
-  meet: Meet;
+  event: Event;
   athlete: Athlete;
   onClose: () => void;
   toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void;
 }
 
-function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
+function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
   const db = useDB();
   const navigate = useNavigate();
 
@@ -215,10 +215,10 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
   ].filter((c): c is NonNullable<typeof c> => !!c);
 
   // Cross-club lock (3d): if the athlete already has a PAID, non-refunded reg for
-  // this meet under one of their clubs, they're locked to it — they can't compete
+  // this event under one of their clubs, they're locked to it — they can't compete
   // for a DIFFERENT club. (excludeClubId omitted ⇒ returns ANY paid-reg club.)
   const lockedClubId = paidRegistrationClub(db.registrations, {
-    athleteId: athlete.id, meetId: meet.id,
+    athleteId: athlete.id, eventId: event.id,
   });
   const lockedClubShort = lockedClubId
     ? db.clubs.find((c) => c.id === lockedClubId)?.shortName ?? 'another club'
@@ -235,14 +235,14 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
 
   const season = db.seasons.find((s) => s.current)!;
   const existingRegs = db.registrations.filter(
-    (r) => r.meetId === meet.id && r.athleteId === athlete.id && !r.refunded,
+    (r) => r.eventId === event.id && r.athleteId === athlete.id && !r.refunded,
   );
 
   const changeFeeApplies = !!(
-    meet.changeFee && new Date() >= new Date(meet.changeFee.startsAt)
+    event.changeFee && new Date() >= new Date(event.changeFee.startsAt)
   );
 
-  const hasAddons = !!(meet.tshirtAddon || meet.bannerAddon);
+  const hasAddons = !!(event.tshirtAddon || event.bannerAddon);
 
   // Called by RegistrationEditor when the athlete confirms their selections
   const handleRegSave = (regs: Registration[]) => {
@@ -250,15 +250,15 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
     // this athlete is already paid-registered with. (Belt-and-suspenders for the
     // single-club case where the selector — and its disabled options — isn't shown.)
     if (lockedClubId && selectedClubId !== lockedClubId) {
-      toast(`You're already registered with ${lockedClubShort} for this meet — you can't register under a different club. Edit your existing registration instead.`, { variant: 'error' });
+      toast(`You're already registered with ${lockedClubShort} for this event — you can't register under a different club. Edit your existing registration instead.`, { variant: 'error' });
       return;
     }
-    // Gate: the competing club must hold an active membership for the meet's season.
-    const seasonId = seasonForDate(db, meet.startDate);
+    // Gate: the competing club must hold an active membership for the event's season.
+    const seasonId = seasonForDate(db, event.startDate);
     if (!clubHasActiveMembership(db, selectedClubId, seasonId)) {
       const sName = db.seasons.find((s) => s.id === seasonId)?.name ?? 'this season';
       const club = db.clubs.find((c) => c.id === selectedClubId);
-      toast(`${club?.shortName ?? 'Your club'} needs an active ${sName} club membership before anyone can register for this meet. A club manager can purchase it on the club page.`, { variant: 'error' });
+      toast(`${club?.shortName ?? 'Your club'} needs an active ${sName} club membership before anyone can register for this event. A club manager can purchase it on the club page.`, { variant: 'error' });
       return;
     }
     if (hasAddons) {
@@ -273,7 +273,7 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
     let hostFree = false;
     mutate((d) => {
       const existingForAthlete = d.registrations.filter(
-        (r) => r.meetId === meet.id && r.athleteId === athlete.id && !r.refunded,
+        (r) => r.eventId === event.id && r.athleteId === athlete.id && !r.refunded,
       );
       const newDiscSet = new Set(regs.map((r) => r.discipline));
       const alreadyHadRegs = existingForAthlete.length > 0;
@@ -286,13 +286,13 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
       const addedRegs = regs.filter((r) => !existingForAthlete.some((e) => e.discipline === r.discipline));
 
       // Entry total for the newly-added disciplines, host-club aware ($0 ⇒ free).
-      const entryTotal = newRegistrationEntryTotal(meet, {
+      const entryTotal = newRegistrationEntryTotal(event, {
         competingClubId,
         priorDisciplineCount,
         newDisciplineCount: addedRegs.length,
       });
       const changeFee = changeFeeApplies && alreadyHadRegs
-        ? registrationChangeFee(meet, { competingClubId })
+        ? registrationChangeFee(event, { competingClubId })
         : 0;
       hostFree = !alreadyHadRegs && entryTotal === 0;
 
@@ -334,24 +334,24 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
       if (!alreadyHadRegs && entryTotal > 0) {
         cart.push({
           id: `ci-self-${Date.now()}-${athlete.id}`,
-          label: `${meet.name} entry — ${athlete.firstName} ${athlete.lastName} (${addedRegs.map((r) => r.discipline).join('+')})`,
+          label: `${event.name} entry — ${athlete.firstName} ${athlete.lastName} (${addedRegs.map((r) => r.discipline).join('+')})`,
           amount: entryTotal,
           kind: 'meet-entry',
           refUserId: athlete.id,
           refRegIds: addedRegs.map((r) => r.id),
-          refMeetId: meet.id,
+          refEventId: event.id,
           refLineType: 'entry',
         });
       }
       if (changeFee > 0) {
         cart.push({
           id: `ci-change-${Date.now()}-${athlete.id}`,
-          label: `${meet.name} change fee — ${athlete.firstName} ${athlete.lastName}`,
+          label: `${event.name} change fee — ${athlete.firstName} ${athlete.lastName}`,
           amount: changeFee,
           kind: 'meet-entry',
           refUserId: athlete.id,
           refRegIds: regs.map((r) => r.id),
-          refMeetId: meet.id,
+          refEventId: event.id,
           refLineType: 'change',
         });
       }
@@ -387,25 +387,25 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
     const tshirtItems: CartItem[] = [];
     const bannerItems: CartItem[] = [];
 
-    if (meet.tshirtAddon && tshirtSize) {
+    if (event.tshirtAddon && tshirtSize) {
       tshirtItems.push({
         id: `ci-tshirt-${ts}`,
-        label: `${meet.name} t-shirt — ${athlete.firstName} ${athlete.lastName} (${tshirtSize})`,
-        amount: meet.tshirtAddon.price,
+        label: `${event.name} t-shirt — ${athlete.firstName} ${athlete.lastName} (${tshirtSize})`,
+        amount: event.tshirtAddon.price,
         kind: 'addon',
         refUserId: athlete.id,
-        refMeetId: meet.id,
+        refEventId: event.id,
         refLineType: 'tshirt',
       });
     }
-    if (meet.bannerAddon && bannerText.trim()) {
+    if (event.bannerAddon && bannerText.trim()) {
       bannerItems.push({
         id: `ci-banner-${ts}`,
-        label: `${meet.name} club banner — "${bannerText.trim()}"`,
-        amount: meet.bannerAddon.price,
+        label: `${event.name} club banner — "${bannerText.trim()}"`,
+        amount: event.bannerAddon.price,
         kind: 'addon',
         refUserId: athlete.id,
-        refMeetId: meet.id,
+        refEventId: event.id,
         refLineType: 'banner',
       });
     }
@@ -414,14 +414,14 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
   };
 
   const title = step === 'reg'
-    ? `Register for ${meet.name}`
-    : `Add-ons — ${meet.name}`;
+    ? `Register for ${event.name}`
+    : `Add-ons — ${event.name}`;
 
   return (
     <Modal title={title} onClose={onClose}>
       {/* Club selector (only if athlete has >1 affiliated club) */}
       {step === 'reg' && myClubs.length > 1 && (
-        <Field label="Compete for" hint="Choose which club you will compete under at this meet.">
+        <Field label="Compete for" hint="Choose which club you will compete under at this event.">
           <select
             className="input"
             value={selectedClubId}
@@ -435,7 +435,7 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
           </select>
           {lockedClubShort && (
             <p style={{ fontSize: 13, color: 'var(--warn)', marginTop: 6 }}>
-              Already registered with {lockedClubShort} for this meet — you can only edit that registration.
+              Already registered with {lockedClubShort} for this event — you can only edit that registration.
             </p>
           )}
         </Field>
@@ -443,7 +443,7 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
 
       {step === 'reg' && (
         <RegistrationEditor
-          meet={meet}
+          event={event}
           athlete={athlete}
           clubId={selectedClubId}
           existing={existingRegs}
@@ -453,23 +453,23 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
           onSave={handleRegSave}
           onCancel={onClose}
           changeFeeApplies={changeFeeApplies}
-          incomingPartnerId={db.registrations.find((r) => r.meetId === meet.id && !r.refunded && r.events.includes('SY') && r.partnerAthleteId === athlete.id)?.athleteId ?? null}
+          incomingPartnerId={db.registrations.find((r) => r.eventId === event.id && !r.refunded && r.events.includes('SY') && r.partnerAthleteId === athlete.id)?.athleteId ?? null}
         />
       )}
 
       {step === 'addons' && (
         <div>
           <p style={{ fontSize: 14, color: 'var(--ink-soft)', marginBottom: 14 }}>
-            Optional add-ons for this meet — leave a field blank to omit it.
+            Optional add-ons for this event — leave a field blank to omit it.
           </p>
 
-          {meet.tshirtAddon && (
+          {event.tshirtAddon && (
             <div className="card card-pad" style={{ marginBottom: 14 }}>
-              <h3 className="card-title">T-shirt — {fmtMoney(meet.tshirtAddon.price)}</h3>
+              <h3 className="card-title">T-shirt — {fmtMoney(event.tshirtAddon.price)}</h3>
               <Field label="Size (leave blank to skip)">
                 <select className="input" value={tshirtSize} onChange={(e) => setTshirtSize(e.target.value)}>
                   <option value="">— no t-shirt —</option>
-                  {(meet.tshirtAddon.sizes.length > 0 ? meet.tshirtAddon.sizes : SHIRT_SIZES).map((sz) => (
+                  {(event.tshirtAddon.sizes.length > 0 ? event.tshirtAddon.sizes : SHIRT_SIZES).map((sz) => (
                     <option key={sz} value={sz}>{sz}</option>
                   ))}
                 </select>
@@ -477,9 +477,9 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
             </div>
           )}
 
-          {meet.bannerAddon && (
+          {event.bannerAddon && (
             <div className="card card-pad" style={{ marginBottom: 14 }}>
-              <h3 className="card-title">Club banner — {fmtMoney(meet.bannerAddon.price)}</h3>
+              <h3 className="card-title">Club banner — {fmtMoney(event.bannerAddon.price)}</h3>
               <Field label="Banner text (leave blank to skip)" hint="Text to print on the banner.">
                 <input
                   className="input"
@@ -504,33 +504,33 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
 // exportCsv helpers (unchanged from original)
 // ---------------------------------------------------------------------------
 
-function exportCsv(db: ReturnType<typeof useDB>, meet: Meet) {
+function exportCsv(db: ReturnType<typeof useDB>, event: Event) {
   // Spec: "just export all the things and let the user trim"
   const rows = [['Athlete', 'Club', 'Discipline', 'Level', 'Session', 'Events', 'Shirt', 'Dietary', 'Email', 'Phone', 'Emergency contact', 'Student', 'Region']];
-  for (const r of db.registrations.filter((x) => x.meetId === meet.id && !x.refunded)) {
+  for (const r of db.registrations.filter((x) => x.eventId === event.id && !x.refunded)) {
     const a = db.people.find((p) => p.id === r.athleteId)!;
     const club = db.clubs.find((c) => c.id === r.clubId)!;
     rows.push([
       `${a.firstName} ${a.lastName}`, club.name, r.discipline,
       db.levels.find((l) => l.id === r.levelId)?.name ?? '',
-      meet.sessions.find((s) => s.id === r.sessionId)?.name ?? '',
+      event.sessions.find((s) => s.id === r.sessionId)?.name ?? '',
       r.events.join('|'), a.shirt, a.dietary.join('|'), a.email, a.phone,
       `${a.emergency.contact} ${a.emergency.phone}`, a.studentStatus, club.region,
     ]);
   }
   const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
-  downloadCsv(csv, `${meet.slug}-export.csv`);
+  downloadCsv(csv, `${event.slug}-export.csv`);
 }
 
 /** Scores export — includes the captured calculator state so verification has
  *  the full breakdown of how every score was built. */
-function exportScoresCsv(db: ReturnType<typeof useDB>, meet: Meet) {
+function exportScoresCsv(db: ReturnType<typeof useDB>, event: Event) {
   const rows = [['Athlete', 'Club', 'Session', 'Event', 'Level', 'D/SV', 'Deductions', 'E-score', 'Final', 'Source', 'Calculator', 'Entered by', 'Entered at', 'Adjusted at', 'Adjust note', 'Calculator state (JSON)']];
-  for (const s of db.scores.filter((x) => x.meetId === meet.id)) {
+  for (const s of db.scores.filter((x) => x.eventId === event.id)) {
     const reg = db.registrations.find((r) => r.id === s.regId);
     const a = reg && db.people.find((p) => p.id === reg.athleteId);
     const club = reg && db.clubs.find((c) => c.id === reg.clubId);
-    const session = meet.sessions.find((x) => x.id === s.sessionId);
+    const session = event.sessions.find((x) => x.id === s.sessionId);
     rows.push([
       a ? `${a.firstName} ${a.lastName}` : s.regId, club?.name ?? '', session?.name ?? '', s.event,
       db.levels.find((l) => l.id === reg?.levelId)?.name ?? '',
@@ -541,7 +541,7 @@ function exportScoresCsv(db: ReturnType<typeof useDB>, meet: Meet) {
     ].map(String));
   }
   const csv = rows.map((r) => r.map((c) => `"${c.replace(/"/g, '""')}"`).join(',')).join('\n');
-  downloadCsv(csv, `${meet.slug}-scores.csv`);
+  downloadCsv(csv, `${event.slug}-scores.csv`);
 }
 
 function downloadCsv(csv: string, filename: string) {
@@ -552,42 +552,42 @@ function downloadCsv(csv: string, filename: string) {
 }
 
 // ---------------------------------------------------------------------------
-// MeetManage: sessions & squads (unchanged logic, updated imports)
+// EventManage: sessions & squads (unchanged logic, updated imports)
 // ---------------------------------------------------------------------------
-export function MeetManage() {
+export function EventManage() {
   const { slug } = useParams();
   const db = useDB();
   const caps = useCapabilities();
-  const meet = db.meets.find((m) => m.slug === slug);
-  const [sessionId, setSessionId] = useState(meet?.sessions[0]?.id ?? '');
-  if (!meet) return <p>Meet not found.</p>;
-  const session = meet.sessions.find((s) => s.id === sessionId) ?? meet.sessions[0];
-  const canScore = caps.isMeetHost(meet.id);
+  const event = db.events.find((m) => m.slug === slug);
+  const [sessionId, setSessionId] = useState(event?.sessions[0]?.id ?? '');
+  if (!event) return <p>Event not found.</p>;
+  const session = event.sessions.find((s) => s.id === sessionId) ?? event.sessions[0];
+  const canScore = caps.isEventHost(event.id);
 
   return (
     <div>
-      <h1 className="page-title display">Manage — {meet.name}</h1>
+      <h1 className="page-title display">Manage — {event.name}</h1>
       <p className="page-sub">Build squads per session, copy a squad setup to other sessions, and save everything at once. New athletes land in the Holding squad until placed.</p>
       {canScore && (
         <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-          <Link className="btn primary" to={`/judge?meet=${meet.id}`}>Score entry →</Link>
-          <Link className="btn ghost" to={`/results/${meet.slug}`}>Live results</Link>
+          <Link className="btn primary" to={`/judge?event=${event.id}`}>Score entry →</Link>
+          <Link className="btn ghost" to={`/results/${event.slug}`}>Live results</Link>
         </div>
       )}
       <Tabs
-        tabs={meet.sessions.map((s) => ({ id: s.id, label: s.name.split('—')[0].trim() }))}
+        tabs={event.sessions.map((s) => ({ id: s.id, label: s.name.split('—')[0].trim() }))}
         active={session.id}
         onChange={setSessionId}
       />
-      <SquadBuilder meet={meet} session={session} />
+      <SquadBuilder event={event} session={session} />
     </div>
   );
 }
 
-function SquadBuilder({ meet, session }: { meet: Meet; session: MeetSession }) {
+function SquadBuilder({ event, session }: { event: Event; session: EventSession }) {
   const db = useDB();
   const toast = useToast();
-  const regs = db.registrations.filter((r) => r.meetId === meet.id && r.sessionId === session.id && !r.refunded);
+  const regs = db.registrations.filter((r) => r.eventId === event.id && r.sessionId === session.id && !r.refunded);
   const events = EVENTS[session.discipline];
   const placed = new Set(session.squads.flatMap((q) => q.athleteRegIds));
   const holding = regs.filter((r) => !placed.has(r.id));
@@ -603,26 +603,26 @@ function SquadBuilder({ meet, session }: { meet: Meet; session: MeetSession }) {
 
   const applyDefault = (n: number) => {
     mutate((d) => {
-      const m = d.meets.find((x) => x.id === meet.id)!;
+      const m = d.events.find((x) => x.id === event.id)!;
       const s = m.sessions.find((x) => x.id === session.id)!;
-      const sregs = d.registrations.filter((r) => r.meetId === meet.id && r.sessionId === session.id && !r.refunded);
+      const sregs = d.registrations.filter((r) => r.eventId === event.id && r.sessionId === session.id && !r.refunded);
       s.squads = Array.from({ length: n }, (_, i) => ({
         id: `${s.id}-q${i + 1}`, name: `Squad ${String.fromCharCode(65 + i)}`,
         startEvent: Math.floor((i * events.length) / n) % events.length,
         athleteRegIds: [],
       }));
       sregs.forEach((r, i) => s.squads[i % n].athleteRegIds.push(r.id));
-      pushMeetSessions(m, d.registrations);
+      pushEventSessions(m, d.registrations);
     });
     toast(`Split ${regs.length} athletes into ${n} squads. Adjust then Save.`);
   };
 
   const copyToOthers = () => {
     mutate((d) => {
-      const m = d.meets.find((x) => x.id === meet.id)!;
+      const m = d.events.find((x) => x.id === event.id)!;
       for (const s of m.sessions) {
         if (s.id === session.id || s.discipline !== session.discipline) continue;
-        const sregs = d.registrations.filter((r) => r.meetId === meet.id && r.sessionId === s.id && !r.refunded);
+        const sregs = d.registrations.filter((r) => r.eventId === event.id && r.sessionId === s.id && !r.refunded);
         const n = Math.max(1, session.squads.filter((q) => !q.holding).length);
         s.squads = Array.from({ length: n }, (_, i) => ({
           id: `${s.id}-q${i + 1}`, name: `Squad ${String.fromCharCode(65 + i)}`,
@@ -631,18 +631,18 @@ function SquadBuilder({ meet, session }: { meet: Meet; session: MeetSession }) {
         }));
         sregs.forEach((r, i) => s.squads[i % n].athleteRegIds.push(r.id));
       }
-      pushMeetSessions(m, d.registrations);
+      pushEventSessions(m, d.registrations);
     });
     toast('Squad setup copied to other ' + session.discipline + ' sessions.');
   };
 
   const move = (regId: string, toSquadId: string | 'holding') => {
     mutate((d) => {
-      const m = d.meets.find((x) => x.id === meet.id)!;
+      const m = d.events.find((x) => x.id === event.id)!;
       const s = m.sessions.find((x) => x.id === session.id)!;
       for (const q of s.squads) q.athleteRegIds = q.athleteRegIds.filter((id) => id !== regId);
       if (toSquadId !== 'holding') s.squads.find((q) => q.id === toSquadId)!.athleteRegIds.push(regId);
-      pushMeetSessions(m, d.registrations);
+      pushEventSessions(m, d.registrations);
     });
   };
 

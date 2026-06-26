@@ -1,5 +1,5 @@
 // stripe-webhook — the SOLE source of truth that completes a payment (Phase S4,
-// generalized: memberships, club memberships, meet entries, change fees, addons;
+// generalized: memberships, club memberships, event entries, change fees, addons;
 // self OR club carts).
 //
 // Deploy with `--no-verify-jwt` (Stripe is the caller; it cannot send a Supabase
@@ -54,7 +54,7 @@ interface CartItemRow {
   ref_season_id: string | null;
   ref_type: string | null;
   ref_reg_ids: string[] | null;
-  ref_meet_id: string | null;
+  ref_event_id: string | null;
   ref_line_type: string | null;
 }
 
@@ -170,7 +170,7 @@ async function fulfill(
   const cartItemIds = payment.cart_item_ids ?? [];
   const { data: itemRows } = cartItemIds.length
     ? await db.from('cart_items')
-      .select('id, club_id, label, amount, kind, ref_user_id, ref_season_id, ref_type, ref_reg_ids, ref_meet_id, ref_line_type')
+      .select('id, club_id, label, amount, kind, ref_user_id, ref_season_id, ref_type, ref_reg_ids, ref_event_id, ref_line_type')
       .in('id', cartItemIds)
     : { data: [] as CartItemRow[] };
   const items = (itemRows ?? []) as CartItemRow[];
@@ -221,7 +221,7 @@ async function fulfill(
     }
   }
 
-  // --- Flip the paid registrations (meet entries + change fees) -------------
+  // --- Flip the paid registrations (event entries + change fees) -------------
   const paidRegIds = Array.from(new Set(items.flatMap((i) => i.ref_reg_ids ?? [])));
   if (paidRegIds.length) {
     await db.from('registrations')
@@ -255,7 +255,7 @@ async function fulfill(
         id: `ii-${payment.id}-${idx}`, invoice_id: invoiceId,
         label: i.label, amount: i.amount, kind: i.kind,
         ref_user_id: i.ref_user_id ?? null,
-        ref_reg_ids: i.ref_reg_ids, ref_meet_id: i.ref_meet_id, ref_line_type: i.ref_line_type,
+        ref_reg_ids: i.ref_reg_ids, ref_event_id: i.ref_event_id, ref_line_type: i.ref_line_type,
         refunded: false,
       })),
       { onConflict: 'id' },

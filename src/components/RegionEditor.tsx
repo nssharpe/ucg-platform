@@ -53,7 +53,7 @@ export function RegionEditor({ regionOverrides }: Props) {
     <div>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
         <p style={{ margin: 0, fontSize: 13.5, color: 'var(--ink-soft)', flex: 1 }}>
-          Assign each state to a region. Changes take effect immediately for new meets and athlete grouping.
+          Assign each state to a region. Changes take effect immediately for new events and athlete grouping.
         </p>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn small ghost" onClick={reset} title="Reset to built-in defaults">

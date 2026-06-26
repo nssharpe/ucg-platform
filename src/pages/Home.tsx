@@ -18,7 +18,7 @@ function isUnder18(dob: string): boolean {
 
 // ── shared sub-components ──────────────────────────────────────────────────
 
-export function MeetStatusBadge({ status }: { status: string }) {
+export function EventStatusBadge({ status }: { status: string }) {
   const map: Record<string, { tone: 'ok' | 'warn' | 'err' | 'info' | 'navy'; label: string }> = {
     'draft': { tone: 'info', label: 'Draft' },
     'reg-open': { tone: 'ok', label: 'Reg open' },
@@ -30,19 +30,19 @@ export function MeetStatusBadge({ status }: { status: string }) {
   return <Badge tone={m.tone}>{m.label}</Badge>;
 }
 
-function MeetList() {
+function EventList() {
   const db = useDB();
   const fmtDate = useFmtDate();
   return (
     <table className="tbl">
       <tbody>
-        {db.meets.map((m) => (
+        {db.events.map((m) => (
           <tr key={m.id}>
             <td>
-              <Link to={`/meets/${m.slug}`} style={{ fontWeight: 600 }}>{m.name}</Link><br />
+              <Link to={`/events/${m.slug}`} style={{ fontWeight: 600 }}>{m.name}</Link><br />
               <span style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>{m.city}, {m.state} · {fmtDate(m.startDate)}</span>
             </td>
-            <td style={{ textAlign: 'right' }}><MeetStatusBadge status={m.status} /></td>
+            <td style={{ textAlign: 'right' }}><EventStatusBadge status={m.status} /></td>
           </tr>
         ))}
       </tbody>
@@ -50,19 +50,19 @@ function MeetList() {
   );
 }
 
-/** Meets currently open for registration, shown as a highlight strip. */
-function OpenMeetsStrip() {
+/** Events currently open for registration, shown as a highlight strip. */
+function OpenEventsStrip() {
   const db = useDB();
   const fmtDate = useFmtDate();
-  const openMeets = db.meets.filter((m) => m.status === 'reg-open');
-  if (openMeets.length === 0) return null;
+  const openEvents = db.events.filter((m) => m.status === 'reg-open');
+  if (openEvents.length === 0) return null;
   return (
     <div className="card card-pad" style={{ marginTop: 16, borderLeft: '4px solid var(--coral-500)' }}>
       <strong>Registration open:</strong>{' '}
-      {openMeets.map((m, i) => (
+      {openEvents.map((m, i) => (
         <span key={m.id}>
           {i > 0 && <span style={{ color: 'var(--ink-soft)' }}> · </span>}
-          <Link to={`/meets/${m.slug}`}>{m.name}</Link>
+          <Link to={`/events/${m.slug}`}>{m.name}</Link>
           <span style={{ color: 'var(--ink-soft)', fontSize: 13 }}> (closes {fmtDate(m.regCloses.slice(0, 10))})</span>
         </span>
       ))}
@@ -74,7 +74,7 @@ function OpenMeetsStrip() {
 
 function Hero() {
   const db = useDB();
-  const liveMeets = db.meets.filter((m) => m.status === 'in-progress');
+  const liveEvents = db.events.filter((m) => m.status === 'in-progress');
   return (
     <div className="card" style={{ background: 'var(--navy-800)', color: 'var(--white)', border: 'none', overflow: 'hidden', position: 'relative', marginBottom: 24 }}>
       <div className="card-pad" style={{ padding: '34px 28px' }}>
@@ -82,12 +82,12 @@ function Hero() {
           For the love<br />of the sport<span style={{ color: 'var(--coral-500)' }}>.</span>
         </div>
         <p style={{ color: 'var(--ice-300)', maxWidth: 520, marginTop: 12 }}>
-          The UCG registration &amp; scoring platform — membership, meet registration,
+          The UCG registration &amp; scoring platform — membership, event registration,
           live scoring, and results in one place. This is a working prototype seeded with demo data.
         </p>
-        {liveMeets.length > 0 && (
+        {liveEvents.length > 0 && (
           <Link to="/results" className="btn primary" style={{ marginTop: 8 }}>
-            <span className="pulse" /> {liveMeets[0].name} is live — watch results
+            <span className="pulse" /> {liveEvents[0].name} is live — watch results
           </Link>
         )}
       </div>
@@ -167,7 +167,7 @@ function AdminDashboard() {
   const clubsWithMembership = db.clubs.filter((c) =>
     db.people.some((p) => p.mainClubId === c.id && p.memberships.some((m) => m.seasonId === season.id && m.status === 'active'))
   );
-  const meetsThisSeason = db.meets.length;
+  const eventsThisSeason = db.events.length;
 
   return (
     <>
@@ -175,7 +175,7 @@ function AdminDashboard() {
         <Stat value={activeMembers.length} label={`Active members · ${season.name}`} accent />
         <Stat value={db.clubs.length} label="Clubs" />
         <Stat value={clubsWithMembership.length} label="Clubs with members" />
-        <Stat value={meetsThisSeason} label="Meets this season" />
+        <Stat value={eventsThisSeason} label="Events this season" />
       </div>
       <div className="grid cols-2">
         <div className="card card-pad">
@@ -183,11 +183,11 @@ function AdminDashboard() {
           <AdminAttentionList />
         </div>
         <div className="card card-pad">
-          <h3 className="card-title">Meets</h3>
-          <MeetList />
+          <h3 className="card-title">Events</h3>
+          <EventList />
         </div>
       </div>
-      <OpenMeetsStrip />
+      <OpenEventsStrip />
     </>
   );
 }
@@ -212,11 +212,11 @@ function ClubManagerCard({ clubId }: { clubId: string }) {
     isUnder18(p.dob) && p.memberships.some((m) => m.seasonId === season.id && m.status === 'pending-waiver'),
   );
 
-  // Meets this club is registered for (at least one athlete reg from this club)
-  const clubMeetIds = [...new Set(
-    db.registrations.filter((r) => r.clubId === clubId && !r.refunded).map((r) => r.meetId)
+  // Events this club is registered for (at least one athlete reg from this club)
+  const clubEventIds = [...new Set(
+    db.registrations.filter((r) => r.clubId === clubId && !r.refunded).map((r) => r.eventId)
   )];
-  const clubMeets = db.meets.filter((m) => clubMeetIds.includes(m.id));
+  const clubEvents = db.events.filter((m) => clubEventIds.includes(m.id));
 
   return (
     <div className="card card-pad">
@@ -248,18 +248,18 @@ function ClubManagerCard({ clubId }: { clubId: string }) {
         </div>
       )}
 
-      {clubMeets.length > 0 && (
+      {clubEvents.length > 0 && (
         <div style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--ink-soft)', marginBottom: 6 }}>Registered meets</div>
-          {clubMeets.map((m) => (
+          <div style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--ink-soft)', marginBottom: 6 }}>Registered events</div>
+          {clubEvents.map((m) => (
             <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 0', borderBottom: '1px solid var(--line)', fontSize: 14 }}>
               <span>
-                <Link to={`/meets/${m.slug}`} style={{ fontWeight: 600 }}>{m.name}</Link>
+                <Link to={`/events/${m.slug}`} style={{ fontWeight: 600 }}>{m.name}</Link>
                 <span style={{ color: 'var(--ink-soft)', marginLeft: 8 }}>{fmtDate(m.startDate)}</span>
               </span>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <MeetStatusBadge status={m.status} />
-                <Link to={`/meets/${m.slug}`} className="btn small ghost">Edit reg →</Link>
+                <EventStatusBadge status={m.status} />
+                <Link to={`/events/${m.slug}`} className="btn small ghost">Edit reg →</Link>
               </div>
             </div>
           ))}
@@ -267,7 +267,7 @@ function ClubManagerCard({ clubId }: { clubId: string }) {
       )}
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <Link className="btn primary" to={`/club/${clubId}`}>Roster &amp; Meet Reg →</Link>
+        <Link className="btn primary" to={`/club/${clubId}`}>Roster &amp; Event Reg →</Link>
         <Link className="btn ghost" to={`/club/${clubId}/cart`}>Club cart ({cart.length})</Link>
       </div>
     </div>
@@ -312,7 +312,7 @@ function ClubManagerDashboard() {
         ))}
       </div>
 
-      <OpenMeetsStrip />
+      <OpenEventsStrip />
     </>
   );
 }
@@ -329,7 +329,7 @@ function AthleteDashboard() {
 
   const membership = me.memberships.find((m) => m.seasonId === season.id);
   const myRegs = db.registrations.filter((r) => r.athleteId === me.id && !r.refunded);
-  const openMeets = db.meets.filter((m) => m.status === 'reg-open');
+  const openEvents = db.events.filter((m) => m.status === 'reg-open');
 
   // Clubs the athlete is associated with
   const mainClub = me.mainClubId ? db.clubs.find((c) => c.id === me.mainClubId) : null;
@@ -342,7 +342,7 @@ function AthleteDashboard() {
         <div className="card card-pad" style={{ marginBottom: 16, borderLeft: '4px solid var(--coral-500)' }}>
           <h3 className="card-title">Get your {season.name} membership</h3>
           <p style={{ marginTop: 0, color: 'var(--ink-soft)' }}>
-            You need an active membership to register for meets and compete.
+            You need an active membership to register for events and compete.
           </p>
           <Link className="btn primary" to="/membership">Register for membership →</Link>
         </div>
@@ -392,24 +392,24 @@ function AthleteDashboard() {
           </div>
         </div>
 
-        {/* My meets & scores */}
+        {/* My events & scores */}
         <div className="card card-pad">
-          <h3 className="card-title">My meets &amp; scores</h3>
+          <h3 className="card-title">My events &amp; scores</h3>
           {myRegs.length === 0 && (
-            <p style={{ color: 'var(--ink-soft)' }}>Not registered for any meets yet.</p>
+            <p style={{ color: 'var(--ink-soft)' }}>Not registered for any events yet.</p>
           )}
-          {[...new Set(myRegs.map((r) => r.meetId))].map((mid) => {
-            const meet = db.meets.find((m) => m.id === mid)!;
-            const regs = myRegs.filter((r) => r.meetId === mid);
+          {[...new Set(myRegs.map((r) => r.eventId))].map((mid) => {
+            const event = db.events.find((m) => m.id === mid)!;
+            const regs = myRegs.filter((r) => r.eventId === mid);
             const myScores = db.scores.filter((s) => regs.some((r) => r.id === s.regId));
             return (
               <div key={mid} style={{ padding: '8px 0', borderBottom: '1px solid var(--line)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Link to={`/meets/${meet.slug}`} style={{ fontWeight: 600 }}>{meet.name}</Link>
-                  <MeetStatusBadge status={meet.status} />
+                  <Link to={`/events/${event.slug}`} style={{ fontWeight: 600 }}>{event.name}</Link>
+                  <EventStatusBadge status={event.status} />
                 </div>
                 <div style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
-                  {fmtDate(meet.startDate)} · {regs.map((r) => `${r.discipline} (${r.events.join(', ')})`).join(' + ')}
+                  {fmtDate(event.startDate)} · {regs.map((r) => `${r.discipline} (${r.events.join(', ')})`).join(' + ')}
                 </div>
                 {myScores.length > 0 && (
                   <div style={{ fontSize: 13, marginTop: 4, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -426,22 +426,22 @@ function AthleteDashboard() {
         </div>
       </div>
 
-      {/* Open meets available to register for */}
-      {openMeets.length > 0 && (
+      {/* Open events available to register for */}
+      {openEvents.length > 0 && (
         <div className="card card-pad" style={{ marginTop: 16 }}>
           <h3 className="card-title">Open for registration</h3>
           <div className="grid cols-2">
-            {openMeets.map((m) => (
+            {openEvents.map((m) => (
               <div key={m.id} style={{ padding: '10px 0', borderBottom: '1px solid var(--line)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
-                  <Link to={`/meets/${m.slug}`} style={{ fontWeight: 600 }}>{m.name}</Link>
-                  <MeetStatusBadge status={m.status} />
+                  <Link to={`/events/${m.slug}`} style={{ fontWeight: 600 }}>{m.name}</Link>
+                  <EventStatusBadge status={m.status} />
                 </div>
                 <p style={{ color: 'var(--ink-soft)', margin: '4px 0 8px', fontSize: 13 }}>
                   {m.city}, {m.state} · {fmtDate(m.startDate)}
                 </p>
                 {caps.canRegister ? (
-                  <Link className="btn small primary" to={`/meets/${m.slug}`}>Register →</Link>
+                  <Link className="btn small primary" to={`/events/${m.slug}`}>Register →</Link>
                 ) : (
                   <span style={{ fontSize: 13, color: 'var(--ink-soft)' }}>Membership required to register</span>
                 )}
@@ -465,7 +465,7 @@ function GuestView() {
         <div className="card card-pad">
           <h3 className="card-title">Get started</h3>
           <p style={{ color: 'var(--ink-soft)', marginTop: 0 }}>
-            Sign in or create an account to purchase a membership and register for meets.
+            Sign in or create an account to purchase a membership and register for events.
           </p>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <Link className="btn primary" to="/login">Sign in</Link>
@@ -473,24 +473,24 @@ function GuestView() {
           </div>
         </div>
         <div className="card card-pad">
-          <h3 className="card-title">Upcoming meets</h3>
-          {db.meets.filter((m) => m.status !== 'complete').slice(0, 4).map((m) => (
+          <h3 className="card-title">Upcoming events</h3>
+          {db.events.filter((m) => m.status !== 'complete').slice(0, 4).map((m) => (
             <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid var(--line)', fontSize: 14 }}>
               <span>
                 <Link to={`/results/${m.slug}`} style={{ fontWeight: 600 }}>{m.name}</Link>
                 <span style={{ color: 'var(--ink-soft)', marginLeft: 8 }}>{m.city}, {m.state} · {fmtDate(m.startDate)}</span>
               </span>
-              <MeetStatusBadge status={m.status} />
+              <EventStatusBadge status={m.status} />
             </div>
           ))}
         </div>
       </div>
       <div className="grid cols-2">
-        {db.meets.map((m) => (
+        {db.events.map((m) => (
           <div className="card card-pad" key={m.id}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
               <h3 style={{ fontSize: 18 }}>{m.name}</h3>
-              <MeetStatusBadge status={m.status} />
+              <EventStatusBadge status={m.status} />
             </div>
             <p style={{ color: 'var(--ink-soft)', margin: '6px 0 14px' }}>
               {m.city}, {m.state} · {fmtDate(m.startDate)}

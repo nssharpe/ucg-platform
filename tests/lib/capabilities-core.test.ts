@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { deriveCapabilities, currentSeasonId, membershipHolds, paidRegistrationClub } from '../../src/lib/capabilities-core';
-import type { Athlete, Club, DB, Meet, Membership, Registration, Season } from '../../src/lib/types';
+import type { Athlete, Club, DB, Event, Membership, Registration, Season } from '../../src/lib/types';
 
 function makeReg(overrides: Partial<Registration>): Registration {
   return {
     id: 'r-x',
-    meetId: 'meet-1',
+    eventId: 'meet-1',
     athleteId: 'a-1',
     clubId: 'club-A',
     discipline: 'WAG',
@@ -24,7 +24,7 @@ function makeDb(partial: Partial<DB>): DB {
     levels: [],
     clubs: [],
     people: [],
-    meets: [],
+    events: [],
     registrations: [],
     scores: [],
     invoices: [],
@@ -91,11 +91,11 @@ function makeClub(overrides: Partial<Club>): Club {
   };
 }
 
-function makeMeet(overrides: Partial<Meet>): Meet {
+function makeEvent(overrides: Partial<Event>): Event {
   return {
     id: 'meet-x',
     slug: 'meet-x',
-    name: 'Meet X',
+    name: 'Event X',
     hostClubId: 'club-x',
     city: 'Columbus',
     state: 'Ohio',
@@ -119,7 +119,7 @@ function makeMeet(overrides: Partial<Meet>): Meet {
 // people: p-admin, p-coach (manages club-A), p-athlete-active (active
 //         membership in s1), p-athlete-none (no membership)
 // clubs: club-A (managerIds: ['p-coach']), club-B (managerIds: [])
-// meets: meet-1 (hosted by club-A)
+// events: meet-1 (hosted by club-A)
 
 const s1 = makeSeason({ id: 's1', current: true });
 
@@ -144,26 +144,26 @@ const pAthleteNone = makePerson({ id: 'p-athlete-none', kind: 'athlete', firstNa
 const clubA = makeClub({ id: 'club-A', name: 'Club A', shortName: 'CA', managerIds: ['p-coach'] });
 const clubB = makeClub({ id: 'club-B', name: 'Club B', shortName: 'CB', managerIds: [] });
 
-const meet1 = makeMeet({ id: 'meet-1', slug: 'meet-1', name: 'Meet 1', hostClubId: 'club-A' });
-const meetClubB = makeMeet({ id: 'meet-clubB', slug: 'meet-clubb', name: 'Meet Club B', hostClubId: 'club-B' });
+const meet1 = makeEvent({ id: 'meet-1', slug: 'meet-1', name: 'Event 1', hostClubId: 'club-A' });
+const meetClubB = makeEvent({ id: 'meet-clubB', slug: 'meet-clubb', name: 'Event Club B', hostClubId: 'club-B' });
 
 const db = makeDb({
   seasons: [s1],
   people: [pAdmin, pCoach, pAthleteActive, pAthleteNone],
   clubs: [clubA, clubB],
-  meets: [meet1, meetClubB],
+  events: [meet1, meetClubB],
 });
 
 // --- Tests --------------------------------------------------------------------
 
 describe('deriveCapabilities', () => {
-  it('1. admin: full access, hosts any meet, no impersonation', () => {
+  it('1. admin: full access, hosts any event, no impersonation', () => {
     const caps = deriveCapabilities(db, true, ['admin'], 'p-admin', null, 's1');
 
     expect(caps.isAdmin).toBe(true);
     expect(caps.impersonating).toBe(false);
     expect(caps.personId).toBe('p-admin');
-    expect(caps.isMeetHost('meet-1')).toBe(true); // admins host any meet
+    expect(caps.isEventHost('meet-1')).toBe(true); // admins host any event
   });
 
   it('1b. sanctioning role (and admin) are on the sanctioning team', () => {
@@ -188,12 +188,12 @@ describe('deriveCapabilities', () => {
     expect(caps.currentMembership).toBe('none');
   });
 
-  it('4. club manager: managedClubIds includes their club, isMeetHost reflects host club', () => {
+  it('4. club manager: managedClubIds includes their club, isEventHost reflects host club', () => {
     const caps = deriveCapabilities(db, true, [], 'p-coach', null, 's1');
 
     expect(caps.managedClubIds).toContain('club-A');
-    expect(caps.isMeetHost('meet-1')).toBe(true); // manages club-A, which hosts meet-1
-    expect(caps.isMeetHost('meet-clubB')).toBe(false); // hosted by club-B, not managed
+    expect(caps.isEventHost('meet-1')).toBe(true); // manages club-A, which hosts meet-1
+    expect(caps.isEventHost('meet-clubB')).toBe(false); // hosted by club-B, not managed
   });
 
   describe('5. impersonation requires admin', () => {
@@ -312,7 +312,7 @@ describe('membershipHolds', () => {
 });
 
 describe('paidRegistrationClub (3d cross-club lock)', () => {
-  const args = { athleteId: 'a-1', meetId: 'meet-1' };
+  const args = { athleteId: 'a-1', eventId: 'meet-1' };
 
   it('returns null when there are no registrations', () => {
     expect(paidRegistrationClub([], { ...args, excludeClubId: 'club-A' })).toBeNull();
@@ -338,9 +338,9 @@ describe('paidRegistrationClub (3d cross-club lock)', () => {
     expect(paidRegistrationClub(regs, { ...args, excludeClubId: 'club-A' })).toBeNull();
   });
 
-  it('ignores other meets and other athletes', () => {
+  it('ignores other events and other athletes', () => {
     const regs = [
-      makeReg({ clubId: 'club-B', paid: true, meetId: 'meet-2' }),
+      makeReg({ clubId: 'club-B', paid: true, eventId: 'meet-2' }),
       makeReg({ clubId: 'club-B', paid: true, athleteId: 'a-2' }),
     ];
     expect(paidRegistrationClub(regs, { ...args, excludeClubId: 'club-A' })).toBeNull();

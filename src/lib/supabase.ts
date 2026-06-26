@@ -7,7 +7,7 @@
 // block the UI) and are no-ops when `isSupabaseConfigured` is false.
 import { createClient, type SupabaseClient, type RealtimePostgresChangesPayload, type PostgrestError } from '@supabase/supabase-js';
 import type {
-  AccountInvite, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, Invoice, Level, Meet, Membership, MembershipType, Payment, Region, Registration, SanctionRequest, SanctionVote, Score, Season,
+  AccountInvite, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, Invoice, Level, Event, Membership, MembershipType, Payment, Region, Registration, SanctionRequest, SanctionVote, Score, Season,
   WaiverDocument, WaiverSignature,
 } from './types';
 import { writeQueue, type WriteOp, type ExecResult } from './write-queue';
@@ -197,7 +197,7 @@ const rowToMembership = (r: Row<'memberships'>): Membership => ({
   clubCartPending: (r as { club_cart_pending?: boolean }).club_cart_pending ?? false,
 });
 
-const meetToRow = (m: Meet) => ({
+const eventToRow = (m: Event) => ({
   id: m.id, slug: m.slug, name: m.name, host_club_id: m.hostClubId, city: m.city, state: m.state,
   timezone: m.timezone, start_date: m.startDate || null, end_date: m.endDate || null, status: m.status,
   reg_opens: m.regOpens || null, reg_closes: m.regCloses || null, entry_fee: m.entryFee,
@@ -210,19 +210,19 @@ const meetToRow = (m: Meet) => ({
   kind: m.kind ?? 'standard', nationals_config: m.nationalsConfig ?? null,
 });
 
-const sessionToRow = (meetId: string, s: Meet['sessions'][number]) => ({
-  id: s.id, meet_id: meetId, name: s.name, discipline: s.discipline,
+const sessionToRow = (eventId: string, s: Event['sessions'][number]) => ({
+  id: s.id, event_id: eventId, name: s.name, discipline: s.discipline,
   date: s.date || null, time: s.time || null, level_ids: s.levelIds,
   phase: s.phase ?? null,
 });
 
-const squadToRow = (sessionId: string, q: Meet['sessions'][number]['squads'][number], i: number) => ({
+const squadToRow = (sessionId: string, q: Event['sessions'][number]['squads'][number], i: number) => ({
   id: q.id, session_id: sessionId, name: q.name, start_event: q.startEvent,
   holding: q.holding ?? false, sort_order: i,
 });
 
 const registrationToRow = (r: Registration, squadId: string | null = null) => ({
-  id: r.id, meet_id: r.meetId, athlete_id: r.athleteId, club_id: r.clubId, discipline: r.discipline,
+  id: r.id, event_id: r.eventId, athlete_id: r.athleteId, club_id: r.clubId, discipline: r.discipline,
   level_id: r.levelId, events: r.events, session_id: r.sessionId || null, squad_id: squadId,
   refunded: r.refunded ?? false, refund_requested: r.refundRequested ?? false,
   keep_listed: r.keepListed ?? false,
@@ -231,13 +231,13 @@ const registrationToRow = (r: Registration, squadId: string | null = null) => ({
 });
 
 /** squad_id for every registration, derived from session.squads[].athleteRegIds. */
-function squadIdsByReg(meet: Meet): Map<string, string> {
+function squadIdsByReg(event: Event): Map<string, string> {
   const map = new Map<string, string>();
-  for (const s of meet.sessions) for (const q of s.squads) for (const regId of q.athleteRegIds) map.set(regId, q.id);
+  for (const s of event.sessions) for (const q of s.squads) for (const regId of q.athleteRegIds) map.set(regId, q.id);
   return map;
 }
 const rowToRegistration = (r: Row<'registrations'>): Registration => ({
-  id: r.id, meetId: r.meet_id, athleteId: r.athlete_id, clubId: r.club_id ?? '', discipline: r.discipline as Registration['discipline'],
+  id: r.id, eventId: r.event_id, athleteId: r.athlete_id, clubId: r.club_id ?? '', discipline: r.discipline as Registration['discipline'],
   levelId: r.level_id ?? '', events: (r.events ?? []) as Registration['events'], sessionId: r.session_id ?? '',
   refunded: r.refunded, keepListed: r.keep_listed,
   paid: (r as { paid?: boolean | null }).paid ?? false,
@@ -248,7 +248,7 @@ const rowToRegistration = (r: Row<'registrations'>): Registration => ({
 });
 
 const scoreToRow = (s: Score) => ({
-  id: s.id, meet_id: s.meetId, session_id: s.sessionId, reg_id: s.regId, event: s.event,
+  id: s.id, event_id: s.eventId, session_id: s.sessionId, reg_id: s.regId, event: s.event,
   sv: s.sv, deductions: s.deductions, e_score: s.eScore ?? null, final: s.final,
   source: s.source ?? 'manual',
   calc: s.calc ?? null, calc_state: s.calcState ?? null,
@@ -257,7 +257,7 @@ const scoreToRow = (s: Score) => ({
   scratched: s.scratched ?? false,
 });
 export const rowToScore = (r: Row<'scores'>): Score => ({
-  id: r.id, meetId: r.meet_id, sessionId: r.session_id ?? '', regId: r.reg_id ?? '', event: r.event as Score['event'],
+  id: r.id, eventId: r.event_id, sessionId: r.session_id ?? '', regId: r.reg_id ?? '', event: r.event as Score['event'],
   sv: r.sv == null ? null : Number(r.sv), deductions: r.deductions == null ? null : Number(r.deductions),
   eScore: r.e_score == null ? null : Number(r.e_score), final: r.final == null ? null : Number(r.final),
   source: r.source as Score['source'], enteredBy: r.entered_by ?? '', enteredAt: r.entered_at, flashed: r.flashed,
@@ -275,7 +275,7 @@ function cartItemToRow(ownerKey: string, item: DB['carts'][string][number], isCl
     label: item.label, amount: item.amount, kind: item.kind, ref_user_id: item.refUserId ?? null,
     ref_season_id: item.refSeasonId ?? null, ref_type: item.refType ?? null,
     ref_reg_ids: item.refRegIds ?? null,
-    ref_meet_id: item.refMeetId ?? null, ref_line_type: item.refLineType ?? null,
+    ref_event_id: item.refEventId ?? null, ref_line_type: item.refLineType ?? null,
   };
 }
 
@@ -290,7 +290,7 @@ const invoiceItemToRow = (invoiceId: string, it: Invoice['items'][number]) => ({
   id: it.id, invoice_id: invoiceId, label: it.label, amount: it.amount, kind: it.kind,
   ref_user_id: it.refUserId ?? null, refunded: it.refunded ?? false,
   ref_reg_ids: it.refRegIds ?? null,
-  ref_meet_id: it.refMeetId ?? null, ref_line_type: it.refLineType ?? null,
+  ref_event_id: it.refEventId ?? null, ref_line_type: it.refLineType ?? null,
 });
 
 const clubRequestToRow = (r: ClubRequest) => ({
@@ -389,24 +389,24 @@ export function pushMembership(personId: string, m: Membership) {
   remoteUpsert('memberships', [membershipToRow(personId, m)], 'person_id,season_id,type');
 }
 
-export function pushMeet(m: Meet) {
-  remoteUpsert('meets', [meetToRow(m)]);
-  remoteReplace('meet_sessions', { meet_id: m.id }, m.sessions.map((s) => sessionToRow(m.id, s)));
+export function pushEvent(m: Event) {
+  remoteUpsert('events', [eventToRow(m)]);
+  remoteReplace('event_sessions', { event_id: m.id }, m.sessions.map((s) => sessionToRow(m.id, s)));
   for (const s of m.sessions) {
     remoteReplace('squads', { session_id: s.id }, s.squads.map((q, i) => squadToRow(s.id, q, i)));
   }
 }
 
-/** Push only a meet's sessions/squads (status/fields unchanged), and the
- *  resulting squad_id placements for that meet's registrations. */
-export function pushMeetSessions(m: Meet, registrations: Registration[]) {
-  remoteReplace('meet_sessions', { meet_id: m.id }, m.sessions.map((s) => sessionToRow(m.id, s)));
+/** Push only an event's sessions/squads (status/fields unchanged), and the
+ *  resulting squad_id placements for that event's registrations. */
+export function pushEventSessions(m: Event, registrations: Registration[]) {
+  remoteReplace('event_sessions', { event_id: m.id }, m.sessions.map((s) => sessionToRow(m.id, s)));
   for (const s of m.sessions) {
     remoteReplace('squads', { session_id: s.id }, s.squads.map((q, i) => squadToRow(s.id, q, i)));
   }
   const squadIds = squadIdsByReg(m);
-  const meetRegs = registrations.filter((r) => r.meetId === m.id);
-  remoteUpsert('registrations', meetRegs.map((r) => registrationToRow(r, squadIds.get(r.id) ?? null)));
+  const eventRegs = registrations.filter((r) => r.eventId === m.id);
+  remoteUpsert('registrations', eventRegs.map((r) => registrationToRow(r, squadIds.get(r.id) ?? null)));
 }
 
 export function pushRegistration(r: Registration, squadId: string | null = null) {
@@ -464,7 +464,7 @@ export function pushSanctionRequest(r: SanctionRequest) {
     id: r.id, host_club_id: r.hostClubId, requester_person_id: r.requesterPersonId,
     event_kind: r.eventKind, status: r.status, payload: r.payload,
     submitted_at: r.submittedAt ?? null, deadline_at: r.deadlineAt ?? null,
-    decided_at: r.decidedAt ?? null, created_meet_id: r.createdMeetId ?? null,
+    decided_at: r.decidedAt ?? null, created_event_id: r.createdEventId ?? null,
     sanction_id: r.sanctionId ?? null,
   }]);
 }
@@ -986,7 +986,7 @@ export async function loadAll(): Promise<DB | null> {
   try {
     const [
       seasonsR, levelsR, clubsR, clubManagersR, peopleR, altClubsR, membershipsR,
-      meetsR, sessionsR, squadsR, registrationsR, scoresR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
+      eventsR, sessionsR, squadsR, registrationsR, scoresR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
       clubRequestsR, appSettingsR, accountInvitesR, sanctionRequestsR, sanctionVotesR,
       waiverDocsR, waiverSigsR, clubMembershipsR, paymentsR,
     ] = await Promise.all([
@@ -997,8 +997,8 @@ export async function loadAll(): Promise<DB | null> {
       fetchAllRows<Row<'people'>>('people'),
       supabase.from('person_alt_clubs').select('*'),
       supabase.from('memberships').select('*'),
-      supabase.from('meets').select('*'),
-      supabase.from('meet_sessions').select('*'),
+      supabase.from('events').select('*'),
+      supabase.from('event_sessions').select('*'),
       supabase.from('squads').select('*'),
       supabase.from('registrations').select('*'),
       supabase.from('scores').select('*'),
@@ -1020,7 +1020,7 @@ export async function loadAll(): Promise<DB | null> {
     // club_requests may not exist on a pre-0005 DB — tolerate its error, fail on the rest.
     const errors = [
       seasonsR, levelsR, clubsR, clubManagersR, peopleR, altClubsR, membershipsR,
-      meetsR, sessionsR, squadsR, registrationsR, scoresR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
+      eventsR, sessionsR, squadsR, registrationsR, scoresR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
     ].map((r) => r.error).filter(Boolean);
     if (errors.length) { console.error('[supabase] loadAll failed:', errors); return null; }
 
@@ -1062,46 +1062,46 @@ export async function loadAll(): Promise<DB | null> {
       memberships: membershipsByPerson.get(r.id) ?? [], achievements: (r.achievements ?? []) as Athlete['achievements'],
     }));
 
-    const squadsBySession = new Map<string, Meet['sessions'][number]['squads']>();
+    const squadsBySession = new Map<string, Event['sessions'][number]['squads']>();
     for (const r of (squadsR.data ?? []).sort((a: Row<'squads'>, b: Row<'squads'>) => a.sort_order - b.sort_order)) {
       const arr = squadsBySession.get(r.session_id) ?? [];
       arr.push({ id: r.id, name: r.name, startEvent: r.start_event, athleteRegIds: [], holding: r.holding });
       squadsBySession.set(r.session_id, arr);
     }
     // Place registrations into squads via registrations.squad_id
-    const squadById = new Map<string, Meet['sessions'][number]['squads'][number]>();
+    const squadById = new Map<string, Event['sessions'][number]['squads'][number]>();
     for (const arr of squadsBySession.values()) for (const q of arr) squadById.set(q.id, q);
     for (const r of registrationsR.data ?? []) {
       if (r.squad_id && squadById.has(r.squad_id)) squadById.get(r.squad_id)!.athleteRegIds.push(r.id);
     }
 
-    const sessionsByMeet = new Map<string, Meet['sessions']>();
-    for (const r of (sessionsR.data ?? []).sort((a: Row<'meet_sessions'>, b: Row<'meet_sessions'>) => a.sort_order - b.sort_order)) {
-      const arr = sessionsByMeet.get(r.meet_id) ?? [];
+    const sessionsByEvent = new Map<string, Event['sessions']>();
+    for (const r of (sessionsR.data ?? []).sort((a: Row<'event_sessions'>, b: Row<'event_sessions'>) => a.sort_order - b.sort_order)) {
+      const arr = sessionsByEvent.get(r.event_id) ?? [];
       arr.push({
         id: r.id, name: r.name, discipline: r.discipline, date: r.date ?? '', time: r.time ?? '',
         levelIds: r.level_ids ?? [], squads: squadsBySession.get(r.id) ?? [],
         ...(r.phase ? { phase: r.phase } : {}),
       });
-      sessionsByMeet.set(r.meet_id, arr);
+      sessionsByEvent.set(r.event_id, arr);
     }
 
-    const meets: Meet[] = (meetsR.data ?? []).map((r: Row<'meets'>) => ({
+    const events: Event[] = (eventsR.data ?? []).map((r: Row<'events'>) => ({
       id: r.id, slug: r.slug, name: r.name, hostClubId: r.host_club_id ?? '', city: r.city ?? '',
       state: r.state ?? '', timezone: r.timezone, startDate: r.start_date ?? '', endDate: r.end_date ?? '',
-      status: r.status as Meet['status'], regOpens: r.reg_opens ?? '', regCloses: r.reg_closes ?? '',
+      status: r.status as Event['status'], regOpens: r.reg_opens ?? '', regCloses: r.reg_closes ?? '',
       entryFee: Number(r.entry_fee), secondDisciplineFee: Number(r.second_discipline_fee),
-      disciplines: (r.disciplines ?? []) as Meet['disciplines'], sessions: sessionsByMeet.get(r.id) ?? [],
+      disciplines: (r.disciplines ?? []) as Event['disciplines'], sessions: sessionsByEvent.get(r.id) ?? [],
       ...(r.private_reg_code ? { privateRegCode: r.private_reg_code } : {}),
-      ...(r.banquet ? { banquet: r.banquet as Meet['banquet'] } : {}),
-      ...(r.tshirt_addon ? { tshirtAddon: r.tshirt_addon as Meet['tshirtAddon'] } : {}),
-      ...(r.banner_addon ? { bannerAddon: r.banner_addon as Meet['bannerAddon'] } : {}),
-      ...(r.change_fee ? { changeFee: r.change_fee as Meet['changeFee'] } : {}),
-      ...(r.event_type && r.event_type !== 'competition' ? { eventType: r.event_type as Meet['eventType'] } : {}),
+      ...(r.banquet ? { banquet: r.banquet as Event['banquet'] } : {}),
+      ...(r.tshirt_addon ? { tshirtAddon: r.tshirt_addon as Event['tshirtAddon'] } : {}),
+      ...(r.banner_addon ? { bannerAddon: r.banner_addon as Event['bannerAddon'] } : {}),
+      ...(r.change_fee ? { changeFee: r.change_fee as Event['changeFee'] } : {}),
+      ...(r.event_type && r.event_type !== 'competition' ? { eventType: r.event_type as Event['eventType'] } : {}),
       ...(r.sanction_id ? { sanctionId: r.sanction_id } : {}),
-      ...(r.camp_config ? { campConfig: r.camp_config as Meet['campConfig'] } : {}),
-      ...(r.kind && r.kind !== 'standard' ? { kind: r.kind as Meet['kind'] } : {}),
-      ...(r.nationals_config ? { nationalsConfig: r.nationals_config as unknown as Meet['nationalsConfig'] } : {}),
+      ...(r.camp_config ? { campConfig: r.camp_config as Event['campConfig'] } : {}),
+      ...(r.kind && r.kind !== 'standard' ? { kind: r.kind as Event['kind'] } : {}),
+      ...(r.nationals_config ? { nationalsConfig: r.nationals_config as unknown as Event['nationalsConfig'] } : {}),
     }));
 
     const registrations: Registration[] = (registrationsR.data ?? []).map(rowToRegistration);
@@ -1112,7 +1112,7 @@ export async function loadAll(): Promise<DB | null> {
       const arr = itemsByInvoice.get(r.invoice_id) ?? [];
       arr.push({ id: r.id, label: r.label, amount: Number(r.amount), kind: r.kind, refUserId: r.ref_user_id ?? undefined, refunded: r.refunded,
         ...((r as { ref_reg_ids?: string[] | null }).ref_reg_ids ? { refRegIds: (r as { ref_reg_ids?: string[] | null }).ref_reg_ids ?? undefined } : {}),
-        ...((r as { ref_meet_id?: string | null }).ref_meet_id ? { refMeetId: (r as { ref_meet_id?: string | null }).ref_meet_id ?? undefined } : {}),
+        ...((r as { ref_event_id?: string | null }).ref_event_id ? { refEventId: (r as { ref_event_id?: string | null }).ref_event_id ?? undefined } : {}),
         ...((r as { ref_line_type?: string | null }).ref_line_type ? { refLineType: (r as { ref_line_type?: string | null }).ref_line_type as Invoice['items'][number]['refLineType'] } : {}) });
       itemsByInvoice.set(r.invoice_id, arr);
     }
@@ -1135,7 +1135,7 @@ export async function loadAll(): Promise<DB | null> {
         refSeasonId: (r as { ref_season_id?: string | null }).ref_season_id ?? undefined,
         refType: ((r as { ref_type?: string | null }).ref_type ?? undefined) as MembershipType | 'club' | undefined,
         ...((r as { ref_reg_ids?: string[] | null }).ref_reg_ids ? { refRegIds: (r as { ref_reg_ids?: string[] | null }).ref_reg_ids ?? undefined } : {}),
-        ...((r as { ref_meet_id?: string | null }).ref_meet_id ? { refMeetId: (r as { ref_meet_id?: string | null }).ref_meet_id ?? undefined } : {}),
+        ...((r as { ref_event_id?: string | null }).ref_event_id ? { refEventId: (r as { ref_event_id?: string | null }).ref_event_id ?? undefined } : {}),
         ...((r as { ref_line_type?: string | null }).ref_line_type ? { refLineType: (r as { ref_line_type?: string | null }).ref_line_type as Invoice['items'][number]['refLineType'] } : {}) });
     }
 
@@ -1156,7 +1156,7 @@ export async function loadAll(): Promise<DB | null> {
         id: r.id, hostClubId: r.host_club_id ?? '', requesterPersonId: r.requester_person_id ?? null,
         eventKind: (r.event_kind ?? 'competition') as SanctionRequest['eventKind'], status: r.status as SanctionRequest['status'], payload: (r.payload ?? {}) as SanctionRequest['payload'],
         submittedAt: r.submitted_at ?? null, deadlineAt: r.deadline_at ?? null,
-        decidedAt: r.decided_at ?? null, createdMeetId: r.created_meet_id ?? null,
+        decidedAt: r.decided_at ?? null, createdEventId: r.created_event_id ?? null,
         sanctionId: r.sanction_id ?? null,
       }));
     const sanctionVotes: SanctionVote[] = (sanctionVotesR.error ? [] : sanctionVotesR.data ?? [])
@@ -1175,7 +1175,7 @@ export async function loadAll(): Promise<DB | null> {
       .map(rowToPayment);
 
     return {
-      seasons, levels, clubs, people, meets, registrations, scores, invoices, coupons,
+      seasons, levels, clubs, people, events, registrations, scores, invoices, coupons,
       carts, clubRequests,
       ...(regionOverrides ? { regionOverrides } : {}),
       ...(accountInvites.length ? { accountInvites } : {}),
@@ -1225,19 +1225,19 @@ export async function pushAll(db: DB, onProgress?: (label: string) => void): Pro
     const rows = db.people.flatMap((p) => p.memberships.map((m) => membershipToRow(p.id, m)));
     return rows.length ? supabase!.from('memberships').upsert(rows, { onConflict: 'person_id,season_id' }) : undefined;
   });
-  await step('Meets', () => supabase!.from('meets').upsert(db.meets.map(meetToRow)));
-  await step('Meet sessions', () => {
-    const rows = db.meets.flatMap((m) => m.sessions.map((s) => sessionToRow(m.id, s)));
-    return rows.length ? supabase!.from('meet_sessions').upsert(rows) : undefined;
+  await step('Events', () => supabase!.from('events').upsert(db.events.map(eventToRow)));
+  await step('Event sessions', () => {
+    const rows = db.events.flatMap((m) => m.sessions.map((s) => sessionToRow(m.id, s)));
+    return rows.length ? supabase!.from('event_sessions').upsert(rows) : undefined;
   });
   await step('Squads', () => {
-    const rows = db.meets.flatMap((m) => m.sessions.flatMap((s) => s.squads.map((q, i) => squadToRow(s.id, q, i))));
+    const rows = db.events.flatMap((m) => m.sessions.flatMap((s) => s.squads.map((q, i) => squadToRow(s.id, q, i))));
     return rows.length ? supabase!.from('squads').upsert(rows) : undefined;
   });
-  const squadIdsByMeet = new Map(db.meets.map((m) => [m.id, squadIdsByReg(m)]));
+  const squadIdsByEvent = new Map(db.events.map((m) => [m.id, squadIdsByReg(m)]));
   for (const part of chunk(db.registrations)) {
     await step('Registrations', () => supabase!.from('registrations').upsert(
-      part.map((r) => registrationToRow(r, squadIdsByMeet.get(r.meetId)?.get(r.id) ?? null)),
+      part.map((r) => registrationToRow(r, squadIdsByEvent.get(r.eventId)?.get(r.id) ?? null)),
     ));
   }
   for (const part of chunk(db.scores)) {
@@ -1259,17 +1259,17 @@ export async function pushAll(db: DB, onProgress?: (label: string) => void): Pro
   onProgress?.('Done');
 }
 
-/** Realtime wiring for live results: subscribes to score changes for a meet.
+/** Realtime wiring for live results: subscribes to score changes for an event.
  *  `onChange` receives the raw postgres_changes payload — use
  *  `applyScorePatch` to accumulate it into a patch map. */
-export function subscribeMeetScores(
-  meetId: string,
+export function subscribeEventScores(
+  eventId: string,
   onChange: (payload: RealtimePostgresChangesPayload<Row<'scores'>>) => void,
 ): () => void {
   if (!supabase) return () => {};
   const channel = supabase
-    .channel(`scores:${meetId}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'scores', filter: `meet_id=eq.${meetId}` }, onChange)
+    .channel(`scores:${eventId}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'scores', filter: `event_id=eq.${eventId}` }, onChange)
     .subscribe();
   return () => { supabase.removeChannel(channel); };
 }

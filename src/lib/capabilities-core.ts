@@ -27,7 +27,7 @@ export interface Capabilities {
   personId: string | null;
   person: Athlete | null;
   managedClubIds: string[];
-  isMeetHost: (meetId: string) => boolean;
+  isEventHost: (eventId: string) => boolean;
   /** The acting person's current-season membership status. */
   currentMembership: MembershipStatus;
   canRegister: boolean;
@@ -81,7 +81,7 @@ export function membershipHolds(m: Pick<Membership, 'status' | 'waiverSignedAt' 
 }
 
 /** Cross-club registration lock (3d): the club a member is already PAID-registered
- *  with for a meet — so they can't be registered again under a DIFFERENT club.
+ *  with for an event — so they can't be registered again under a DIFFERENT club.
  *
  *  Only a non-refunded, PAID registration locks the member. A merely
  *  pending-purchase (paid !== true) registration sitting in some club's cart does
@@ -93,12 +93,12 @@ export function membershipHolds(m: Pick<Membership, 'status' | 'waiverSignedAt' 
  *  under `excludeClubId`. */
 export function paidRegistrationClub(
   registrations: Registration[],
-  opts: { athleteId: string; meetId: string; excludeClubId?: string | null },
+  opts: { athleteId: string; eventId: string; excludeClubId?: string | null },
 ): string | null {
-  const { athleteId, meetId, excludeClubId } = opts;
+  const { athleteId, eventId, excludeClubId } = opts;
   const hit = registrations.find(
     (r) =>
-      r.meetId === meetId &&
+      r.eventId === eventId &&
       r.athleteId === athleteId &&
       r.paid === true &&
       !r.refunded &&
@@ -143,10 +143,10 @@ export function deriveCapabilities(
     person,
     managedClubIds,
     impersonating,
-    isMeetHost: (meetId: string) => {
+    isEventHost: (eventId: string) => {
       if (isAdmin) return true;
-      const meet = db.meets.find((m) => m.id === meetId);
-      return !!meet && managedClubIds.includes(meet.hostClubId);
+      const event = db.events.find((m) => m.id === eventId);
+      return !!event && managedClubIds.includes(event.hostClubId);
     },
     currentMembership,
     canRegister: signedIn && currentMembership === 'active',
