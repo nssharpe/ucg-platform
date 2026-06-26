@@ -1,11 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useDB, mutate, syncFromSupabase } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { useToast } from '../components/ui-hooks';
 import { fmtMoney } from '../lib/scoring';
 import { pushInvoice, pushCart, pushRegistration, createCheckoutSession } from '../lib/supabase';
-import { processingFee } from '../lib/pricing';
 import { StripeCheckout } from '../components/StripeCheckout';
 import type { CartItem, Invoice } from '../lib/types';
 
@@ -179,9 +178,9 @@ export function MembershipsCheckout() {
 }
 
 type Stage =
-  | { kind: 'cart' }
-  | { kind: 'starting' }
-  | { kind: 'checkout'; clientSecret: string; paymentId: string }
+  | { kind: 'loading' }
+  | { kind: 'error'; message: string }
+  | { kind: 'checkout'; clientSecret: string; paymentId: string; amountSubtotal: number; serviceFee: number }
   | { kind: 'paid' };
 
 function MembershipsCheckoutInner({ personId, name }: { personId: string; name: string }) {
@@ -189,35 +188,30 @@ function MembershipsCheckoutInner({ personId, name }: { personId: string; name: 
   const toast = useToast();
   const cart = useMemo(() => db.carts[personId] ?? [], [db.carts, personId]);
   const items = useMemo(() => cart.filter((i) => i.kind === 'membership'), [cart]);
-  const [stage, setStage] = useState<Stage>({ kind: 'cart' });
+  const [stage, setStage] = useState<Stage>({ kind: 'loading' });
+  // Create the checkout session once on mount. The cart `amount`s are
+  // display-only — we drive the summary from the session's SERVER-recomputed
+  // amounts so the total shown always equals what Stripe collects. (In dev,
+  // StrictMode's mount→unmount→remount resets this per-instance ref and can
+  // create one extra test-mode session that simply expires; a production build
+  // does not double-invoke, so it fires exactly once.)
+  const startedRef = useRef(false);
 
-  // Service fee + grand total for the pre-checkout display. The server recomputes
-  // the authoritative amounts; this client-side `processingFee` is the matching
-  // estimate (= round(subtotal*0.03)+30, in cents). Money math in cents to avoid
-  // float drift, then converted to dollars for `fmtMoney`.
-  const subtotal = sum(items); // dollars
-  const subtotalCents = Math.round(subtotal * 100);
-  const serviceFeeCents = processingFee(subtotalCents);
-  const serviceFee = serviceFeeCents / 100; // dollars
-  const grandTotal = subtotal + serviceFee;
-
-  const startCheckout = () => {
-    if (items.length === 0) return;
-    setStage({ kind: 'starting' });
+  useEffect(() => {
+    if (items.length === 0 || startedRef.current) return;
+    startedRef.current = true;
     void createCheckoutSession({ cartItemIds: items.map((i) => i.id) })
       .then((r) => {
-        if (r.ok && r.clientSecret && r.paymentId) {
-          setStage({ kind: 'checkout', clientSecret: r.clientSecret, paymentId: r.paymentId });
+        if (r.ok && r.clientSecret && r.paymentId && r.amountSubtotal != null && r.serviceFee != null) {
+          setStage({ kind: 'checkout', clientSecret: r.clientSecret, paymentId: r.paymentId, amountSubtotal: r.amountSubtotal, serviceFee: r.serviceFee });
         } else {
-          toast(r.error ?? 'Could not start checkout. Please try again.', { variant: 'error' });
-          setStage({ kind: 'cart' });
+          setStage({ kind: 'error', message: r.error ?? 'Could not start checkout. Please try again.' });
         }
       })
       .catch((e) => {
-        toast(e instanceof Error ? e.message : 'Could not start checkout. Please try again.', { variant: 'error' });
-        setStage({ kind: 'cart' });
+        setStage({ kind: 'error', message: e instanceof Error ? e.message : 'Could not start checkout. Please try again.' });
       });
-  };
+  }, [items]);
 
   const onPaid = () => {
     // Memberships, invoice, and cart lines are all written by the webhook — pull
@@ -230,14 +224,24 @@ function MembershipsCheckoutInner({ personId, name }: { personId: string; name: 
 
   const onError = (msg: string) => {
     toast(msg, { variant: 'error' });
-    setStage({ kind: 'cart' });
+    setStage({ kind: 'error', message: msg });
   };
+
+  const retry = () => {
+    startedRef.current = false;
+    setStage({ kind: 'loading' });
+  };
+
+  // Authoritative dollar amounts (server returns CENTS) for the summary.
+  const summary = stage.kind === 'checkout'
+    ? { subtotal: stage.amountSubtotal / 100, serviceFee: stage.serviceFee / 100, total: (stage.amountSubtotal + stage.serviceFee) / 100 }
+    : null;
 
   return (
     <div style={{ maxWidth: 620 }}>
       <h1 className="page-title display">Checkout — Memberships</h1>
       <p className="page-sub">Billed to {name}.</p>
-      {stage.kind !== 'checkout' && stage.kind !== 'paid' && (
+      {stage.kind !== 'paid' && (
         <div style={{ marginBottom: 14 }}>
           <Link className="btn ghost small" to="/cart">← Back to cart</Link>
         </div>
@@ -257,48 +261,52 @@ function MembershipsCheckoutInner({ personId, name }: { personId: string; name: 
             <Link className="btn ghost small" to="/profile">Purchase history</Link>
           </div>
         </div>
-      ) : stage.kind === 'checkout' ? (
-        <StripeCheckout
-          clientSecret={stage.clientSecret}
-          paymentId={stage.paymentId}
-          onPaid={onPaid}
-          onError={onError}
-        />
       ) : items.length === 0 ? (
         <div className="card card-pad">
           <p style={{ color: 'var(--ink-soft)' }}>No memberships in your cart.</p>
         </div>
-      ) : (
+      ) : stage.kind === 'error' ? (
+        <div className="card card-pad" style={{ maxWidth: 520 }}>
+          <h3 className="card-title" style={{ marginTop: 0, color: 'var(--ink)' }}>Couldn’t start checkout</h3>
+          <p style={{ color: 'var(--ink-soft)' }}>{stage.message}</p>
+          <button className="btn primary small" onClick={retry}>Try again</button>
+        </div>
+      ) : stage.kind === 'loading' ? (
         <div className="card card-pad">
-          <h3 className="card-title" style={{ marginTop: 0 }}>Memberships</h3>
-          <ul style={{ margin: '10px 0', paddingLeft: 18, fontSize: 14 }}>
-            {items.map((i) => (
-              <li key={i.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
-                <span>{i.label}</span><strong>{fmtMoney(i.amount)}</strong>
-              </li>
-            ))}
-          </ul>
-          <div style={{ borderTop: '1px solid var(--line)', margin: '10px 0', paddingTop: 10, fontSize: 14 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
-              <span style={{ color: 'var(--ink-soft)' }}>Subtotal</span>
-              <span>{fmtMoney(subtotal)}</span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 4 }}>
-              <span style={{ color: 'var(--ink-soft)' }}>Service fee (card processing)</span>
-              <span>{fmtMoney(serviceFee)}</span>
-            </div>
+          <p style={{ color: 'var(--ink-soft)', margin: 0 }}>Preparing your secure checkout…</p>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div className="card card-pad">
+            <h3 className="card-title" style={{ marginTop: 0 }}>Memberships</h3>
+            <ul style={{ margin: '10px 0', paddingLeft: 18, fontSize: 14 }}>
+              {items.map((i) => (
+                <li key={i.id}><span>{i.label}</span></li>
+              ))}
+            </ul>
+            {summary && (
+              <div style={{ borderTop: '1px solid var(--line)', margin: '10px 0 0', paddingTop: 10, fontSize: 14 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                  <span style={{ color: 'var(--ink-soft)' }}>Subtotal</span>
+                  <span>{fmtMoney(summary.subtotal)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 4 }}>
+                  <span style={{ color: 'var(--ink-soft)' }}>Service fee (card processing)</span>
+                  <span>{fmtMoney(summary.serviceFee)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 8 }}>
+                  <strong style={{ fontSize: 16 }}>Total due</strong>
+                  <strong style={{ fontSize: 16 }}>{fmtMoney(summary.total)}</strong>
+                </div>
+              </div>
+            )}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
-            <strong style={{ fontSize: 16 }}>Total: {fmtMoney(grandTotal)}</strong>
-            <button
-              className="btn primary"
-              style={{ marginLeft: 'auto' }}
-              onClick={startCheckout}
-              disabled={stage.kind === 'starting'}
-            >
-              {stage.kind === 'starting' ? 'Starting…' : `Pay ${fmtMoney(grandTotal)} →`}
-            </button>
-          </div>
+          <StripeCheckout
+            clientSecret={stage.clientSecret}
+            paymentId={stage.paymentId}
+            onPaid={onPaid}
+            onError={onError}
+          />
         </div>
       )}
     </div>
