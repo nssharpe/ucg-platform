@@ -493,12 +493,15 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
   payment-emailed PDF receipts (server attachments) still wait on later Stripe phases.
 - **Stripe payments — IN PROGRESS.** S1–S2 (backend loop) + **S3 (front-end membership
   checkout)** are built & deployed; **S4** (meet entries / club cart / change fees —
-  generalized both Edge Functions, deleted all remaining client-side fulfillment, shared
-  `CartCheckout.tsx`) is **built, deploy-pending** (Nate deploys the two functions; the new
+  generalized both Edge Functions, deleted the `Cart.tsx` `completePurchase` + `Club.tsx`
+  `payClubItems`/`emailClubReceipt` client-side fulfillment, shared `CartCheckout.tsx`) is
+  **built, deploy-pending** (Nate deploys the two functions; the new
   `ref_meet_id`/`ref_line_type` columns are already live). **S5** (finance wiring + go-live:
-  test→live keys + real $1 smoke test) is the remaining phase — it also adds the deferred
-  **coupon-at-card-checkout** path (S4 doesn't apply club-cart coupons at Stripe checkout
-  since the server is the amount source-of-truth). Still TODO beyond Stripe:
+  test→live keys + real $1 smoke test) is the remaining phase — it also (1) moves the **one
+  remaining client-side fulfillment**, `Membership.tsx` **direct card-pay**, to Stripe
+  (confirmed S5 scope w/ Nate 2026-06-26), and (2) adds the deferred **coupon-at-card-checkout**
+  path (S4 doesn't apply club-cart coupons at Stripe checkout since the server is the amount
+  source-of-truth). Still TODO beyond Stripe:
   per-season typed waivers, codeless judge access (URL / 6-digit / QR), multi-judge +
   score-entry-mode meet config, PDF certs, finals rosters. See `docs/specs/` + `docs/plans/`,
   and the roadmap in `docs/README.md`.

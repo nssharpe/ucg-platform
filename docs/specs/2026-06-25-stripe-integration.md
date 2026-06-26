@@ -149,6 +149,12 @@ remaining client-side fulfillment server-side.
 ### S5 — Finance wiring + cleanup + go-live checklist
 - Ensure every fulfilled invoice carries the real `stripe_fee` + `stripe_payment_intent_id` (feeds
   Phase 5 finance). Remove now-dead client-side fulfillment paths.
+- **Move `Membership.tsx` direct card-pay to Stripe** (the one remaining client-side fulfillment
+  after S4 — it still flips memberships paid + calls `send-receipt` client-side). Confirmed S5 scope
+  with Nate 2026-06-26.
+- **Coupons at card checkout** (deferred from S4): the club-cart coupon field is shown but NOT
+  applied by Stripe checkout (server is the amount source of truth, no coupon path yet). Wire a
+  server-side discount path or remove the field.
 - Optional: admin **refund** path (`create-refund` function + `payments.status='refunded'`); may
   defer to the Phase 5 finance work.
 - Go-live checklist (doc): swap test→live keys + webhook secret, register the **live** webhook
