@@ -146,7 +146,20 @@ remaining client-side fulfillment server-side.
 - Files: `supabase/functions/{create-checkout-session,stripe-webhook}/…`, `src/pages/Cart.tsx`,
   `src/pages/Club.tsx`. *(May split per surface if the diff gets large.)*
 
-### S5 — Finance wiring + cleanup + go-live checklist
+### S5 — Finance wiring + cleanup + go-live checklist — ✅ BUILT 2026-06-26 (partial scope; see notes)
+> **Done this phase:** (1) Finance wiring — the `stripe-webhook` already wrote
+> `invoices.stripe_fee` + `invoices.stripe_payment_intent_id`, but the front-end model
+> **dropped** them: `supabase.ts` `loadAll` invoice map + `invoiceToRow` now carry both
+> (cast past the un-regenerated `Row<'invoices'>`), so Phase 5 finance reads the REAL fee.
+> (2) Dead client-side fulfillment — S4 already deleted `completePurchase`/`payClubItems`/
+> `emailClubReceipt`; residual was a stale `MyRegistrations.tsx` comment (fixed). (3)
+> Go-live checklist written: [`../stripe-go-live-checklist.md`](../stripe-go-live-checklist.md)
+> (test→live key/webhook swap, $1 smoke test + refund, payout/bank). (4) Admin refund —
+> **deferred** with a documented sketch in the checklist (Nate's discretion + "may defer").
+> **Deferred to a later phase (NOT done here, by Nate's scope for this task):** moving
+> `Membership.tsx` direct card-pay to Stripe, and card-checkout coupons. **Go-live itself
+> (live keys + real money) is Nate's to execute** via the checklist; the S4 functions also
+> still await Nate's deploy.
 - Ensure every fulfilled invoice carries the real `stripe_fee` + `stripe_payment_intent_id` (feeds
   Phase 5 finance). Remove now-dead client-side fulfillment paths.
 - **Move `Membership.tsx` direct card-pay to Stripe** (the one remaining client-side fulfillment

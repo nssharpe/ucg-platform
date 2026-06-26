@@ -491,17 +491,27 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
   S4). The `Membership.tsx` **direct card-pay** flow still calls `send-receipt`
   client-side (not part of S4 — moves to Stripe in a later phase). Remaining
   payment-emailed PDF receipts (server attachments) still wait on later Stripe phases.
-- **Stripe payments — IN PROGRESS.** S1–S2 (backend loop) + **S3 (front-end membership
-  checkout)** are built & deployed; **S4** (meet entries / club cart / change fees —
-  generalized both Edge Functions, deleted the `Cart.tsx` `completePurchase` + `Club.tsx`
-  `payClubItems`/`emailClubReceipt` client-side fulfillment, shared `CartCheckout.tsx`) is
-  **built, deploy-pending** (Nate deploys the two functions; the new
-  `ref_meet_id`/`ref_line_type` columns are already live). **S5** (finance wiring + go-live:
-  test→live keys + real $1 smoke test) is the remaining phase — it also (1) moves the **one
-  remaining client-side fulfillment**, `Membership.tsx` **direct card-pay**, to Stripe
-  (confirmed S5 scope w/ Nate 2026-06-26), and (2) adds the deferred **coupon-at-card-checkout**
-  path (S4 doesn't apply club-cart coupons at Stripe checkout since the server is the amount
-  source-of-truth). Still TODO beyond Stripe:
+- **Stripe payments — BUILT (S1–S5); go-live is Nate's remaining action.** S1–S2 (backend
+  loop) + **S3 (front-end membership checkout)** are built & deployed; **S4** (meet entries /
+  club cart / change fees — generalized both Edge Functions, deleted the `Cart.tsx`
+  `completePurchase` + `Club.tsx` `payClubItems`/`emailClubReceipt` client-side fulfillment,
+  shared `CartCheckout.tsx`) is **built, deploy-pending** (Nate deploys the two functions; the
+  new `ref_meet_id`/`ref_line_type` columns are already live). **S5 (finance wiring + cleanup
+  + go-live checklist) — DONE 2026-06-26 (partial scope, by Nate's task framing):**
+  (1) **Finance wiring** — the `stripe-webhook` already wrote `invoices.stripe_fee` +
+  `invoices.stripe_payment_intent_id` (real cents from the balance txn), but the FE model
+  **dropped** them; `supabase.ts`'s `loadAll` invoice map + `invoiceToRow` now carry both
+  (cast past the un-regenerated `Row<'invoices'>`), so **Phase 5 finance reads the real fee**.
+  (2) **Dead client-side fulfillment** — S4 already deleted the big paths; only a stale
+  `MyRegistrations.tsx` comment remained (fixed). (3) **Go-live checklist** written:
+  `docs/stripe-go-live-checklist.md` (test→live key/webhook swap, real ~$1 smoke test +
+  refund, payout/bank check). **Go-live itself (live keys + real money) is Nate's to run.**
+  **Still DEFERRED (NOT in S5's task scope):** moving `Membership.tsx` **direct card-pay** to
+  Stripe (it still fulfills client-side + `send-receipt`; its invoice legitimately carries no
+  Stripe fee since no Stripe charge happens), **coupon-at-card-checkout** (server is the amount
+  source-of-truth), and an **in-app admin refund** path (refunds are issued **manually in the
+  Stripe Dashboard** today — a Dashboard refund doesn't yet reflect back into
+  `payments.status`/fulfillment; sketch in the checklist). Still TODO beyond Stripe:
   per-season typed waivers, codeless judge access (URL / 6-digit / QR), multi-judge +
   score-entry-mode meet config, PDF certs, finals rosters. See `docs/specs/` + `docs/plans/`,
   and the roadmap in `docs/README.md`.
