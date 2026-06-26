@@ -1555,17 +1555,17 @@ export function ClubCart() {
         {allInvoices.length > 0 && (
           <div style={{ display: 'flex', gap: 10, marginBottom: 12, flexWrap: 'wrap', alignItems: 'end' }}>
             <div style={{ flex: '1 1 180px', minWidth: 140 }}>
-              <label style={{ fontSize: 12, color: 'var(--ink-soft)', display: 'block', marginBottom: 2 }}>Search</label>
-              <input type="text" value={receiptSearch} onChange={(e) => setReceiptSearch(e.target.value)}
-                placeholder="Name, item, amount…" style={{ width: '100%' }} />
+              <label style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--navy-700)', display: 'block', marginBottom: 5 }}>Search</label>
+              <input className="input" type="text" value={receiptSearch} onChange={(e) => setReceiptSearch(e.target.value)}
+                placeholder="Name, item, amount…" />
             </div>
             <div style={{ minWidth: 120 }}>
-              <label style={{ fontSize: 12, color: 'var(--ink-soft)', display: 'block', marginBottom: 2 }}>From</label>
-              <input type="date" value={receiptFrom} onChange={(e) => setReceiptFrom(e.target.value)} style={{ width: '100%' }} />
+              <label style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--navy-700)', display: 'block', marginBottom: 5 }}>From</label>
+              <input className="input" type="date" value={receiptFrom} onChange={(e) => setReceiptFrom(e.target.value)} />
             </div>
             <div style={{ minWidth: 120 }}>
-              <label style={{ fontSize: 12, color: 'var(--ink-soft)', display: 'block', marginBottom: 2 }}>To</label>
-              <input type="date" value={receiptTo} onChange={(e) => setReceiptTo(e.target.value)} style={{ width: '100%' }} />
+              <label style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--navy-700)', display: 'block', marginBottom: 5 }}>To</label>
+              <input className="input" type="date" value={receiptTo} onChange={(e) => setReceiptTo(e.target.value)} />
             </div>
             {(receiptSearch || receiptFrom || receiptTo) && (
               <button className="btn small ghost" style={{ marginBottom: 2 }}
