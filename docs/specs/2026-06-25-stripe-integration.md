@@ -107,7 +107,13 @@ Stripe test events / CLI), so it can land before S0 if desired.
 - **Controller** sets the Stripe secrets (test) + deploys both functions (webhook `--no-verify-jwt`)
   at phase end; registers the webhook endpoint URL in the Stripe **test** dashboard.
 
-### S3 — Front-end membership checkout (needs S0)
+### S3 — Front-end membership checkout (needs S0) — ✅ BUILT & DEPLOYED 2026-06-26
+> `StripeCheckout.tsx` (Embedded Checkout + confirming→poll `payments` row→paid/failed state
+> machine) + `Cart.tsx` `MembershipsCheckout` rewired to launch checkout instead of fulfilling
+> (service-fee line shown via `processingFee`; receipt now from the webhook). New
+> `fetchPaymentStatus` poll helper. Verified live except the literal test-card submission into
+> Stripe's cross-origin iframe (not automatable with the preview/Chrome tooling; webhook
+> fulfillment proven in S2) — a manual `4242`/decline pass is still outstanding.
 - `StripeCheckout` component using `EmbeddedCheckoutProvider`/`EmbeddedCheckout`, fed `client_secret`
   from `createCheckoutSession`; keep user on-page; "confirming…" state polls the `payments` row until
   `paid`. Contrast-check any new text/bg pair (AA).

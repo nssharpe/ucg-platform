@@ -291,8 +291,24 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
       `wkyerxlgricfphopocoz`; `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` set (Stripe
       **test** mode, account `acct_1TjNQ73b3Mn88V15` "UCG"); `VITE_STRIPE_PUBLISHABLE_KEY`
       in `.env.local`. Webhook signature path proven via `stripe trigger
-      checkout.session.completed` (event delivered, `pending_webhooks: 0` ⇒ 2xx). The full
-      cart→pay→activate loop awaits the S3 front-end.
+      checkout.session.completed` (event delivered, `pending_webhooks: 0` ⇒ 2xx).
+    - **S3 — front-end membership checkout (deployed 2026-06-26).** `StripeCheckout`
+      (`src/components/StripeCheckout.tsx`) renders Stripe **Embedded Checkout** from a
+      server-created session and runs an on-page state machine: `onComplete` (no redirect)
+      → **confirming** → polls the `payments` row via `fetchPaymentStatus` (self-read RLS)
+      until `status='paid'` → `onPaid`, or `failed` → `onError`, with a ~60s cap that NEVER
+      falsely claims success. `loadStripe` is called once at module scope.
+      `Cart.tsx` `MembershipsCheckout` was rewired: it **no longer fulfills client-side** —
+      the Pay button calls `createCheckoutSession` and mounts the embedded form; the webhook
+      fulfills + emails the receipt; `onPaid` re-syncs (`syncFromSupabase`) and shows success.
+      The cart card shows a **Subtotal / Service fee (card processing) / Total** breakdown via
+      `processingFee`. **NOTE:** `completePurchase` still fulfills client-side for the grouped
+      **Cart** page cards (meets/other) and the `Membership.tsx`/`Club.tsx` pay paths — those
+      move to Stripe in **S4**. Verified live (seeded athlete) through the embedded-form render
+      + server-authoritative amounts (trust boundary: client cart $ ignored) + RLS poll read +
+      responsive 375/768/1280; the literal test-card submission into Stripe's cross-origin
+      iframe isn't automatable with the preview/Chrome tooling here — manual `4242`/decline
+      confirmation still pending (webhook fulfillment itself is proven via S2's `stripe trigger`).
 - **Stripe CLI (test events + docs lookup).** The Stripe CLI is installed and logged in
   (account "UCG"). `stripe trigger <event>` fires a signed test event to the registered
   test webhook endpoint(s) — always test mode. Verify delivery via `stripe events list`
@@ -317,13 +333,15 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
   `edgeErrorMessage(error)` (returns the function's real message), NOT `error.message`
   (which is the generic "Edge Function returned a non-2xx status code"). Every invoker
   follows this — match it for new ones.
-- **Membership receipts now send for real** (feedback 2d/2e, 2026-06-25): the
-  `/cart/memberships` checkout, the `Club.tsx` club-cart pay paths, and the
-  `Membership.tsx` direct card-pay flow all call `send-receipt` and show an honest
-  toast (only claim "emailed" on `ok && sent`). NOTE the recipient is always the
-  CALLER's own email — for a club-cart payment that's the paying MANAGER, not the
-  member whose fee was in the cart (acceptable: managers pay the club cart). Other
-  flows may still over-claim until payments land; check the specific toast.
+- **Membership receipts** (feedback 2d/2e, 2026-06-25): the `Club.tsx` club-cart pay
+  paths and the `Membership.tsx` direct card-pay flow still call `send-receipt`
+  client-side and show an honest toast (only claim "emailed" on `ok && sent`). The
+  recipient is always the CALLER's own email — for a club-cart payment that's the paying
+  MANAGER, not the member whose fee was in the cart (acceptable: managers pay the club
+  cart). **CHANGED in S3 (2026-06-26):** the `/cart/memberships` checkout no longer sends
+  a client-side receipt — that flow now goes through Stripe Embedded Checkout, and the
+  **`stripe-webhook` emails the receipt to the real payer** on fulfillment. The other two
+  paths move to Stripe (webhook receipt) in S4.
 
 ## Patterns & gotchas (learned in build)
 - **Dev test-auth (seeded auto-login).** `src/lib/dev-auth.ts` performs a **real**
@@ -446,11 +464,15 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
 - **MFA / passkeys** — phased recommendation in
   `docs/research/2026-06-22-auth-2fa-passkeys.md` (TOTP opt-in → require for admins →
   passkeys). Not built.
-- **Membership "Confirmation emailed" toasts now send for real** via `send-receipt`
-  (`Membership.tsx` direct-pay, `Club.tsx` club-cart pay, `/cart/memberships`). Done
-  2026-06-25 — see the Email-infra note. Remaining payment-emailed PDF receipts (server
-  attachments) still wait on Stripe.
-- Stripe payments (memberships, meet entries, banquet) + server-emailed PDF receipts,
+- **Membership "Confirmation emailed" toasts send for real** via `send-receipt`
+  (`Membership.tsx` direct-pay, `Club.tsx` club-cart pay). The `/cart/memberships`
+  checkout now goes through **Stripe** (S3) — its receipt is emailed by the
+  `stripe-webhook` on fulfillment, not client-side. Remaining payment-emailed PDF
+  receipts (server attachments) still wait on later Stripe phases.
+- **Stripe payments — IN PROGRESS.** S1–S2 (backend loop) + **S3 (front-end membership
+  checkout)** are built & deployed; **S4** extends Stripe to meet entries / club cart /
+  change fees (moves the remaining client-side fulfillment server-side), **S5** is finance
+  wiring + go-live (test→live keys + real $1 smoke test). Still TODO beyond Stripe:
   per-season typed waivers, codeless judge access (URL / 6-digit / QR), multi-judge +
   score-entry-mode meet config, PDF certs, finals rosters. See `docs/specs/` + `docs/plans/`,
   and the roadmap in `docs/README.md`.
