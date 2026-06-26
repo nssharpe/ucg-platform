@@ -287,6 +287,27 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
       `https://wkyerxlgricfphopocoz.supabase.co/functions/v1/stripe-webhook`; subscribe the
       events `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
       `checkout.session.async_payment_failed`, `checkout.session.expired`.
+    - **Status:** S2 is **deployed + verified** (2026-06-25). Both functions live on
+      `wkyerxlgricfphopocoz`; `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` set (Stripe
+      **test** mode, account `acct_1TjNQ73b3Mn88V15` "UCG"); `VITE_STRIPE_PUBLISHABLE_KEY`
+      in `.env.local`. Webhook signature path proven via `stripe trigger
+      checkout.session.completed` (event delivered, `pending_webhooks: 0` ⇒ 2xx). The full
+      cart→pay→activate loop awaits the S3 front-end.
+- **Stripe CLI (test events + docs lookup).** The Stripe CLI is installed and logged in
+  (account "UCG"). `stripe trigger <event>` fires a signed test event to the registered
+  test webhook endpoint(s) — always test mode. Verify delivery via `stripe events list`
+  (`pending_webhooks: 0` on the event ⇒ every endpoint returned 2xx; >0 ⇒ a non-2xx is
+  being retried). The Supabase CLI has **no** remote-function-logs command — use the Stripe
+  event/dashboard side or add temporary `console.log`s.
+  - **Look up Stripe syntax in-terminal** with the `stripe docs` plugin (installed). For
+    agent use ALWAYS combine `-N` (non-interactive, no TUI) with a `--format` flag:
+    - `stripe docs search "<query>" -N --format=compact` — search guides + API reference.
+    - `stripe docs api <resource> <op> -N --format=compact --filter=required` — operation
+      params (e.g. `stripe docs api checkout/sessions create -N --format=compact`).
+    - `stripe docs events <event_type> -N --format=compact` (or `--format=json`) — webhook
+      payload shape (e.g. `checkout.session.completed`).
+    - Add `--language=node` to limit code samples; `--format=json` for parsing. Prefer this
+      over guessing SDK/API syntax.
 - Front-end invokers in `src/lib/supabase.ts`: `sendEmail`, `sendSms`, `requestGuardianWaiver`,
   `notifyClubCart`, `sendMembershipWelcome`, `sendReceipt`, `createCheckoutSession`, `sendClubInvite`, `inviteAccount`, `requestManagerAccess`, `notifySanction`,
   `createWaiverLink`, `fetchManagerAccessRequest`, `decideManagerAccess`, `notifyManagerAccessDenied`.
