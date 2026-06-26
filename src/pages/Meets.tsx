@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { seasonForDate, clubHasActiveMembership, paidRegistrationClub } from '../lib/capabilities-core';
@@ -10,7 +10,7 @@ import { RegistrationEditor } from '../components/RegistrationEditor';
 import { MeetStatusBadge } from './Home';
 import { EVENTS, SHIRT_SIZES } from '../lib/types';
 import type { Athlete, CartItem, Meet, MeetSession, Registration } from '../lib/types';
-import { deleteRegistration, pushCart, pushInvoice, pushMeet, pushMeetSessions, pushRegistration } from '../lib/supabase';
+import { deleteRegistration, pushCart, pushMeet, pushMeetSessions, pushRegistration } from '../lib/supabase';
 import { fmtMoney } from '../lib/scoring';
 import { newRegistrationEntryTotal, registrationChangeFee } from '../lib/pricing';
 
@@ -206,6 +206,7 @@ interface SelfRegModalProps {
 
 function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
   const db = useDB();
+  const navigate = useNavigate();
 
   // Clubs the athlete is affiliated with (main + alt)
   const myClubs = [
@@ -361,22 +362,10 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
       }
 
       pushCart(athlete.id, cart, false);
-
-      // Create an unpaid invoice stub if anything is owed (paying individually).
-      const allItems = [...cart];
-      if (allItems.length > 0) {
-        const invoice = {
-          id: `inv-self-${Date.now()}`,
-          number: `UCG-I-${Date.now()}`,
-          clubId: null,
-          athleteId: athlete.id,
-          createdAt: new Date().toISOString(),
-          paidAt: null,
-          items: [...allItems],
-        };
-        d.invoices.push(invoice);
-        pushInvoice(invoice);
-      }
+      // No client-side invoice stub: the cart is the pre-payment source of truth and
+      // the Stripe webhook writes the authoritative paid invoice on fulfillment.
+      // (The old stub reused cart-item ids as invoice_items PKs, colliding across
+      // registrations — `invoice_items_pkey` duplicate-key error.)
     });
 
     toast(
@@ -387,6 +376,9 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
           : 'Registration saved! Check your cart to complete payment.',
     );
     onClose();
+    // Always land on the cart so the member can complete payment (both the add-on
+    // and no-add-on paths funnel through here).
+    navigate('/cart');
   };
 
   const handleAddons = () => {
@@ -468,7 +460,7 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
       {step === 'addons' && (
         <div>
           <p style={{ fontSize: 14, color: 'var(--ink-soft)', marginBottom: 14 }}>
-            Optional add-ons are available for this meet. Skip any you don&apos;t want.
+            Optional add-ons for this meet — leave a field blank to omit it.
           </p>
 
           {meet.tshirtAddon && (
@@ -501,7 +493,6 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
 
           <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
             <button className="btn primary" onClick={handleAddons}>Continue to cart</button>
-            <button className="btn ghost" onClick={() => persistRegs(pendingRegs!, [], [])}>Skip add-ons</button>
           </div>
         </div>
       )}
