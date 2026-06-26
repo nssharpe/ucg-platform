@@ -56,7 +56,7 @@ function PurchaseHistoryInner({ personId, name }: { personId: string; name: stri
   return (
     <div style={{ maxWidth: 820 }}>
       <h1 className="page-title display">Purchase History</h1>
-      <p className="page-sub">Membership and meet-entry receipts processed on your account.</p>
+      <p className="page-sub">Receipts processed on your account.</p>
 
       {invoices.length === 0 ? (
         <p style={{ color: 'var(--ink-soft)' }}>No purchases yet.</p>

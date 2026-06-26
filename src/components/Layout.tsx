@@ -34,7 +34,7 @@ function navFor(caps: ReturnType<typeof useCapabilities>): NavGroup[] {
     groups.push({ group: 'My Club', items: [
       { to: `/club/${cid}/roster`, label: 'Club Roster' },
       { to: `/club/${cid}/registrations`, label: 'Club Registrations' },
-      { to: `/club/${cid}/cart`, label: 'Club Cart & Invoices' },
+      { to: `/club/${cid}/cart`, label: 'Club Cart & Receipts' },
       { to: '/sanction', label: 'Request a Sanction' },
     ]});
   }

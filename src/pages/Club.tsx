@@ -124,7 +124,7 @@ export function ClubPage({ view }: { view: ClubView }) {
       )}
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
-        <Link className="btn ghost small" to={`/club/${club.id}/cart`}>Club cart & invoices →</Link>
+        <Link className="btn ghost small" to={`/club/${club.id}/cart`}>Club cart & receipts →</Link>
         {canManage && (
           <>
             <button className="btn ghost small" onClick={() => setEditingClub(true)}>Edit club details</button>
@@ -1385,7 +1385,7 @@ export function ClubCart() {
 
   return (
     <div style={{ maxWidth: 820 }}>
-      <h1 className="page-title display">{club.shortName} — Cart &amp; invoices</h1>
+      <h1 className="page-title display">{club.shortName} — Cart &amp; Receipts</h1>
       <p className="page-sub">
         Memberships pushed to the club, meet entries, and add-ons.
         Each membership is a separate line item so single refunds stay clean.
@@ -1527,8 +1527,8 @@ export function ClubCart() {
 
       {/* Invoices */}
       <div className="card card-pad">
-        <h3 className="card-title">Invoices &amp; receipts</h3>
-        {invoices.length === 0 ? <p style={{ color: 'var(--ink-soft)' }}>No invoices yet.</p> : (
+        <h3 className="card-title">Receipts</h3>
+        {invoices.length === 0 ? <p style={{ color: 'var(--ink-soft)' }}>No receipts yet.</p> : (
           <table className="tbl">
             <thead><tr><th>Invoice</th><th>Date</th><th>Items</th><th className="num">Total</th><th /></tr></thead>
             <tbody>

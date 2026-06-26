@@ -32,7 +32,7 @@ export function labelFor(pathname: string): string {
   if (/^\/club\/[^/]+\/roster$/.test(pathname)) return 'Club Roster';
   if (/^\/club\/[^/]+\/registrations$/.test(pathname)) return 'Club Registrations';
   if (/^\/club\/[^/]+$/.test(pathname)) return 'Club Roster';
-  if (/^\/club\/[^/]+\/cart$/.test(pathname)) return 'Club Cart & Invoices';
+  if (/^\/club\/[^/]+\/cart$/.test(pathname)) return 'Club Cart & Receipts';
   if (/^\/meets\//.test(pathname)) return 'Meet';
   if (/^\/members\//.test(pathname)) return 'Member';
   if (/^\/clubs\//.test(pathname)) return 'Club';

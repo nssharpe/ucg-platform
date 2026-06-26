@@ -255,7 +255,6 @@ async function fulfill(
         id: `ii-${payment.id}-${idx}`, invoice_id: invoiceId,
         label: i.label, amount: i.amount, kind: i.kind,
         ref_user_id: i.ref_user_id ?? null,
-        ref_season_id: i.ref_season_id, ref_type: i.ref_type,
         ref_reg_ids: i.ref_reg_ids, ref_meet_id: i.ref_meet_id, ref_line_type: i.ref_line_type,
         refunded: false,
       })),
