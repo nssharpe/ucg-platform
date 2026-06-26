@@ -1307,6 +1307,9 @@ export function ClubCart() {
   const [coupon, setCoupon] = useState('');
   const [checkout, setCheckout] = useState<{ items: CartItem[]; title: string } | null>(null);
   const [detail, setDetail] = useState<Invoice | null>(null);
+  const [receiptSearch, setReceiptSearch] = useState('');
+  const [receiptFrom, setReceiptFrom] = useState('');
+  const [receiptTo, setReceiptTo] = useState('');
   const club = db.clubs.find((c) => c.id === clubId);
 
   // The webhook bills the club, activates every membership/registration, clears
@@ -1322,6 +1325,26 @@ export function ClubCart() {
   // Cross-club cart cleanup (3d): when this cart loads, drop any pending meet-entry
   // line for an athlete who has SINCE become PAID-registered under a DIFFERENT club
   // for that meet, and notify the manager. Idempotent (see cleanupCrossClubCart).
+  const allInvoices = useMemo(() =>
+    db.invoices
+      .filter((i) => i.clubId === (club?.id ?? ''))
+      .slice()
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    [db.invoices, club?.id],
+  );
+  const invoices = useMemo(() => {
+    const q = receiptSearch.trim().toLowerCase();
+    return allInvoices.filter((inv) => {
+      if (receiptFrom && inv.createdAt.slice(0, 10) < receiptFrom) return false;
+      if (receiptTo && inv.createdAt.slice(0, 10) > receiptTo) return false;
+      if (!q) return true;
+      if (inv.number.toLowerCase().includes(q)) return true;
+      const totalStr = fmtMoney(invoiceTotal(inv));
+      if (totalStr.includes(q)) return true;
+      return inv.items.some((it) => it.label.toLowerCase().includes(q));
+    });
+  }, [allInvoices, receiptSearch, receiptFrom, receiptTo]);
+
   useEffect(() => {
     if (club) cleanupCrossClubCart(db, club.id, toast);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1329,7 +1352,6 @@ export function ClubCart() {
 
   if (!club) return <p>Club not found.</p>;
   const cart = db.carts[club.id] ?? [];
-  const invoices = db.invoices.filter((i) => i.clubId === club.id);
   const couponDef = db.coupons.find((c) => c.code === coupon.toUpperCase());
   const subtotal = cart.reduce((s, i) => s + i.amount, 0);
   const discount = couponDef ? (couponDef.amountOff ?? subtotal * (couponDef.pctOff ?? 0) / 100) : 0;
@@ -1530,7 +1552,30 @@ export function ClubCart() {
       {/* Receipts */}
       <div style={{ marginTop: 4 }}>
         <h3 className="card-title" style={{ marginBottom: 10 }}>Receipts</h3>
-        {invoices.length === 0 ? <p style={{ color: 'var(--ink-soft)' }}>No receipts yet.</p> : (
+        {allInvoices.length > 0 && (
+          <div style={{ display: 'flex', gap: 10, marginBottom: 12, flexWrap: 'wrap', alignItems: 'end' }}>
+            <div style={{ flex: '1 1 180px', minWidth: 140 }}>
+              <label style={{ fontSize: 12, color: 'var(--ink-soft)', display: 'block', marginBottom: 2 }}>Search</label>
+              <input type="text" value={receiptSearch} onChange={(e) => setReceiptSearch(e.target.value)}
+                placeholder="Name, item, amount…" style={{ width: '100%' }} />
+            </div>
+            <div style={{ minWidth: 120 }}>
+              <label style={{ fontSize: 12, color: 'var(--ink-soft)', display: 'block', marginBottom: 2 }}>From</label>
+              <input type="date" value={receiptFrom} onChange={(e) => setReceiptFrom(e.target.value)} style={{ width: '100%' }} />
+            </div>
+            <div style={{ minWidth: 120 }}>
+              <label style={{ fontSize: 12, color: 'var(--ink-soft)', display: 'block', marginBottom: 2 }}>To</label>
+              <input type="date" value={receiptTo} onChange={(e) => setReceiptTo(e.target.value)} style={{ width: '100%' }} />
+            </div>
+            {(receiptSearch || receiptFrom || receiptTo) && (
+              <button className="btn small ghost" style={{ marginBottom: 2 }}
+                onClick={() => { setReceiptSearch(''); setReceiptFrom(''); setReceiptTo(''); }}>Clear</button>
+            )}
+          </div>
+        )}
+        {allInvoices.length === 0 ? <p style={{ color: 'var(--ink-soft)' }}>No receipts yet.</p>
+        : invoices.length === 0 ? <p style={{ color: 'var(--ink-soft)' }}>No receipts match your filters.</p>
+        : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {invoices.map((inv) => (
               <div key={inv.id} className="card card-pad">
