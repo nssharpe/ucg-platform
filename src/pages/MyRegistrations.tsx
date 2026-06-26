@@ -80,8 +80,8 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   // Persist the member's own registration edits (6a). Modeled on Club.tsx
   // saveRegs + addToCart, but TARGETS THE MEMBER'S OWN CART (carts[personId],
   // non-club) and uses the club selected in the modal. A meet's change fee is
-  // routed to the member's personal cart, where Cart.completePurchase already
-  // flips the exact linked regs to paid via refRegIds.
+  // routed to the member's personal cart, where the Stripe webhook (after the
+  // CartCheckout payment) flips the exact linked regs to paid via refRegIds.
   //
   // *** CRITICAL self-removal divergence from Club.tsx ***: the member side
   // NEVER deletes a registration. Where Club.tsx deletes regs for disciplines

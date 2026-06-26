@@ -282,6 +282,9 @@ function cartItemToRow(ownerKey: string, item: DB['carts'][string][number], isCl
 const invoiceToRow = (i: Invoice) => ({
   id: i.id, number: i.number, club_id: i.clubId, athlete_id: i.athleteId,
   coupon_code: i.couponCode ?? null, created_at: i.createdAt, paid_at: i.paidAt,
+  // Preserve the Stripe finance fields on round-trip (the webhook is their writer;
+  // a non-Stripe direct-pay invoice carries nulls, which is correct).
+  stripe_payment_intent_id: i.stripePaymentIntentId ?? null, stripe_fee: i.stripeFee ?? null,
 });
 const invoiceItemToRow = (invoiceId: string, it: Invoice['items'][number]) => ({
   id: it.id, invoice_id: invoiceId, label: it.label, amount: it.amount, kind: it.kind,
@@ -1117,6 +1120,10 @@ export async function loadAll(): Promise<DB | null> {
       id: r.id, number: r.number, clubId: r.club_id, athleteId: r.athlete_id,
       createdAt: r.created_at, paidAt: r.paid_at, items: itemsByInvoice.get(r.id) ?? [],
       ...(r.coupon_code ? { couponCode: r.coupon_code } : {}),
+      // Stripe finance fields (written by stripe-webhook; not in the generated
+      // Row type yet). Surfaced so Phase 5 finance reads the REAL processing fee.
+      stripePaymentIntentId: (r as { stripe_payment_intent_id?: string | null }).stripe_payment_intent_id ?? null,
+      stripeFee: (r as { stripe_fee?: number | null }).stripe_fee ?? null,
     }));
 
     const carts: DB['carts'] = {};

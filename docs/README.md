@@ -55,7 +55,7 @@ in [`../CLAUDE.md`](../CLAUDE.md).
 | Note | Subject | Status |
 |------|---------|--------|
 | [sms-providers](research/2026-06-18-sms-providers.md) | Bulk-SMS provider options for the Communicate tool | 📓 research (Telnyx shipped) |
-| [stripe-plan](research/2026-06-18-stripe-plan.md) | Real payments: membership/meet/banquet, card-on-file, club cart | 📓 research → **next major build** |
+| [stripe-plan](research/2026-06-18-stripe-plan.md) | Real payments: membership/meet/banquet, card-on-file, club cart | 📓 research → **shipped (S1–S5; see [stripe-integration spec](specs/2026-06-25-stripe-integration.md) + [go-live checklist](stripe-go-live-checklist.md))** |
 | [auth-2fa-passkeys](research/2026-06-22-auth-2fa-passkeys.md) | 2FA/passkey options (Supabase MFA: TOTP/SMS/WebAuthn) + phased recommendation | 📓 research |
 | [password-policy](research/2026-06-22-password-policy.md) | Password best practice (NIST) + Supabase policy settings | 📓 research |
 | [error-logging-observability](research/2026-06-22-error-logging-observability.md) | Error-log strategy (DB + admin search; Sentry optional) | 📓 research → **shipped (error_logs)** |
@@ -63,8 +63,11 @@ in [`../CLAUDE.md`](../CLAUDE.md).
 
 ## Roadmap (sub-projects)
 
-A ✅ accounts & roles → **Stripe payments** (🟡 S1–S4 built — membership + meet-entry +
-club-cart Embedded Checkout; S4 deploy-pending; S5 finance + go-live remains) →
+A ✅ accounts & roles → **Stripe payments** (✅ S1–S5 built — membership + meet-entry +
+club-cart Embedded Checkout, server-authoritative fulfillment, invoices carry the real
+Stripe fee/payment-intent for finance; remaining = Nate deploys the S4 functions + runs
+the [go-live checklist](stripe-go-live-checklist.md) for live keys. Deferred: Membership
+direct card-pay → Stripe, card-checkout coupons, in-app refunds) →
 B typed memberships + per-season waiver → C club-based registration multi-club picker →
 D codeless judge access (URL / 6-digit / QR) → E meet scoring config (1-vs-2 panels,
 calculator vs. simple entry). Further out: PDF certs, banquet tickets, finals rosters,

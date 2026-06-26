@@ -104,8 +104,17 @@ mirroring `src/lib/pricing.ts` + the meet config). Secrets: `STRIPE_SECRET_KEY`,
 `checkout.session.{completed,async_payment_succeeded,async_payment_failed,expired}`.
 **S4 status:** both functions are generalized to all cart-line kinds + club carts but are
 **built, not yet deployed** (Nate deploys at phase end); the new `cart_items`/`invoice_items`
-`ref_meet_id` + `ref_line_type` columns are already live. Coupons are not yet applied at
-Stripe checkout (deferred to S5).
+`ref_meet_id` + `ref_line_type` columns are already live.
+
+**S5 (finance wiring + go-live):** the webhook already records `invoices.stripe_fee` +
+`invoices.stripe_payment_intent_id` (real cents from the balance txn); S5 closed the FE gap
+where `supabase.ts` dropped those columns, so **Phase 5 finance now reads the real fee**.
+Go-live (swap test→live keys + webhook secret, $1 smoke test + refund, payout/bank check) is
+a documented runbook: [`../docs/stripe-go-live-checklist.md`](../docs/stripe-go-live-checklist.md).
+**Deferred:** card-checkout coupons, moving `Membership.tsx` direct card-pay to Stripe, and
+an in-app admin refund path (today refunds are issued **manually in the Stripe Dashboard** —
+a Dashboard refund does not yet reflect back into `payments.status`/fulfillment; sketch in
+the checklist).
 
 ## Stand it up
 
@@ -229,9 +238,11 @@ until payment). League admins still grant/revoke any season directly. The gate i
 
 ## Not covered yet (future migrations)
 
-Payments are **largely built** (Stripe Embedded Checkout, Phases S1–S4 — `payments`/`invoices`/
-`cart_items` tables + the `create-checkout-session`/`stripe-webhook` functions above; S5 finance
-wiring + go-live remains). Still future: the membership-expiry notification cron, scheduled
+Payments are **built** (Stripe Embedded Checkout, Phases S1–S5 — `payments`/`invoices`/
+`cart_items` tables + the `create-checkout-session`/`stripe-webhook` functions above; finance
+fee/payment-intent wiring done). Remaining before real money flows: Nate deploys the S4
+functions and runs the go-live checklist (live keys). Still future: the membership-expiry
+notification cron, scheduled
 database backups, and the public API
 surface for other leagues. (Waiver e-signature **is** built — migrations 0010–0030 +
 `record-waiver-signature` / `request-guardian-waiver`; it stores a structured signature
