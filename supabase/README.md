@@ -92,6 +92,15 @@ is the only admin-gated sender.
 | `request-manager-access` | "Request Club Admin Role": records `manager_access_requests` + emails the requested club's managers (admins only if the club has none yet) a no-login review link; first responder approves/denies. | any signed-in member |
 | `notify-manager-access-denied` | Emails the requester that their Club Admin request was not approved. Token-gated (deploy `--no-verify-jwt`); resolves recipient server-side; fails closed unless the request is `denied`. | no-login (secret token) |
 | `notify-sanction` | Sanction lifecycle emails (submitted → team+admins; approved/rejected → requester). | any signed-in member |
+| `create-checkout-session` | Stripe Embedded Checkout for **membership** cart items (Phase S2). **Recomputes** all amounts server-side from season fees + existing memberships (cart `amount` never trusted), adds the service fee (`processingFee`), creates the session (`ui_mode:'embedded'`, no redirect), inserts a `pending` `payments` row. Returns `{ clientSecret, sessionId, paymentId }`. | any signed-in member (own cart items only) |
+| `stripe-webhook` | The sole completer. Verifies the Stripe signature with `constructEventAsync` against `STRIPE_WEBHOOK_SECRET` (**fail-closed** if unset). On `session.completed`/`async_payment_succeeded` runs **idempotent** membership fulfillment (event-id + `fulfilled_at` guarded): activate membership(s), write the paid invoice with the **real** `stripe_fee`, clear cart lines, email the payer a receipt. On `expired`/`async_payment_failed` → mark `failed`. | Stripe (no JWT; deploy `--no-verify-jwt`; signature-verified) |
+
+Stripe functions share `functions/_shared/stripe.ts` (Stripe client via `npm:stripe`,
+fetch HTTP client, SubtleCrypto provider, and `processingFee`/membership pricing
+mirroring `src/lib/pricing.ts`). Secrets: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
+(test values first). Register the webhook endpoint
+`https://<ref>.supabase.co/functions/v1/stripe-webhook` for events
+`checkout.session.{completed,async_payment_succeeded,async_payment_failed,expired}`.
 
 ## Stand it up
 

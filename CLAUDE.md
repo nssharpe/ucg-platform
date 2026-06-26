@@ -258,8 +258,37 @@ pre-authorized — no need to present the finishing-a-development-branch menu fo
   - The notify-style functions allow any signed-in caller and resolve recipients
     server-side with the service role (pattern: `notify-club-cart`). `send-email`/`send-sms`
     are the only admin-gated senders.
+  - **Stripe payment functions (Phase S2, membership scope)** — share
+    `_shared/stripe.ts` (Stripe client via `npm:stripe@17.7.0` + fetch HTTP client +
+    SubtleCrypto provider; server-side `processingFee` + membership pricing mirroring
+    `pricing.ts`, since Edge Functions can't import `src/`):
+    - `create-checkout-session` — auth'd (any signed-in member, own cart items only).
+      Takes `{ cartItemIds }`, **recomputes** every membership amount server-side from
+      the season fees + the person's existing memberships (cart `amount` is display-only,
+      never trusted), adds the **service-fee** line (`processingFee` = 3% + $0.30 of the
+      cents subtotal), creates an **Embedded Checkout Session** (`ui_mode:'embedded'`,
+      `redirect_on_completion:'never'`), and inserts a `pending` `payments` row linking
+      session → person → exact `cart_item_ids` (+ `ref_season_id`/`ref_type` when a single
+      membership). Returns `{ clientSecret, sessionId, paymentId }`.
+    - `stripe-webhook` — deploy **`--no-verify-jwt`** (Stripe is the caller). Verifies the
+      signature with **`constructEventAsync`** (async SubtleCrypto) against
+      `STRIPE_WEBHOOK_SECRET`; **fail-closed** if the secret is unset. On
+      `checkout.session.completed`/`async_payment_succeeded` runs **idempotent** membership
+      fulfillment (idempotent on the Stripe **event id** + the payment row's `fulfilled_at`):
+      activate the membership(s) (`active` if a `waiver_signatures` row exists for the
+      (person,season), else `pending-waiver`; `paid_via:'card'`, clears `club_cart_pending`),
+      write the paid invoice (`stripe_payment_intent_id` + **real** `stripe_fee` from the
+      balance transaction), clear the paid cart lines, and email the **real payer** a receipt
+      (Resend; reuses `_shared/resend.ts`). On `expired`/`async_payment_failed` → mark the
+      payment `failed`, leave memberships pending. **Note:** the webhook trusts the
+      server-written `payments` row amounts (never client) rather than re-recomputing.
+    - Secrets to set (test values first): `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
+      (build-time `VITE_STRIPE_PUBLISHABLE_KEY` for the FE in S3). Webhook endpoint URL:
+      `https://wkyerxlgricfphopocoz.supabase.co/functions/v1/stripe-webhook`; subscribe the
+      events `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
+      `checkout.session.async_payment_failed`, `checkout.session.expired`.
 - Front-end invokers in `src/lib/supabase.ts`: `sendEmail`, `sendSms`, `requestGuardianWaiver`,
-  `notifyClubCart`, `sendMembershipWelcome`, `sendReceipt`, `sendClubInvite`, `inviteAccount`, `requestManagerAccess`, `notifySanction`,
+  `notifyClubCart`, `sendMembershipWelcome`, `sendReceipt`, `createCheckoutSession`, `sendClubInvite`, `inviteAccount`, `requestManagerAccess`, `notifySanction`,
   `createWaiverLink`, `fetchManagerAccessRequest`, `decideManagerAccess`, `notifyManagerAccessDenied`.
   Deploy: `supabase functions deploy <name> --project-ref wkyerxlgricfphopocoz` (sandbox
   disabled; Docker NOT required) — the deploy bundles `_shared/resend.ts` automatically.
