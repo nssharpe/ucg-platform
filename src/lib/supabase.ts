@@ -697,6 +697,26 @@ export async function createCheckoutSession(args: {
   return data as { ok: boolean; clientSecret?: string; sessionId?: string; paymentId?: string; amountSubtotal?: number; serviceFee?: number };
 }
 
+/** Poll a payment row's fulfillment status (Phase S3). The signed-in person can
+ *  self-read their own payments rows (RLS: person_id = my_person_id()); the
+ *  embedded-checkout FE polls this after `onComplete` until `status='paid'`
+ *  (webhook fulfilled) or `'failed'`. Returns null on error / not-found. */
+export async function fetchPaymentStatus(
+  paymentId: string,
+): Promise<{ status: Payment['status']; invoiceId: string | null } | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('payments')
+    .select('status, invoice_id')
+    .eq('id', paymentId)
+    .maybeSingle();
+  if (error || !data) return null;
+  return {
+    status: (data as { status: Payment['status'] }).status,
+    invoiceId: (data as { invoice_id: string | null }).invoice_id ?? null,
+  };
+}
+
 /** Invite someone to a club by email (coach invite or membership purchase).
  *  Caller must manage the club (the function re-checks). */
 export async function sendClubInvite(args: {
