@@ -338,6 +338,8 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
           kind: 'meet-entry',
           refUserId: athlete.id,
           refRegIds: addedRegs.map((r) => r.id),
+          refMeetId: meet.id,
+          refLineType: 'entry',
         });
       }
       if (changeFee > 0) {
@@ -348,6 +350,8 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
           kind: 'meet-entry',
           refUserId: athlete.id,
           refRegIds: regs.map((r) => r.id),
+          refMeetId: meet.id,
+          refLineType: 'change',
         });
       }
 
@@ -398,6 +402,8 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
         amount: meet.tshirtAddon.price,
         kind: 'addon',
         refUserId: athlete.id,
+        refMeetId: meet.id,
+        refLineType: 'tshirt',
       });
     }
     if (meet.bannerAddon && bannerText.trim()) {
@@ -407,6 +413,8 @@ function SelfRegModal({ meet, athlete, onClose, toast }: SelfRegModalProps) {
         amount: meet.bannerAddon.price,
         kind: 'addon',
         refUserId: athlete.id,
+        refMeetId: meet.id,
+        refLineType: 'banner',
       });
     }
 

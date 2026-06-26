@@ -356,6 +356,12 @@ export interface InvoiceItem {
    *  pays for, so the pay path can flip exactly those registrations to
    *  `paid: true`. */
   refRegIds?: string[];
+  /** The meet a meet-entry / addon line belongs to — lets the server re-price the
+   *  line (esp. addons, which carry no reg ids). */
+  refMeetId?: string;
+  /** Refines `kind` for server-side re-pricing: 'entry'|'change' for meet-entry
+   *  lines, 'tshirt'|'banner' for addon lines. Memberships leave it unset. */
+  refLineType?: 'entry' | 'change' | 'tshirt' | 'banner';
   refunded?: boolean;
 }
 

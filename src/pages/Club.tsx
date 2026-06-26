@@ -913,6 +913,8 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
           kind: 'meet-entry',
           refUserId: athleteId,
           refRegIds: newRegs.map((r) => r.id),
+          refMeetId: meet.id,
+          refLineType: 'change',
         });
         pushCart(clubId, cart, true);
       }
@@ -977,6 +979,8 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
           kind: 'meet-entry',
           refUserId: athleteId,
           refRegIds: regs.map((r) => r.id),
+          refMeetId: meet.id,
+          refLineType: 'entry',
         });
         pushCart(clubId, cart, true);
       }
@@ -1033,7 +1037,7 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
 
       if (swapFee > 0 && meet.changeFee) {
         const cart = d.carts[clubId] ?? (d.carts[clubId] = []);
-        cart.push({ id: `ci-change-${Date.now()}-${toId}`, label: `${meet.name} change fee — swap to ${to.firstName} ${to.lastName}`, amount: swapFee, kind: 'meet-entry', refUserId: toId, refRegIds: swappedRegIds });
+        cart.push({ id: `ci-change-${Date.now()}-${toId}`, label: `${meet.name} change fee — swap to ${to.firstName} ${to.lastName}`, amount: swapFee, kind: 'meet-entry', refUserId: toId, refRegIds: swappedRegIds, refMeetId: meet.id, refLineType: 'change' });
         pushCart(clubId, cart, true);
       }
     });
