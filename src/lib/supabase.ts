@@ -682,6 +682,21 @@ export async function sendReceipt(args: {
   return data as { ok: boolean; sent?: boolean; error?: string };
 }
 
+/** Start a Stripe Embedded Checkout for the given MEMBERSHIP cart items (Phase
+ *  S2). The server recomputes every amount from pricing.ts (the cart's display
+ *  amounts are never trusted), adds the service fee, creates the session, and
+ *  inserts a `pending` payments row. Returns the session `client_secret` for the
+ *  embedded form plus the payment row id the FE polls (self-read RLS) until
+ *  `status='paid'`. The verified `stripe-webhook` is the sole completer. */
+export async function createCheckoutSession(args: {
+  cartItemIds: string[];
+}): Promise<{ ok: boolean; clientSecret?: string; sessionId?: string; paymentId?: string; amountSubtotal?: number; serviceFee?: number; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('create-checkout-session', { body: args });
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  return data as { ok: boolean; clientSecret?: string; sessionId?: string; paymentId?: string; amountSubtotal?: number; serviceFee?: number };
+}
+
 /** Invite someone to a club by email (coach invite or membership purchase).
  *  Caller must manage the club (the function re-checks). */
 export async function sendClubInvite(args: {
