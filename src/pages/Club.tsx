@@ -7,8 +7,9 @@ import { Badge, Combo, Field, Modal } from '../components/ui';
 import { useToast, useFmtDate } from '../components/ui-hooks';
 import type { ToastOptions } from '../components/ui-hooks';
 import { CLUB_ACCESS_LABELS, STATE_REGIONS } from '../lib/types';
-import type { Athlete, CartItem, Club, ClubAccess, DB, Registration, Season } from '../lib/types';
+import type { Athlete, CartItem, Club, ClubAccess, DB, Invoice, Registration, Season } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
+import { downloadReceipt, invoiceTotal } from '../lib/receipt';
 import { newRegistrationEntryTotal, reassignPartners, registrationChangeFee } from '../lib/pricing';
 import {
   deleteRegistration, pushCart, pushClub, pushClubManager,
@@ -1305,6 +1306,7 @@ export function ClubCart() {
   const fmtDate = useFmtDate();
   const [coupon, setCoupon] = useState('');
   const [checkout, setCheckout] = useState<{ items: CartItem[]; title: string } | null>(null);
+  const [detail, setDetail] = useState<Invoice | null>(null);
   const club = db.clubs.find((c) => c.id === clubId);
 
   // The webhook bills the club, activates every membership/registration, clears
@@ -1525,26 +1527,74 @@ export function ClubCart() {
         )}
       </div>
 
-      {/* Invoices */}
-      <div className="card card-pad">
-        <h3 className="card-title">Receipts</h3>
+      {/* Receipts */}
+      <div style={{ marginTop: 4 }}>
+        <h3 className="card-title" style={{ marginBottom: 10 }}>Receipts</h3>
         {invoices.length === 0 ? <p style={{ color: 'var(--ink-soft)' }}>No receipts yet.</p> : (
-          <table className="tbl">
-            <thead><tr><th>Invoice</th><th>Date</th><th>Items</th><th className="num">Total</th><th /></tr></thead>
-            <tbody>
-              {invoices.map((inv) => (
-                <tr key={inv.id}>
-                  <td><strong>{inv.number}</strong></td>
-                  <td>{fmtDate(inv.createdAt.slice(0, 10))}</td>
-                  <td style={{ fontSize: 13 }}>{inv.items.map((i) => i.label).join('; ')}</td>
-                  <td className="num">{fmtMoney(inv.items.reduce((s, i) => s + i.amount, 0))}</td>
-                  <td><button className="btn small ghost" onClick={() => window.print()}>PDF</button></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {invoices.map((inv) => (
+              <div key={inv.id} className="card card-pad">
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+                  <strong>{inv.number}</strong>
+                  <span style={{ color: 'var(--ink-soft)', fontSize: 13 }}>{fmtDate(inv.createdAt.slice(0, 10))}</span>
+                  {inv.paidAt ? <Badge tone="ok">Paid</Badge> : <Badge tone="warn">Unpaid</Badge>}
+                  <strong style={{ marginLeft: 'auto' }}>{fmtMoney(invoiceTotal(inv))}</strong>
+                </div>
+                <p style={{ margin: '8px 0 10px', fontSize: 14, color: 'var(--ink-soft)' }}>
+                  {inv.items.filter((i) => i.kind !== 'discount').map((i) => i.label).join('; ')}
+                </p>
+                <button className="btn small ghost" onClick={() => setDetail(inv)}>Click for details →</button>
+              </div>
+            ))}
+          </div>
         )}
       </div>
+
+      {detail && (
+        <Modal title={`Receipt ${detail.number}`} onClose={() => setDetail(null)}>
+          <div style={{ fontSize: 13.5, color: 'var(--ink-soft)', marginBottom: 12 }}>
+            {fmtDate(detail.createdAt.slice(0, 10))} · {detail.paidAt ? 'Paid' : 'Unpaid'} · Billed to {club.shortName}
+          </div>
+          {(() => {
+            const lineItems = detail.items.filter((i) => i.kind !== 'discount');
+            const subtotal = lineItems.reduce((s, i) => s + (i.refunded ? 0 : i.amount), 0);
+            const discount = -detail.items.filter((i) => i.kind === 'discount').reduce((s, i) => s + (i.refunded ? 0 : i.amount), 0);
+            const total = subtotal - discount;
+            return (
+              <table className="tbl" style={{ marginBottom: 12 }}>
+                <tbody>
+                  {lineItems.map((i) => (
+                    <tr key={i.id}>
+                      <td>{i.label}{i.refunded ? ' (refunded)' : ''}</td>
+                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtMoney(i.refunded ? 0 : i.amount)}</td>
+                    </tr>
+                  ))}
+                  {discount > 0 && (
+                    <>
+                      <tr style={{ borderTop: '1px solid var(--line)' }}>
+                        <td style={{ color: 'var(--ink-soft)' }}>Subtotal</td>
+                        <td style={{ textAlign: 'right', color: 'var(--ink-soft)' }}>{fmtMoney(subtotal)}</td>
+                      </tr>
+                      <tr>
+                        <td style={{ color: 'var(--ink-soft)' }}>Promo code{detail.couponCode ? ` (${detail.couponCode})` : ''}</td>
+                        <td style={{ textAlign: 'right', color: 'var(--ink-soft)' }}>−{fmtMoney(discount)}</td>
+                      </tr>
+                    </>
+                  )}
+                  <tr style={{ borderTop: '2px solid var(--navy-800)', fontWeight: 700 }}>
+                    <td>Total{discount > 0 ? ' paid' : ''}</td>
+                    <td style={{ textAlign: 'right' }}>{fmtMoney(total)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            );
+          })()}
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button className="btn primary" onClick={() => downloadReceipt(detail, club.shortName)}>Download receipt (PDF)</button>
+            <button className="btn ghost" onClick={() => setDetail(null)}>Close</button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
