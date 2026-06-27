@@ -62,10 +62,44 @@ Still run the test suite, `npx eslint` the touched files, and confirm the build 
 pushing (the push deploys to production), but the merge-and-push decision itself is
 pre-authorized — no need to present the finishing-a-development-branch menu for it.
 
+## Meet→Event rename (applied 2026-06-27) — READ THIS for naming
+The "Meet" entity was renamed to **Event** everywhere, and gymnastics **apparatus**
+(previously also called "events") was renamed to **apparatus**, to kill the overload.
+What this means for names you'll grep for:
+- **DB:** table `meets`→**`events`**, `meet_sessions`→**`event_sessions`**; column
+  `meet_id`→**`event_id`** (on `events`-sessions/`registrations`/`scores`);
+  `cart_items.ref_meet_id`/`invoice_items.ref_meet_id`→**`ref_event_id`**;
+  `sanction_requests.created_meet_id`→**`created_event_id`**; `registrations.events`→
+  **`registrations.apparatus`**; `scores.event`→**`scores.apparatus`**; enum type
+  `meet_status`→`event_status`. (Migrations `20260626150000_rename_meet_entity.sql` +
+  `20260626150100_rename_apparatus.sql`.) Historical notes below predating this still
+  say `meet`/`ref_meet_id`/`registrations.events`/`scores.event` — mentally map them.
+- **TS/app:** `Meet`→`Event`, `MeetSession`→`EventSession`, `MeetWizard`→`EventWizard`,
+  `src/pages/Meets.tsx`→**`src/pages/Events.tsx`**, `meetId`→`eventId`,
+  `isMeetHost`→`isEventHost`, `refMeetId`→`refEventId`; apparatus: the `EVENTS` const
+  →**`APPARATUS`**, `Registration.events`→`apparatus`, `Score.event`→`apparatus`, the
+  nationals engine (`EventScore`→`ApparatusScore`, `EventRanking`→`ApparatusRanking`,
+  `EventPlacement`→`ApparatusPlacement`, `DisciplineDef.events`→`apparatus`, etc.), and
+  the calculator engine prop `eventCode`→**`apparatusCode`**. PRESERVED (NOT renamed):
+  the `'meet-entry'` invoice_item_kind value, `meet-host` app_role, `meet_kind` enum,
+  the persisted `NationalsConfig.cutoffs.event` jsonb key, opaque id-value prefixes
+  (`meet-…` seed ids, `scores.id` composite), and DOM/realtime/lifecycle `event`s.
+  (`TntEvent`/`tntEvent` in the TNT engine left as a noted trivial follow-up.)
+- **Routes:** `/meets*`→**`/events*`**; the old `/meets*` paths are kept as
+  `<Navigate replace>` redirects (slug-preserving) so bookmarked links survive.
+- **localStorage:** `SEED_VERSION` bumped 5→6 to discard any pre-rename cached DB shape
+  (else `db.events` is undefined and `Home`'s `Hero` crashes on load).
+- Edge Functions `create-checkout-session`/`stripe-webhook`/`notify-sanction` use the
+  renamed columns and were redeployed. See `docs/specs/2026-06-26-events-rename-and-registration-flow.md`.
+
 ## Supabase / migrations
 - Project ref `wkyerxlgricfphopocoz` (org NAIGC). Migrations in `supabase/migrations/`.
   CLI is linked (`supabase link` done 2026-06-19). Latest migration is
-  `20260626144305_s4_cart_line_tags.sql` (Stripe Phase S4 — adds `ref_meet_id` +
+  `20260626150100_rename_apparatus.sql` (apparatus column rename — `registrations.events`
+  →`apparatus`, `scores.event`→`apparatus`; **applied 2026-06-27**), preceded by
+  `20260626150000_rename_meet_entity.sql` (the Meet→Event table/column rename;
+  **applied 2026-06-27**) — see the rename note above. Before those,
+  `20260626144305_s4_cart_line_tags.sql` (Stripe Phase S4 — adds `ref_event_id` (was `ref_meet_id`) +
   `ref_line_type` to `cart_items`/`invoice_items` for server-side addon pricing +
   entry/change discrimination; **applied 2026-06-26**) — all migrations through it
   are **applied**. The prior `20260625231808_payments_and_invoice_stripe_fields.sql`
