@@ -11,10 +11,19 @@ import { EventStatusBadge } from './Home';
 import { APPARATUS, SHIRT_SIZES } from '../lib/types';
 import type { Athlete, CartItem, Event, EventSession, Registration } from '../lib/types';
 import { deleteRegistration, pushCart, pushEvent, pushEventSessions, pushRegistration } from '../lib/supabase';
+import { stateCode } from '../lib/sanction';
 import { fmtMoney } from '../lib/scoring';
 import { newRegistrationEntryTotal, registrationChangeFee } from '../lib/pricing';
 
 const today = () => new Date().toISOString().slice(0, 10);
+
+/** Registration state for an event from its open/close timestamps (vs now):
+ *  `regOpen` = now within [opens, closes]; `regClosed` = now past closes. */
+function regState(regOpens: string, regCloses: string): { regOpen: boolean; regClosed: boolean } {
+  const now = Date.now();
+  const regClosed = now > new Date(regCloses).getTime();
+  return { regClosed, regOpen: !regClosed && now >= new Date(regOpens).getTime() };
+}
 
 // Sortable columns of the Events table. Each maps to a comparable underlying value.
 type SortKey = 'name' | 'location' | 'date' | 'disciplines' | 'regOpens' | 'regCloses';
@@ -115,21 +124,21 @@ export function Events() {
         <p style={{ color: 'var(--ink-soft)' }}>No {tab} events.</p>
       ) : (
         <div className="card" style={{ overflow: 'hidden' }}>
-          <div style={{ overflowX: 'auto' }}>
-            <table className="tbl">
+          <div className="events-table-wrap">
+            <table className="tbl events-table">
               <thead>
                 <tr>
                   {COLUMNS.map((c) => (
                     <th
                       key={c.key}
                       onClick={() => onSort(c.key)}
-                      style={{ cursor: 'pointer', whiteSpace: 'nowrap', userSelect: 'none', color: 'var(--ink)' }}
+                      style={{ cursor: 'pointer', userSelect: 'none', color: 'var(--ink)' }}
                     >
                       {c.label}
                       {effKey === c.key && <span style={{ marginLeft: 4 }}>{effDir === 'asc' ? '▲' : '▼'}</span>}
                     </th>
                   ))}
-                  <th style={{ whiteSpace: 'nowrap' }}>Details</th>
+                  <th>Details</th>
                 </tr>
               </thead>
               <tbody>
@@ -137,20 +146,29 @@ export function Events() {
                   const dates = ev.startDate === ev.endDate
                     ? fmtDate(ev.startDate)
                     : `${fmtDate(ev.startDate)}–${fmtDate(ev.endDate)}`;
+                  // Registration state drives the date-cell highlighting:
+                  //  • open   → Reg Opens date highlighted green (badge ok)
+                  //  • closed → Reg Closes date highlighted coral (badge err)
+                  const { regOpen, regClosed } = regState(ev.regOpens, ev.regCloses);
                   return (
                     <tr key={ev.id}>
-                      <td style={{ whiteSpace: 'nowrap' }}>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                          <Link to={`/events/${ev.slug}`}>{ev.name}</Link>
-                          <EventStatusBadge status={ev.status} />
-                        </span>
+                      <td data-label="Event">
+                        <Link to={`/events/${ev.slug}`}>{ev.name}</Link>
                       </td>
-                      <td style={{ whiteSpace: 'nowrap' }}>{ev.city}, {ev.state}</td>
-                      <td style={{ whiteSpace: 'nowrap' }}>{dates}</td>
-                      <td style={{ color: 'var(--ink-soft)' }}>{ev.disciplines.join(' · ')}</td>
-                      <td style={{ whiteSpace: 'nowrap', color: 'var(--ink-soft)' }}>{fmtDate(ev.regOpens.slice(0, 10))}</td>
-                      <td style={{ whiteSpace: 'nowrap', color: 'var(--ink-soft)' }}>{fmtDate(ev.regCloses.slice(0, 10))}</td>
-                      <td><Link className="btn small" to={`/events/${ev.slug}`}>Details</Link></td>
+                      <td data-label="Location" style={{ whiteSpace: 'nowrap' }}>{ev.city}, {stateCode(ev.state)}</td>
+                      <td data-label="Date(s)" style={{ whiteSpace: 'nowrap' }}>{dates}</td>
+                      <td data-label="Disciplines" style={{ color: 'var(--ink-soft)' }}>{ev.disciplines.join(' · ')}</td>
+                      <td data-label="Reg Opens" style={{ whiteSpace: 'nowrap' }}>
+                        {regOpen
+                          ? <span className="badge ok">{fmtDate(ev.regOpens.slice(0, 10))}</span>
+                          : <span style={{ color: 'var(--ink-soft)' }}>{fmtDate(ev.regOpens.slice(0, 10))}</span>}
+                      </td>
+                      <td data-label="Reg Closes" style={{ whiteSpace: 'nowrap' }}>
+                        {regClosed
+                          ? <span className="badge err">{fmtDate(ev.regCloses.slice(0, 10))}</span>
+                          : <span style={{ color: 'var(--ink-soft)' }}>{fmtDate(ev.regCloses.slice(0, 10))}</span>}
+                      </td>
+                      <td data-label=""><Link className="btn small" to={`/events/${ev.slug}`}>Details</Link></td>
                     </tr>
                   );
                 })}

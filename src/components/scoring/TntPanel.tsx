@@ -1,13 +1,13 @@
 // Native T&T panel — per-pass skill entry with DD chart lookup.
 import { useId, useMemo } from 'react';
-import { STRUCTURE, compute, init, levelNote, passDD, skillsFor, tntEvent } from '../../scoring/tnt';
+import { STRUCTURE, compute, init, levelNote, passDD, skillsFor, tntApparatus } from '../../scoring/tnt';
 import type { TntState } from '../../scoring/tnt';
 import { BreakdownLine, DecimalInput, PanelSection, WarnBox } from './parts';
 
 export function TntPanel({ levelId, apparatusCode, value, onChange }: {
   levelId: string; apparatusCode: string; value: TntState; onChange: (s: TntState) => void;
 }) {
-  const ev = tntEvent(apparatusCode);
+  const ev = tntApparatus(apparatusCode);
   const outcome = compute(value, levelId, apparatusCode);
   const listId = useId();
   const skills = useMemo(() => skillsFor(apparatusCode), [apparatusCode]);

@@ -3,15 +3,15 @@
 import { num, round2, round3, type ScoringOutcome } from './types';
 import { TT_SKILLS, type TtSkill } from './ttSkills';
 
-export type TntEvent = 'TR' | 'DM' | 'TU';
+export type TntApparatus = 'TR' | 'DM' | 'TU';
 export type TntLevel = 'New Flyers' | 'Intermediate Flyers' | 'High Flyers';
 
-const APPARATUS_KEY: Record<TntEvent, keyof typeof TT_SKILLS> = { TR: 'trampoline', DM: 'dmt', TU: 'tumbling' };
+const APPARATUS_KEY: Record<TntApparatus, keyof typeof TT_SKILLS> = { TR: 'trampoline', DM: 'dmt', TU: 'tumbling' };
 
 export interface TntPassSpec { name: string; skills: number; labels?: string[]; exec: string }
 
 /** Per-event pass structure. */
-export const STRUCTURE: Record<TntEvent, { passes: TntPassSpec[] }> = {
+export const STRUCTURE: Record<TntApparatus, { passes: TntPassSpec[] }> = {
   TR: { passes: [{ name: 'Routine', skills: 10, exec: 'Execution (out of 10)' }] },
   DM: {
     passes: [
@@ -34,7 +34,7 @@ interface LevelRule {
   note: string;
 }
 
-export const LEVEL_RULES: Record<TntEvent, Record<TntLevel, LevelRule>> = {
+export const LEVEL_RULES: Record<TntApparatus, Record<TntLevel, LevelRule>> = {
   TR: {
     'New Flyers': { maxSkill: 0.4, maxSkillSoft: true, note: 'Skills ≤0.4 (up to 2 listed exceptions, e.g. tucks/baranis). 0.0 skills may repeat once. Violations = 2.0 CJP.' },
     'Intermediate Flyers': { maxSkill: 0.8, maxTotal: 5.0, note: 'Skills ≤0.8 · ≥3 skills with ≥360° flip · routine DD ≤5.0.' },
@@ -60,16 +60,16 @@ export function tntLevel(levelId: string): TntLevel {
   }
 }
 
-export function tntEvent(apparatusCode: string): TntEvent {
+export function tntApparatus(apparatusCode: string): TntApparatus {
   return (apparatusCode === 'DM' || apparatusCode === 'TU') ? apparatusCode : 'TR';
 }
 
 export function skillsFor(apparatusCode: string): TtSkill[] {
-  return TT_SKILLS[APPARATUS_KEY[tntEvent(apparatusCode)]];
+  return TT_SKILLS[APPARATUS_KEY[tntApparatus(apparatusCode)]];
 }
 
 export function levelNote(levelId: string, apparatusCode: string): string {
-  return LEVEL_RULES[tntEvent(apparatusCode)][tntLevel(levelId)].note;
+  return LEVEL_RULES[tntApparatus(apparatusCode)][tntLevel(levelId)].note;
 }
 
 export interface TntSkillEntry {
@@ -82,7 +82,7 @@ export interface TntState { passes: TntPassState[]; penalty: string }
 
 export function init(_levelId: string, apparatusCode: string): TntState {
   return {
-    passes: STRUCTURE[tntEvent(apparatusCode)].passes.map((p) => ({
+    passes: STRUCTURE[tntApparatus(apparatusCode)].passes.map((p) => ({
       exec: '10.0',
       skills: Array.from({ length: p.skills }, () => ({ name: '', dd: '' })),
     })),
@@ -98,7 +98,7 @@ export function passDD(pass: TntPassState): number {
 }
 
 export function compute(state: TntState, levelId: string, apparatusCode: string): ScoringOutcome {
-  const ev = tntEvent(apparatusCode);
+  const ev = tntApparatus(apparatusCode);
   const level = tntLevel(levelId);
   const rules = LEVEL_RULES[ev][level];
   const warnings: string[] = [];

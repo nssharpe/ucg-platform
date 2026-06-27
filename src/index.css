@@ -366,6 +366,33 @@ option { color: var(--ink); background: #fff; }
 .tbl .num { text-align: right; font-variant-numeric: tabular-nums; }
 .tbl .score { font-weight: 700; font-variant-numeric: tabular-nums; }
 
+/* Events table → reflow to stacked label/value rows when its OWN available width
+   is too narrow for the columns, so it NEVER needs a horizontal scroll regardless
+   of viewport OR sidebar state. A container query (not a viewport media query) is
+   used because the sidebar changes the content width independently of viewport —
+   so the table stacks based on the space it actually has. */
+.events-table-wrap { overflow-x: auto; container-type: inline-size; }
+@container (max-width: 820px) {
+  .events-table thead { display: none; }
+  .events-table, .events-table tbody { display: block; width: 100%; }
+  .events-table tr { display: block; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .events-table tbody tr:last-child { border-bottom: none; }
+  .events-table tbody tr:hover { background: transparent; }
+  .events-table td {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 14px;
+    padding: 3px 0; border: none; white-space: normal; text-align: right;
+  }
+  .events-table td::before {
+    content: attr(data-label);
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--ink-soft); text-align: left; flex: 0 0 auto;
+  }
+  .events-table td[data-label=""]::before { content: none; }
+  .events-table td:first-child { justify-content: flex-start; padding-bottom: 4px; }
+  .events-table td:first-child::before { content: none; }
+  .events-table td:first-child a { font-weight: 700; font-size: 15px; }
+}
+
 /* forms */
 .field { margin-bottom: 14px; }
 .field > label {
