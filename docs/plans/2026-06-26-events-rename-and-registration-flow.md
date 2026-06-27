@@ -172,7 +172,7 @@ On the renamed code. Spec §"Phase 3". Model on `src/pages/MyRegistrations.tsx`.
 **Files:** `src/pages/Events.tsx` (the `Events` list component, renamed from `Meets` in
 Phase 2).
 
-- [ ] **3.1 — Build the tabbed table.** Replace the 3-card grid with:
+- [x] **3.1 — Build the tabbed table.** Replace the 3-card grid with:
   - Title "Events"; subtitle exactly: "Current and Past UCG Hosted (Nationals,
     FlipFest, etc.) and UCG Sanctioned (Regular Season Meets) Events".
   - Admin button text → **"+ Sanction New Event"** (opens `EventWizard`).
@@ -185,8 +185,8 @@ Phase 2).
     (link). Clickable headers toggle asc/desc; default Upcoming asc / Past desc by date.
   - Wrap the table in a horizontal-scroll container (`overflow-x:auto`) so it doesn't
     overflow the page at 375px. Ensure header/row contrast meets the global UI rule.
-- [ ] **3.2 — Verify.** `npm run build`; `npx eslint src/pages/Events.tsx`;
-  `npx vitest run`. Live (dev auto-login): tab switch, search, column sort all work.
+- [x] **3.2 — Verify.** `npm run build`; `npx eslint src/pages/Events.tsx`;
+  `npx vitest run` (191 pass). Live (dev auto-login): tab switch, search, column sort all work.
   Responsive sweep 375 / 768 / 1280 via preview tooling — confirm
   `documentElement.scrollWidth ≤ clientWidth` (no page overflow; table scrolls within
   its container), screenshots at each width.
