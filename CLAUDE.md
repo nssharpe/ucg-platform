@@ -87,7 +87,11 @@ What this means for names you'll grep for:
   (The TNT engine's `TntEvent`/`tntEvent` were also renamed → `TntApparatus`/`tntApparatus`, completing the disambiguation.)
 - **Routes:** `/meets*`→**`/events*`**; the old `/meets*` paths are kept as
   `<Navigate replace>` redirects (slug-preserving) so bookmarked links survive.
-- **localStorage:** `SEED_VERSION` bumped 5→6 to discard any pre-rename cached DB shape
+- **Follow-up consistency pass (2026-06-27):** `registrations.event_levels`→`apparatus_levels`
+  (TS `eventLevels`→`apparatusLevels`, the per-apparatus T&T level map); user-facing labels
+  that meant apparatus fixed (RegistrationEditor "Events"→"Apparatus", Judge "Event"→"Apparatus",
+  Results "By event"→"By apparatus"); `NATIONALS_MEET_ID`→`NATIONALS_EVENT_ID`.
+- **localStorage:** `SEED_VERSION` bumped 5→6 (and later 6→7 for the `eventLevels` rename) to discard any pre-rename cached DB shape
   (else `db.events` is undefined and `Home`'s `Hero` crashes on load).
 - Edge Functions `create-checkout-session`/`stripe-webhook`/`notify-sanction` use the
   renamed columns and were redeployed. See `docs/specs/2026-06-26-events-rename-and-registration-flow.md`.
@@ -95,7 +99,10 @@ What this means for names you'll grep for:
 ## Supabase / migrations
 - Project ref `wkyerxlgricfphopocoz` (org NAIGC). Migrations in `supabase/migrations/`.
   CLI is linked (`supabase link` done 2026-06-19). Latest migration is
-  `20260626150100_rename_apparatus.sql` (apparatus column rename — `registrations.events`
+  `20260627120000_rename_event_levels_apparatus.sql` (consistency follow-up —
+  `registrations.event_levels`→`apparatus_levels`, the per-apparatus T&T level map;
+  TS `eventLevels`→`apparatusLevels`, `SEED_VERSION` bumped 6→7; **applied 2026-06-27**),
+  preceded by `20260626150100_rename_apparatus.sql` (apparatus column rename — `registrations.events`
   →`apparatus`, `scores.event`→`apparatus`; **applied 2026-06-27**), preceded by
   `20260626150000_rename_meet_entity.sql` (the Meet→Event table/column rename;
   **applied 2026-06-27**) — see the rename note above. Before those,
