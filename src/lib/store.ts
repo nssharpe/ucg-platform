@@ -6,7 +6,12 @@ import { buildSeed } from './seed';
 import { isSupabaseConfigured, loadAll } from './supabase';
 
 const LS_KEY = 'ucg-db-v1';
-const SEED_VERSION = 5;
+// Bumped to 6 for the Meet→Event + apparatus rename: the persisted DB shape
+// changed (db.meets→db.events, registration.events→apparatus, score.event→
+// apparatus), so any localStorage snapshot from a prior version must be
+// discarded and reseeded rather than loaded into the new code (which would read
+// undefined `db.events` and crash).
+const SEED_VERSION = 6;
 
 let db: DB = load();
 const listeners = new Set<() => void>();
