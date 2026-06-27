@@ -28,8 +28,8 @@ type SortCol = 'firstName' | 'lastName' | 'WAG' | 'MAG' | 'TNT' | 'studentStatus
 /** Event list as text, appending the synchro partner's name when the SY event is
  *  registered and a partner is set (per 2026-06-22 feedback). */
 function eventsText(r: Registration, nameOf: (id: string) => string): string {
-  const base = r.events.join(', ');
-  if (r.events.includes('SY') && r.partnerAthleteId) {
+  const base = r.apparatus.join(', ');
+  if (r.apparatus.includes('SY') && r.partnerAthleteId) {
     return `${base} (synchro w/ ${nameOf(r.partnerAthleteId)})`;
   }
   return base;
@@ -1268,7 +1268,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
             onSave={(regs) => saveRegs(editingAthlete.id, regs)}
             onCancel={() => setEditingAthleteId(null)}
             changeFeeApplies={changeFeeApplies}
-            incomingPartnerId={db.registrations.find((r) => r.eventId === event.id && !r.refunded && r.events.includes('SY') && r.partnerAthleteId === editingAthlete.id)?.athleteId ?? null}
+            incomingPartnerId={db.registrations.find((r) => r.eventId === event.id && !r.refunded && r.apparatus.includes('SY') && r.partnerAthleteId === editingAthlete.id)?.athleteId ?? null}
           />
         </Modal>
       )}
@@ -1289,7 +1289,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
             season={season}
             onSave={(regs) => addToCart(registerAthlete.id, regs)}
             onCancel={() => setRegisterAthleteId(null)}
-            incomingPartnerId={db.registrations.find((r) => r.eventId === event.id && !r.refunded && r.events.includes('SY') && r.partnerAthleteId === registerAthlete.id)?.athleteId ?? null}
+            incomingPartnerId={db.registrations.find((r) => r.eventId === event.id && !r.refunded && r.apparatus.includes('SY') && r.partnerAthleteId === registerAthlete.id)?.athleteId ?? null}
           />
         </Modal>
       )}

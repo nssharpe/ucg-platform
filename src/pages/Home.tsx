@@ -409,13 +409,13 @@ function AthleteDashboard() {
                   <EventStatusBadge status={event.status} />
                 </div>
                 <div style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
-                  {fmtDate(event.startDate)} · {regs.map((r) => `${r.discipline} (${r.events.join(', ')})`).join(' + ')}
+                  {fmtDate(event.startDate)} · {regs.map((r) => `${r.discipline} (${r.apparatus.join(', ')})`).join(' + ')}
                 </div>
                 {myScores.length > 0 && (
                   <div style={{ fontSize: 13, marginTop: 4, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                     {myScores.map((s) => (
                       <Link key={s.id} to={`/scores/${encodeURIComponent(s.id)}`}>
-                        {s.event}: <strong>{s.final?.toFixed(3)}</strong>
+                        {s.apparatus}: <strong>{s.final?.toFixed(3)}</strong>
                       </Link>
                     ))}
                   </div>

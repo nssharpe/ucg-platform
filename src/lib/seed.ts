@@ -2,7 +2,7 @@ import type {
   DB, Athlete, Club, Level, Event, Registration, Score, Season, Discipline, Invoice,
   WaiverDocument,
 } from './types';
-import { EVENTS, STATE_REGIONS, GENERAL_WAIVER_TYPE } from './types';
+import { APPARATUS, STATE_REGIONS, GENERAL_WAIVER_TYPE } from './types';
 import { DEFAULT_WAIVER_HTML, DEFAULT_WAIVER_HASH } from './waiver-default';
 
 // Deterministic PRNG so every visitor sees the same demo data
@@ -187,18 +187,18 @@ export function buildSeed(): DB {
         ?? event.sessions.find((s) => s.discipline === d);
       if (!session) continue;
       rid += 1;
-      const evts = EVENTS[d].map((e) => e.code).filter(() => rnd() < 0.92);
+      const evts = APPARATUS[d].map((e) => e.code).filter(() => rnd() < 0.92);
       registrations.push({
         id: `reg-${rid}`,
         eventId: event.id, athleteId: a.id, clubId: a.mainClubId!,
         discipline: d, levelId,
-        events: evts.length ? evts : [EVENTS[d][0].code],
+        apparatus: evts.length ? evts : [APPARATUS[d][0].code],
         sessionId: session.id,
       });
       if (intoSquads) {
         let sq = session.squads.find((q) => !q.holding && q.athleteRegIds.length < 8);
         if (!sq) {
-          sq = { id: `${session.id}-q${session.squads.length + 1}`, name: `Squad ${String.fromCharCode(65 + session.squads.length)}`, startEvent: session.squads.length % EVENTS[d].length, athleteRegIds: [] };
+          sq = { id: `${session.id}-q${session.squads.length + 1}`, name: `Squad ${String.fromCharCode(65 + session.squads.length)}`, startEvent: session.squads.length % APPARATUS[d].length, athleteRegIds: [] };
           session.squads.push(sq);
         }
         sq.athleteRegIds.push(`reg-${rid}`);
@@ -221,14 +221,14 @@ export function buildSeed(): DB {
         for (const regId of sq.athleteRegIds) {
           const reg = registrations.find((r) => r.id === regId)!;
           const level = levels.find((l) => l.id === reg.levelId)!;
-          for (const ev of reg.events) {
+          for (const ev of reg.apparatus) {
             if (!complete && rnd() < 0.45) continue; // in-progress: partial scores
             const svCap = level.svMax ?? 14.0;
             const sv = round(Math.min(svCap, svCap - rnd() * 1.6), 1);
             const ded = round(0.7 + rnd() * 1.9, 3);
             scores.push({
               id: `${event.id}|${regId}|${ev}`,
-              eventId: event.id, sessionId: session.id, regId, event: ev,
+              eventId: event.id, sessionId: session.id, regId, apparatus: ev,
               sv, deductions: ded, final: round(Math.max(0, sv - ded)),
               enteredBy: 'judge-demo', enteredAt: new Date().toISOString(), flashed: true,
             });

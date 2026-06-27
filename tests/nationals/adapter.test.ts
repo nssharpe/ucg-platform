@@ -45,15 +45,15 @@ function scenario() {
   const registrations: unknown[] = [];
   const scores: unknown[] = [];
   people.forEach((p, i) => {
-    const reg = { id: `r${i}`, eventId: 'm1', athleteId: p.id, clubId: p.mainClubId, discipline: 'WAG', levelId: 'wag-open', events: evs, sessionId: 'sp' };
+    const reg = { id: `r${i}`, eventId: 'm1', athleteId: p.id, clubId: p.mainClubId, discipline: 'WAG', levelId: 'wag-open', apparatus: evs, sessionId: 'sp' };
     registrations.push(reg);
-    for (const ev of evs) scores.push({ id: `${reg.id}|${ev}`, eventId: 'm1', sessionId: 'sp', regId: reg.id, event: ev, sv: null, deductions: null, final: totals[i] / 4, enteredBy: 't', enteredAt: '', flashed: true });
+    for (const ev of evs) scores.push({ id: `${reg.id}|${ev}`, eventId: 'm1', sessionId: 'sp', regId: reg.id, apparatus: ev, sv: null, deductions: null, final: totals[i] / 4, enteredBy: 't', enteredAt: '', flashed: true });
   });
   // Finals scores for the three qualifiers (A,B,C) in the finals session.
   people.slice(0, 3).forEach((p, i) => {
-    const reg = { id: `rf${i}`, eventId: 'm1', athleteId: p.id, clubId: p.mainClubId, discipline: 'WAG', levelId: 'wag-open', events: evs, sessionId: 'sf' };
+    const reg = { id: `rf${i}`, eventId: 'm1', athleteId: p.id, clubId: p.mainClubId, discipline: 'WAG', levelId: 'wag-open', apparatus: evs, sessionId: 'sf' };
     registrations.push(reg);
-    for (const ev of evs) scores.push({ id: `${reg.id}|${ev}`, eventId: 'm1', sessionId: 'sf', regId: reg.id, event: ev, sv: null, deductions: null, final: (38 - i * 2) / 4, enteredBy: 't', enteredAt: '', flashed: true });
+    for (const ev of evs) scores.push({ id: `${reg.id}|${ev}`, eventId: 'm1', sessionId: 'sf', regId: reg.id, apparatus: ev, sv: null, deductions: null, final: (38 - i * 2) / 4, enteredBy: 't', enteredAt: '', flashed: true });
   });
 
   const db = { levels: [], clubs, people, events: [event], registrations, scores } as unknown as DB;
@@ -92,7 +92,7 @@ describe('nationals adapter', () => {
   it('scratched scores are excluded from placement', () => {
     const { db, event } = scenario();
     // Scratch athlete A's vault — still place-eligible on other events, but VT place skips A.
-    const aVault = (db.scores as { regId: string; event: string; scratched?: boolean }[]).find((s) => s.regId === 'r0' && s.event === 'VT')!;
+    const aVault = (db.scores as { regId: string; apparatus: string; scratched?: boolean }[]).find((s) => s.regId === 'r0' && s.apparatus === 'VT')!;
     aVault.scratched = true;
     const { prelims } = computeArtisticDiscipline(db, event, 'WAG');
     const a = prelims.results.find((r) => r.entry.first === 'A')!;

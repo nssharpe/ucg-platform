@@ -106,7 +106,7 @@ export async function loadNationals(): Promise<{ athletes: number; scores: numbe
         id: r.id, eventId: NATIONALS_MEET_ID,
         athleteId: r.athleteId, clubId: r.clubId,
         discipline: r.discipline, levelId,
-        events: r.events, sessionId: session.id,
+        apparatus: r.events, sessionId: session.id,
         category: r.category, quals: r.quals,
       };
       db.registrations.push(reg);
@@ -114,7 +114,7 @@ export async function loadNationals(): Promise<{ athletes: number; scores: numbe
         scoreCount++;
         db.scores.push({
           id: `${NATIONALS_MEET_ID}|${r.id}|${ev}`,
-          eventId: NATIONALS_MEET_ID, sessionId: session.id, regId: r.id, event: ev,
+          eventId: NATIONALS_MEET_ID, sessionId: session.id, regId: r.id, apparatus: ev,
           sv: null, deductions: null, eScore: null, final: finalScore,
           source: 'manual', enteredBy: 'import-nationals-2026', enteredAt: data.meta.generated, flashed: true,
         } as Score);

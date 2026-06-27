@@ -1,5 +1,5 @@
 import type { DB, Discipline, Event, Registration, Score } from './types';
-import { EVENTS } from './types';
+import { APPARATUS } from './types';
 
 export interface AthleteResult {
   reg: Registration;
@@ -23,13 +23,13 @@ export function sessionResults(db: DB, event: Event, sessionId: string): {
   const regs = db.registrations.filter((r) => r.eventId === event.id && r.sessionId === sessionId && !r.refunded);
   const scores = db.scores.filter((s) => s.eventId === event.id && s.sessionId === sessionId);
   const scoreMap = new Map<string, Score>();
-  for (const s of scores) scoreMap.set(`${s.regId}|${s.event}`, s);
+  for (const s of scores) scoreMap.set(`${s.regId}|${s.apparatus}`, s);
 
   const results: AthleteResult[] = regs.map((reg) => {
     const events: Record<string, Score | undefined> = {};
     let aa = 0;
     let aaComplete = true;
-    for (const ev of reg.events) {
+    for (const ev of reg.apparatus) {
       const sc = scoreMap.get(`${reg.id}|${ev}`);
       events[ev] = sc;
       if (sc?.final != null) aa += sc.final;
@@ -46,7 +46,7 @@ export function sessionResults(db: DB, event: Event, sessionId: string): {
   }
   for (const arr of byLevel.values()) arr.sort((a, b) => b.aa - a.aa);
 
-  const evCodes = EVENTS[session.discipline].map((e) => e.code);
+  const evCodes = APPARATUS[session.discipline].map((e) => e.code);
   const eventRankings: EventRanking[] = evCodes.map((ev) => {
     const rows = results
       .filter((r) => r.events[ev]?.final != null)

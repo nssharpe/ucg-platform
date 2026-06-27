@@ -2,7 +2,7 @@ export type Discipline = 'MAG' | 'WAG' | 'TNT';
 
 export const DISCIPLINES: Discipline[] = ['MAG', 'WAG', 'TNT'];
 
-export const EVENTS: Record<Discipline, { code: string; name: string }[]> = {
+export const APPARATUS: Record<Discipline, { code: string; name: string }[]> = {
   MAG: [
     { code: 'FX', name: 'Floor' },
     { code: 'PH', name: 'Pommel Horse' },
@@ -282,7 +282,7 @@ export interface Registration {
   clubId: string; // competing-for club
   discipline: Discipline;
   levelId: string;
-  events: string[]; // event codes
+  apparatus: string[]; // apparatus codes
   sessionId: string | null;
   /** Placement category (e.g. "Collegiate Women", "Community Men+") — drives
    *  results grouping badges & filters, mirroring the Nationals results viewer. */
@@ -313,11 +313,11 @@ export interface Registration {
 }
 
 export interface Score {
-  id: string; // `${eventId}|${athleteRegId}|${event}`
+  id: string; // `${eventId}|${athleteRegId}|${apparatus}`
   eventId: string;
   sessionId: string;
   regId: string;
-  event: string;
+  apparatus: string;
   sv: number | null; // start value / D-score
   deductions: number | null; // total E deductions (for capped levels: final = sv - deductions)
   eScore?: number | null; // E-score out of 10 (open scoring: final = sv + eScore)

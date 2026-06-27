@@ -223,7 +223,7 @@ const squadToRow = (sessionId: string, q: Event['sessions'][number]['squads'][nu
 
 const registrationToRow = (r: Registration, squadId: string | null = null) => ({
   id: r.id, event_id: r.eventId, athlete_id: r.athleteId, club_id: r.clubId, discipline: r.discipline,
-  level_id: r.levelId, events: r.events, session_id: r.sessionId || null, squad_id: squadId,
+  level_id: r.levelId, apparatus: r.apparatus, session_id: r.sessionId || null, squad_id: squadId,
   refunded: r.refunded ?? false, refund_requested: r.refundRequested ?? false,
   keep_listed: r.keepListed ?? false,
   partner_athlete_id: r.partnerAthleteId ?? null, event_levels: r.eventLevels ?? null,
@@ -238,7 +238,7 @@ function squadIdsByReg(event: Event): Map<string, string> {
 }
 const rowToRegistration = (r: Row<'registrations'>): Registration => ({
   id: r.id, eventId: r.event_id, athleteId: r.athlete_id, clubId: r.club_id ?? '', discipline: r.discipline as Registration['discipline'],
-  levelId: r.level_id ?? '', events: (r.events ?? []) as Registration['events'], sessionId: r.session_id ?? '',
+  levelId: r.level_id ?? '', apparatus: (r.apparatus ?? []) as Registration['apparatus'], sessionId: r.session_id ?? '',
   refunded: r.refunded, keepListed: r.keep_listed,
   paid: (r as { paid?: boolean | null }).paid ?? false,
   ...((r as { updated_pending?: boolean | null }).updated_pending ? { updatedPending: true } : {}),
@@ -248,7 +248,7 @@ const rowToRegistration = (r: Row<'registrations'>): Registration => ({
 });
 
 const scoreToRow = (s: Score) => ({
-  id: s.id, event_id: s.eventId, session_id: s.sessionId, reg_id: s.regId, event: s.event,
+  id: s.id, event_id: s.eventId, session_id: s.sessionId, reg_id: s.regId, apparatus: s.apparatus,
   sv: s.sv, deductions: s.deductions, e_score: s.eScore ?? null, final: s.final,
   source: s.source ?? 'manual',
   calc: s.calc ?? null, calc_state: s.calcState ?? null,
@@ -257,7 +257,7 @@ const scoreToRow = (s: Score) => ({
   scratched: s.scratched ?? false,
 });
 export const rowToScore = (r: Row<'scores'>): Score => ({
-  id: r.id, eventId: r.event_id, sessionId: r.session_id ?? '', regId: r.reg_id ?? '', event: r.event as Score['event'],
+  id: r.id, eventId: r.event_id, sessionId: r.session_id ?? '', regId: r.reg_id ?? '', apparatus: r.apparatus as Score['apparatus'],
   sv: r.sv == null ? null : Number(r.sv), deductions: r.deductions == null ? null : Number(r.deductions),
   eScore: r.e_score == null ? null : Number(r.e_score), final: r.final == null ? null : Number(r.final),
   source: r.source as Score['source'], enteredBy: r.entered_by ?? '', enteredAt: r.entered_at, flashed: r.flashed,

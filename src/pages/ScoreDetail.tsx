@@ -5,7 +5,7 @@ import { useCapabilities } from '../lib/capabilities';
 import { Badge, Field } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 import { pushScore } from '../lib/supabase';
-import { EVENTS } from '../lib/types';
+import { APPARATUS } from '../lib/types';
 import type { Score } from '../lib/types';
 import { fmtScore } from '../lib/scoring';
 import { calcForLevel } from '../lib/calculators';
@@ -35,7 +35,7 @@ function ScoreDetailInner({ score }: { score: Score }) {
 
   const reg = db.registrations.find((r) => r.id === score.regId);
   const level = reg && db.levels.find((l) => l.id === reg.levelId);
-  const calcCfg = score.calc && reg && level ? calcForLevel(level.id, score.event) : null;
+  const calcCfg = score.calc && reg && level ? calcForLevel(level.id, score.apparatus) : null;
   const v2 = isCalcStateV2(score.calcState) && calcCfg && score.calcState.kind === calcCfg.kind
     ? score.calcState : null;
 
@@ -50,7 +50,7 @@ function ScoreDetailInner({ score }: { score: Score }) {
   const event = db.events.find((m) => m.id === score.eventId);
   const session = event?.sessions.find((s) => s.id === score.sessionId);
   const club = reg && db.clubs.find((c) => c.id === reg.clubId);
-  const eventName = session ? EVENTS[session.discipline].find((e) => e.code === score.event)?.name ?? score.event : score.event;
+  const eventName = session ? APPARATUS[session.discipline].find((e) => e.code === score.apparatus)?.name ?? score.apparatus : score.apparatus;
 
   const canView = caps.isAdmin || caps.isEventHost(score.eventId)
     || (!!reg && caps.personId === reg.athleteId);
@@ -67,7 +67,7 @@ function ScoreDetailInner({ score }: { score: Score }) {
 
   const isNative = !!v2 && nativeSt != null && !!calcCfg && !!level;
   const isLegacy = !isNative && !!score.calcState && !!calcCfg;
-  const outcome = isNative ? computeScoring(calcCfg!.kind, nativeSt, level!.id, score.event) : null;
+  const outcome = isNative ? computeScoring(calcCfg!.kind, nativeSt, level!.id, score.apparatus) : null;
 
   // Live values for the adjustment readout: native outcome, else legacy bridge message.
   const liveD = outcome?.d ?? live?.d ?? score.sv;
@@ -130,13 +130,13 @@ function ScoreDetailInner({ score }: { score: Score }) {
           <h3 style={{ marginBottom: 8 }}>Calculator as submitted{canAdjust && ' — edit to adjust'}</h3>
           {isNative ? (
             <div className="card card-pad">
-              <ScoringPanel kind={calcCfg!.kind} levelId={level!.id} eventCode={score.event} value={nativeSt} onChange={setNativeSt} />
+              <ScoringPanel kind={calcCfg!.kind} levelId={level!.id} eventCode={score.apparatus} value={nativeSt} onChange={setNativeSt} />
             </div>
           ) : (
             <CalcPanel
               ref={calcRef}
               cfg={calcCfg!}
-              eventCode={score.event}
+              eventCode={score.apparatus}
               initialState={score.calcState}
               onLive={setLive}
               height={560}

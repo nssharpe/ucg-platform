@@ -4,7 +4,7 @@ import { useDB, mutate } from '../lib/store';
 import { pushScore } from '../lib/supabase';
 import { Badge, Field } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
-import { EVENTS } from '../lib/types';
+import { APPARATUS } from '../lib/types';
 import type { Score } from '../lib/types';
 import { fmtScore } from '../lib/scoring';
 import { calcForLevel, calcSource, scoreFromOutcome, scoreDetailPath } from '../lib/calculators';
@@ -29,21 +29,21 @@ export function Judge() {
   const eventRec = db.events.find((m) => m.id === eventId);
   const [sessionId, setSessionId] = useState(eventRec?.sessions[0]?.id ?? '');
   const session = eventRec?.sessions.find((s) => s.id === sessionId) ?? eventRec?.sessions[0];
-  const events = session ? EVENTS[session.discipline] : [];
-  const [event, setEvent] = useState(events[0]?.code ?? '');
+  const apparatusDefs = session ? APPARATUS[session.discipline] : [];
+  const [apparatus, setApparatus] = useState(apparatusDefs[0]?.code ?? '');
   const [flash, setFlash] = useState<{ name: string; score: number } | null>(null);
 
   const regs = useMemo(() => {
     if (!eventRec || !session) return [];
-    const inSession = db.registrations.filter((r) => r.eventId === eventRec.id && r.sessionId === session.id && !r.refunded && r.events.includes(event));
+    const inSession = db.registrations.filter((r) => r.eventId === eventRec.id && r.sessionId === session.id && !r.refunded && r.apparatus.includes(apparatus));
     return inSession.sort((a, b) => {
       const an = db.people.find((p) => p.id === a.athleteId)!;
       const bn = db.people.find((p) => p.id === b.athleteId)!;
       return an.lastName.localeCompare(bn.lastName);
     });
-  }, [db, eventRec, session, event]);
+  }, [db, eventRec, session, apparatus]);
 
-  const scoreFor = (regId: string) => db.scores.find((s) => s.id === `${eventRec?.id}|${regId}|${event}`);
+  const scoreFor = (regId: string) => db.scores.find((s) => s.id === `${eventRec?.id}|${regId}|${apparatus}`);
 
   const [activeReg, setActiveReg] = useState<string | null>(null);
   const [sv, setSv] = useState('');
@@ -67,12 +67,12 @@ export function Judge() {
   const active = regs.find((r) => r.id === activeReg);
   const activeAthlete = active && db.people.find((p) => p.id === active.athleteId);
   const activeLevel = active && db.levels.find((l) => l.id === active.levelId);
-  const calcCfg = activeLevel ? calcForLevel(activeLevel.id, event) : null;
+  const calcCfg = activeLevel ? calcForLevel(activeLevel.id, apparatus) : null;
   const svMax = activeLevel?.svMax;
 
   // Pure and cheap — recompute every render (the React Compiler memoizes it).
   const outcome = calcCfg && activeLevel && calcSt != null
-    ? computeScoring(calcCfg.kind, calcSt, activeLevel.id, event)
+    ? computeScoring(calcCfg.kind, calcSt, activeLevel.id, apparatus)
     : null;
 
   const usingCalcFull = !!calcCfg && calcCfg.produces === 'full' && !override;
@@ -98,7 +98,7 @@ export function Judge() {
   const openScoring = (reg: typeof regs[number]) => {
     const sc = scoreFor(reg.id);
     const level = db.levels.find((l) => l.id === reg.levelId);
-    const cfg = level ? calcForLevel(level.id, event) : null;
+    const cfg = level ? calcForLevel(level.id, apparatus) : null;
     setActiveReg(reg.id);
     setSv(sc?.sv?.toString() ?? '');
     setDed(sc?.deductions?.toString() ?? '');
@@ -107,7 +107,7 @@ export function Judge() {
     // Editing a score re-opens the panel exactly as it was posted.
     if (cfg && level) {
       const prior = sc?.calcState;
-      setCalcSt(isCalcStateV2(prior) && prior.kind === cfg.kind ? prior.state : initScoring(cfg.kind, level.id, event));
+      setCalcSt(isCalcStateV2(prior) && prior.kind === cfg.kind ? prior.state : initScoring(cfg.kind, level.id, apparatus));
     } else {
       setCalcSt(null);
     }
@@ -130,10 +130,10 @@ export function Judge() {
     }
     const calcState = calcCfg && calcSt != null ? { v: 2 as const, kind: calcCfg.kind, state: calcSt } : undefined;
     mutate((d) => {
-      const id = `${eventRec.id}|${active.id}|${event}`;
+      const id = `${eventRec.id}|${active.id}|${apparatus}`;
       d.scores = d.scores.filter((s) => s.id !== id);
       const score = {
-        id, eventId: eventRec.id, sessionId: session.id, regId: active.id, event,
+        id, eventId: eventRec.id, sessionId: session.id, regId: active.id, apparatus,
         sv: fields.sv ?? null, deductions: fields.deductions ?? null, eScore: fields.eScore ?? null,
         final: finalScore, source: fields.source,
         calc: calcCfg?.kind, calcState,
@@ -171,19 +171,19 @@ export function Judge() {
           {requestedEvent && eventRec ? (
             <input type="text" className="input" value={eventRec.name} readOnly disabled data-tip="Locked to the event you opened score entry from" />
           ) : (
-            <select className="input" value={eventId} onChange={(e) => { setEventId(e.target.value); const m = db.events.find((x) => x.id === e.target.value)!; setSessionId(m.sessions[0].id); setEvent(EVENTS[m.sessions[0].discipline][0].code); close(); }}>
+            <select className="input" value={eventId} onChange={(e) => { setEventId(e.target.value); const m = db.events.find((x) => x.id === e.target.value)!; setSessionId(m.sessions[0].id); setApparatus(APPARATUS[m.sessions[0].discipline][0].code); close(); }}>
               {db.events.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
             </select>
           )}
         </Field>
         <Field label="Session">
-          <select className="input" value={sessionId} onChange={(e) => { setSessionId(e.target.value); const s = eventRec.sessions.find((x) => x.id === e.target.value)!; setEvent(EVENTS[s.discipline][0].code); close(); }}>
+          <select className="input" value={sessionId} onChange={(e) => { setSessionId(e.target.value); const s = eventRec.sessions.find((x) => x.id === e.target.value)!; setApparatus(APPARATUS[s.discipline][0].code); close(); }}>
             {eventRec.sessions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </Field>
         <Field label="Event">
-          <select className="input" value={event} onChange={(e) => { setEvent(e.target.value); close(); }}>
-            {events.map((ev) => <option key={ev.code} value={ev.code}>{ev.name}</option>)}
+          <select className="input" value={apparatus} onChange={(e) => { setApparatus(e.target.value); close(); }}>
+            {apparatusDefs.map((ev) => <option key={ev.code} value={ev.code}>{ev.name}</option>)}
           </select>
         </Field>
       </div>
@@ -202,7 +202,7 @@ export function Judge() {
             <div>
               <h2 className="display" style={{ fontSize: 26 }}>{activeAthlete!.firstName} {activeAthlete!.lastName}</h2>
               <div style={{ color: 'var(--ink-soft)', fontSize: 14 }}>
-                {db.clubs.find((c) => c.id === active.clubId)?.shortName} · {activeLevel?.name} · {events.find((e) => e.code === event)?.name}
+                {db.clubs.find((c) => c.id === active.clubId)?.shortName} · {activeLevel?.name} · {apparatusDefs.find((e) => e.code === apparatus)?.name}
                 {calcCfg && <> · <strong>{calcCfg.label}</strong></>}
               </div>
             </div>
@@ -218,7 +218,7 @@ export function Judge() {
 
           {calcCfg && !override && calcSt != null && (
             <div style={{ marginBottom: 14 }}>
-              <ScoringPanel kind={calcCfg.kind} levelId={activeLevel!.id} eventCode={event} value={calcSt} onChange={setCalcSt} />
+              <ScoringPanel kind={calcCfg.kind} levelId={activeLevel!.id} eventCode={apparatus} value={calcSt} onChange={setCalcSt} />
             </div>
           )}
 

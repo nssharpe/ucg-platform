@@ -8,7 +8,7 @@ import { useToast, useFmtDate } from '../components/ui-hooks';
 import { EventWizard } from '../components/EventWizard';
 import { RegistrationEditor } from '../components/RegistrationEditor';
 import { EventStatusBadge } from './Home';
-import { EVENTS, SHIRT_SIZES } from '../lib/types';
+import { APPARATUS, SHIRT_SIZES } from '../lib/types';
 import type { Athlete, CartItem, Event, EventSession, Registration } from '../lib/types';
 import { deleteRegistration, pushCart, pushEvent, pushEventSessions, pushRegistration } from '../lib/supabase';
 import { fmtMoney } from '../lib/scoring';
@@ -453,7 +453,7 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
           onSave={handleRegSave}
           onCancel={onClose}
           changeFeeApplies={changeFeeApplies}
-          incomingPartnerId={db.registrations.find((r) => r.eventId === event.id && !r.refunded && r.events.includes('SY') && r.partnerAthleteId === athlete.id)?.athleteId ?? null}
+          incomingPartnerId={db.registrations.find((r) => r.eventId === event.id && !r.refunded && r.apparatus.includes('SY') && r.partnerAthleteId === athlete.id)?.athleteId ?? null}
         />
       )}
 
@@ -514,7 +514,7 @@ function exportCsv(db: ReturnType<typeof useDB>, event: Event) {
       `${a.firstName} ${a.lastName}`, club.name, r.discipline,
       db.levels.find((l) => l.id === r.levelId)?.name ?? '',
       event.sessions.find((s) => s.id === r.sessionId)?.name ?? '',
-      r.events.join('|'), a.shirt, a.dietary.join('|'), a.email, a.phone,
+      r.apparatus.join('|'), a.shirt, a.dietary.join('|'), a.email, a.phone,
       `${a.emergency.contact} ${a.emergency.phone}`, a.studentStatus, club.region,
     ]);
   }
@@ -532,7 +532,7 @@ function exportScoresCsv(db: ReturnType<typeof useDB>, event: Event) {
     const club = reg && db.clubs.find((c) => c.id === reg.clubId);
     const session = event.sessions.find((x) => x.id === s.sessionId);
     rows.push([
-      a ? `${a.firstName} ${a.lastName}` : s.regId, club?.name ?? '', session?.name ?? '', s.event,
+      a ? `${a.firstName} ${a.lastName}` : s.regId, club?.name ?? '', session?.name ?? '', s.apparatus,
       db.levels.find((l) => l.id === reg?.levelId)?.name ?? '',
       s.sv ?? '', s.deductions ?? '', s.eScore ?? '', s.final ?? '',
       s.source ?? 'manual', s.calc ?? '', s.enteredBy, s.enteredAt,
@@ -588,7 +588,7 @@ function SquadBuilder({ event, session }: { event: Event; session: EventSession 
   const db = useDB();
   const toast = useToast();
   const regs = db.registrations.filter((r) => r.eventId === event.id && r.sessionId === session.id && !r.refunded);
-  const events = EVENTS[session.discipline];
+  const events = APPARATUS[session.discipline];
   const placed = new Set(session.squads.flatMap((q) => q.athleteRegIds));
   const holding = regs.filter((r) => !placed.has(r.id));
   const name = (regId: string) => {

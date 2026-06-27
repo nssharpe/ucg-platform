@@ -815,7 +815,7 @@ export type Database = {
           created_at: string
           discipline: Database["public"]["Enums"]["discipline"]
           event_levels: Json | null
-          events: string[]
+          apparatus: string[]
           id: string
           keep_listed: boolean
           level_id: string | null
@@ -833,7 +833,7 @@ export type Database = {
           created_at?: string
           discipline: Database["public"]["Enums"]["discipline"]
           event_levels?: Json | null
-          events?: string[]
+          apparatus?: string[]
           id: string
           keep_listed?: boolean
           level_id?: string | null
@@ -851,7 +851,7 @@ export type Database = {
           created_at?: string
           discipline?: Database["public"]["Enums"]["discipline"]
           event_levels?: Json | null
-          events?: string[]
+          apparatus?: string[]
           id?: string
           keep_listed?: boolean
           level_id?: string | null
@@ -1044,7 +1044,7 @@ export type Database = {
           e_score: number | null
           entered_at: string
           entered_by: string | null
-          event: string
+          apparatus: string
           final: number | null
           flashed: boolean
           id: string
@@ -1064,7 +1064,7 @@ export type Database = {
           e_score?: number | null
           entered_at?: string
           entered_by?: string | null
-          event: string
+          apparatus: string
           final?: number | null
           flashed?: boolean
           id: string
@@ -1084,7 +1084,7 @@ export type Database = {
           e_score?: number | null
           entered_at?: string
           entered_by?: string | null
-          event?: string
+          apparatus?: string
           final?: number | null
           flashed?: boolean
           id?: string

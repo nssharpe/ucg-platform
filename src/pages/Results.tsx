@@ -7,7 +7,7 @@ import { useFmtDate } from '../components/ui-hooks';
 import { EventStatusBadge } from './Home';
 import { sessionResults, fmtScore } from '../lib/scoring';
 import { scoreDetailPath } from '../lib/calculators';
-import { EVENTS } from '../lib/types';
+import { APPARATUS } from '../lib/types';
 import type { Registration, Score, DB } from '../lib/types';
 import type { AthleteResult } from '../lib/scoring';
 import { isSupabaseConfigured, subscribeEventScores, applyScorePatch } from '../lib/supabase';
@@ -102,7 +102,7 @@ export function EventResults() {
     const aa = new Map<string, number>();
     const ev = new Map<string, number>(); // key `${regId}|${event}`
     if (!computed || !session) return { aa, ev };
-    const sessionEvents = EVENTS[session.discipline];
+    const sessionEvents = APPARATUS[session.discipline];
     for (const [levelId, rows] of computed.byLevel.entries()) {
       const cats = [...new Set(rows.map((r) => r.reg.category ?? ''))];
       for (const cat of cats) {
@@ -120,7 +120,7 @@ export function EventResults() {
 
   if (!event || !session || !computed) return <p>Event not found.</p>;
   const { byLevel, eventRankings, teamScores } = computed;
-  const events = EVENTS[session.discipline];
+  const events = APPARATUS[session.discipline];
   const clubName = (id: string) => db.clubs.find((c) => c.id === id)?.shortName ?? id;
   const athleteName = (athleteId: string) => {
     const a = db.people.find((p) => p.id === athleteId);
@@ -353,7 +353,7 @@ function ResultRow({ r, events, name, club, showCat, aaPlace, evPlace, linkScore
         const p = evPlace(ev);
         return (
           <td key={ev} className={`num score${medalClass(p)}${reg.quals?.[ev] ? ' res-qual' : ''}`}>
-            {reg.events.includes(ev) ? <>{scoreLink(sc, linkScores)}{p != null && p <= 3 && <span className="res-place"> {p}</span>}</> : ''}
+            {reg.apparatus.includes(ev) ? <>{scoreLink(sc, linkScores)}{p != null && p <= 3 && <span className="res-place"> {p}</span>}</> : ''}
           </td>
         );
       })}

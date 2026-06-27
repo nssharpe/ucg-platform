@@ -10,7 +10,7 @@ function makeReg(overrides: Partial<Registration>): Registration {
     clubId: 'club-A',
     discipline: 'WAG',
     levelId: 'lvl-1',
-    events: ['VT'],
+    apparatus: ['VT'],
     sessionId: null,
     ...overrides,
   };

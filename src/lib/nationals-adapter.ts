@@ -139,7 +139,7 @@ export function buildEntries(db: DB, event: Event, discipline: Discipline, phase
     (r) => r.eventId === event.id && r.sessionId && sessionIds.has(r.sessionId) && !r.refunded,
   );
   const scoreMap = new Map<string, (typeof db.scores)[number]>();
-  for (const s of db.scores) if (sessionIds.has(s.sessionId)) scoreMap.set(`${s.regId}|${s.event}`, s);
+  for (const s of db.scores) if (sessionIds.has(s.sessionId)) scoreMap.set(`${s.regId}|${s.apparatus}`, s);
 
   const peopleById = new Map(db.people.map((p) => [p.id, p]));
   const clubsById = new Map(db.clubs.map((c) => [c.id, c]));

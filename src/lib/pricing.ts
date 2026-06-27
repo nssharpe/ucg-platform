@@ -148,14 +148,14 @@ export function newRegistrationEntryTotal(
 // `athleteId` (the same across all of an athlete's discipline entries) plus a
 // `disciplines` array, one entry per discipline the athlete is registered in.
 // Each `RegDisciplineEntry` carries the discipline-level (`levelId`), the chosen
-// `events`, and optional per-event level overrides (`eventLevels`, used by T&T).
+// `apparatus`, and optional per-event level overrides (`eventLevels`, used by T&T).
 // This maps 1:1 from the RegistrationEditor's per-discipline draft.
 
 /** One discipline's worth of an athlete's registration draft. */
 export type RegDisciplineEntry = {
   discipline: Discipline;
   levelId: string;
-  events: string[];
+  apparatus: string[];
   /** Per-event level overrides (event code → levelId); T&T uses this. */
   eventLevels?: Record<string, string>;
 };

@@ -85,7 +85,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   //
   // *** CRITICAL self-removal divergence from Club.tsx ***: the member side
   // NEVER deletes a registration. Where Club.tsx deletes regs for disciplines
-  // the editor deselected, here we RETAIN the reg and blank it (events: [],
+  // the editor deselected, here we RETAIN the reg and blank it (apparatus: [],
   // no eventLevels / partner) instead. Deletion only ever happens via a refund
   // (out of scope) — so a member can't make their entry vanish on their own.
   const saveRegs = (event: Event, selectedClubId: string, newRegs: Registration[]) => {
@@ -101,7 +101,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
       // Retain (do NOT delete) deselected disciplines: blank them out instead.
       for (const old of existingForAthlete) {
         if (!newDiscSet.has(old.discipline)) {
-          old.events = [];
+          old.apparatus = [];
           delete old.eventLevels;
           delete old.partnerAthleteId;
           old.clubId = selectedClubId;
@@ -115,7 +115,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
         : 0;
 
       // Brand-new entry total for disciplines with no prior reg (host = $0).
-      const priorDisciplineCount = existingForAthlete.filter((r) => r.events.length > 0).length;
+      const priorDisciplineCount = existingForAthlete.filter((r) => r.apparatus.length > 0).length;
       const entryTotal = !editingExisting
         ? newRegistrationEntryTotal(event, {
             competingClubId: selectedClubId,
@@ -250,8 +250,8 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                     <table className="tbl" style={{ marginBottom: 12 }}>
                       <tbody>
                         {regs.map((r) => {
-                          const base = r.events.join(', ');
-                          const evts = r.events.includes('SY') && r.partnerAthleteId
+                          const base = r.apparatus.join(', ');
+                          const evts = r.apparatus.includes('SY') && r.partnerAthleteId
                             ? `${base} (synchro w/ ${nameOf(r.partnerAthleteId)})` : base;
                           return (
                             <tr key={r.id}>
