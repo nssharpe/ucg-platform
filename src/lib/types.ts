@@ -287,7 +287,7 @@ export interface Registration {
   /** Placement category (e.g. "Collegiate Women", "Community Men+") — drives
    *  results grouping badges & filters, mirroring the Nationals results viewer. */
   category?: string;
-  /** Qualifier flags per event code (+ "AA"/"Team") — drives green/gold
+  /** Qualifier flags per apparatus code (+ "AA"/"Team") — drives green/gold
    *  highlighting on results, mirroring the Nationals results viewer. */
   quals?: Record<string, boolean>;
   /** True once the registration's entry/change fee is actually paid through a
@@ -309,7 +309,7 @@ export interface Registration {
   /** Per-event level override (event code → levelId). T&T uses this now;
    *  shape future-proofs per-apparatus levels for MAG/WAG. Absent ⇒ use
    *  `levelId` for all events. */
-  eventLevels?: Record<string, string>;
+  apparatusLevels?: Record<string, string>;
 }
 
 export interface Score {

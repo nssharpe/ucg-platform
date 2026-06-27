@@ -17,7 +17,7 @@ interface NatJson {
   }[];
 }
 
-export const NATIONALS_MEET_ID = 'meet-natreal26';
+export const NATIONALS_EVENT_ID = 'meet-natreal26';
 
 // The importer minted new MAG level ids for names that already exist in the
 // platform's level table — remap instead of duplicating.
@@ -46,7 +46,7 @@ export async function loadNationals(): Promise<{ athletes: number; scores: numbe
   const sessionFor = Object.fromEntries(sessions.map((s) => [s.discipline, s]));
 
   const event: Event = {
-    id: NATIONALS_MEET_ID,
+    id: NATIONALS_EVENT_ID,
     slug: data.meta.slug,
     name: `${data.meta.name} (Real Results)`,
     hostClubId: 'club-1',
@@ -62,9 +62,9 @@ export async function loadNationals(): Promise<{ athletes: number; scores: numbe
   let scoreCount = 0;
   mutate((db) => {
     // Idempotent: wipe any previous import first.
-    db.events = db.events.filter((m) => m.id !== NATIONALS_MEET_ID);
-    db.registrations = db.registrations.filter((r) => r.eventId !== NATIONALS_MEET_ID);
-    db.scores = db.scores.filter((s) => s.eventId !== NATIONALS_MEET_ID);
+    db.events = db.events.filter((m) => m.id !== NATIONALS_EVENT_ID);
+    db.registrations = db.registrations.filter((r) => r.eventId !== NATIONALS_EVENT_ID);
+    db.scores = db.scores.filter((s) => s.eventId !== NATIONALS_EVENT_ID);
     db.clubs = db.clubs.filter((c) => !c.id.startsWith('nc'));
     db.people = db.people.filter((p) => !p.id.startsWith('na'));
 
@@ -103,7 +103,7 @@ export async function loadNationals(): Promise<{ athletes: number; scores: numbe
       levelSeen[r.discipline]?.add(levelId);
       const session = sessionFor[r.discipline];
       const reg: Registration = {
-        id: r.id, eventId: NATIONALS_MEET_ID,
+        id: r.id, eventId: NATIONALS_EVENT_ID,
         athleteId: r.athleteId, clubId: r.clubId,
         discipline: r.discipline, levelId,
         apparatus: r.events, sessionId: session.id,
@@ -113,8 +113,8 @@ export async function loadNationals(): Promise<{ athletes: number; scores: numbe
       for (const [ev, finalScore] of Object.entries(r.scores)) {
         scoreCount++;
         db.scores.push({
-          id: `${NATIONALS_MEET_ID}|${r.id}|${ev}`,
-          eventId: NATIONALS_MEET_ID, sessionId: session.id, regId: r.id, apparatus: ev,
+          id: `${NATIONALS_EVENT_ID}|${r.id}|${ev}`,
+          eventId: NATIONALS_EVENT_ID, sessionId: session.id, regId: r.id, apparatus: ev,
           sv: null, deductions: null, eScore: null, final: finalScore,
           source: 'manual', enteredBy: 'import-nationals-2026', enteredAt: data.meta.generated, flashed: true,
         } as Score);

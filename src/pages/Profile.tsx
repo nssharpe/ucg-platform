@@ -276,7 +276,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
       <p className="page-sub">
         {adminView
           ? <><code>#/admin/members/{p.id}</code> · {p.kind} · {p.email}</>
-          : 'Your competition levels, contact info, and meet-day details.'}
+          : 'Your competition levels, contact info, and event-day details.'}
       </p>
 
       {adminView && (
