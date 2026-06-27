@@ -14,40 +14,151 @@ import { deleteRegistration, pushCart, pushEvent, pushEventSessions, pushRegistr
 import { fmtMoney } from '../lib/scoring';
 import { newRegistrationEntryTotal, registrationChangeFee } from '../lib/pricing';
 
+const today = () => new Date().toISOString().slice(0, 10);
+
+// Sortable columns of the Events table. Each maps to a comparable underlying value.
+type SortKey = 'name' | 'location' | 'date' | 'disciplines' | 'regOpens' | 'regCloses';
+
+// Pure comparator: returns the underlying value (lowercased for text) for a column.
+function sortValue(ev: Event, key: SortKey): string {
+  switch (key) {
+    case 'name': return ev.name.toLowerCase();
+    case 'location': return `${ev.city}, ${ev.state}`.toLowerCase();
+    case 'date': return ev.startDate; // ISO yyyy-mm-dd sorts lexicographically
+    case 'disciplines': return ev.disciplines.join(' · ').toLowerCase();
+    case 'regOpens': return ev.regOpens.slice(0, 10);
+    case 'regCloses': return ev.regCloses.slice(0, 10);
+  }
+}
+
+const COLUMNS: { key: SortKey; label: string }[] = [
+  { key: 'name', label: 'Event Name' },
+  { key: 'location', label: 'Location' },
+  { key: 'date', label: 'Date(s)' },
+  { key: 'disciplines', label: 'Disciplines' },
+  { key: 'regOpens', label: 'Reg Opens' },
+  { key: 'regCloses', label: 'Reg Closes' },
+];
+
+/** Events list (MY UCG / public): all UCG-hosted & sanctioned events, split into
+ *  Upcoming / Past (on `endDate >= today`), searchable by name/location/disciplines,
+ *  and shown as a sortable, horizontally-scrollable table. Modeled on
+ *  MyRegistrations.tsx. Admins can sanction a new event via the wizard. */
 export function Events() {
   const db = useDB();
   const caps = useCapabilities();
   const fmtDate = useFmtDate();
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [tab, setTab] = useState<'upcoming' | 'past'>('upcoming');
+  const [q, setQ] = useState('');
+  // Single sort state. `null` dir ⇒ apply the tab-appropriate default (date asc for
+  // Upcoming, date desc for Past). A user click sets an explicit key + direction.
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+
+  const t = today();
+  const lq = q.trim().toLowerCase();
+
+  const inTab = db.events.filter((ev) => (tab === 'upcoming' ? ev.endDate >= t : ev.endDate < t));
+  const matched = inTab.filter((ev) => {
+    if (!lq) return true;
+    const hay = `${ev.name} ${ev.city}, ${ev.state} ${ev.disciplines.join(' · ')}`.toLowerCase();
+    return hay.includes(lq);
+  });
+
+  // Effective sort: explicit user choice, or the per-tab default (date, asc for
+  // upcoming / desc for past).
+  const effKey: SortKey = sortKey ?? 'date';
+  const effDir: 'asc' | 'desc' = sortKey ? sortDir : (tab === 'upcoming' ? 'asc' : 'desc');
+  const rows = [...matched].sort((a, b) => {
+    const cmp = sortValue(a, effKey).localeCompare(sortValue(b, effKey));
+    return effDir === 'asc' ? cmp : -cmp;
+  });
+
+  const onSort = (key: SortKey) => {
+    if (effKey === key) {
+      setSortKey(key);
+      setSortDir(effDir === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  };
+
+  const switchTab = (id: 'upcoming' | 'past') => {
+    setTab(id);
+    setSortKey(null); // re-apply the tab-appropriate default sort
+  };
+
   return (
     <div>
       <h1 className="page-title display">Events</h1>
-      <p className="page-sub">Every event gets its own unique URL, sessions, squads, and live results page.</p>
+      <p className="page-sub">Current and Past UCG Hosted (Nationals, FlipFest, etc.) and UCG Sanctioned (Regular Season Meets) Events</p>
       {caps.isAdmin && (
-        <button className="btn primary" style={{ marginBottom: 18 }} onClick={() => setWizardOpen(true)}>+ Sanction new event</button>
+        <button className="btn primary" style={{ marginBottom: 18 }} onClick={() => setWizardOpen(true)}>+ Sanction New Event</button>
       )}
       {wizardOpen && <EventWizard onClose={() => setWizardOpen(false)} />}
-      <div className="grid cols-3">
-        {db.events.map((m) => {
-          const regs = db.registrations.filter((r) => r.eventId === m.id && !r.refunded);
-          return (
-            <div className="card card-pad" key={m.id} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                <h3 style={{ fontSize: 17 }}><Link to={`/events/${m.slug}`} style={{ textDecoration: 'none' }}>{m.name}</Link></h3>
-                <EventStatusBadge status={m.status} />
-              </div>
-              <div style={{ fontSize: 13.5, color: 'var(--ink-soft)' }}>
-                {m.city}, {m.state} · {fmtDate(m.startDate)}<br />
-                {m.disciplines.join(' · ')} · {regs.length} athletes · hosted by {db.clubs.find((c) => c.id === m.hostClubId)?.shortName}
-              </div>
-              <div style={{ marginTop: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                <Link className="btn small" to={`/events/${m.slug}`}>Details</Link>
-                {(m.status === 'in-progress' || m.status === 'complete') && <Link className="btn small primary" to={`/results/${m.slug}`}>Results</Link>}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+
+      <Tabs
+        tabs={[{ id: 'upcoming' as const, label: 'Upcoming' }, { id: 'past' as const, label: 'Past' }]}
+        active={tab}
+        onChange={switchTab}
+      />
+
+      <input
+        type="search" className="input" placeholder="Search by name, location, or discipline…"
+        value={q} onChange={(e) => setQ(e.target.value)}
+        style={{ maxWidth: 320, margin: '12px 0' }}
+      />
+
+      {rows.length === 0 ? (
+        <p style={{ color: 'var(--ink-soft)' }}>No {tab} events.</p>
+      ) : (
+        <div className="card" style={{ overflow: 'hidden' }}>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="tbl">
+              <thead>
+                <tr>
+                  {COLUMNS.map((c) => (
+                    <th
+                      key={c.key}
+                      onClick={() => onSort(c.key)}
+                      style={{ cursor: 'pointer', whiteSpace: 'nowrap', userSelect: 'none', color: 'var(--ink)' }}
+                    >
+                      {c.label}
+                      {effKey === c.key && <span style={{ marginLeft: 4 }}>{effDir === 'asc' ? '▲' : '▼'}</span>}
+                    </th>
+                  ))}
+                  <th style={{ whiteSpace: 'nowrap' }}>Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((ev) => {
+                  const dates = ev.startDate === ev.endDate
+                    ? fmtDate(ev.startDate)
+                    : `${fmtDate(ev.startDate)}–${fmtDate(ev.endDate)}`;
+                  return (
+                    <tr key={ev.id}>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                          <Link to={`/events/${ev.slug}`}>{ev.name}</Link>
+                          <EventStatusBadge status={ev.status} />
+                        </span>
+                      </td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{ev.city}, {ev.state}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{dates}</td>
+                      <td style={{ color: 'var(--ink-soft)' }}>{ev.disciplines.join(' · ')}</td>
+                      <td style={{ whiteSpace: 'nowrap', color: 'var(--ink-soft)' }}>{fmtDate(ev.regOpens.slice(0, 10))}</td>
+                      <td style={{ whiteSpace: 'nowrap', color: 'var(--ink-soft)' }}>{fmtDate(ev.regCloses.slice(0, 10))}</td>
+                      <td><Link className="btn small" to={`/events/${ev.slug}`}>Details</Link></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
