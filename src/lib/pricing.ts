@@ -148,7 +148,7 @@ export function newRegistrationEntryTotal(
 // `athleteId` (the same across all of an athlete's discipline entries) plus a
 // `disciplines` array, one entry per discipline the athlete is registered in.
 // Each `RegDisciplineEntry` carries the discipline-level (`levelId`), the chosen
-// `apparatus`, and optional per-event level overrides (`eventLevels`, used by T&T).
+// `apparatus`, and optional per-apparatus level overrides (`apparatusLevels`, used by T&T).
 // This maps 1:1 from the RegistrationEditor's per-discipline draft.
 
 /** One discipline's worth of an athlete's registration draft. */
@@ -157,7 +157,7 @@ export type RegDisciplineEntry = {
   levelId: string;
   apparatus: string[];
   /** Per-event level overrides (event code → levelId); T&T uses this. */
-  eventLevels?: Record<string, string>;
+  apparatusLevels?: Record<string, string>;
 };
 
 /** Normalized before/after snapshot of an athlete's whole registration. */
@@ -171,7 +171,7 @@ function byDiscipline(state: RegChangeState): Map<Discipline, RegDisciplineEntry
   return new Map(state.disciplines.map((d) => [d.discipline, d]));
 }
 
-function eventLevelsDiffer(
+function apparatusLevelsDiffer(
   a: Record<string, string> | undefined,
   b: Record<string, string> | undefined,
 ): boolean {
@@ -185,7 +185,7 @@ function eventLevelsDiffer(
 /**
  * Is the change from `before` → `after` ELIGIBLE for a chargeable change?
  * Returns true if ANY of: a discipline was ADDED; a discipline-level (`levelId`)
- * or T&T event-level (`eventLevels`) changed for a discipline in both; the
+ * or T&T apparatus-level (`apparatusLevels`) changed for a discipline in both; the
  * club changed; or the athlete was swapped. Adding/removing apparatus WITHIN an
  * already-registered discipline, REMOVING a discipline, or no change at all are
  * NOT (on their own) eligible.
@@ -203,12 +203,12 @@ export function changeIsEligible(before: RegChangeState, after: RegChangeState):
     if (!beforeMap.has(disc)) return true;
   }
 
-  // Level change (discipline-level or T&T event-level) for a shared discipline.
+  // Level change (discipline-level or T&T apparatus-level) for a shared discipline.
   for (const [disc, a] of afterMap) {
     const b = beforeMap.get(disc);
     if (!b) continue;
     if (a.levelId !== b.levelId) return true;
-    if (eventLevelsDiffer(a.eventLevels, b.eventLevels)) return true;
+    if (apparatusLevelsDiffer(a.apparatusLevels, b.apparatusLevels)) return true;
   }
 
   // Note: a REMOVED discipline, or apparatus add/remove within an existing

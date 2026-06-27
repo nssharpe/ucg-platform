@@ -10,8 +10,10 @@ const LS_KEY = 'ucg-db-v1';
 // changed (db.meets→db.events, registration.events→apparatus, score.event→
 // apparatus), so any localStorage snapshot from a prior version must be
 // discarded and reseeded rather than loaded into the new code (which would read
-// undefined `db.events` and crash).
-const SEED_VERSION = 6;
+// undefined `db.events` and crash). Bumped to 7 for the follow-up
+// registration.eventLevels→apparatusLevels rename (same reasoning: discard the
+// stale shape so the new field isn't read as undefined from cache).
+const SEED_VERSION = 7;
 
 let db: DB = load();
 const listeners = new Set<() => void>();

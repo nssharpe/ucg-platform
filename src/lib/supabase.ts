@@ -226,7 +226,7 @@ const registrationToRow = (r: Registration, squadId: string | null = null) => ({
   level_id: r.levelId, apparatus: r.apparatus, session_id: r.sessionId || null, squad_id: squadId,
   refunded: r.refunded ?? false, refund_requested: r.refundRequested ?? false,
   keep_listed: r.keepListed ?? false,
-  partner_athlete_id: r.partnerAthleteId ?? null, event_levels: r.eventLevels ?? null,
+  partner_athlete_id: r.partnerAthleteId ?? null, apparatus_levels: r.apparatusLevels ?? null,
   paid: r.paid ?? false, updated_pending: r.updatedPending ?? false,
 });
 
@@ -244,7 +244,7 @@ const rowToRegistration = (r: Row<'registrations'>): Registration => ({
   ...((r as { updated_pending?: boolean | null }).updated_pending ? { updatedPending: true } : {}),
   ...(r.refund_requested ? { refundRequested: true } : {}),
   ...(r.partner_athlete_id ? { partnerAthleteId: r.partner_athlete_id } : {}),
-  ...(r.event_levels ? { eventLevels: r.event_levels as Registration['eventLevels'] } : {}),
+  ...(r.apparatus_levels ? { apparatusLevels: r.apparatus_levels as Registration['apparatusLevels'] } : {}),
 });
 
 const scoreToRow = (s: Score) => ({
