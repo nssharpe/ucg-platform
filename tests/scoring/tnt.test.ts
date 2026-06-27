@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { init, compute, tntLevel, tntEvent } from '../../src/scoring/tnt';
+import { init, compute, tntLevel, tntApparatus } from '../../src/scoring/tnt';
 
 describe('tnt scoring engine', () => {
   it('TR Intermediate: a skill DD exceeding the level max warns and final = DD + exec', () => {
@@ -35,12 +35,12 @@ describe('tnt scoring engine', () => {
     expect(out.final).toBe(10.8);
   });
 
-  it('exposes structural helpers: produces, tntEvent, tntLevel', () => {
+  it('exposes structural helpers: produces, tntApparatus, tntLevel', () => {
     const state = init('tnt-int', 'TR');
     const out = compute(state, 'tnt-int', 'TR');
 
     expect(out.produces).toBe('full');
-    expect(tntEvent('DM')).toBe('DM');
+    expect(tntApparatus('DM')).toBe('DM');
     expect(tntLevel('tnt-high')).toBe('High Flyers');
   });
 });
