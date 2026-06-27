@@ -22,7 +22,8 @@ const stack: HistoryEntry[] = [];
 export function labelFor(pathname: string): string {
   if (pathname === '/') return 'Home';
   if (pathname === '/results') return 'Live Results';
-  if (pathname === '/meets') return 'Meets';
+  if (pathname === '/events') return 'Events';
+  if (pathname === '/meets') return 'Events'; // legacy path (redirects to /events)
   if (pathname === '/me') return 'Profile';
   if (pathname === '/membership') return 'Membership';
   if (pathname === '/admin/members') return 'Members';
@@ -33,7 +34,8 @@ export function labelFor(pathname: string): string {
   if (/^\/club\/[^/]+\/registrations$/.test(pathname)) return 'Club Registrations';
   if (/^\/club\/[^/]+$/.test(pathname)) return 'Club Roster';
   if (/^\/club\/[^/]+\/cart$/.test(pathname)) return 'Club Cart & Receipts';
-  if (/^\/meets\//.test(pathname)) return 'Meet';
+  if (/^\/events\//.test(pathname)) return 'Event';
+  if (/^\/meets\//.test(pathname)) return 'Event'; // legacy path (redirects to /events/)
   if (/^\/members\//.test(pathname)) return 'Member';
   if (/^\/clubs\//.test(pathname)) return 'Club';
   // Generic fallback: capitalise path segments

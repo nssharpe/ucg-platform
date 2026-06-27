@@ -7,7 +7,7 @@ import { pushRegistration, pushCart } from '../lib/supabase';
 import { RegistrationEditor } from '../components/RegistrationEditor';
 import { newRegistrationEntryTotal, registrationChangeFee } from '../lib/pricing';
 import { fmtMoney } from '../lib/scoring';
-import type { Athlete, Club, Level, Meet, Registration, Season } from '../lib/types';
+import type { Athlete, Club, Level, Event, Registration, Season } from '../lib/types';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -32,7 +32,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   const [tab, setTab] = useState<'upcoming' | 'past'>('upcoming');
   const [q, setQ] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [editingMeetId, setEditingMeetId] = useState<string | null>(null);
+  const [editingEventId, setEditingEventId] = useState<string | null>(null);
 
   const lvlName = (id?: string) => db.levels.find((l) => l.id === id)?.name ?? '—';
   const nameOf = (id: string) => {
@@ -40,60 +40,60 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
     return p ? `${p.firstName} ${p.lastName}` : 'partner';
   };
 
-  // Group this athlete's (non-refunded) registrations by meet.
-  const byMeet = useMemo(() => {
+  // Group this athlete's (non-refunded) registrations by event.
+  const byEvent = useMemo(() => {
     const mine = db.registrations.filter((r) => r.athleteId === personId && !r.refunded);
     const groups = new Map<string, Registration[]>();
     for (const r of mine) {
-      const arr = groups.get(r.meetId) ?? [];
+      const arr = groups.get(r.eventId) ?? [];
       arr.push(r);
-      groups.set(r.meetId, arr);
+      groups.set(r.eventId, arr);
     }
     return [...groups.entries()]
-      .map(([meetId, regs]) => ({ meet: db.meets.find((m) => m.id === meetId), regs }))
-      .filter((g): g is { meet: NonNullable<typeof g.meet>; regs: Registration[] } => !!g.meet)
-      .sort((a, b) => b.meet.startDate.localeCompare(a.meet.startDate));
-  }, [db.registrations, db.meets, personId]);
+      .map(([eventId, regs]) => ({ event: db.events.find((m) => m.id === eventId), regs }))
+      .filter((g): g is { event: NonNullable<typeof g.event>; regs: Registration[] } => !!g.event)
+      .sort((a, b) => b.event.startDate.localeCompare(a.event.startDate));
+  }, [db.registrations, db.events, personId]);
 
   const t = today();
   const lq = q.trim().toLowerCase();
-  const filtered = byMeet
-    .filter((g) => (tab === 'upcoming' ? g.meet.endDate >= t : g.meet.endDate < t))
-    .filter((g) => !lq || g.meet.name.toLowerCase().includes(lq) || g.meet.city.toLowerCase().includes(lq));
+  const filtered = byEvent
+    .filter((g) => (tab === 'upcoming' ? g.event.endDate >= t : g.event.endDate < t))
+    .filter((g) => !lq || g.event.name.toLowerCase().includes(lq) || g.event.city.toLowerCase().includes(lq));
 
   // Clubs this athlete is affiliated with (main + alt) — for the club switch.
   const me = db.people.find((p) => p.id === personId);
   const affiliatedClubIds = me ? [me.mainClubId, ...(me.altClubIds ?? [])].filter((x): x is string => !!x) : [];
   const affiliatedClubs = db.clubs.filter((c) => affiliatedClubIds.includes(c.id));
 
-  // A meet's change fee is live once its start date has passed.
-  const changeFeeApplies = (meet: Meet) => !!(meet.changeFee && new Date() >= new Date(meet.changeFee.startsAt));
+  // A event's change fee is live once its start date has passed.
+  const changeFeeApplies = (event: Event) => !!(event.changeFee && new Date() >= new Date(event.changeFee.startsAt));
 
-  // Label used for a meet's change fee in the athlete's cart — also how we detect
-  // that a change fee for this meet is already pending checkout.
-  const changeFeeLabel = (meetName: string) => `${meetName} change fee`;
-  const changeFeePending = (meet: Meet) =>
-    (db.carts[personId] ?? []).some((c) => c.kind === 'meet-entry' && c.label.startsWith(changeFeeLabel(meet.name)));
+  // Label used for an event's change fee in the athlete's cart — also how we detect
+  // that a change fee for this event is already pending checkout.
+  const changeFeeLabel = (eventName: string) => `${eventName} change fee`;
+  const changeFeePending = (event: Event) =>
+    (db.carts[personId] ?? []).some((c) => c.kind === 'meet-entry' && c.label.startsWith(changeFeeLabel(event.name)));
 
   const season = db.seasons.find((s) => s.current)!;
 
   // Persist the member's own registration edits (6a). Modeled on Club.tsx
   // saveRegs + addToCart, but TARGETS THE MEMBER'S OWN CART (carts[personId],
-  // non-club) and uses the club selected in the modal. A meet's change fee is
+  // non-club) and uses the club selected in the modal. A event's change fee is
   // routed to the member's personal cart, where the Stripe webhook (after the
   // CartCheckout payment) flips the exact linked regs to paid via refRegIds.
   //
   // *** CRITICAL self-removal divergence from Club.tsx ***: the member side
   // NEVER deletes a registration. Where Club.tsx deletes regs for disciplines
-  // the editor deselected, here we RETAIN the reg and blank it (events: [],
+  // the editor deselected, here we RETAIN the reg and blank it (apparatus: [],
   // no eventLevels / partner) instead. Deletion only ever happens via a refund
   // (out of scope) — so a member can't make their entry vanish on their own.
-  const saveRegs = (meet: Meet, selectedClubId: string, newRegs: Registration[]) => {
-    const applyFee = changeFeeApplies(meet);
-    const alreadyPending = changeFeePending(meet);
+  const saveRegs = (event: Event, selectedClubId: string, newRegs: Registration[]) => {
+    const applyFee = changeFeeApplies(event);
+    const alreadyPending = changeFeePending(event);
     mutate((d) => {
       const existingForAthlete = d.registrations.filter(
-        (r) => r.meetId === meet.id && r.athleteId === personId && !r.refunded,
+        (r) => r.eventId === event.id && r.athleteId === personId && !r.refunded,
       );
       const editingExisting = existingForAthlete.length > 0;
       const newDiscSet = new Set(newRegs.map((r) => r.discipline));
@@ -101,7 +101,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
       // Retain (do NOT delete) deselected disciplines: blank them out instead.
       for (const old of existingForAthlete) {
         if (!newDiscSet.has(old.discipline)) {
-          old.events = [];
+          old.apparatus = [];
           delete old.eventLevels;
           delete old.partnerAthleteId;
           old.clubId = selectedClubId;
@@ -111,13 +111,13 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
 
       // Chargeable edit (fee live, editing an existing reg, non-host fee).
       const changeFee = applyFee && editingExisting
-        ? registrationChangeFee(meet, { competingClubId: selectedClubId })
+        ? registrationChangeFee(event, { competingClubId: selectedClubId })
         : 0;
 
       // Brand-new entry total for disciplines with no prior reg (host = $0).
-      const priorDisciplineCount = existingForAthlete.filter((r) => r.events.length > 0).length;
+      const priorDisciplineCount = existingForAthlete.filter((r) => r.apparatus.length > 0).length;
       const entryTotal = !editingExisting
-        ? newRegistrationEntryTotal(meet, {
+        ? newRegistrationEntryTotal(event, {
             competingClubId: selectedClubId,
             priorDisciplineCount,
             newDisciplineCount: newRegs.length,
@@ -158,12 +158,12 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
         const cart = d.carts[personId] ?? (d.carts[personId] = []);
         cart.push({
           id: `ci-change-${Date.now()}`,
-          label: `${changeFeeLabel(meet.name)}`,
+          label: `${changeFeeLabel(event.name)}`,
           amount: changeFee,
           kind: 'meet-entry',
           refUserId: personId,
           refRegIds: newRegs.map((r) => r.id),
-          refMeetId: meet.id,
+          refEventId: event.id,
           refLineType: 'change',
         });
         pushCart(personId, cart, false);
@@ -171,34 +171,34 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
         const cart = d.carts[personId] ?? (d.carts[personId] = []);
         cart.push({
           id: `ci-${Date.now()}`,
-          label: `${meet.name} entry — ${newRegs.map((r) => r.discipline).join('+')}`,
+          label: `${event.name} entry — ${newRegs.map((r) => r.discipline).join('+')}`,
           amount: entryTotal,
           kind: 'meet-entry',
           refUserId: personId,
           refRegIds: newRegs.map((r) => r.id),
-          refMeetId: meet.id,
+          refEventId: event.id,
           refLineType: 'entry',
         });
         pushCart(personId, cart, false);
       }
     });
 
-    const fee = applyFee && existingForMeet(meet).length > 0 && !alreadyPending
-      ? registrationChangeFee(meet, { competingClubId: selectedClubId })
+    const fee = applyFee && existingForEvent(event).length > 0 && !alreadyPending
+      ? registrationChangeFee(event, { competingClubId: selectedClubId })
       : 0;
     toast(fee > 0
       ? `Registration updated. A ${fmtMoney(fee)} change fee was added to your cart — pay it to finalize.`
       : 'Registration updated.');
-    setEditingMeetId(null);
+    setEditingEventId(null);
   };
 
-  const existingForMeet = (meet: Meet) =>
-    db.registrations.filter((r) => r.meetId === meet.id && r.athleteId === personId && !r.refunded);
+  const existingForEvent = (event: Event) =>
+    db.registrations.filter((r) => r.eventId === event.id && r.athleteId === personId && !r.refunded);
 
   return (
     <div style={{ maxWidth: 820 }}>
       <h1 className="page-title display">My Registrations</h1>
-      <p className="page-sub">Every event you’re registered for. Change which club you compete for on upcoming meets.</p>
+      <p className="page-sub">Every event you’re registered for. Change which club you compete for on upcoming events.</p>
 
       <Tabs
         tabs={[{ id: 'upcoming' as const, label: 'Upcoming' }, { id: 'past' as const, label: 'Past' }]}
@@ -207,7 +207,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
       />
 
       <input
-        type="search" className="input" placeholder="Search by meet or city…"
+        type="search" className="input" placeholder="Search by event or city…"
         value={q} onChange={(e) => setQ(e.target.value)}
         style={{ maxWidth: 300, margin: '12px 0' }}
       />
@@ -216,24 +216,24 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
         <p style={{ color: 'var(--ink-soft)' }}>No {tab} registrations.</p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {filtered.map(({ meet, regs }) => {
-            const isOpen = expanded === meet.id;
+          {filtered.map(({ event, regs }) => {
+            const isOpen = expanded === event.id;
             const club = db.clubs.find((c) => c.id === regs[0]?.clubId);
-            const regClosed = meet.regCloses < t;
+            const regClosed = event.regCloses < t;
             return (
-              <div key={meet.id} className="card card-pad">
+              <div key={event.id} className="card card-pad">
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, cursor: 'pointer', flexWrap: 'wrap' }}
-                  onClick={() => setExpanded(isOpen ? null : meet.id)}>
-                  <strong style={{ fontSize: 15 }}>{meet.name}</strong>
+                  onClick={() => setExpanded(isOpen ? null : event.id)}>
+                  <strong style={{ fontSize: 15 }}>{event.name}</strong>
                   <span style={{ color: 'var(--ink-soft)', fontSize: 13 }}>
-                    {meet.startDate}{meet.endDate !== meet.startDate ? `–${meet.endDate}` : ''} · {meet.city}, {meet.state}
+                    {event.startDate}{event.endDate !== event.startDate ? `–${event.endDate}` : ''} · {event.city}, {event.state}
                   </span>
                   {club && <Badge tone="navy">{club.shortName || club.name}</Badge>}
                   <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 10, alignItems: 'center' }}>
                     {isOpen && tab === 'upcoming' && !regClosed && (
                       <button
                         className="btn ghost small"
-                        onClick={(e) => { e.stopPropagation(); setEditingMeetId(meet.id); }}
+                        onClick={(e) => { e.stopPropagation(); setEditingEventId(event.id); }}
                       >
                         Edit
                       </button>
@@ -245,13 +245,13 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                 {isOpen && (
                   <div style={{ marginTop: 12, borderTop: '1px solid var(--line)', paddingTop: 12 }}>
                     <div style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 8 }}>
-                      Status: {meet.status} · Registration closes {meet.regCloses}
+                      Status: {event.status} · Registration closes {event.regCloses}
                     </div>
                     <table className="tbl" style={{ marginBottom: 12 }}>
                       <tbody>
                         {regs.map((r) => {
-                          const base = r.events.join(', ');
-                          const evts = r.events.includes('SY') && r.partnerAthleteId
+                          const base = r.apparatus.join(', ');
+                          const evts = r.apparatus.includes('SY') && r.partnerAthleteId
                             ? `${base} (synchro w/ ${nameOf(r.partnerAthleteId)})` : base;
                           return (
                             <tr key={r.id}>
@@ -265,14 +265,14 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                     </table>
 
                     {tab === 'upcoming' && (
-                      changeFeePending(meet) ? (
+                      changeFeePending(event) ? (
                         <div className="card card-pad" style={{ borderLeft: '4px solid var(--warn-500, #d97706)', padding: '8px 12px', fontSize: 13 }}>
-                          ⏳ Changes are pending checkout — a {fmtMoney(meet.changeFee?.amount ?? 0)} change fee is in your{' '}
+                          ⏳ Changes are pending checkout — a {fmtMoney(event.changeFee?.amount ?? 0)} change fee is in your{' '}
                           <a href="#/cart">cart</a>. Your registration updates fully once it’s paid.
                         </div>
                       ) : regClosed ? (
                         <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: 0 }}>
-                          Registration is closed for this meet — entries can no longer be edited.
+                          Registration is closed for this event — entries can no longer be edited.
                         </p>
                       ) : (
                         <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: 0 }}>
@@ -288,15 +288,15 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
         </div>
       )}
 
-      {editingMeetId && me && (() => {
-        const meet = db.meets.find((m) => m.id === editingMeetId);
-        if (!meet) return null;
-        const existing = existingForMeet(meet);
+      {editingEventId && me && (() => {
+        const event = db.events.find((m) => m.id === editingEventId);
+        if (!event) return null;
+        const existing = existingForEvent(event);
         const currentClubId = existing[0]?.clubId ?? me.mainClubId ?? affiliatedClubs[0]?.id ?? null;
         if (!currentClubId) return null;
         return (
           <EditRegistrationModal
-            meet={meet}
+            event={event}
             me={me}
             clubs={affiliatedClubs}
             currentClubId={currentClubId}
@@ -304,9 +304,9 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
             allAthletes={db.people as Athlete[]}
             levels={db.levels}
             season={season}
-            changeFeeApplies={changeFeeApplies(meet)}
-            onClose={() => setEditingMeetId(null)}
-            onSave={(selectedClubId, regs) => saveRegs(meet, selectedClubId, regs)}
+            changeFeeApplies={changeFeeApplies(event)}
+            onClose={() => setEditingEventId(null)}
+            onSave={(selectedClubId, regs) => saveRegs(event, selectedClubId, regs)}
           />
         );
       })()}
@@ -321,9 +321,9 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
 // (its clubId prop is stamped onto every saved reg). `originalClubId` lets a
 // club-only switch register as an eligible/chargeable change.
 function EditRegistrationModal({
-  meet, me, clubs, currentClubId, existing, allAthletes, levels, season, changeFeeApplies, onClose, onSave,
+  event, me, clubs, currentClubId, existing, allAthletes, levels, season, changeFeeApplies, onClose, onSave,
 }: {
-  meet: Meet; me: Athlete; clubs: Club[]; currentClubId: string;
+  event: Event; me: Athlete; clubs: Club[]; currentClubId: string;
   existing: Registration[]; allAthletes: Athlete[]; levels: Level[];
   season: Season; changeFeeApplies: boolean;
   onClose: () => void; onSave: (selectedClubId: string, regs: Registration[]) => void;
@@ -331,7 +331,7 @@ function EditRegistrationModal({
   const [clubId, setClubId] = useState<string>(currentClubId);
 
   return (
-    <Modal title={`Edit registration — ${meet.name}`} onClose={onClose}>
+    <Modal title={`Edit registration — ${event.name}`} onClose={onClose}>
       {clubs.length > 1 && (
         <Field label="Club I’m competing for">
           <Combo
@@ -342,7 +342,7 @@ function EditRegistrationModal({
         </Field>
       )}
       <RegistrationEditor
-        meet={meet}
+        event={event}
         athlete={me}
         clubId={clubId}
         originalClubId={currentClubId}

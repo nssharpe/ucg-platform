@@ -1,12 +1,12 @@
 // create-checkout-session — start a Stripe Embedded Checkout for a cart (Phase S4,
-// generalized: memberships, meet entries, change fees, addons; self OR club carts).
+// generalized: memberships, event entries, change fees, addons; self OR club carts).
 //
 // Auth: any signed-in user. The caller may pay for EITHER their own person cart
 // (every item person_id === caller, club_id null) OR a club cart they manage
 // (every item club_id === X, person_id null, caller in club_managers for X).
 //
 // Trust boundary: the client sends only the cart-item ids to pay. EVERY amount is
-// recomputed here server-side from admin config (season fees, meet config) + the
+// recomputed here server-side from admin config (season fees, event config) + the
 // referenced state (`_shared/stripe.ts`, mirroring pricing.ts) — the cart row's
 // `amount` is display-only and never trusted. We add the service-fee line, create
 // an Embedded Checkout Session (`ui_mode: 'embedded'`, no redirect — the FE keeps
@@ -28,7 +28,7 @@ import {
   toCents,
   type MembershipRow,
   type MembershipType,
-  type RegFeeMeet,
+  type RegFeeEvent,
   type SeasonFees,
 } from '../_shared/stripe.ts';
 
@@ -51,13 +51,13 @@ interface CartItemRow {
   ref_season_id: string | null;
   ref_type: string | null;
   ref_reg_ids: string[] | null;
-  ref_meet_id: string | null;
+  ref_event_id: string | null;
   ref_line_type: string | null;
 }
 
 interface RegRow {
   id: string;
-  meet_id: string;
+  event_id: string;
   athlete_id: string;
   club_id: string | null;
   refunded: boolean;
@@ -97,7 +97,7 @@ Deno.serve(async (req) => {
   // --- Load the requested cart items (service role; we authorize ownership below) ---
   const { data: itemRows, error: itemErr } = await db
     .from('cart_items')
-    .select('id, club_id, person_id, label, amount, kind, ref_user_id, ref_season_id, ref_type, ref_reg_ids, ref_meet_id, ref_line_type')
+    .select('id, club_id, person_id, label, amount, kind, ref_user_id, ref_season_id, ref_type, ref_reg_ids, ref_event_id, ref_line_type')
     .in('id', cartItemIds);
   if (itemErr) return json({ ok: false, error: itemErr.message }, 500);
   const items = (itemRows ?? []) as CartItemRow[];
@@ -123,46 +123,46 @@ Deno.serve(async (req) => {
   }
 
   // --- Batch-load everything the recompute needs ----------------------------
-  // Seasons (memberships), meets (meet-entry + addon), registrations (entry/change
+  // Seasons (memberships), events (meet-entry + addon), registrations (entry/change
   // counts), existing memberships (per target person), club_memberships (club fee).
   const seasonIds = Array.from(new Set(
     items.filter((i) => i.kind === 'membership' && i.ref_season_id).map((i) => i.ref_season_id!),
   ));
-  // ref_reg_ids → resolve regs to meets; ref_meet_id covers addons + change lines.
+  // ref_reg_ids → resolve regs to events; ref_event_id covers addons + change lines.
   const allRefRegIds = Array.from(new Set(items.flatMap((i) => i.ref_reg_ids ?? [])));
 
   let regsByLine: RegRow[] = [];
   if (allRefRegIds.length) {
     const { data: rr, error: rrErr } = await db
       .from('registrations')
-      .select('id, meet_id, athlete_id, club_id, refunded')
+      .select('id, event_id, athlete_id, club_id, refunded')
       .in('id', allRefRegIds);
     if (rrErr) return json({ ok: false, error: rrErr.message }, 500);
     regsByLine = (rr ?? []) as RegRow[];
   }
   const regById = new Map(regsByLine.map((r) => [r.id, r]));
 
-  // Meet ids = explicit ref_meet_id ∪ the meets of any referenced regs.
-  const meetIds = Array.from(new Set([
-    ...items.map((i) => i.ref_meet_id).filter((m): m is string => !!m),
-    ...regsByLine.map((r) => r.meet_id),
+  // Event ids = explicit ref_event_id ∪ the events of any referenced regs.
+  const eventIds = Array.from(new Set([
+    ...items.map((i) => i.ref_event_id).filter((m): m is string => !!m),
+    ...regsByLine.map((r) => r.event_id),
   ]));
-  let meets = new Map<string, RegFeeMeet>();
-  let allMeetRegs: RegRow[] = []; // ALL non-refunded regs for the involved meets (for prior counts)
-  if (meetIds.length) {
+  let events = new Map<string, RegFeeEvent>();
+  let allEventRegs: RegRow[] = []; // ALL non-refunded regs for the involved events (for prior counts)
+  if (eventIds.length) {
     const { data: mr, error: mErr } = await db
-      .from('meets')
+      .from('events')
       .select('id, host_club_id, entry_fee, second_discipline_fee, change_fee, tshirt_addon, banner_addon')
-      .in('id', meetIds);
+      .in('id', eventIds);
     if (mErr) return json({ ok: false, error: mErr.message }, 500);
-    meets = new Map((mr ?? []).map((m) => [m.id as string, m as unknown as RegFeeMeet]));
+    events = new Map((mr ?? []).map((m) => [m.id as string, m as unknown as RegFeeEvent]));
     const { data: amr, error: amErr } = await db
       .from('registrations')
-      .select('id, meet_id, athlete_id, club_id, refunded')
-      .in('meet_id', meetIds)
+      .select('id, event_id, athlete_id, club_id, refunded')
+      .in('event_id', eventIds)
       .eq('refunded', false);
     if (amErr) return json({ ok: false, error: amErr.message }, 500);
-    allMeetRegs = (amr ?? []) as RegRow[];
+    allEventRegs = (amr ?? []) as RegRow[];
   }
 
   let seasons = new Map<string, SeasonFees>();
@@ -269,35 +269,35 @@ Deno.serve(async (req) => {
       continue;
     }
 
-    // --- Meet-entry change fee ---
+    // --- Event-entry change fee ---
     if (i.kind === 'meet-entry' && i.ref_line_type === 'change') {
       const refRegs = (i.ref_reg_ids ?? []).map((id) => regById.get(id)).filter((r): r is RegRow => !!r);
       const reg = refRegs[0];
       if (!reg) return json({ ok: false, error: `Change line ${i.id} references no known registration.` }, 400);
-      const meet = meets.get(reg.meet_id);
-      if (!meet) return json({ ok: false, error: `Unknown meet ${reg.meet_id}.` }, 400);
-      pushLine(i.label, registrationChangeFeeDollars(meet, { competingClubId: reg.club_id ?? '' }));
+      const event = events.get(reg.event_id);
+      if (!event) return json({ ok: false, error: `Unknown event ${reg.event_id}.` }, 400);
+      pushLine(i.label, registrationChangeFeeDollars(event, { competingClubId: reg.club_id ?? '' }));
       continue;
     }
 
-    // --- Meet-entry (new entry; 'entry' or legacy null line type) ---
+    // --- Event-entry (new entry; 'entry' or legacy null line type) ---
     if (i.kind === 'meet-entry') {
       const refRegs = (i.ref_reg_ids ?? []).map((id) => regById.get(id)).filter((r): r is RegRow => !!r);
       const reg = refRegs[0];
       if (!reg) return json({ ok: false, error: `Entry line ${i.id} references no known registration.` }, 400);
-      const meet = meets.get(reg.meet_id);
-      if (!meet) return json({ ok: false, error: `Unknown meet ${reg.meet_id}.` }, 400);
+      const event = events.get(reg.event_id);
+      if (!event) return json({ ok: false, error: `Unknown event ${reg.event_id}.` }, 400);
       const competingClubId = reg.club_id ?? '';
       const lineRegIds = new Set(i.ref_reg_ids ?? []);
       const newDisciplineCount = refRegs.length;
-      // Prior = other non-refunded regs for (meet, athlete, competing club) not in this line.
-      const priorDisciplineCount = allMeetRegs.filter((r) =>
-        r.meet_id === reg.meet_id &&
+      // Prior = other non-refunded regs for (event, athlete, competing club) not in this line.
+      const priorDisciplineCount = allEventRegs.filter((r) =>
+        r.event_id === reg.event_id &&
         r.athlete_id === reg.athlete_id &&
         (r.club_id ?? '') === competingClubId &&
         !lineRegIds.has(r.id),
       ).length;
-      pushLine(i.label, newRegistrationEntryTotalDollars(meet, {
+      pushLine(i.label, newRegistrationEntryTotalDollars(event, {
         competingClubId, priorDisciplineCount, newDisciplineCount,
       }));
       continue;
@@ -305,10 +305,10 @@ Deno.serve(async (req) => {
 
     // --- Addon (tshirt / banner) ---
     if (i.kind === 'addon') {
-      if (!i.ref_meet_id) return json({ ok: false, error: `Addon line ${i.id} has no meet.` }, 400);
-      const meet = meets.get(i.ref_meet_id);
-      if (!meet) return json({ ok: false, error: `Unknown meet ${i.ref_meet_id}.` }, 400);
-      pushLine(i.label, addonPriceDollars(meet, i.ref_line_type));
+      if (!i.ref_event_id) return json({ ok: false, error: `Addon line ${i.id} has no event.` }, 400);
+      const event = events.get(i.ref_event_id);
+      if (!event) return json({ ok: false, error: `Unknown event ${i.ref_event_id}.` }, 400);
+      pushLine(i.label, addonPriceDollars(event, i.ref_line_type));
       continue;
     }
 

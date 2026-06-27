@@ -69,12 +69,12 @@ export function offeredMembershipTypes(roles: {
 }
 
 // --- Registration fees (3g/3h) ---------------------------------------------
-// Pure pricing for meet registration. The host club's own athletes pay $0 for
+// Pure pricing for event registration. The host club's own athletes pay $0 for
 // all registration-side fees (decision 3g: base entry, second-discipline, AND
-// change fee are all waived when the competing-for club IS the meet's host).
+// change fee are all waived when the competing-for club IS the event's host).
 
-/** Minimal slice of a `Meet` these helpers need (keeps them trivially testable). */
-export type RegFeeMeet = {
+/** Minimal slice of a `Event` these helpers need (keeps them trivially testable). */
+export type RegFeeEvent = {
   hostClubId: string;
   entryFee: number;
   secondDisciplineFee: number;
@@ -83,32 +83,32 @@ export type RegFeeMeet = {
 
 /**
  * Entry fee for one discipline of a registration. $0 when the athlete competes
- * FOR the meet's host club; otherwise the second-discipline fee (if this is a
+ * FOR the event's host club; otherwise the second-discipline fee (if this is a
  * second discipline) or the base entry fee.
  */
 export function registrationEntryFee(
-  meet: RegFeeMeet,
+  event: RegFeeEvent,
   { competingClubId, isSecondDiscipline = false }: {
     competingClubId: string;
     isSecondDiscipline?: boolean;
   },
 ): number {
-  if (competingClubId === meet.hostClubId) return 0;
-  return isSecondDiscipline ? meet.secondDisciplineFee : meet.entryFee;
+  if (competingClubId === event.hostClubId) return 0;
+  return isSecondDiscipline ? event.secondDisciplineFee : event.entryFee;
 }
 
 /**
  * Change fee for modifying a registration. $0 for the host club's own athletes;
- * otherwise the meet's configured change-fee amount (0 if none). Whether a change
+ * otherwise the event's configured change-fee amount (0 if none). Whether a change
  * fee applies AT ALL (eligibility per 3h, timing per `changeFee.startsAt`) is the
  * caller's decision — this only zeroes it for the host club.
  */
 export function registrationChangeFee(
-  meet: RegFeeMeet,
+  event: RegFeeEvent,
   { competingClubId }: { competingClubId: string },
 ): number {
-  if (competingClubId === meet.hostClubId) return 0;
-  return meet.changeFee?.amount ?? 0;
+  if (competingClubId === event.hostClubId) return 0;
+  return event.changeFee?.amount ?? 0;
 }
 
 /**
@@ -117,45 +117,45 @@ export function registrationChangeFee(
  * additional discipline, all zeroed for the host club's own athletes.
  *
  * `priorDisciplineCount` is how many disciplines the athlete is ALREADY
- * registered for at this meet (so a discipline added when others exist counts as
+ * registered for at this event (so a discipline added when others exist counts as
  * a second discipline). `newDisciplineCount` is how many are being added now.
  * Returns 0 for the host club (every fee waived) — the caller treats a 0 total
  * as "nothing to purchase ⇒ create the registration already paid".
  */
 export function newRegistrationEntryTotal(
-  meet: RegFeeMeet,
+  event: RegFeeEvent,
   { competingClubId, priorDisciplineCount, newDisciplineCount }: {
     competingClubId: string;
     priorDisciplineCount: number;
     newDisciplineCount: number;
   },
 ): number {
-  if (competingClubId === meet.hostClubId) return 0;
+  if (competingClubId === event.hostClubId) return 0;
   let total = 0;
   for (let i = 0; i < newDisciplineCount; i++) {
     const isSecond = priorDisciplineCount + i > 0;
-    total += isSecond ? meet.secondDisciplineFee : meet.entryFee;
+    total += isSecond ? event.secondDisciplineFee : event.entryFee;
   }
   return total;
 }
 
 // --- Change-fee eligibility (3h) -------------------------------------------
 // A pure predicate: given the BEFORE and AFTER state of an athlete's
-// registration for a meet, is the change "meaningful" enough to be chargeable
+// registration for an event, is the change "meaningful" enough to be chargeable
 // (i.e. show the "Add change to cart" action)?
 //
 // The normalized input shape is `RegChangeState`: a top-level `clubId` +
 // `athleteId` (the same across all of an athlete's discipline entries) plus a
 // `disciplines` array, one entry per discipline the athlete is registered in.
 // Each `RegDisciplineEntry` carries the discipline-level (`levelId`), the chosen
-// `events`, and optional per-event level overrides (`eventLevels`, used by T&T).
+// `apparatus`, and optional per-event level overrides (`eventLevels`, used by T&T).
 // This maps 1:1 from the RegistrationEditor's per-discipline draft.
 
 /** One discipline's worth of an athlete's registration draft. */
 export type RegDisciplineEntry = {
   discipline: Discipline;
   levelId: string;
-  events: string[];
+  apparatus: string[];
   /** Per-event level overrides (event code → levelId); T&T uses this. */
   eventLevels?: Record<string, string>;
 };
@@ -222,7 +222,7 @@ export function changeIsEligible(before: RegChangeState, after: RegChangeState):
 // repointed to `toId`. Pure: takes the registration slice it needs and returns
 // the subset that CHANGED (so the caller can persist only those). Scope is the
 // same one the partner model uses — the caller passes the registrations already
-// filtered to the relevant meet & non-refunded set.
+// filtered to the relevant event & non-refunded set.
 
 /** Minimal slice of a registration the partner-reassign logic needs. */
 export type PartnerReg = {

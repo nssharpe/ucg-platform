@@ -1,15 +1,15 @@
 import { useMemo, useState } from 'react';
 import { mutate, useDB } from '../lib/store';
-import { pushMeet } from '../lib/supabase';
+import { pushEvent } from '../lib/supabase';
 import { useToast } from './ui-hooks';
 import { PLACEMENT_CATEGORIES, scaffoldNationalsConfig } from '../lib/nationals-adapter';
-import type { Level, Meet, NationalsConfig, PlacementCategory } from '../lib/types';
+import type { Level, Event, NationalsConfig, PlacementCategory } from '../lib/types';
 
 const discLabel = (d: string) => (d === 'TNT' ? 'T&T' : d);
 
-/** Levels actually competing in this meet, grouped/ordered by discipline. */
-function competingLevels(meet: Meet, levels: Level[]): Level[] {
-  const ids = new Set(meet.sessions.flatMap((s) => s.levelIds));
+/** Levels actually competing in this event, grouped/ordered by discipline. */
+function competingLevels(event: Event, levels: Level[]): Level[] {
+  const ids = new Set(event.sessions.flatMap((s) => s.levelIds));
   const order: Record<string, number> = { WAG: 0, MAG: 1, TNT: 2 };
   return levels
     .filter((l) => ids.has(l.id))
@@ -22,20 +22,20 @@ function clone(cfg: NationalsConfig): NationalsConfig {
 }
 
 /**
- * Edit a Nationals meet's qualification cutoffs ("blue numbers") and finals
+ * Edit a Nationals event's qualification cutoffs ("blue numbers") and finals
  * levels. Mirrors the reference tool's config.ini but in-app and keyed by
  * platform levelId. Admin/host only — gated by the caller.
  */
-export function NationalsConfigEditor({ meet }: { meet: Meet }) {
+export function NationalsConfigEditor({ event }: { event: Event }) {
   const db = useDB();
   const toast = useToast();
-  const levels = useMemo(() => competingLevels(meet, db.levels), [meet, db.levels]);
+  const levels = useMemo(() => competingLevels(event, db.levels), [event, db.levels]);
   const artistic = levels.filter((l) => l.discipline === 'WAG' || l.discipline === 'MAG');
   const tnt = levels.filter((l) => l.discipline === 'TNT');
 
   // Local editable copy, re-scaffolded so newly-added levels appear.
   const [cfg, setCfg] = useState<NationalsConfig>(() =>
-    scaffoldNationalsConfig(db.levels, meet.disciplines, meet.nationalsConfig?.finalsLevelIds ?? [], meet.nationalsConfig),
+    scaffoldNationalsConfig(db.levels, event.disciplines, event.nationalsConfig?.finalsLevelIds ?? [], event.nationalsConfig),
   );
   const [dirty, setDirty] = useState(false);
 
@@ -53,8 +53,8 @@ export function NationalsConfigEditor({ meet }: { meet: Meet }) {
 
   const save = () => {
     mutate((d) => {
-      const m = d.meets.find((x) => x.id === meet.id);
-      if (m) { m.nationalsConfig = cfg; pushMeet(m); }
+      const m = d.events.find((x) => x.id === event.id);
+      if (m) { m.nationalsConfig = cfg; pushEvent(m); }
     });
     setDirty(false);
     toast('Qualification config saved.');
@@ -111,7 +111,7 @@ export function NationalsConfigEditor({ meet }: { meet: Meet }) {
             {discLabel(l.discipline)} {l.name}
           </label>
         ))}
-        {artistic.length === 0 && <span style={{ fontSize: 13, color: 'var(--ink-soft)' }}>No WAG/MAG levels in this meet.</span>}
+        {artistic.length === 0 && <span style={{ fontSize: 13, color: 'var(--ink-soft)' }}>No WAG/MAG levels in this event.</span>}
       </div>
 
       {artistic.length > 0 && (

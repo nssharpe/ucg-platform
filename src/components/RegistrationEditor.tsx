@@ -1,13 +1,13 @@
 /**
- * RegistrationEditor — reusable registration editor for a single athlete at a meet.
+ * RegistrationEditor — reusable registration editor for a single athlete at an event.
  *
  * CONTRACT
  * --------
  * Props:
- *   meet        — the Meet being registered for
+ *   event        — the Event being registered for
  *   athlete     — the Athlete being registered
  *   clubId      — the club they are competing for
- *   existing    — current Registration[] for this athlete+meet (may be [])
+ *   existing    — current Registration[] for this athlete+event (may be [])
  *   allAthletes — full athlete list (for synchro partner combo)
  *   levels      — full Level[] from the DB
  *   season      — current Season (to check active memberships for partner search)
@@ -25,8 +25,8 @@
 
 import { useState, useMemo } from 'react';
 import { Combo, Field } from './ui';
-import { EVENTS } from '../lib/types';
-import type { Athlete, Discipline, Level, Meet, Registration, Season } from '../lib/types';
+import { APPARATUS } from '../lib/types';
+import type { Athlete, Discipline, Level, Event, Registration, Season } from '../lib/types';
 import { changeIsEligible } from '../lib/pricing';
 import type { RegChangeState, RegDisciplineEntry } from '../lib/pricing';
 
@@ -34,7 +34,7 @@ import type { RegChangeState, RegDisciplineEntry } from '../lib/pricing';
 
 interface DiscSectionProps {
   disc: Discipline;
-  meet: Meet;
+  event: Event;
   athlete: Athlete;
   levels: Level[];
   existing: Registration | undefined; // existing reg for this disc, if any
@@ -50,7 +50,7 @@ interface DiscSectionProps {
 export interface DraftReg {
   enabled: boolean;
   levelId: string;
-  events: string[];
+  apparatus: string[];
   eventLevels: Record<string, string>; // T&T per-event levels
   partnerAthleteId: string | null; // synchro
   partnerUnknown: boolean;
@@ -58,11 +58,11 @@ export interface DraftReg {
 
 function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, season, incomingPartnerId }: DiscSectionProps) {
   const discLevels = levels.filter((l) => l.discipline === disc && !l.retired);
-  const events = EVENTS[disc];
+  const apparatusDefs = APPARATUS[disc];
   const isTNT = disc === 'TNT';
 
   // SY (Synchro) is an event within TNT, not its own discipline
-  const synchroSelected = isTNT && draft.events.includes('SY');
+  const synchroSelected = isTNT && draft.apparatus.includes('SY');
 
   // Athletes with active memberships for the partner combo
   const partnerOptions = useMemo(() => {
@@ -72,9 +72,9 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
   }, [allAthletes, athlete.id, season.id]);
 
   const toggleEvent = (code: string) => {
-    const next = draft.events.includes(code)
-      ? draft.events.filter((e) => e !== code)
-      : [...draft.events, code];
+    const next = draft.apparatus.includes(code)
+      ? draft.apparatus.filter((e) => e !== code)
+      : [...draft.apparatus, code];
 
     // Update eventLevels for T&T — add/remove the key
     const nextEventLevels = { ...draft.eventLevels };
@@ -93,11 +93,11 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
       partnerAthleteId = incomingPartnerId;
       partnerUnknown = false;
     }
-    onChange({ ...draft, events: next, eventLevels: nextEventLevels, partnerAthleteId, partnerUnknown });
+    onChange({ ...draft, apparatus: next, eventLevels: nextEventLevels, partnerAthleteId, partnerUnknown });
   };
 
   const selectAllAround = () => {
-    const allCodes = events.map((e) => e.code);
+    const allCodes = apparatusDefs.map((e) => e.code);
     const nextEventLevels: Record<string, string> = {};
     if (isTNT) {
       for (const code of allCodes) nextEventLevels[code] = draft.eventLevels[code] ?? draft.levelId;
@@ -105,14 +105,14 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
     // Auto-link synchro partner when selecting all (which includes SY for T&T).
     const partnerAthleteId = (allCodes.includes('SY') && !draft.partnerAthleteId && incomingPartnerId)
       ? incomingPartnerId : draft.partnerAthleteId;
-    onChange({ ...draft, events: allCodes, eventLevels: nextEventLevels, partnerAthleteId });
+    onChange({ ...draft, apparatus: allCodes, eventLevels: nextEventLevels, partnerAthleteId });
   };
 
   const clearAll = () => {
-    onChange({ ...draft, events: [], eventLevels: {} });
+    onChange({ ...draft, apparatus: [], eventLevels: {} });
   };
 
-  const isAA = draft.events.length === events.length && events.every((e) => draft.events.includes(e.code));
+  const isAA = draft.apparatus.length === apparatusDefs.length && apparatusDefs.every((e) => draft.apparatus.includes(e.code));
 
   const setMainLevel = (levelId: string) => {
     // When the main level changes, update any eventLevels that were still at the
@@ -169,11 +169,11 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
               </button>
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 16px' }}>
-              {events.map((ev) => (
+              {apparatusDefs.map((ev) => (
                 <label className="checkrow" key={ev.code} style={{ minWidth: 120 }}>
                   <input
                     type="checkbox"
-                    checked={draft.events.includes(ev.code)}
+                    checked={draft.apparatus.includes(ev.code)}
                     onChange={() => toggleEvent(ev.code)}
                   />
                   <span title={ev.name}>{ev.code} — {ev.name}</span>
@@ -183,14 +183,14 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
           </div>
 
           {/* T&T per-event level overrides */}
-          {isTNT && draft.events.length > 0 && (
+          {isTNT && draft.apparatus.length > 0 && (
             <div style={{ marginTop: 10, marginBottom: 8 }}>
               <div style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 6 }}>
                 Per-event level (T&T — defaults to main level above)
               </div>
               <div className="grid cols-2" style={{ gap: 8 }}>
-                {draft.events.map((code) => {
-                  const evDef = events.find((e) => e.code === code);
+                {draft.apparatus.map((code) => {
+                  const evDef = apparatusDefs.find((e) => e.code === code);
                   return (
                     <Field key={code} label={`${code} — ${evDef?.name ?? code}`}>
                       <select
@@ -239,7 +239,7 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
               )}
               {!draft.partnerUnknown && !draft.partnerAthleteId && (
                 <p style={{ fontSize: 12, color: 'var(--warn)', marginTop: 4 }}>
-                  A synchro meet can't go live until all entries have partners assigned.
+                  A synchro event can't go live until all entries have partners assigned.
                 </p>
               )}
             </div>
@@ -253,14 +253,14 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
 // ---- main component ---------------------------------------------------------
 
 export interface RegistrationEditorProps {
-  meet: Meet;
+  event: Event;
   athlete: Athlete;
   clubId: string;
   /** The club the athlete is CURRENTLY registered with (before any edit). When
    *  provided and it differs from `clubId`, a club-only switch registers as an
    *  eligible/chargeable change. Defaults to `clubId` (no club change). */
   originalClubId?: string;
-  existing: Registration[]; // all regs for this athlete+meet (may be [])
+  existing: Registration[]; // all regs for this athlete+event (may be [])
   allAthletes: Athlete[];
   levels: Level[];
   season: Season;
@@ -273,7 +273,7 @@ export interface RegistrationEditorProps {
 }
 
 export function RegistrationEditor({
-  meet,
+  event,
   athlete,
   clubId,
   originalClubId,
@@ -289,7 +289,7 @@ export function RegistrationEditor({
   // Build initial draft state from existing regs (or defaults from athlete.levels)
   const initDrafts = (): Record<Discipline, DraftReg> => {
     const out = {} as Record<Discipline, DraftReg>;
-    for (const disc of meet.disciplines as Discipline[]) {
+    for (const disc of event.disciplines as Discipline[]) {
       const reg = existing.find((r) => r.discipline === disc && !r.refunded);
       const discLevels = levels.filter((l) => l.discipline === disc && !l.retired);
       const defaultLevelId = athlete.levels[disc] ?? discLevels[0]?.id ?? '';
@@ -297,16 +297,16 @@ export function RegistrationEditor({
         out[disc] = {
           enabled: true,
           levelId: reg.levelId,
-          events: [...reg.events],
+          apparatus: [...reg.apparatus],
           eventLevels: { ...(reg.eventLevels ?? {}) },
           partnerAthleteId: reg.partnerAthleteId ?? null,
-          partnerUnknown: reg.partnerAthleteId === null && reg.events.includes('SY'),
+          partnerUnknown: reg.partnerAthleteId === null && reg.apparatus.includes('SY'),
         };
       } else {
         out[disc] = {
           enabled: false,
           levelId: defaultLevelId,
-          events: [],
+          apparatus: [],
           eventLevels: {},
           partnerAthleteId: null,
           partnerUnknown: false,
@@ -323,24 +323,24 @@ export function RegistrationEditor({
 
   const handleSave = () => {
     const regs: Registration[] = [];
-    for (const disc of meet.disciplines as Discipline[]) {
+    for (const disc of event.disciplines as Discipline[]) {
       const d = drafts[disc];
-      if (!d.enabled || d.events.length === 0) continue;
+      if (!d.enabled || d.apparatus.length === 0) continue;
       const existing_ = existing.find((r) => r.discipline === disc && !r.refunded);
-      const session = meet.sessions.find((s) => s.discipline === disc && s.levelIds.includes(d.levelId))
-        ?? meet.sessions.find((s) => s.discipline === disc);
+      const session = event.sessions.find((s) => s.discipline === disc && s.levelIds.includes(d.levelId))
+        ?? event.sessions.find((s) => s.discipline === disc);
 
       const reg: Registration = {
         id: existing_?.id ?? `reg-${Date.now()}-${athlete.id}-${disc}`,
-        meetId: meet.id,
+        eventId: event.id,
         athleteId: athlete.id,
         clubId,
         discipline: disc,
         levelId: d.levelId,
-        events: [...d.events],
+        apparatus: [...d.apparatus],
         sessionId: existing_?.sessionId ?? session?.id ?? null,
         ...(Object.keys(d.eventLevels).length > 0 ? { eventLevels: d.eventLevels } : {}),
-        ...(d.events.includes('SY') ? { partnerAthleteId: d.partnerUnknown ? null : d.partnerAthleteId } : {}),
+        ...(d.apparatus.includes('SY') ? { partnerAthleteId: d.partnerUnknown ? null : d.partnerAthleteId } : {}),
         ...(existing_?.refunded !== undefined ? { refunded: existing_.refunded } : {}),
         ...(existing_?.refundRequested !== undefined ? { refundRequested: existing_.refundRequested } : {}),
         ...(existing_?.keepListed !== undefined ? { keepListed: existing_.keepListed } : {}),
@@ -352,7 +352,7 @@ export function RegistrationEditor({
     onSave(regs);
   };
 
-  const anyEnabled = (meet.disciplines as Discipline[]).some((d) => drafts[d]?.enabled && drafts[d].events.length > 0);
+  const anyEnabled = (event.disciplines as Discipline[]).some((d) => drafts[d]?.enabled && drafts[d].apparatus.length > 0);
 
   // Are we editing an EXISTING registration (vs creating a brand-new one)? An
   // existing-reg edit must make an ELIGIBLE (chargeable) change before it can be
@@ -365,23 +365,23 @@ export function RegistrationEditor({
     fromExisting: boolean,
   ): RegDisciplineEntry[] => {
     const out: RegDisciplineEntry[] = [];
-    for (const disc of meet.disciplines as Discipline[]) {
+    for (const disc of event.disciplines as Discipline[]) {
       if (fromExisting) {
         const reg = existing.find((r) => r.discipline === disc && !r.refunded);
         if (!reg) continue;
         out.push({
           discipline: disc,
           levelId: reg.levelId,
-          events: [...reg.events],
+          apparatus: [...reg.apparatus],
           ...(reg.eventLevels ? { eventLevels: reg.eventLevels } : {}),
         });
       } else {
         const d = drafts[disc];
-        if (!d?.enabled || d.events.length === 0) continue;
+        if (!d?.enabled || d.apparatus.length === 0) continue;
         out.push({
           discipline: disc,
           levelId: d.levelId,
-          events: [...d.events],
+          apparatus: [...d.apparatus],
           ...(Object.keys(d.eventLevels).length > 0 ? { eventLevels: d.eventLevels } : {}),
         });
       }
@@ -425,18 +425,18 @@ export function RegistrationEditor({
           {isEditingExisting ? 'Editing registration' : 'New registration'}
         </span>
         <strong style={{ fontSize: 16 }}>{athlete.firstName} {athlete.lastName}</strong>
-        <span style={{ fontSize: 13, color: 'var(--ink-soft)' }}>{meet.name}</span>
+        <span style={{ fontSize: 13, color: 'var(--ink-soft)' }}>{event.name}</span>
       </div>
 
-      {(meet.disciplines as Discipline[]).map((disc) => (
+      {(event.disciplines as Discipline[]).map((disc) => (
         <DiscSection
           key={disc}
           disc={disc}
-          meet={meet}
+          event={event}
           athlete={athlete}
           levels={levels}
           existing={existing.find((r) => r.discipline === disc && !r.refunded)}
-          draft={drafts[disc] ?? { enabled: false, levelId: '', events: [], eventLevels: {}, partnerAthleteId: null, partnerUnknown: false }}
+          draft={drafts[disc] ?? { enabled: false, levelId: '', apparatus: [], eventLevels: {}, partnerAthleteId: null, partnerUnknown: false }}
           onChange={(d) => updateDisc(disc, d)}
           allAthletes={allAthletes}
           season={season}

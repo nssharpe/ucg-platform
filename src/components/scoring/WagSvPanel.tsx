@@ -3,17 +3,17 @@ import { LEVELS, SR, compute, init, vaultsFor, vpParts, wagSvLevel } from '../..
 import type { WagSvState } from '../../scoring/wagSv';
 import { BreakdownLine, CheckRow, PanelSection, StepperRow, WarnBox } from './parts';
 
-export function WagSvPanel({ levelId, eventCode, value, onChange }: {
-  levelId: string; eventCode: string; value: WagSvState; onChange: (s: WagSvState) => void;
+export function WagSvPanel({ levelId, apparatusCode, value, onChange }: {
+  levelId: string; apparatusCode: string; value: WagSvState; onChange: (s: WagSvState) => void;
 }) {
   const level = wagSvLevel(levelId);
   const lvl = LEVELS[level];
-  const outcome = compute(value, levelId, eventCode);
+  const outcome = compute(value, levelId, apparatusCode);
   const reset = (
-    <button className="btn ghost small" type="button" onClick={() => onChange(init(levelId, eventCode))}>Reset</button>
+    <button className="btn ghost small" type="button" onClick={() => onChange(init(levelId, apparatusCode))}>Reset</button>
   );
 
-  if (eventCode === 'VT') {
+  if (apparatusCode === 'VT') {
     return (
       <div className="sp-panel">
         <PanelSection title={`Vault — ${level}`} sub="The vault's table value is the start value; deductions are applied directly." right={reset}>
@@ -30,7 +30,7 @@ export function WagSvPanel({ levelId, eventCode, value, onChange }: {
   }
 
   const req = Object.entries(lvl.req).filter(([, n]) => n > 0).map(([k, n]) => `${n}×"${k}"`).join(' + ');
-  const srList = SR[level][eventCode as 'UB' | 'BB' | 'FX'] ?? [];
+  const srList = SR[level][apparatusCode as 'UB' | 'BB' | 'FX'] ?? [];
 
   return (
     <div className="sp-panel">

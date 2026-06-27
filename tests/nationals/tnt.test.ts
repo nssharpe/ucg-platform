@@ -31,9 +31,9 @@ function checkTnt(name: string): Mismatch[] {
       mism.push({ who, field: 'MISSING', expected: k, got: null });
       continue;
     }
-    for (const ev of TNT.events) {
+    for (const ev of TNT.apparatus) {
       const c = TNT_COLS[ev];
-      const ep = r.events[ev];
+      const ep = r.apparatus[ev];
       if (place(exp[c.place]) !== ep.place)
         mism.push({ who, field: `${ev} place`, expected: exp[c.place], got: ep.place });
       if ((exp[c.qual] ?? null) !== (ep.qual ?? null))

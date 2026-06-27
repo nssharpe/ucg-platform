@@ -3,14 +3,14 @@ import {
   registrationEntryFee,
   registrationChangeFee,
   changeIsEligible,
-  type RegFeeMeet,
+  type RegFeeEvent,
   type RegChangeState,
   type RegDisciplineEntry,
 } from '../../src/lib/pricing';
 
 // --- Fixtures ---------------------------------------------------------------
 
-const meet: RegFeeMeet = {
+const event: RegFeeEvent = {
   hostClubId: 'host-club',
   entryFee: 40,
   secondDisciplineFee: 25,
@@ -21,7 +21,7 @@ function disc(overrides: Partial<RegDisciplineEntry> = {}): RegDisciplineEntry {
   return {
     discipline: 'MAG',
     levelId: 'L5',
-    events: ['FX', 'PH'],
+    apparatus: ['FX', 'PH'],
     ...overrides,
   };
 }
@@ -39,41 +39,41 @@ function state(overrides: Partial<RegChangeState> = {}): RegChangeState {
 
 describe('registrationEntryFee (3g)', () => {
   it('charges base entry fee for a non-host club', () => {
-    expect(registrationEntryFee(meet, { competingClubId: 'club-a' })).toBe(40);
+    expect(registrationEntryFee(event, { competingClubId: 'club-a' })).toBe(40);
   });
 
   it('charges second-discipline fee for a non-host club second discipline', () => {
     expect(
-      registrationEntryFee(meet, { competingClubId: 'club-a', isSecondDiscipline: true }),
+      registrationEntryFee(event, { competingClubId: 'club-a', isSecondDiscipline: true }),
     ).toBe(25);
   });
 
   it('is $0 for the host club (base entry)', () => {
-    expect(registrationEntryFee(meet, { competingClubId: 'host-club' })).toBe(0);
+    expect(registrationEntryFee(event, { competingClubId: 'host-club' })).toBe(0);
   });
 
   it('is $0 for the host club even as a second discipline', () => {
     expect(
-      registrationEntryFee(meet, { competingClubId: 'host-club', isSecondDiscipline: true }),
+      registrationEntryFee(event, { competingClubId: 'host-club', isSecondDiscipline: true }),
     ).toBe(0);
   });
 
   it('defaults isSecondDiscipline to false', () => {
-    expect(registrationEntryFee(meet, { competingClubId: 'club-a' })).toBe(40);
+    expect(registrationEntryFee(event, { competingClubId: 'club-a' })).toBe(40);
   });
 });
 
 describe('registrationChangeFee (3g)', () => {
   it('charges the configured change fee for a non-host club', () => {
-    expect(registrationChangeFee(meet, { competingClubId: 'club-a' })).toBe(15);
+    expect(registrationChangeFee(event, { competingClubId: 'club-a' })).toBe(15);
   });
 
   it('is $0 for the host club', () => {
-    expect(registrationChangeFee(meet, { competingClubId: 'host-club' })).toBe(0);
+    expect(registrationChangeFee(event, { competingClubId: 'host-club' })).toBe(0);
   });
 
-  it('is $0 when the meet has no change fee configured (non-host)', () => {
-    const noFee: RegFeeMeet = { ...meet, changeFee: undefined };
+  it('is $0 when the event has no change fee configured (non-host)', () => {
+    const noFee: RegFeeEvent = { ...event, changeFee: undefined };
     expect(registrationChangeFee(noFee, { competingClubId: 'club-a' })).toBe(0);
   });
 });
@@ -105,20 +105,20 @@ describe('changeIsEligible (3h)', () => {
 
   it('change a T&T event level via eventLevels → eligible', () => {
     const before = state({
-      disciplines: [disc({ discipline: 'TNT', events: ['TR', 'DMT'], eventLevels: { TR: 'L3', DMT: 'L3' } })],
+      disciplines: [disc({ discipline: 'TNT', apparatus: ['TR', 'DMT'], eventLevels: { TR: 'L3', DMT: 'L3' } })],
     });
     const after = state({
-      disciplines: [disc({ discipline: 'TNT', events: ['TR', 'DMT'], eventLevels: { TR: 'L4', DMT: 'L3' } })],
+      disciplines: [disc({ discipline: 'TNT', apparatus: ['TR', 'DMT'], eventLevels: { TR: 'L4', DMT: 'L3' } })],
     });
     expect(changeIsEligible(before, after)).toBe(true);
   });
 
   it('add a NEW eventLevels key (event-level set where none before) → eligible', () => {
     const before = state({
-      disciplines: [disc({ discipline: 'TNT', events: ['TR'], eventLevels: {} })],
+      disciplines: [disc({ discipline: 'TNT', apparatus: ['TR'], eventLevels: {} })],
     });
     const after = state({
-      disciplines: [disc({ discipline: 'TNT', events: ['TR'], eventLevels: { TR: 'L4' } })],
+      disciplines: [disc({ discipline: 'TNT', apparatus: ['TR'], eventLevels: { TR: 'L4' } })],
     });
     expect(changeIsEligible(before, after)).toBe(true);
   });
@@ -132,17 +132,17 @@ describe('changeIsEligible (3h)', () => {
   });
 
   it('add an apparatus within an existing discipline → NOT eligible', () => {
-    const after = state({ disciplines: [disc({ events: ['FX', 'PH', 'SR'] })] });
+    const after = state({ disciplines: [disc({ apparatus: ['FX', 'PH', 'SR'] })] });
     expect(changeIsEligible(state(), after)).toBe(false);
   });
 
   it('remove an apparatus within an existing discipline → NOT eligible', () => {
-    const after = state({ disciplines: [disc({ events: ['FX'] })] });
+    const after = state({ disciplines: [disc({ apparatus: ['FX'] })] });
     expect(changeIsEligible(state(), after)).toBe(false);
   });
 
   it('combo: apparatus change + level change → eligible', () => {
-    const after = state({ disciplines: [disc({ levelId: 'L6', events: ['FX'] })] });
+    const after = state({ disciplines: [disc({ levelId: 'L6', apparatus: ['FX'] })] });
     expect(changeIsEligible(state(), after)).toBe(true);
   });
 
@@ -150,12 +150,12 @@ describe('changeIsEligible (3h)', () => {
     const before = state({
       disciplines: [disc(), disc({ discipline: 'WAG', levelId: 'L4' })],
     });
-    const after = state({ disciplines: [disc({ events: ['FX', 'PH', 'SR'] })] });
+    const after = state({ disciplines: [disc({ apparatus: ['FX', 'PH', 'SR'] })] });
     expect(changeIsEligible(before, after)).toBe(false);
   });
 
   it('reordering events (same set/level) → NOT eligible', () => {
-    const after = state({ disciplines: [disc({ events: ['PH', 'FX'] })] });
+    const after = state({ disciplines: [disc({ apparatus: ['PH', 'FX'] })] });
     expect(changeIsEligible(state(), after)).toBe(false);
   });
 });

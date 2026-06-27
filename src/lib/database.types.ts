@@ -460,13 +460,13 @@ export type Database = {
         }
         Relationships: []
       }
-      meet_sessions: {
+      event_sessions: {
         Row: {
           date: string | null
           discipline: Database["public"]["Enums"]["discipline"]
           id: string
           level_ids: string[]
-          meet_id: string
+          event_id: string
           name: string
           phase: string | null
           sort_order: number
@@ -477,7 +477,7 @@ export type Database = {
           discipline: Database["public"]["Enums"]["discipline"]
           id: string
           level_ids?: string[]
-          meet_id: string
+          event_id: string
           name: string
           phase?: string | null
           sort_order?: number
@@ -488,7 +488,7 @@ export type Database = {
           discipline?: Database["public"]["Enums"]["discipline"]
           id?: string
           level_ids?: string[]
-          meet_id?: string
+          event_id?: string
           name?: string
           phase?: string | null
           sort_order?: number
@@ -496,15 +496,15 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "meet_sessions_meet_id_fkey"
-            columns: ["meet_id"]
+            foreignKeyName: "event_sessions_event_id_fkey"
+            columns: ["event_id"]
             isOneToOne: false
-            referencedRelation: "meets"
+            referencedRelation: "events"
             referencedColumns: ["id"]
           },
         ]
       }
-      meets: {
+      events: {
         Row: {
           banner_addon: Json | null
           banquet: Json | null
@@ -529,7 +529,7 @@ export type Database = {
           slug: string
           start_date: string | null
           state: string | null
-          status: Database["public"]["Enums"]["meet_status"]
+          status: Database["public"]["Enums"]["event_status"]
           timezone: string
           tshirt_addon: Json | null
         }
@@ -557,7 +557,7 @@ export type Database = {
           slug: string
           start_date?: string | null
           state?: string | null
-          status?: Database["public"]["Enums"]["meet_status"]
+          status?: Database["public"]["Enums"]["event_status"]
           timezone?: string
           tshirt_addon?: Json | null
         }
@@ -585,7 +585,7 @@ export type Database = {
           slug?: string
           start_date?: string | null
           state?: string | null
-          status?: Database["public"]["Enums"]["meet_status"]
+          status?: Database["public"]["Enums"]["event_status"]
           timezone?: string
           tshirt_addon?: Json | null
         }
@@ -815,11 +815,11 @@ export type Database = {
           created_at: string
           discipline: Database["public"]["Enums"]["discipline"]
           event_levels: Json | null
-          events: string[]
+          apparatus: string[]
           id: string
           keep_listed: boolean
           level_id: string | null
-          meet_id: string
+          event_id: string
           partner_athlete_id: string | null
           refund_requested: boolean
           refunded: boolean
@@ -833,11 +833,11 @@ export type Database = {
           created_at?: string
           discipline: Database["public"]["Enums"]["discipline"]
           event_levels?: Json | null
-          events?: string[]
+          apparatus?: string[]
           id: string
           keep_listed?: boolean
           level_id?: string | null
-          meet_id: string
+          event_id: string
           partner_athlete_id?: string | null
           refund_requested?: boolean
           refunded?: boolean
@@ -851,11 +851,11 @@ export type Database = {
           created_at?: string
           discipline?: Database["public"]["Enums"]["discipline"]
           event_levels?: Json | null
-          events?: string[]
+          apparatus?: string[]
           id?: string
           keep_listed?: boolean
           level_id?: string | null
-          meet_id?: string
+          event_id?: string
           partner_athlete_id?: string | null
           refund_requested?: boolean
           refunded?: boolean
@@ -892,10 +892,10 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "registrations_meet_id_fkey"
-            columns: ["meet_id"]
+            foreignKeyName: "registrations_event_id_fkey"
+            columns: ["event_id"]
             isOneToOne: false
-            referencedRelation: "meets"
+            referencedRelation: "events"
             referencedColumns: ["id"]
           },
           {
@@ -916,7 +916,7 @@ export type Database = {
             foreignKeyName: "registrations_session_id_fkey"
             columns: ["session_id"]
             isOneToOne: false
-            referencedRelation: "meet_sessions"
+            referencedRelation: "event_sessions"
             referencedColumns: ["id"]
           },
           {
@@ -930,7 +930,7 @@ export type Database = {
       }
       sanction_requests: {
         Row: {
-          created_meet_id: string | null
+          created_event_id: string | null
           deadline_at: string | null
           decided_at: string | null
           event_kind: string
@@ -943,7 +943,7 @@ export type Database = {
           submitted_at: string | null
         }
         Insert: {
-          created_meet_id?: string | null
+          created_event_id?: string | null
           deadline_at?: string | null
           decided_at?: string | null
           event_kind?: string
@@ -956,7 +956,7 @@ export type Database = {
           submitted_at?: string | null
         }
         Update: {
-          created_meet_id?: string | null
+          created_event_id?: string | null
           deadline_at?: string | null
           decided_at?: string | null
           event_kind?: string
@@ -970,10 +970,10 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "sanction_requests_created_meet_id_fkey"
-            columns: ["created_meet_id"]
+            foreignKeyName: "sanction_requests_created_event_id_fkey"
+            columns: ["created_event_id"]
             isOneToOne: false
-            referencedRelation: "meets"
+            referencedRelation: "events"
             referencedColumns: ["id"]
           },
           {
@@ -1044,11 +1044,11 @@ export type Database = {
           e_score: number | null
           entered_at: string
           entered_by: string | null
-          event: string
+          apparatus: string
           final: number | null
           flashed: boolean
           id: string
-          meet_id: string
+          event_id: string
           reg_id: string
           scratched: boolean
           session_id: string | null
@@ -1064,11 +1064,11 @@ export type Database = {
           e_score?: number | null
           entered_at?: string
           entered_by?: string | null
-          event: string
+          apparatus: string
           final?: number | null
           flashed?: boolean
           id: string
-          meet_id: string
+          event_id: string
           reg_id: string
           scratched?: boolean
           session_id?: string | null
@@ -1084,11 +1084,11 @@ export type Database = {
           e_score?: number | null
           entered_at?: string
           entered_by?: string | null
-          event?: string
+          apparatus?: string
           final?: number | null
           flashed?: boolean
           id?: string
-          meet_id?: string
+          event_id?: string
           reg_id?: string
           scratched?: boolean
           session_id?: string | null
@@ -1097,10 +1097,10 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "scores_meet_id_fkey"
-            columns: ["meet_id"]
+            foreignKeyName: "scores_event_id_fkey"
+            columns: ["event_id"]
             isOneToOne: false
-            referencedRelation: "meets"
+            referencedRelation: "events"
             referencedColumns: ["id"]
           },
           {
@@ -1114,7 +1114,7 @@ export type Database = {
             foreignKeyName: "scores_session_id_fkey"
             columns: ["session_id"]
             isOneToOne: false
-            referencedRelation: "meet_sessions"
+            referencedRelation: "event_sessions"
             referencedColumns: ["id"]
           },
         ]
@@ -1188,7 +1188,7 @@ export type Database = {
             foreignKeyName: "squads_session_id_fkey"
             columns: ["session_id"]
             isOneToOne: false
-            referencedRelation: "meet_sessions"
+            referencedRelation: "event_sessions"
             referencedColumns: ["id"]
           },
         ]
@@ -1481,7 +1481,7 @@ export type Database = {
         | "donation"
         | "discount"
       meet_kind: "standard" | "nationals"
-      meet_status:
+      event_status:
         | "draft"
         | "reg-open"
         | "reg-closed"
@@ -1656,7 +1656,7 @@ export const Constants = {
         "discount",
       ],
       meet_kind: ["standard", "nationals"],
-      meet_status: [
+      event_status: [
         "draft",
         "reg-open",
         "reg-closed",

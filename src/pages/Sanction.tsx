@@ -6,7 +6,7 @@
 import { useState, useMemo } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { mutate, useDB } from '../lib/store';
-import { pushSanctionRequest, pushSanctionVote, pushMeet, notifySanction } from '../lib/supabase';
+import { pushSanctionRequest, pushSanctionVote, pushEvent, notifySanction } from '../lib/supabase';
 import { useCapabilities } from '../lib/capabilities';
 import { seasonForDate, clubHasActiveMembership } from '../lib/capabilities-core';
 import { useSession } from '../lib/auth';
@@ -15,7 +15,7 @@ import { useToast } from '../components/ui-hooks';
 import { tallyVotes, nextSanctionId } from '../lib/sanction';
 import { RIBBON_OPTIONS, DEFAULT_RIBBON } from '../lib/ribbons';
 import { STATE_REGIONS, DISCIPLINES, SHIRT_SIZES } from '../lib/types';
-import type { Discipline, Meet, SanctionRequest, SanctionVote } from '../lib/types';
+import type { Discipline, Event, SanctionRequest, SanctionVote } from '../lib/types';
 import type { RibbonOption } from '../lib/ribbons';
 
 // ---------------------------------------------------------------------------
@@ -49,7 +49,7 @@ const slugify = (name: string) =>
   name.toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
 function uniqueSlug(name: string, taken: string[]): string {
-  const base = slugify(name) || 'meet';
+  const base = slugify(name) || 'event';
   if (!taken.includes(base)) return base;
   let n = 2;
   while (taken.includes(`${base}-${n}`)) n++;
@@ -353,7 +353,7 @@ export function SanctionRequestForm() {
       <h1 className="page-title">Request Event Sanction</h1>
       <p className="page-sub">
         Submit a request for the Sanctioning Team to review and vote on your event.
-        Approval creates a meet on the platform with a unique Sanction ID.
+        Approval creates an event on the platform with a unique Sanction ID.
       </p>
 
       <div className="card card-pad" style={{ maxWidth: 720 }}>
@@ -824,15 +824,15 @@ export function SanctionVotePage() {
       const eventYear = new Date(String(req.payload.startDate ?? decidedNow)).getFullYear();
       const hostState = String(req.payload.state ?? club?.state ?? '');
       const existingIds = [
-        ...db.meets.map((m) => m.sanctionId).filter(Boolean) as string[],
+        ...db.events.map((m) => m.sanctionId).filter(Boolean) as string[],
         ...(db.sanctionRequests ?? []).map((r) => r.sanctionId).filter(Boolean) as string[],
       ];
       const sid = nextSanctionId(eventYear, hostState, existingIds);
 
-      // Build Meet from payload
-      const takenSlugs = db.meets.map((m) => m.slug);
-      const slug = uniqueSlug(String(p.eventName ?? 'meet'), takenSlugs);
-      const meetId = genId('meet');
+      // Build Event from payload
+      const takenSlugs = db.events.map((m) => m.slug);
+      const slug = uniqueSlug(String(p.eventName ?? 'event'), takenSlugs);
+      const eventId = genId('event');
 
       // Determine disciplines from selected levels
       const disciplines: Discipline[] = [];
@@ -840,8 +840,8 @@ export function SanctionVotePage() {
       if ((p.magLevels as string[] | undefined)?.length) disciplines.push('MAG');
       if ((p.tntLevels as string[] | undefined)?.length) disciplines.push('TNT');
 
-      const meet: Meet = {
-        id: meetId,
+      const event: Event = {
+        id: eventId,
         slug,
         name: String(p.eventName ?? 'Sanctioned Event'),
         hostClubId: req.hostClubId,
@@ -859,28 +859,28 @@ export function SanctionVotePage() {
         sessions: [],
         eventType: req.eventKind,
         sanctionId: sid,
-        ...(p.tshirtAddon ? { tshirtAddon: p.tshirtAddon as Meet['tshirtAddon'] } : {}),
+        ...(p.tshirtAddon ? { tshirtAddon: p.tshirtAddon as Event['tshirtAddon'] } : {}),
         ...(p.wantBanner ? { bannerAddon: { price: 0 } } : {}),
       };
 
       mutate((d) => {
-        d.meets.push(meet);
+        d.events.push(event);
         const rIdx = (d.sanctionRequests ?? []).findIndex((r) => r.id === req.id);
         if (rIdx >= 0) {
           d.sanctionRequests![rIdx] = {
             ...d.sanctionRequests![rIdx],
             status: 'approved',
             decidedAt: decidedNow,
-            createdMeetId: meetId,
+            createdEventId: eventId,
             sanctionId: sid,
           };
         }
       });
-      pushMeet(meet);
-      pushSanctionRequest({ ...req, status: 'approved', decidedAt: decidedNow, createdMeetId: meetId, sanctionId: sid });
+      pushEvent(event);
+      pushSanctionRequest({ ...req, status: 'approved', decidedAt: decidedNow, createdEventId: eventId, sanctionId: sid });
       notifySanction({ requestId: req.id, event: 'approved' });
       // TODO: reminder emails 3d/1d before deadline (needs scheduler)
-      toast(`Approved! Sanction ID: ${sid}. Meet created as draft.`);
+      toast(`Approved! Sanction ID: ${sid}. Event created as draft.`);
     } else {
       // Rejected
       mutate((d) => {

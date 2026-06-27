@@ -11,18 +11,18 @@ const AGES: { value: AgeDecade; label: string }[] = [
   { value: '60', label: '60–69' }, { value: '70', label: '70+' },
 ];
 
-export function MastersPanel({ levelId, eventCode, value, onChange }: {
-  levelId: string; eventCode: string; value: MastersState; onChange: (s: MastersState) => void;
+export function MastersPanel({ levelId, apparatusCode, value, onChange }: {
+  levelId: string; apparatusCode: string; value: MastersState; onChange: (s: MastersState) => void;
 }) {
-  const apparatus = apparatusFor(value.discipline, eventCode);
+  const apparatus = apparatusFor(value.discipline, apparatusCode);
   const isVault = apparatus === 'vault';
-  const outcome = compute(value, levelId, eventCode);
+  const outcome = compute(value, levelId, apparatusCode);
   const totalSkills = SKILL_LEVELS.reduce((n, l) => n + value.counts[l], 0);
   const dedStep = value.discipline === 'WAG' ? 0.05 : 0.1;
 
   const reset = (
     <button className="btn ghost small" type="button"
-      onClick={() => onChange({ ...init(levelId, eventCode), discipline: value.discipline, age: value.age })}>
+      onClick={() => onChange({ ...init(levelId, apparatusCode), discipline: value.discipline, age: value.age })}>
       Reset
     </button>
   );

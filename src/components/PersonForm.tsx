@@ -232,7 +232,7 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
         </div>
       )}
 
-      <h3 className="card-title" style={{ marginTop: 8 }}>Meet-day</h3>
+      <h3 className="card-title" style={{ marginTop: 8 }}>Event-day</h3>
       <div className="grid cols-2">
         <Field label="Emergency contact"><input type="text" value={draft.emergency.contact} onChange={(e) => set({ emergency: { ...draft.emergency, contact: e.target.value } })} /></Field>
         <Field label="Relation"><input type="text" value={draft.emergency.relation} onChange={(e) => set({ emergency: { ...draft.emergency, relation: e.target.value } })} /></Field>

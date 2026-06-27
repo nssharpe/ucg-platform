@@ -58,9 +58,9 @@ function checkArtistic(name: string, finals: boolean) {
     }
     if (exp['Placement Category'] !== r.category)
       mism.push({ who, field: 'category', expected: exp['Placement Category'], got: r.category });
-    for (const ev of def.events) {
+    for (const ev of def.apparatus) {
       const c = EVENT_COLS[ev];
-      const ep = r.events[ev];
+      const ep = r.apparatus[ev];
       if (place(exp[c.place]) !== ep.place)
         mism.push({ who, field: `${ev} place`, expected: exp[c.place], got: ep.place });
       if ((exp[c.qual] ?? null) !== (ep.qual ?? null))

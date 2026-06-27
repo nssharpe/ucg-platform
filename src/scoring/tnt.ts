@@ -6,7 +6,7 @@ import { TT_SKILLS, type TtSkill } from './ttSkills';
 export type TntEvent = 'TR' | 'DM' | 'TU';
 export type TntLevel = 'New Flyers' | 'Intermediate Flyers' | 'High Flyers';
 
-const EVENT_KEY: Record<TntEvent, keyof typeof TT_SKILLS> = { TR: 'trampoline', DM: 'dmt', TU: 'tumbling' };
+const APPARATUS_KEY: Record<TntEvent, keyof typeof TT_SKILLS> = { TR: 'trampoline', DM: 'dmt', TU: 'tumbling' };
 
 export interface TntPassSpec { name: string; skills: number; labels?: string[]; exec: string }
 
@@ -60,16 +60,16 @@ export function tntLevel(levelId: string): TntLevel {
   }
 }
 
-export function tntEvent(eventCode: string): TntEvent {
-  return (eventCode === 'DM' || eventCode === 'TU') ? eventCode : 'TR';
+export function tntEvent(apparatusCode: string): TntEvent {
+  return (apparatusCode === 'DM' || apparatusCode === 'TU') ? apparatusCode : 'TR';
 }
 
-export function skillsFor(eventCode: string): TtSkill[] {
-  return TT_SKILLS[EVENT_KEY[tntEvent(eventCode)]];
+export function skillsFor(apparatusCode: string): TtSkill[] {
+  return TT_SKILLS[APPARATUS_KEY[tntEvent(apparatusCode)]];
 }
 
-export function levelNote(levelId: string, eventCode: string): string {
-  return LEVEL_RULES[tntEvent(eventCode)][tntLevel(levelId)].note;
+export function levelNote(levelId: string, apparatusCode: string): string {
+  return LEVEL_RULES[tntEvent(apparatusCode)][tntLevel(levelId)].note;
 }
 
 export interface TntSkillEntry {
@@ -80,9 +80,9 @@ export interface TntSkillEntry {
 export interface TntPassState { exec: string; skills: TntSkillEntry[] }
 export interface TntState { passes: TntPassState[]; penalty: string }
 
-export function init(_levelId: string, eventCode: string): TntState {
+export function init(_levelId: string, apparatusCode: string): TntState {
   return {
-    passes: STRUCTURE[tntEvent(eventCode)].passes.map((p) => ({
+    passes: STRUCTURE[tntEvent(apparatusCode)].passes.map((p) => ({
       exec: '10.0',
       skills: Array.from({ length: p.skills }, () => ({ name: '', dd: '' })),
     })),
@@ -97,8 +97,8 @@ export function passDD(pass: TntPassState): number {
   }, 0));
 }
 
-export function compute(state: TntState, levelId: string, eventCode: string): ScoringOutcome {
-  const ev = tntEvent(eventCode);
+export function compute(state: TntState, levelId: string, apparatusCode: string): ScoringOutcome {
+  const ev = tntEvent(apparatusCode);
   const level = tntLevel(levelId);
   const rules = LEVEL_RULES[ev][level];
   const warnings: string[] = [];

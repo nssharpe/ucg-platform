@@ -18,7 +18,7 @@ function navFor(caps: ReturnType<typeof useCapabilities>): NavGroup[] {
   groups.push({ group: 'Browse', items: [
     { to: '/', label: 'Home' },
     { to: '/results', label: 'Live Results' },
-    { to: '/meets', label: 'Meets' },
+    { to: '/events', label: 'Events' },
     ...(caps.person ? [{ to: '/clubs', label: 'Club Directory' }] : []),
   ]});
   if (caps.person) {

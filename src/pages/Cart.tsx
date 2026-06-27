@@ -35,7 +35,7 @@ function CartCard({ title, items, returnTo, returnLabel, onCheckout }: {
   );
 }
 
-/** View Cart (topbar): the signed-in person's cart, grouped into a card per meet
+/** View Cart (topbar): the signed-in person's cart, grouped into a card per event
  *  plus a Memberships card, each with a "return to registration" link and its own
  *  checkout — or check out everything at once. Every group pays via Stripe
  *  Embedded Checkout (`CartCheckout`); the verified webhook does all fulfillment
@@ -58,25 +58,25 @@ function CartInner({ personId, name }: { personId: string; name: string }) {
   const cart = useMemo(() => db.carts[personId] ?? [], [db.carts, personId]);
   const [checkout, setCheckout] = useState<{ items: CartItem[]; title: string } | null>(null);
 
-  // Group: a card per meet (matched by name in the label), one "Memberships"
+  // Group: a card per event (matched by name in the label), one "Memberships"
   // card, and an "Other" card for anything that doesn't match.
   const groups = useMemo(() => {
     const membership: CartItem[] = [];
-    const byMeet = new Map<string, { meetName: string; slug: string | null; items: CartItem[] }>();
+    const byEvent = new Map<string, { eventName: string; slug: string | null; items: CartItem[] }>();
     const other: CartItem[] = [];
     for (const item of cart) {
       if (item.kind === 'membership') { membership.push(item); continue; }
-      const meet = db.meets.find((m) => item.label.includes(m.name));
-      if (meet) {
-        const g = byMeet.get(meet.id) ?? { meetName: meet.name, slug: meet.slug, items: [] };
+      const event = db.events.find((m) => item.label.includes(m.name));
+      if (event) {
+        const g = byEvent.get(event.id) ?? { eventName: event.name, slug: event.slug, items: [] };
         g.items.push(item);
-        byMeet.set(meet.id, g);
+        byEvent.set(event.id, g);
       } else {
         other.push(item);
       }
     }
-    return { membership, meets: [...byMeet.values()], other };
-  }, [cart, db.meets]);
+    return { membership, events: [...byEvent.values()], other };
+  }, [cart, db.events]);
 
   const onPaid = () => {
     // The invoice, registrations, and cart lines are all written by the webhook —
@@ -124,13 +124,13 @@ function CartInner({ personId, name }: { personId: string; name: string }) {
           <CartCard title="Memberships" items={groups.membership} returnTo="/cart/memberships" returnLabel="Checkout Memberships"
             onCheckout={() => setCheckout({ items: groups.membership, title: 'Memberships' })} />
         )}
-        {groups.meets.map((g) => (
-          <CartCard key={g.meetName} title={g.meetName} items={g.items}
-            returnTo={g.slug ? `/meets/${g.slug}` : '/meets'} returnLabel="Return to registration"
-            onCheckout={() => setCheckout({ items: g.items, title: g.meetName })} />
+        {groups.events.map((g) => (
+          <CartCard key={g.eventName} title={g.eventName} items={g.items}
+            returnTo={g.slug ? `/events/${g.slug}` : '/events'} returnLabel="Return to registration"
+            onCheckout={() => setCheckout({ items: g.items, title: g.eventName })} />
         ))}
         {groups.other.length > 0 && (
-          <CartCard title="Other" items={groups.other} returnTo="/meets" returnLabel="Browse"
+          <CartCard title="Other" items={groups.other} returnTo="/events" returnLabel="Browse"
             onCheckout={() => setCheckout({ items: groups.other, title: 'Other' })} />
         )}
       </div>

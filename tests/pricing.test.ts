@@ -9,7 +9,7 @@ import {
   newRegistrationEntryTotal,
   reassignPartners,
 } from '../src/lib/pricing';
-import type { PartnerReg, RegFeeMeet } from '../src/lib/pricing';
+import type { PartnerReg, RegFeeEvent } from '../src/lib/pricing';
 import type { Coupon, Membership, Season } from '../src/lib/types';
 
 const season: Season = {
@@ -126,27 +126,27 @@ describe('applyCoupon', () => {
 });
 
 describe('newRegistrationEntryTotal (3f/3g host-club $0)', () => {
-  const meet: RegFeeMeet = { hostClubId: 'host', entryFee: 60, secondDisciplineFee: 25 };
+  const event: RegFeeEvent = { hostClubId: 'host', entryFee: 60, secondDisciplineFee: 25 };
 
   it('host club pays $0 for any number of disciplines', () => {
-    expect(newRegistrationEntryTotal(meet, { competingClubId: 'host', priorDisciplineCount: 0, newDisciplineCount: 1 })).toBe(0);
-    expect(newRegistrationEntryTotal(meet, { competingClubId: 'host', priorDisciplineCount: 0, newDisciplineCount: 3 })).toBe(0);
-    expect(newRegistrationEntryTotal(meet, { competingClubId: 'host', priorDisciplineCount: 2, newDisciplineCount: 1 })).toBe(0);
+    expect(newRegistrationEntryTotal(event, { competingClubId: 'host', priorDisciplineCount: 0, newDisciplineCount: 1 })).toBe(0);
+    expect(newRegistrationEntryTotal(event, { competingClubId: 'host', priorDisciplineCount: 0, newDisciplineCount: 3 })).toBe(0);
+    expect(newRegistrationEntryTotal(event, { competingClubId: 'host', priorDisciplineCount: 2, newDisciplineCount: 1 })).toBe(0);
   });
 
   it('non-host: first discipline = entry fee, additional = second-discipline fee', () => {
-    expect(newRegistrationEntryTotal(meet, { competingClubId: 'other', priorDisciplineCount: 0, newDisciplineCount: 1 })).toBe(60);
-    expect(newRegistrationEntryTotal(meet, { competingClubId: 'other', priorDisciplineCount: 0, newDisciplineCount: 2 })).toBe(85);
-    expect(newRegistrationEntryTotal(meet, { competingClubId: 'other', priorDisciplineCount: 0, newDisciplineCount: 3 })).toBe(110);
+    expect(newRegistrationEntryTotal(event, { competingClubId: 'other', priorDisciplineCount: 0, newDisciplineCount: 1 })).toBe(60);
+    expect(newRegistrationEntryTotal(event, { competingClubId: 'other', priorDisciplineCount: 0, newDisciplineCount: 2 })).toBe(85);
+    expect(newRegistrationEntryTotal(event, { competingClubId: 'other', priorDisciplineCount: 0, newDisciplineCount: 3 })).toBe(110);
   });
 
   it('non-host: a discipline added when others already exist is a second discipline', () => {
-    expect(newRegistrationEntryTotal(meet, { competingClubId: 'other', priorDisciplineCount: 1, newDisciplineCount: 1 })).toBe(25);
-    expect(newRegistrationEntryTotal(meet, { competingClubId: 'other', priorDisciplineCount: 2, newDisciplineCount: 2 })).toBe(50);
+    expect(newRegistrationEntryTotal(event, { competingClubId: 'other', priorDisciplineCount: 1, newDisciplineCount: 1 })).toBe(25);
+    expect(newRegistrationEntryTotal(event, { competingClubId: 'other', priorDisciplineCount: 2, newDisciplineCount: 2 })).toBe(50);
   });
 
   it('zero new disciplines = $0', () => {
-    expect(newRegistrationEntryTotal(meet, { competingClubId: 'other', priorDisciplineCount: 0, newDisciplineCount: 0 })).toBe(0);
+    expect(newRegistrationEntryTotal(event, { competingClubId: 'other', priorDisciplineCount: 0, newDisciplineCount: 0 })).toBe(0);
   });
 });
 

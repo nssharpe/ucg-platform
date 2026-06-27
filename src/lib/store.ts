@@ -55,7 +55,7 @@ export async function syncFromSupabase() {
   if (!remote) return;
   // A completely empty remote means the backend hasn't been seeded yet —
   // keep the local snapshot so it can be pushed (Admin → Demo tools).
-  if (!remote.seasons.length && !remote.clubs.length && !remote.people.length && !remote.meets.length) return;
+  if (!remote.seasons.length && !remote.clubs.length && !remote.people.length && !remote.events.length) return;
   db = remote;
   snapshotVersion++;
   persist();

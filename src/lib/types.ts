@@ -2,7 +2,7 @@ export type Discipline = 'MAG' | 'WAG' | 'TNT';
 
 export const DISCIPLINES: Discipline[] = ['MAG', 'WAG', 'TNT'];
 
-export const EVENTS: Record<Discipline, { code: string; name: string }[]> = {
+export const APPARATUS: Record<Discipline, { code: string; name: string }[]> = {
   MAG: [
     { code: 'FX', name: 'Floor' },
     { code: 'PH', name: 'Pommel Horse' },
@@ -54,7 +54,7 @@ export interface Level {
   svMax: number | null; // null = open / FIG
   vaults: number;
   order: number;
-  /** Soft-deleted: hidden from new meets but preserved on past meets/results. */
+  /** Soft-deleted: hidden from new events but preserved on past events/results. */
   retired?: boolean;
 }
 
@@ -148,7 +148,7 @@ export interface Athlete {
   achievements: string[];
 }
 
-export type MeetStatus = 'draft' | 'reg-open' | 'reg-closed' | 'in-progress' | 'complete';
+export type EventStatus = 'draft' | 'reg-open' | 'reg-closed' | 'in-progress' | 'complete';
 
 export interface Squad {
   id: string;
@@ -158,7 +158,7 @@ export interface Squad {
   holding?: boolean;
 }
 
-export interface MeetSession {
+export interface EventSession {
   id: string;
   name: string; // "Session 1 — WAG Xcel Silver/Platinum"
   discipline: Discipline;
@@ -166,7 +166,7 @@ export interface MeetSession {
   time: string;
   levelIds: string[];
   squads: Squad[];
-  /** Nationals meets only: distinguishes prelim sessions from finals sessions.
+  /** Nationals events only: distinguishes prelim sessions from finals sessions.
    *  Absent ⇒ a normal (single-phase) session. See NationalsConfig. */
   phase?: 'prelim' | 'final';
 }
@@ -179,7 +179,7 @@ export type PlacementCategory =
   | 'Community Men+';
 
 /**
- * Admin-editable Nationals qualification/awards config on a meet — the in-app
+ * Admin-editable Nationals qualification/awards config on an event — the in-app
  * equivalent of the reference tool's per-year config.ini. Cutoffs ("blue
  * numbers") are keyed by platform levelId. See docs/specs/2026-06-13-nationals-
  * qual-awards.md and src/nationals/.
@@ -203,7 +203,7 @@ export interface NationalsConfig {
   svCaps?: Record<string, number>;
 }
 
-export interface Meet {
+export interface Event {
   id: string;
   slug: string;
   name: string;
@@ -213,13 +213,13 @@ export interface Meet {
   timezone: string;
   startDate: string;
   endDate: string;
-  status: MeetStatus;
+  status: EventStatus;
   regOpens: string;
   regCloses: string;
   entryFee: number; // per discipline
   secondDisciplineFee: number;
   disciplines: Discipline[];
-  sessions: MeetSession[];
+  sessions: EventSession[];
   privateRegCode?: string;
   banquet?: { price: number; name: string };
   /** Optional add-ons offered at registration. */
@@ -230,7 +230,7 @@ export interface Meet {
   /** 'nationals' unlocks the prelim/finals + qualification/awards features and is
    *  creatable only by a UCG admin. Absent ⇒ 'standard'. */
   kind?: 'standard' | 'nationals';
-  /** Present on Nationals meets: the qualification/awards configuration. */
+  /** Present on Nationals events: the qualification/awards configuration. */
   nationalsConfig?: NationalsConfig;
   /** Competition (default) or a camp (NAIGC-hosted, individual-only reg). */
   eventType?: 'competition' | 'camp';
@@ -262,7 +262,7 @@ export interface SanctionRequest {
   submittedAt?: string | null;
   deadlineAt?: string | null; // submittedAt + 7 days
   decidedAt?: string | null;
-  createdMeetId?: string | null;
+  createdEventId?: string | null;
   sanctionId?: string | null;
 }
 
@@ -277,12 +277,12 @@ export interface SanctionVote {
 
 export interface Registration {
   id: string;
-  meetId: string;
+  eventId: string;
   athleteId: string;
   clubId: string; // competing-for club
   discipline: Discipline;
   levelId: string;
-  events: string[]; // event codes
+  apparatus: string[]; // apparatus codes
   sessionId: string | null;
   /** Placement category (e.g. "Collegiate Women", "Community Men+") — drives
    *  results grouping badges & filters, mirroring the Nationals results viewer. */
@@ -303,7 +303,7 @@ export interface Registration {
   refunded?: boolean;
   refundRequested?: boolean; // athlete/club asked for a refund; admin reviews
   keepListed?: boolean; // refunded but keep for shirt/gift
-  /** Synchro trampoline partner (any athlete w/ membership). A synchro meet
+  /** Synchro trampoline partner (any athlete w/ membership). A synchro event
    *  cannot go live until every synchro entry has a partner assigned. */
   partnerAthleteId?: string | null;
   /** Per-event level override (event code → levelId). T&T uses this now;
@@ -313,11 +313,11 @@ export interface Registration {
 }
 
 export interface Score {
-  id: string; // `${meetId}|${athleteRegId}|${event}`
-  meetId: string;
+  id: string; // `${eventId}|${athleteRegId}|${apparatus}`
+  eventId: string;
   sessionId: string;
   regId: string;
-  event: string;
+  apparatus: string;
   sv: number | null; // start value / D-score
   deductions: number | null; // total E deductions (for capped levels: final = sv - deductions)
   eScore?: number | null; // E-score out of 10 (open scoring: final = sv + eScore)
@@ -356,9 +356,9 @@ export interface InvoiceItem {
    *  pays for, so the pay path can flip exactly those registrations to
    *  `paid: true`. */
   refRegIds?: string[];
-  /** The meet a meet-entry / addon line belongs to — lets the server re-price the
+  /** The event a meet-entry / addon line belongs to — lets the server re-price the
    *  line (esp. addons, which carry no reg ids). */
-  refMeetId?: string;
+  refEventId?: string;
   /** Refines `kind` for server-side re-pricing: 'entry'|'change' for meet-entry
    *  lines, 'tshirt'|'banner' for addon lines. Memberships leave it unset. */
   refLineType?: 'entry' | 'change' | 'tshirt' | 'banner';
@@ -485,7 +485,7 @@ export interface DB {
   levels: Level[];
   clubs: Club[];
   people: Athlete[];
-  meets: Meet[];
+  events: Event[];
   registrations: Registration[];
   scores: Score[];
   invoices: Invoice[];

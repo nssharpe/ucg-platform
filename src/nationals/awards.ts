@@ -31,7 +31,7 @@ function shortName(first: string, last: string): string {
 
 /**
  * Assemble awards across all levels: for non-finals levels pull prelim
- * placements, for finals levels pull finals placements; per (event/AA, level,
+ * placements, for finals levels pull finals placements; per (apparatus/AA, level,
  * category) and per team. Ports `Artistic.create_awards_presentation` +
  * `create_team_awards_presentation`. Mixed-team awards always come from prelims.
  */
@@ -42,9 +42,9 @@ export function assembleArtisticAwards(
   finals: { results: AthleteResult[]; teams: TeamResult[] },
 ): AwardTable[] {
   const tables: AwardTable[] = [];
-  const scopes = [...def.events, ...(def.hasAA ? ['AA'] : [])];
+  const scopes = [...def.apparatus, ...(def.hasAA ? ['AA'] : [])];
 
-  const pickEvent = (r: AthleteResult, scope: string) => (scope === 'AA' ? r.aa : r.events[scope]);
+  const pickEvent = (r: AthleteResult, scope: string) => (scope === 'AA' ? r.aa : r.apparatus[scope]);
 
   const levelSets: { levels: string[]; fromFinals: boolean }[] = [
     { levels: config.nonFinalsLevels, fromFinals: false },

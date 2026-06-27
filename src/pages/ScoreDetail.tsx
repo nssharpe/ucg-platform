@@ -5,7 +5,7 @@ import { useCapabilities } from '../lib/capabilities';
 import { Badge, Field } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 import { pushScore } from '../lib/supabase';
-import { EVENTS } from '../lib/types';
+import { APPARATUS } from '../lib/types';
 import type { Score } from '../lib/types';
 import { fmtScore } from '../lib/scoring';
 import { calcForLevel } from '../lib/calculators';
@@ -35,7 +35,7 @@ function ScoreDetailInner({ score }: { score: Score }) {
 
   const reg = db.registrations.find((r) => r.id === score.regId);
   const level = reg && db.levels.find((l) => l.id === reg.levelId);
-  const calcCfg = score.calc && reg && level ? calcForLevel(level.id, score.event) : null;
+  const calcCfg = score.calc && reg && level ? calcForLevel(level.id, score.apparatus) : null;
   const v2 = isCalcStateV2(score.calcState) && calcCfg && score.calcState.kind === calcCfg.kind
     ? score.calcState : null;
 
@@ -47,12 +47,12 @@ function ScoreDetailInner({ score }: { score: Score }) {
   const [note, setNote] = useState('');
 
   const athlete = reg && db.people.find((p) => p.id === reg.athleteId);
-  const meet = db.meets.find((m) => m.id === score.meetId);
-  const session = meet?.sessions.find((s) => s.id === score.sessionId);
+  const event = db.events.find((m) => m.id === score.eventId);
+  const session = event?.sessions.find((s) => s.id === score.sessionId);
   const club = reg && db.clubs.find((c) => c.id === reg.clubId);
-  const eventName = session ? EVENTS[session.discipline].find((e) => e.code === score.event)?.name ?? score.event : score.event;
+  const eventName = session ? APPARATUS[session.discipline].find((e) => e.code === score.apparatus)?.name ?? score.apparatus : score.apparatus;
 
-  const canView = caps.isAdmin || caps.isMeetHost(score.meetId)
+  const canView = caps.isAdmin || caps.isEventHost(score.eventId)
     || (!!reg && caps.personId === reg.athleteId);
   const canAdjust = caps.isAdmin;
 
@@ -67,7 +67,7 @@ function ScoreDetailInner({ score }: { score: Score }) {
 
   const isNative = !!v2 && nativeSt != null && !!calcCfg && !!level;
   const isLegacy = !isNative && !!score.calcState && !!calcCfg;
-  const outcome = isNative ? computeScoring(calcCfg!.kind, nativeSt, level!.id, score.event) : null;
+  const outcome = isNative ? computeScoring(calcCfg!.kind, nativeSt, level!.id, score.apparatus) : null;
 
   // Live values for the adjustment readout: native outcome, else legacy bridge message.
   const liveD = outcome?.d ?? live?.d ?? score.sv;
@@ -103,7 +103,7 @@ function ScoreDetailInner({ score }: { score: Score }) {
     <div style={{ maxWidth: 860 }}>
       <h1 className="page-title display">{athlete ? `${athlete.firstName} ${athlete.lastName}` : 'Score'} — {eventName}</h1>
       <p className="page-sub">
-        {meet && <Link to={`/results/${meet.slug}`}>{meet.name}</Link>} · {session?.name} · {club?.shortName} · {level?.name}
+        {event && <Link to={`/results/${event.slug}`}>{event.name}</Link>} · {session?.name} · {club?.shortName} · {level?.name}
         {' '}· Unique URL: <code>#/scores/{encodeURIComponent(score.id)}</code>
       </p>
 
@@ -130,13 +130,13 @@ function ScoreDetailInner({ score }: { score: Score }) {
           <h3 style={{ marginBottom: 8 }}>Calculator as submitted{canAdjust && ' — edit to adjust'}</h3>
           {isNative ? (
             <div className="card card-pad">
-              <ScoringPanel kind={calcCfg!.kind} levelId={level!.id} eventCode={score.event} value={nativeSt} onChange={setNativeSt} />
+              <ScoringPanel kind={calcCfg!.kind} levelId={level!.id} apparatusCode={score.apparatus} value={nativeSt} onChange={setNativeSt} />
             </div>
           ) : (
             <CalcPanel
               ref={calcRef}
               cfg={calcCfg!}
-              eventCode={score.event}
+              apparatusCode={score.apparatus}
               initialState={score.calcState}
               onLive={setLive}
               height={560}
@@ -166,7 +166,7 @@ function ScoreDetailInner({ score }: { score: Score }) {
             {score.source === 'manual'
               ? 'This score was entered manually — there is no calculator breakdown to show.'
               : 'No calculator state was captured with this score (e.g. seeded demo data).'}
-            {canAdjust && <> Admins can re-score it from the <Link to={`/judge?meet=${score.meetId}`}>score entry pad</Link>.</>}
+            {canAdjust && <> Admins can re-score it from the <Link to={`/judge?event=${score.eventId}`}>score entry pad</Link>.</>}
           </p>
         </div>
       )}

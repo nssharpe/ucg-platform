@@ -1,13 +1,13 @@
 /**
  * Adapter: the seam between the platform's data model and the pure Nationals
  * engine (src/nationals/). Builds engine `AthleteEntry[]` from
- * Athlete/Registration/Score/MeetSession, maps the admin-entered `NationalsConfig`
+ * Athlete/Registration/Score/EventSession, maps the admin-entered `NationalsConfig`
  * (keyed by platform levelId) to the engine config, and runs the engine per
  * discipline + phase. Everything is keyed by platform levelId end-to-end, so no
  * Jules-level-code mapping is needed for live data (that map only exists in the
  * fixture extractor). See docs/specs/2026-06-13-nationals-qual-awards.md.
  */
-import type { DB, Discipline, Level, Meet, NationalsConfig, PlacementCategory } from './types';
+import type { DB, Discipline, Level, Event, NationalsConfig, PlacementCategory } from './types';
 import {
   WAG,
   MAG,
@@ -27,20 +27,20 @@ import {
   type Category,
   type DecathlonResult,
   type DisciplineDef,
-  type EventScore,
+  type ApparatusScore,
   type NationalsEngineConfig,
   type OmnithonResult,
   type TeamResult,
 } from '../nationals';
 
-/** Platform TNT: events TR/DM/TU (no Synch Trampoline), one level per registration,
- *  no AA/team — so each event carries the registration's level. */
+/** Platform TNT: apparatus TR/DM/TU (no Synch Trampoline), one level per registration,
+ *  no AA/team — so each apparatus carries the registration's level. */
 export const PLATFORM_TNT: DisciplineDef = {
   abbr: 'tnt',
-  events: ['TR', 'DM', 'TU'],
+  apparatus: ['TR', 'DM', 'TU'],
   hasAA: false,
   hasTeam: false,
-  perEventLevel: true,
+  perApparatusLevel: true,
 };
 
 export const DISCIPLINE_DEFS: Record<Discipline, DisciplineDef> = { WAG, MAG, TNT: PLATFORM_TNT };
@@ -106,7 +106,7 @@ export function platformCategory(
 export function toEngineConfig(cfg: NationalsConfig): NationalsEngineConfig {
   return {
     cutoffs: {
-      event: cfg.cutoffs.event,
+      apparatus: cfg.cutoffs.event,
       aa: cfg.cutoffs.aa,
       team: cfg.cutoffs.team,
       teamMixed: cfg.cutoffs.teamMixed ?? {},
@@ -119,27 +119,27 @@ export function toEngineConfig(cfg: NationalsConfig): NationalsEngineConfig {
   };
 }
 
-/** Sessions of a meet for one discipline + phase (phase optional). */
-function sessionsFor(meet: Meet, discipline: Discipline, phase?: Phase) {
-  return meet.sessions.filter(
+/** Sessions of an event for one discipline + phase (phase optional). */
+function sessionsFor(event: Event, discipline: Discipline, phase?: Phase) {
+  return event.sessions.filter(
     (s) => s.discipline === discipline && (phase ? s.phase === phase : true),
   );
 }
 
 /**
  * Build engine entries for one discipline + phase from the platform DB. AA is the
- * natural event sum (the platform computes scores natively, so there is no
+ * natural apparatus sum (the platform computes scores natively, so there is no
  * separate "provided AA" to diverge from). Scratched apparatus → status
  * 'Scratched'; everything else entered is 'Included'. Finalists are place-eligible.
  */
-export function buildEntries(db: DB, meet: Meet, discipline: Discipline, phase?: Phase): AthleteEntry[] {
+export function buildEntries(db: DB, event: Event, discipline: Discipline, phase?: Phase): AthleteEntry[] {
   const def = DISCIPLINE_DEFS[discipline];
-  const sessionIds = new Set(sessionsFor(meet, discipline, phase).map((s) => s.id));
+  const sessionIds = new Set(sessionsFor(event, discipline, phase).map((s) => s.id));
   const regs = db.registrations.filter(
-    (r) => r.meetId === meet.id && r.sessionId && sessionIds.has(r.sessionId) && !r.refunded,
+    (r) => r.eventId === event.id && r.sessionId && sessionIds.has(r.sessionId) && !r.refunded,
   );
   const scoreMap = new Map<string, (typeof db.scores)[number]>();
-  for (const s of db.scores) if (sessionIds.has(s.sessionId)) scoreMap.set(`${s.regId}|${s.event}`, s);
+  for (const s of db.scores) if (sessionIds.has(s.sessionId)) scoreMap.set(`${s.regId}|${s.apparatus}`, s);
 
   const peopleById = new Map(db.people.map((p) => [p.id, p]));
   const clubsById = new Map(db.clubs.map((c) => [c.id, c]));
@@ -147,16 +147,16 @@ export function buildEntries(db: DB, meet: Meet, discipline: Discipline, phase?:
   return regs.map((reg) => {
     const athlete = peopleById.get(reg.athleteId);
     const club = clubsById.get(reg.clubId);
-    const events: Record<string, EventScore> = {};
-    for (const ev of def.events) {
+    const apparatus: Record<string, ApparatusScore> = {};
+    for (const ev of def.apparatus) {
       const sc = scoreMap.get(`${reg.id}|${ev}`);
-      events[ev] = {
-        event: ev,
+      apparatus[ev] = {
+        apparatus: ev,
         score: sc?.final ?? 0,
         status: sc?.scratched ? 'Scratched' : 'Included',
         placeEligible: true,
         sv: sc?.sv ?? null,
-        ...(def.perEventLevel ? { level: reg.levelId } : {}),
+        ...(def.perApparatusLevel ? { level: reg.levelId } : {}),
       };
     }
     return {
@@ -172,17 +172,17 @@ export function buildEntries(db: DB, meet: Meet, discipline: Discipline, phase?:
       // for category placement (|| catches '' where ?? would not).
       category: platformCategory(athlete?.placement?.[discipline], athlete?.gender ?? '', athlete?.studentStatus || 'Non-Student'),
       session: reg.sessionId ?? '',
-      events,
+      apparatus,
       aaPlaceEligible: true,
-      // aaScore omitted ⇒ engine sums event scores (platform AA is always the sum).
+      // aaScore omitted ⇒ engine sums apparatus scores (platform AA is always the sum).
     } satisfies AthleteEntry;
   });
 }
 
-/** Every competing levelId for a discipline in this meet (from its sessions). */
-function competingLevels(meet: Meet, discipline: Discipline): string[] {
+/** Every competing levelId for a discipline in this event (from its sessions). */
+function competingLevels(event: Event, discipline: Discipline): string[] {
   const set = new Set<string>();
-  for (const s of sessionsFor(meet, discipline)) for (const id of s.levelIds) set.add(id);
+  for (const s of sessionsFor(event, discipline)) for (const id of s.levelIds) set.add(id);
   return [...set];
 }
 
@@ -194,17 +194,17 @@ export interface ArtisticDisciplineResult {
 }
 
 /** Run an artistic discipline (WAG/MAG) end-to-end: prelims, finals, awards. */
-export function computeArtisticDiscipline(db: DB, meet: Meet, discipline: 'WAG' | 'MAG'): ArtisticDisciplineResult {
+export function computeArtisticDiscipline(db: DB, event: Event, discipline: 'WAG' | 'MAG'): ArtisticDisciplineResult {
   const def = DISCIPLINE_DEFS[discipline];
-  const cfg = meet.nationalsConfig!;
+  const cfg = event.nationalsConfig!;
   const engineCfg = toEngineConfig(cfg);
   // Non-finals levels = competing levels that aren't finals levels.
-  engineCfg.nonFinalsLevels = competingLevels(meet, discipline).filter((l) => !engineCfg.finalsLevels.includes(l));
+  engineCfg.nonFinalsLevels = competingLevels(event, discipline).filter((l) => !engineCfg.finalsLevels.includes(l));
 
-  const prelimEntries = buildEntries(db, meet, discipline, 'prelim');
+  const prelimEntries = buildEntries(db, event, discipline, 'prelim');
   const prelims = computeArtistic(prelimEntries, def, engineCfg, { finals: false });
 
-  const finalEntries = buildEntries(db, meet, discipline, 'final');
+  const finalEntries = buildEntries(db, event, discipline, 'final');
   const qualifiedTeams = new Set<string>();
   for (const t of prelims.teams)
     if (t.category !== 'Mixed' && t.qual === 'Y') qualifiedTeams.add(`${t.club}|${t.level}|${t.category}`);
@@ -230,26 +230,26 @@ export interface ValidationIssue {
 
 const NAME: Record<string, string> = { VT: 'Vault', UB: 'Bars', BB: 'Beam', FX: 'Floor', PH: 'PH', SR: 'Rings', PB: 'PB', HB: 'HB', AA: 'AA' };
 
-/** Run the engine's validation checks for a Nationals meet → flat issue list for
+/** Run the engine's validation checks for a Nationals event → flat issue list for
  *  the UI. On the platform AA is always the event sum, so AA-sum/decimal checks
  *  rarely fire; SV caps, finals team completeness, and prelim-qual-vs-finals
  *  eligibility are the meaningful ones. */
-export function computeNationalsValidation(db: DB, meet: Meet): ValidationIssue[] {
-  const cfg = meet.nationalsConfig;
+export function computeNationalsValidation(db: DB, event: Event): ValidationIssue[] {
+  const cfg = event.nationalsConfig;
   if (!cfg) return [];
   const issues: ValidationIssue[] = [];
   for (const discipline of ['WAG', 'MAG'] as const) {
-    if (!meet.disciplines.includes(discipline)) continue;
+    if (!event.disciplines.includes(discipline)) continue;
     const def = DISCIPLINE_DEFS[discipline];
     const engineCfg = toEngineConfig(cfg);
-    engineCfg.nonFinalsLevels = competingLevels(meet, discipline).filter((l) => !engineCfg.finalsLevels.includes(l));
+    engineCfg.nonFinalsLevels = competingLevels(event, discipline).filter((l) => !engineCfg.finalsLevels.includes(l));
 
-    const prelimEntries = buildEntries(db, meet, discipline, 'prelim');
+    const prelimEntries = buildEntries(db, event, discipline, 'prelim');
     const vp = validateArtistic(prelimEntries, def, engineCfg, false);
-    for (const f of vp.svCap) issues.push({ discipline, group: 'Prelim SV cap', detail: `${f.first} ${f.last} — ${NAME[f.event]} ${f.score} over cap` });
-    for (const f of vp.decimal) issues.push({ discipline, group: 'Prelim score precision', detail: `${f.first} ${f.last} — ${NAME[f.event] ?? f.event} ${f.score} not a 0.001 multiple` });
+    for (const f of vp.svCap) issues.push({ discipline, group: 'Prelim SV cap', detail: `${f.first} ${f.last} — ${NAME[f.apparatus]} ${f.score} over cap` });
+    for (const f of vp.decimal) issues.push({ discipline, group: 'Prelim score precision', detail: `${f.first} ${f.last} — ${NAME[f.apparatus] ?? f.apparatus} ${f.score} not a 0.001 multiple` });
 
-    const finalEntries = buildEntries(db, meet, discipline, 'final');
+    const finalEntries = buildEntries(db, event, discipline, 'final');
     if (!finalEntries.length) continue;
     const prelims = computeArtistic(prelimEntries, def, engineCfg, { finals: false });
     const qualifiedTeams = new Set<string>();
@@ -257,41 +257,41 @@ export function computeNationalsValidation(db: DB, meet: Meet): ValidationIssue[
     const prelimQual: PrelimQualLookup = new Map();
     for (const r of prelims.results) {
       const rec: Record<string, QualFlag> = {};
-      for (const ev of def.events) rec[ev] = r.events[ev].qual!;
+      for (const ev of def.apparatus) rec[ev] = r.apparatus[ev].qual!;
       if (r.aa) rec.AA = r.aa.qual!;
       prelimQual.set(`${r.entry.first}|${r.entry.last}|${r.entry.club}|${r.level}`, rec);
     }
     for (const t of validateTeamFinals(finalEntries, def, qualifiedTeams)) {
-      const bad = def.events.filter((ev) => t.validity[ev] !== 'Valid').map((ev) => `${ev}: ${t.validity[ev]}`).join(', ');
+      const bad = def.apparatus.filter((ev) => t.validity[ev] !== 'Valid').map((ev) => `${ev}: ${t.validity[ev]}`).join(', ');
       issues.push({ discipline, group: 'Finals team roster', detail: `${t.club} · ${t.level} · ${t.category} — ${bad}` });
     }
     for (const q of validateQualCheck(finalEntries, def, prelimQual)) {
-      issues.push({ discipline, group: 'Finals eligibility', detail: `${q.first} ${q.last} (${q.level} ${NAME[q.event] ?? q.event}) — ${q.problem}` });
+      issues.push({ discipline, group: 'Finals eligibility', detail: `${q.first} ${q.last} (${q.level} ${NAME[q.apparatus] ?? q.apparatus}) — ${q.problem}` });
     }
   }
   return issues;
 }
 
-/** Compute everything for a Nationals meet that the UI needs. */
-export function computeNationals(db: DB, meet: Meet): NationalsBundle {
-  const cfg = meet.nationalsConfig;
+/** Compute everything for a Nationals event that the UI needs. */
+export function computeNationals(db: DB, event: Event): NationalsBundle {
+  const cfg = event.nationalsConfig;
   if (!cfg) return { decathlon: [], omnithon: [] };
   const bundle: NationalsBundle = { decathlon: [], omnithon: [] };
 
-  if (meet.disciplines.includes('WAG')) bundle.wag = computeArtisticDiscipline(db, meet, 'WAG');
-  if (meet.disciplines.includes('MAG')) bundle.mag = computeArtisticDiscipline(db, meet, 'MAG');
-  if (meet.disciplines.includes('TNT')) {
-    const entries = buildEntries(db, meet, 'TNT', 'prelim');
+  if (event.disciplines.includes('WAG')) bundle.wag = computeArtisticDiscipline(db, event, 'WAG');
+  if (event.disciplines.includes('MAG')) bundle.mag = computeArtisticDiscipline(db, event, 'MAG');
+  if (event.disciplines.includes('TNT')) {
+    const entries = buildEntries(db, event, 'TNT', 'prelim');
     bundle.tnt = { results: computeTnt(entries, PLATFORM_TNT, cfg.tntCutoffs ?? {}) };
   }
 
   // Combined awards (prelims), only when both artistic disciplines ran.
-  const wagEntries = meet.disciplines.includes('WAG') ? buildEntries(db, meet, 'WAG', 'prelim') : [];
-  const magEntries = meet.disciplines.includes('MAG') ? buildEntries(db, meet, 'MAG', 'prelim') : [];
+  const wagEntries = event.disciplines.includes('WAG') ? buildEntries(db, event, 'WAG', 'prelim') : [];
+  const magEntries = event.disciplines.includes('MAG') ? buildEntries(db, event, 'MAG', 'prelim') : [];
   if (wagEntries.length && magEntries.length) {
     bundle.decathlon = computeDecathlon(wagEntries, magEntries);
-    if (meet.disciplines.includes('TNT')) {
-      bundle.omnithon = computeOmnithon(wagEntries, magEntries, buildEntries(db, meet, 'TNT', 'prelim'));
+    if (event.disciplines.includes('TNT')) {
+      bundle.omnithon = computeOmnithon(wagEntries, magEntries, buildEntries(db, event, 'TNT', 'prelim'));
     }
   }
   return bundle;

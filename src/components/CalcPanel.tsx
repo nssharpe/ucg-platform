@@ -11,11 +11,11 @@ export interface CalcPanelHandle {
  *  Optionally restores a previously captured form state (score review/adjustment). */
 export const CalcPanel = forwardRef<CalcPanelHandle, {
   cfg: CalcConfig;
-  eventCode: string;
+  apparatusCode: string;
   initialState?: unknown;
   onLive?: (msg: CalcMessage) => void;
   height?: number;
-}>(function CalcPanel({ cfg, eventCode, initialState, onLive, height = 520 }, ref) {
+}>(function CalcPanel({ cfg, apparatusCode, initialState, onLive, height = 520 }, ref) {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const pending = useRef(new Map<string, (s: unknown) => void>());
   const [ready, setReady] = useState(false);
@@ -60,7 +60,7 @@ export const CalcPanel = forwardRef<CalcPanelHandle, {
       <iframe
         ref={frameRef}
         title={cfg.label}
-        src={calcUrl(cfg, eventCode)}
+        src={calcUrl(cfg, apparatusCode)}
         style={{ border: 'none', width: '100%', height, display: 'block', opacity: ready ? 1 : 0.4, transition: 'opacity 0.2s' }}
       />
     </div>

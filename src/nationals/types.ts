@@ -4,7 +4,7 @@
  * Deliberately platform-agnostic: the engine works on generic level/category
  * strings + a config object, so it can be tested directly against the reference
  * tool's fixtures (its level codes + its config.ini). The platform adapter
- * (src/lib/nationals-*) maps UCG `Athlete`/`Registration`/`Score`/`MeetSession`
+ * (src/lib/nationals-*) maps UCG `Athlete`/`Registration`/`Score`/`EventSession`
  * onto these shapes. See docs/specs/2026-06-13-nationals-qual-awards.md.
  */
 
@@ -21,17 +21,17 @@ export const CATEGORIES: Category[] = [
   'Community Men+',
 ];
 
-export type EventStatus = 'Included' | 'Excluded' | 'Scratched';
+export type ApparatusStatus = 'Included' | 'Excluded' | 'Scratched';
 
 /** One athlete's result on one apparatus, before placement is computed. */
-export interface EventScore {
-  /** Apparatus abbreviation: VT, UB, BB(beam), FX, PH, SR, PB, HB, or a TNT event. */
-  event: string;
+export interface ApparatusScore {
+  /** Apparatus abbreviation: VT, UB, BB(beam), FX, PH, SR, PB, HB, or a TNT apparatus. */
+  apparatus: string;
   score: number;
-  status: EventStatus;
+  status: ApparatusStatus;
   placeEligible: boolean;
   sv?: number | null;
-  /** TNT only: each event carries its own level. */
+  /** TNT only: each apparatus carries its own level. */
   level?: string;
 }
 
@@ -48,8 +48,8 @@ export interface AthleteEntry {
   level: string;
   category: Category;
   session?: string;
-  /** Keyed by event abbreviation. */
-  events: Record<string, EventScore>;
+  /** Keyed by apparatus abbreviation. */
+  apparatus: Record<string, ApparatusScore>;
   /** All-around place-eligibility flag from the source (finals filtering / passthrough). */
   aaPlaceEligible?: boolean;
   /** SF-provided AA score. The reference tool PLACES on this value verbatim (not a
@@ -65,7 +65,7 @@ export type CutoffMap = Partial<Record<Category, Record<string, number>>>;
 
 export interface NationalsEngineConfig {
   cutoffs: {
-    event: CutoffMap;
+    apparatus: CutoffMap;
     aa: CutoffMap;
     team: CutoffMap;
     /** Mixed-team cutoffs keyed by level (Mixed is its own category). */
@@ -78,9 +78,9 @@ export interface NationalsEngineConfig {
 
 export type QualFlag = 'Y' | 'N';
 
-/** Per-event computed placement. */
-export interface EventPlacement {
-  event: string;
+/** Per-apparatus computed placement. */
+export interface ApparatusPlacement {
+  apparatus: string;
   score: number;
   place: number | null;
   qual: QualFlag | null;
@@ -91,8 +91,8 @@ export interface AthleteResult {
   entry: AthleteEntry;
   category: Category;
   level: string;
-  events: Record<string, EventPlacement>;
-  aa?: EventPlacement;
+  apparatus: Record<string, ApparatusPlacement>;
+  aa?: ApparatusPlacement;
   /** Set after team scoring merges in (artistic only). */
   teamQual?: QualFlag;
 }
@@ -106,37 +106,37 @@ export interface TeamResult {
   qual: QualFlag;
 }
 
-/** Definition of a discipline: its events and which scopes apply. */
+/** Definition of a discipline: its apparatus and which scopes apply. */
 export interface DisciplineDef {
   abbr: 'wag' | 'mag' | 'tnt';
   /** Ordered apparatus abbreviations. */
-  events: string[];
+  apparatus: string[];
   hasAA: boolean;
   hasTeam: boolean;
-  /** TNT: group/qualify by each event's own level rather than a single CompLevel. */
-  perEventLevel: boolean;
+  /** TNT: group/qualify by each apparatus's own level rather than a single CompLevel. */
+  perApparatusLevel: boolean;
 }
 
 export const WAG: DisciplineDef = {
   abbr: 'wag',
-  events: ['VT', 'UB', 'BB', 'FX'],
+  apparatus: ['VT', 'UB', 'BB', 'FX'],
   hasAA: true,
   hasTeam: true,
-  perEventLevel: false,
+  perApparatusLevel: false,
 };
 
 export const MAG: DisciplineDef = {
   abbr: 'mag',
-  events: ['FX', 'PH', 'SR', 'VT', 'PB', 'HB'],
+  apparatus: ['FX', 'PH', 'SR', 'VT', 'PB', 'HB'],
   hasAA: true,
   hasTeam: true,
-  perEventLevel: false,
+  perApparatusLevel: false,
 };
 
 export const TNT: DisciplineDef = {
   abbr: 'tnt',
-  events: ['Tumbling', 'Trampoline', 'Synch_Trampoline', 'DMT'],
+  apparatus: ['Tumbling', 'Trampoline', 'Synch_Trampoline', 'DMT'],
   hasAA: false,
   hasTeam: false,
-  perEventLevel: true,
+  perApparatusLevel: true,
 };

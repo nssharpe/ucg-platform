@@ -43,7 +43,7 @@ Deno.serve(async (req) => {
 
   const { data: sreq } = await db
     .from('sanction_requests')
-    .select('id, host_club_id, requester_person_id, payload, sanction_id, created_meet_id')
+    .select('id, host_club_id, requester_person_id, payload, sanction_id, created_event_id')
     .eq('id', requestId)
     .maybeSingle();
   if (!sreq) return json({ ok: false, error: 'Sanction request not found.' }, 404);
@@ -82,16 +82,16 @@ Deno.serve(async (req) => {
 
   let subject: string; let html: string;
   if (event === 'approved') {
-    // Meet routes are keyed by slug (/meets/:slug/manage), not the meet id we store.
-    const { data: meet } = sreq.created_meet_id
-      ? await db.from('meets').select('slug').eq('id', sreq.created_meet_id).maybeSingle()
+    // Event routes are keyed by slug (/events/:slug/manage), not the event id we store.
+    const { data: event } = sreq.created_event_id
+      ? await db.from('events').select('slug').eq('id', sreq.created_event_id).maybeSingle()
       : { data: null };
-    const meetLink = meet?.slug ? `${appUrl}/#/meets/${meet.slug}/manage` : reqLink;
+    const eventLink = event?.slug ? `${appUrl}/#/events/${event.slug}/manage` : reqLink;
     subject = `Approved: ${eventName ?? 'your event'} sanction`;
     html = `<p>Hi ${esc(requester?.first_name ?? '')},</p>
 <p>Your sanction request for <strong>${label}</strong> has been <strong>approved</strong>${sreq.sanction_id ? ` (Sanction ID: ${esc(String(sreq.sanction_id))})` : ''}.</p>
-<p>A draft meet has been created.</p>
-<p><a href="${meetLink}">Open your meet &rarr;</a></p>`;
+<p>A draft event has been created.</p>
+<p><a href="${eventLink}">Open your event &rarr;</a></p>`;
   } else {
     subject = `Update on your ${eventName ?? 'event'} sanction request`;
     html = `<p>Hi ${esc(requester?.first_name ?? '')},</p>

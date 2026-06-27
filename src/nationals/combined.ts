@@ -7,8 +7,8 @@ function joinKey(e: AthleteEntry): string {
   return `${e.first}|${e.last}|${e.email}|${e.club}`;
 }
 
-function allCompeted(e: AthleteEntry, events: string[]): boolean {
-  return events.every((ev) => e.events[ev] && e.events[ev].status !== 'Scratched');
+function allCompeted(e: AthleteEntry, apparatus: string[]): boolean {
+  return apparatus.every((ev) => e.apparatus[ev] && e.apparatus[ev].status !== 'Scratched');
 }
 
 export interface DecathlonResult {
@@ -35,7 +35,7 @@ export function computeDecathlon(wag: AthleteEntry[], mag: AthleteEntry[]): Deca
     const m = magByKey.get(joinKey(w));
     if (!m) continue;
     const overall = roundScore(2 * roundScore(w.aaScore ?? 0) + roundScore(m.aaScore ?? 0));
-    const eligible = allCompeted(w, WAG.events) && allCompeted(m, MAG.events);
+    const eligible = allCompeted(w, WAG.apparatus) && allCompeted(m, MAG.apparatus);
     rows.push({
       id: joinKey(w),
       first: w.first,
@@ -74,7 +74,7 @@ export interface OmnithonResult {
   last: string;
   email: string;
   club: string;
-  /** Whether the athlete competed every event across WAG, MAG, and TNT. */
+  /** Whether the athlete competed every apparatus across WAG, MAG, and TNT. */
   eligible: boolean;
   qual: QualFlag;
 }
@@ -95,7 +95,7 @@ export function computeOmnithon(wag: AthleteEntry[], mag: AthleteEntry[], tnt: A
     const t = tntByKey.get(joinKey(w));
     if (!m || !t) continue;
     const eligible =
-      allCompeted(w, WAG.events) && allCompeted(m, MAG.events) && allCompeted(t, TNT.events);
+      allCompeted(w, WAG.apparatus) && allCompeted(m, MAG.apparatus) && allCompeted(t, TNT.apparatus);
     out.push({ first: w.first, last: w.last, email: w.email, club: w.club, eligible, qual: eligible ? 'Y' : 'N' });
   }
   return out;

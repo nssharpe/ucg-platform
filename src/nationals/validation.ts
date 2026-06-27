@@ -15,14 +15,14 @@ import type { AthleteEntry, Category, DisciplineDef, NationalsEngineConfig, Qual
  */
 
 export interface AaFinding { first: string; last: string; session: string; sfAA: number; calcAA: number; }
-export interface SvCapFinding { first: string; last: string; session: string; event: string; score: number; }
-export interface IncludedFinding { first: string; last: string; session: string; event: string; }
-export interface DecimalFinding { first: string; last: string; session: string; event: string; score: number; }
+export interface SvCapFinding { first: string; last: string; session: string; apparatus: string; score: number; }
+export interface IncludedFinding { first: string; last: string; session: string; apparatus: string; }
+export interface DecimalFinding { first: string; last: string; session: string; apparatus: string; score: number; }
 export type TeamValidity = 'Valid' | 'Too many included' | 'Not enough included' | 'Missing Scores';
 export interface TeamIncludedFinding { club: string; level: string; category: Category; validity: Record<string, TeamValidity>; }
 export interface QualCheckFinding {
   first: string; last: string; session: string; club: string; level: string;
-  event: string; prelimsQual: QualFlag; finalsPlaceEligible: boolean; problem: string;
+  apparatus: string; prelimsQual: QualFlag; finalsPlaceEligible: boolean; problem: string;
 }
 
 const isDecimalBad = (score: number): boolean => {
@@ -47,7 +47,7 @@ export function validateArtistic(
     const session = e.session ?? '';
     // AA-sum check
     let sum = 0;
-    for (const ev of def.events) sum += roundScore(e.events[ev]?.score ?? 0);
+    for (const ev of def.apparatus) sum += roundScore(e.apparatus[ev]?.score ?? 0);
     sum = roundScore(sum);
     if (e.aaScore != null && sum !== roundScore(e.aaScore)) {
       aa.push({ first: e.first, last: e.last, session, sfAA: roundScore(e.aaScore), calcAA: sum });
@@ -55,30 +55,30 @@ export function validateArtistic(
     // SV caps
     const cap = config.svCaps[e.level];
     if (cap != null) {
-      for (const ev of def.events) {
-        const es = e.events[ev];
+      for (const ev of def.apparatus) {
+        const es = e.apparatus[ev];
         if (!es) continue;
         if ((es.score ?? 0) > cap || (es.sv ?? 0) > cap) {
-          svCap.push({ first: e.first, last: e.last, session, event: ev, score: es.score });
+          svCap.push({ first: e.first, last: e.last, session, apparatus: ev, score: es.score });
         }
       }
     }
-    // Prelims included: nonzero score on an Excluded event
+    // Prelims included: nonzero score on an Excluded apparatus
     if (!finals) {
-      for (const ev of def.events) {
-        const es = e.events[ev];
+      for (const ev of def.apparatus) {
+        const es = e.apparatus[ev];
         if (es && es.score !== 0 && es.status === 'Excluded') {
-          prelimsIncluded.push({ first: e.first, last: e.last, session, event: ev });
+          prelimsIncluded.push({ first: e.first, last: e.last, session, apparatus: ev });
         }
       }
     }
     // Decimal: scores (and AA) must be 0.001-multiples (raw values)
-    for (const ev of def.events) {
-      const es = e.events[ev];
-      if (es && isDecimalBad(es.score)) decimal.push({ first: e.first, last: e.last, session, event: ev, score: es.score });
+    for (const ev of def.apparatus) {
+      const es = e.apparatus[ev];
+      if (es && isDecimalBad(es.score)) decimal.push({ first: e.first, last: e.last, session, apparatus: ev, score: es.score });
     }
     if (e.aaScore != null && isDecimalBad(e.aaScore)) {
-      decimal.push({ first: e.first, last: e.last, session, event: 'AA', score: e.aaScore });
+      decimal.push({ first: e.first, last: e.last, session, apparatus: 'AA', score: e.aaScore });
     }
   }
   return { aa, svCap, prelimsIncluded, decimal };
@@ -102,10 +102,10 @@ export function validateTeamFinals(
     const [club, level, category] = key.split('|') as [string, string, Category];
     const validity: Record<string, TeamValidity> = {};
     let anyBad = false;
-    for (const ev of def.events) {
-      const numIncluded = rows.filter((r) => r.events[ev]?.status === 'Included').length;
-      const numRemaining = rows.filter((r) => r.events[ev]?.status === 'Excluded' && (r.events[ev]?.score ?? 0) !== 0).length;
-      const missing = rows.filter((r) => r.events[ev]?.status === 'Included' && (r.events[ev]?.score ?? 0) === 0).length;
+    for (const ev of def.apparatus) {
+      const numIncluded = rows.filter((r) => r.apparatus[ev]?.status === 'Included').length;
+      const numRemaining = rows.filter((r) => r.apparatus[ev]?.status === 'Excluded' && (r.apparatus[ev]?.score ?? 0) !== 0).length;
+      const missing = rows.filter((r) => r.apparatus[ev]?.status === 'Included' && (r.apparatus[ev]?.score ?? 0) === 0).length;
       let v: TeamValidity;
       if (numIncluded > 4) v = 'Too many included';
       else if (numIncluded < 4 && numRemaining > 0) v = 'Not enough included';
@@ -123,7 +123,7 @@ export function validateTeamFinals(
 export type PrelimQualLookup = Map<string, Record<string, QualFlag>>;
 
 /** Finals: prelim qualifiers must be finals place-eligible and vice-versa.
- *  Ports `validate_place_eligible_vs_qual`. `eventsWithScopes` lists engine event
+ *  Ports `validate_place_eligible_vs_qual`. `scopes` lists engine apparatus
  *  abbrs plus 'AA'; placeEligibleOf returns the finals place-eligibility per scope. */
 export function validateQualCheck(
   entries: AthleteEntry[],
@@ -131,17 +131,17 @@ export function validateQualCheck(
   prelimQual: PrelimQualLookup,
 ): QualCheckFinding[] {
   const out: QualCheckFinding[] = [];
-  const scopes = def.hasAA ? [...def.events, 'AA'] : [...def.events];
+  const scopes = def.hasAA ? [...def.apparatus, 'AA'] : [...def.apparatus];
   for (const e of entries) {
     const pq = prelimQual.get(`${e.first}|${e.last}|${e.club}|${e.level}`);
     if (!pq) continue;
     for (const scope of scopes) {
       const qualified = pq[scope] === 'Y';
-      const placeEligible = scope === 'AA' ? !!e.aaPlaceEligible : !!e.events[scope]?.placeEligible;
+      const placeEligible = scope === 'AA' ? !!e.aaPlaceEligible : !!e.apparatus[scope]?.placeEligible;
       if (qualified === placeEligible) continue;
       out.push({
         first: e.first, last: e.last, session: e.session ?? '', club: e.club, level: e.level,
-        event: scope, prelimsQual: qualified ? 'Y' : 'N', finalsPlaceEligible: placeEligible,
+        apparatus: scope, prelimsQual: qualified ? 'Y' : 'N', finalsPlaceEligible: placeEligible,
         problem: qualified ? 'Qualified but not place eligible' : 'Place eligible but did not qualify',
       });
     }
@@ -162,7 +162,7 @@ export function validateSyncro(entries: AthleteEntry[]): {
   interface Pair { levels: string[]; scores: number[]; sessions: string[]; }
   const pairs = new Map<string, Pair>();
   for (const e of entries) {
-    const es = e.events['Synch_Trampoline'];
+    const es = e.apparatus['Synch_Trampoline'];
     if (!es) continue;
     // Competed = a non-scratched synch entry (status is always one of the three).
     const competed = es.status !== 'Scratched';

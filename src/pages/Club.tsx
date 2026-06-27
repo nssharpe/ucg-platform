@@ -28,8 +28,8 @@ type SortCol = 'firstName' | 'lastName' | 'WAG' | 'MAG' | 'TNT' | 'studentStatus
 /** Event list as text, appending the synchro partner's name when the SY event is
  *  registered and a partner is set (per 2026-06-22 feedback). */
 function eventsText(r: Registration, nameOf: (id: string) => string): string {
-  const base = r.events.join(', ');
-  if (r.events.includes('SY') && r.partnerAthleteId) {
+  const base = r.apparatus.join(', ');
+  if (r.apparatus.includes('SY') && r.partnerAthleteId) {
     return `${base} (synchro w/ ${nameOf(r.partnerAthleteId)})`;
   }
   return base;
@@ -129,7 +129,7 @@ export function ClubPage({ view }: { view: ClubView }) {
         {canManage && (
           <>
             <button className="btn ghost small" onClick={() => setEditingClub(true)}>Edit club details</button>
-            <button className="btn ghost small" data-tip="Ask UCG to sanction a meet hosted by your club" onClick={() => alert('Sanction request form — wires to league admin approval queue (post-MVP).')}>Request meet sanction</button>
+            <button className="btn ghost small" data-tip="Ask UCG to sanction an event hosted by your club" onClick={() => alert('Sanction request form — wires to league admin approval queue (post-MVP).')}>Request event sanction</button>
             <button className="btn ghost small" data-tip="Create an account for an athlete and email them a set-password link" onClick={() => setAddingAthlete(true)}>Add athlete</button>
             <button className="btn ghost small" data-tip="Create an account for a coach and email them a set-password link" onClick={() => setAddingCoach(true)}>Add coach</button>
           </>
@@ -157,7 +157,7 @@ export function ClubPage({ view }: { view: ClubView }) {
           <Roster clubId={club.id} canManage={canManage} />
         </>
       ) : (
-        <MeetRegGrid clubId={club.id} canManage={canManage} />
+        <EventRegGrid clubId={club.id} canManage={canManage} />
       )}
 
       {editingClub && <ClubForm club={club} onClose={() => setEditingClub(false)} />}
@@ -710,30 +710,30 @@ function RosterTable({
 
 // ---- Cross-club cart cleanup (3d) -------------------------------------------
 
-/** Resolve the meetId a club-cart meet-entry line is for: prefer the linked
- *  registration(s) (`refRegIds`), else fall back to the "<meet name> entry —"
+/** Resolve the eventId a club-cart meet-entry line is for: prefer the linked
+ *  registration(s) (`refRegIds`), else fall back to the "<event name> entry —"
  *  label parse. */
-function cartItemMeetId(db: DB, item: CartItem): string | null {
+function cartItemEventId(db: DB, item: CartItem): string | null {
   if (item.refRegIds && item.refRegIds.length > 0) {
     const reg = db.registrations.find((r) => item.refRegIds!.includes(r.id));
-    if (reg) return reg.meetId;
+    if (reg) return reg.eventId;
   }
   const m = item.label.match(/^(.+?) entry —/);
-  if (m) return db.meets.find((mt) => mt.name === m[1])?.id ?? null;
+  if (m) return db.events.find((mt) => mt.name === m[1])?.id ?? null;
   return null;
 }
 
 /** The club-cart meet-entry lines for `clubId` whose athlete has SINCE become
- *  PAID-registered under a DIFFERENT club for that meet (pending line is moot).
+ *  PAID-registered under a DIFFERENT club for that event (pending line is moot).
  *  Excludes THIS club so a legitimate same-club pending line is never flagged. */
 function staleCrossClubCartItems(db: DB, clubId: string): CartItem[] {
   const cart = db.carts[clubId] ?? [];
   return cart.filter((i) => {
     if (i.kind !== 'meet-entry' || !i.refUserId) return false;
-    const meetId = cartItemMeetId(db, i);
-    if (!meetId) return false;
+    const eventId = cartItemEventId(db, i);
+    if (!eventId) return false;
     return paidRegistrationClub(db.registrations, {
-      athleteId: i.refUserId, meetId, excludeClubId: clubId,
+      athleteId: i.refUserId, eventId, excludeClubId: clubId,
     }) !== null;
   });
 }
@@ -756,9 +756,9 @@ function cleanupCrossClubCart(
   for (const i of removable) {
     const athlete = db.people.find((p) => p.id === i.refUserId);
     const name = athlete ? `${athlete.firstName} ${athlete.lastName}` : 'An athlete';
-    const meetId = cartItemMeetId(db, i);
-    const otherClubId = meetId && i.refUserId
-      ? paidRegistrationClub(db.registrations, { athleteId: i.refUserId, meetId, excludeClubId: clubId })
+    const eventId = cartItemEventId(db, i);
+    const otherClubId = eventId && i.refUserId
+      ? paidRegistrationClub(db.registrations, { athleteId: i.refUserId, eventId, excludeClubId: clubId })
       : null;
     const otherShort = otherClubId
       ? db.clubs.find((c) => c.id === otherClubId)?.shortName ?? 'another club'
@@ -767,14 +767,14 @@ function cleanupCrossClubCart(
   }
 }
 
-// ---- MeetRegGrid (three-card layout) ----------------------------------------
+// ---- EventRegGrid (three-card layout) ----------------------------------------
 
-function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean }) {
+function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean }) {
   const db = useDB();
   const toast = useToast();
-  const openMeets = db.meets.filter((m) => m.status === 'reg-open' || m.status === 'reg-closed');
-  const [meetId, setMeetId] = useState(openMeets.find((m) => m.status === 'reg-open')?.id ?? openMeets[0]?.id);
-  const meet = db.meets.find((m) => m.id === meetId);
+  const openEvents = db.events.filter((m) => m.status === 'reg-open' || m.status === 'reg-closed');
+  const [eventId, setEventId] = useState(openEvents.find((m) => m.status === 'reg-open')?.id ?? openEvents[0]?.id);
+  const event = db.events.find((m) => m.id === eventId);
   const season = db.seasons.find((s) => s.current)!;
 
   // Modal state for RegistrationEditor
@@ -792,18 +792,18 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [db, clubId]);
 
-  if (!meet) return <p>No meets accepting registration.</p>;
+  if (!event) return <p>No events accepting registration.</p>;
 
-  const regClosed = meet.status !== 'reg-open';
+  const regClosed = event.status !== 'reg-open';
 
-  // Gate: the club must hold an active membership for the meet's season before
+  // Gate: the club must hold an active membership for the event's season before
   // registering any athlete. Returns true (and toasts) when blocked.
   const clubMembershipBlocked = (): boolean => {
-    const seasonId = seasonForDate(db, meet.startDate);
+    const seasonId = seasonForDate(db, event.startDate);
     if (!clubHasActiveMembership(db, clubId, seasonId)) {
       const sName = db.seasons.find((s) => s.id === seasonId)?.name ?? 'this season';
       const club = db.clubs.find((c) => c.id === clubId);
-      toast(`${club?.shortName ?? 'This club'} needs an active ${sName} club membership before registering athletes for this meet. Purchase it on the club page.`, { variant: 'error' });
+      toast(`${club?.shortName ?? 'This club'} needs an active ${sName} club membership before registering athletes for this event. Purchase it on the club page.`, { variant: 'error' });
       return true;
     }
     return false;
@@ -811,13 +811,13 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
 
   // changeFee applies if the fee is defined and we're past the startsAt date
   const changeFeeApplies = !!(
-    meet.changeFee &&
-    new Date() >= new Date(meet.changeFee.startsAt)
+    event.changeFee &&
+    new Date() >= new Date(event.changeFee.startsAt)
   );
 
-  // All non-refunded regs for this meet + club
+  // All non-refunded regs for this event + club
   const allRegs = db.registrations.filter(
-    (r) => r.meetId === meet.id && r.clubId === clubId && !r.refunded,
+    (r) => r.eventId === event.id && r.clubId === clubId && !r.refunded,
   );
 
   const regsFor = (athleteId: string) => allRegs.filter((r) => r.athleteId === athleteId);
@@ -845,10 +845,10 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
   };
 
   // Cross-club lock (3d): the OTHER club this athlete is already PAID-registered
-  // with for this meet. Non-null ⇒ not selectable here. shortName for the note.
+  // with for this event. Non-null ⇒ not selectable here. shortName for the note.
   const lockedToClubShortName = (athleteId: string): string | null => {
     const otherClubId = paidRegistrationClub(db.registrations, {
-      athleteId, meetId: meet.id, excludeClubId: clubId,
+      athleteId, eventId: event.id, excludeClubId: clubId,
     });
     if (!otherClubId) return null;
     return db.clubs.find((c) => c.id === otherClubId)?.shortName ?? 'another club';
@@ -859,7 +859,7 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
     if (clubMembershipBlocked()) return;
     mutate((d) => {
       const existingForAthlete = d.registrations.filter(
-        (r) => r.meetId === meet.id && r.athleteId === athleteId && r.clubId === clubId && !r.refunded,
+        (r) => r.eventId === event.id && r.athleteId === athleteId && r.clubId === clubId && !r.refunded,
       );
 
       // Disciplines covered by new regs
@@ -876,7 +876,7 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
       // A chargeable edit (change fee applies, editing existing regs, and the
       // fee is non-zero — i.e. NOT the host club's own athletes).
       const changeFee = changeFeeApplies && existingForAthlete.length > 0
-        ? registrationChangeFee(meet, { competingClubId: clubId })
+        ? registrationChangeFee(event, { competingClubId: clubId })
         : 0;
 
       // Upsert each new reg. A chargeable edit flips a previously-PAID reg back
@@ -905,17 +905,17 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
 
       // If a (non-host) change fee applies on an edit, add a fee line linked to
       // the affected regs so paying it flips them back to paid.
-      if (changeFee > 0 && meet.changeFee) {
+      if (changeFee > 0 && event.changeFee) {
         const cart = d.carts[clubId] ?? (d.carts[clubId] = []);
         const athlete = d.people.find((p) => p.id === athleteId)!;
         cart.push({
           id: `ci-change-${Date.now()}-${athleteId}`,
-          label: `${meet.name} change fee — ${athlete.firstName} ${athlete.lastName}`,
+          label: `${event.name} change fee — ${athlete.firstName} ${athlete.lastName}`,
           amount: changeFee,
           kind: 'meet-entry',
           refUserId: athleteId,
           refRegIds: newRegs.map((r) => r.id),
-          refMeetId: meet.id,
+          refEventId: event.id,
           refLineType: 'change',
         });
         pushCart(clubId, cart, true);
@@ -924,7 +924,7 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
 
     setEditingAthleteId(null);
     setRegisterAthleteId(null);
-    const editedHostFree = changeFeeApplies && registrationChangeFee(meet, { competingClubId: clubId }) === 0;
+    const editedHostFree = changeFeeApplies && registrationChangeFee(event, { competingClubId: clubId }) === 0;
     toast(
       changeFeeApplies && !editedHostFree
         ? 'Registration updated. Change fee added to club cart.'
@@ -942,10 +942,10 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
     let hostFree = false;
     mutate((d) => {
       const existingForAthlete = d.registrations.filter(
-        (r) => r.meetId === meet.id && r.athleteId === athleteId && r.clubId === clubId && !r.refunded,
+        (r) => r.eventId === event.id && r.athleteId === athleteId && r.clubId === clubId && !r.refunded,
       );
       const priorDisciplineCount = existingForAthlete.length;
-      const entryTotal = newRegistrationEntryTotal(meet, {
+      const entryTotal = newRegistrationEntryTotal(event, {
         competingClubId: clubId,
         priorDisciplineCount,
         newDisciplineCount: regs.length,
@@ -969,11 +969,11 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
       if (!already.has(athleteId)) {
         cart.push({
           id: `ci-${Date.now()}-${athleteId}`,
-          label: `${meet.name} entry — ${athlete.firstName} ${athlete.lastName} (${regs.map((r) => r.discipline).join('+')})`,
-          amount: newRegistrationEntryTotal(meet, {
+          label: `${event.name} entry — ${athlete.firstName} ${athlete.lastName} (${regs.map((r) => r.discipline).join('+')})`,
+          amount: newRegistrationEntryTotal(event, {
             competingClubId: clubId,
             priorDisciplineCount: d.registrations.filter(
-              (r) => r.meetId === meet.id && r.athleteId === athleteId && r.clubId === clubId && !r.refunded
+              (r) => r.eventId === event.id && r.athleteId === athleteId && r.clubId === clubId && !r.refunded
                 && !regs.some((nr) => nr.id === r.id),
             ).length,
             newDisciplineCount: regs.length,
@@ -981,7 +981,7 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
           kind: 'meet-entry',
           refUserId: athleteId,
           refRegIds: regs.map((r) => r.id),
-          refMeetId: meet.id,
+          refEventId: event.id,
           refLineType: 'entry',
         });
         pushCart(clubId, cart, true);
@@ -991,7 +991,7 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
 
   const requestRefund = (athleteId: string) => {
     mutate((d) => {
-      for (const r of d.registrations.filter((x) => x.meetId === meet.id && x.athleteId === athleteId && x.clubId === clubId && !x.refunded)) {
+      for (const r of d.registrations.filter((x) => x.eventId === event.id && x.athleteId === athleteId && x.clubId === clubId && !x.refunded)) {
         r.refundRequested = true;
         pushRegistration(r);
       }
@@ -1004,11 +1004,11 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
   const swapAthlete = (fromId: string, toId: string) => {
     const to = db.people.find((p) => p.id === toId);
     if (!to) return;
-    const swapFee = changeFeeApplies ? registrationChangeFee(meet, { competingClubId: clubId }) : 0;
+    const swapFee = changeFeeApplies ? registrationChangeFee(event, { competingClubId: clubId }) : 0;
     mutate((d) => {
       const swappedRegIds: string[] = [];
       for (const r of d.registrations) {
-        if (r.meetId === meet.id && r.athleteId === fromId && r.clubId === clubId && !r.refunded) {
+        if (r.eventId === event.id && r.athleteId === fromId && r.clubId === clubId && !r.refunded) {
           r.athleteId = toId;
           // A chargeable swap re-pends a previously-paid registration.
           if (swapFee > 0 && r.paid) {
@@ -1021,11 +1021,11 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
       }
       // 3e: any OTHER (meet-scoped, non-refunded) registration that named the
       // swapped-OUT athlete as its synchro partner must now point at the
-      // swapped-IN athlete. Scope mirrors the partner model (same meet, not
+      // swapped-IN athlete. Scope mirrors the partner model (same event, not
       // refunded). reassignPartners skips the swapped athletes' own rows.
-      const meetRegs = d.registrations.filter((r) => r.meetId === meet.id && !r.refunded);
+      const eventRegs = d.registrations.filter((r) => r.eventId === event.id && !r.refunded);
       const repointed = reassignPartners(
-        meetRegs.map((r) => ({ id: r.id, athleteId: r.athleteId, partnerAthleteId: r.partnerAthleteId ?? null })),
+        eventRegs.map((r) => ({ id: r.id, athleteId: r.athleteId, partnerAthleteId: r.partnerAthleteId ?? null })),
         fromId,
         toId,
       );
@@ -1037,9 +1037,9 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
         }
       }
 
-      if (swapFee > 0 && meet.changeFee) {
+      if (swapFee > 0 && event.changeFee) {
         const cart = d.carts[clubId] ?? (d.carts[clubId] = []);
-        cart.push({ id: `ci-change-${Date.now()}-${toId}`, label: `${meet.name} change fee — swap to ${to.firstName} ${to.lastName}`, amount: swapFee, kind: 'meet-entry', refUserId: toId, refRegIds: swappedRegIds, refMeetId: meet.id, refLineType: 'change' });
+        cart.push({ id: `ci-change-${Date.now()}-${toId}`, label: `${event.name} change fee — swap to ${to.firstName} ${to.lastName}`, amount: swapFee, kind: 'meet-entry', refUserId: toId, refRegIds: swappedRegIds, refEventId: event.id, refLineType: 'change' });
         pushCart(clubId, cart, true);
       }
     });
@@ -1052,33 +1052,33 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
 
   return (
     <div>
-      {/* Meet selector */}
+      {/* Event selector */}
       <div className="grid cols-3" style={{ marginBottom: 14, alignItems: 'end' }}>
-        <Field label="Meet">
-          <select className="input" value={meetId} onChange={(e) => setMeetId(e.target.value)}>
-            {openMeets.map((m) => <option key={m.id} value={m.id}>{m.name}{m.status !== 'reg-open' ? ' (closed)' : ''}</option>)}
+        <Field label="Event">
+          <select className="input" value={eventId} onChange={(e) => setEventId(e.target.value)}>
+            {openEvents.map((m) => <option key={m.id} value={m.id}>{m.name}{m.status !== 'reg-open' ? ' (closed)' : ''}</option>)}
           </select>
         </Field>
         <Field label="Entry fees">
           <div style={{ paddingTop: 8, fontSize: 14 }}>
-            {fmtMoney(meet.entryFee)} first discipline · {fmtMoney(meet.secondDisciplineFee)} additional
-            {meet.changeFee && (
+            {fmtMoney(event.entryFee)} first discipline · {fmtMoney(event.secondDisciplineFee)} additional
+            {event.changeFee && (
               <span style={{ color: 'var(--warn)', marginLeft: 8 }}>
-                · Change fee {fmtMoney(meet.changeFee.amount)} after {new Date(meet.changeFee.startsAt).toLocaleDateString()}
+                · Change fee {fmtMoney(event.changeFee.amount)} after {new Date(event.changeFee.startsAt).toLocaleDateString()}
               </span>
             )}
           </div>
         </Field>
         <Field label="Disciplines">
           <div style={{ paddingTop: 8, fontSize: 14 }}>
-            {meet.disciplines.join(', ')}
+            {event.disciplines.join(', ')}
           </div>
         </Field>
       </div>
 
       {regClosed && (
         <div className="card card-pad" style={{ borderLeft: '4px solid var(--coral-500)', marginBottom: 14 }}>
-          Registration is closed for this meet. Changes require a league admin override.
+          Registration is closed for this event. Changes require a league admin override.
         </div>
       )}
 
@@ -1151,7 +1151,7 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
         <div className="card card-pad" style={{ marginBottom: 18 }}>
           <h3 className="card-title">Ready to register ({unregisteredWithMembership.length})</h3>
           <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 12 }}>
-            Active members not yet registered for this meet.
+            Active members not yet registered for this event.
           </p>
           {unregisteredWithMembership.length === 0 ? (
             <p style={{ color: 'var(--ink-soft)', fontSize: 14 }}>All members with memberships are registered.</p>
@@ -1173,13 +1173,13 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
                       <td style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
                         {lockedTo
                           ? <span style={{ color: 'var(--warn)' }}>Already registered with {lockedTo}</span>
-                          : meet.disciplines.map((d) => (d === 'TNT' ? 'T&T' : d)).join(', ')}
+                          : event.disciplines.map((d) => (d === 'TNT' ? 'T&T' : d)).join(', ')}
                       </td>
                       <td>
                         <button
                           className="btn small primary"
                           disabled={regClosed || !!lockedTo}
-                          title={lockedTo ? `Already registered with ${lockedTo} for this meet` : undefined}
+                          title={lockedTo ? `Already registered with ${lockedTo} for this event` : undefined}
                           onClick={() => setRegisterAthleteId(a.id)}
                         >
                           Register
@@ -1199,7 +1199,7 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
         <div className="card card-pad" style={{ marginBottom: 18 }}>
           <h3 className="card-title">No membership ({withoutMembership.length})</h3>
           <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 12 }}>
-            These athletes need an active membership before they can register for a meet.{' '}
+            These athletes need an active membership before they can register for an event.{' '}
             <Link to="/membership">View membership options →</Link>
           </p>
           <table className="tbl">
@@ -1242,14 +1242,14 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
           {unregisteredWithMembership.length > 0 && (
             <div style={{ marginBottom: 14, paddingBottom: 14, borderBottom: '1px solid var(--line)' }}>
               <Field label="Swap this registration to another athlete"
-                hint={changeFeeApplies && meet.changeFee ? `A ${fmtMoney(meet.changeFee.amount)} change fee will be added to the club cart.` : 'Moves all of this athlete’s entries for this meet to a club member who has membership.'}>
+                hint={changeFeeApplies && event.changeFee ? `A ${fmtMoney(event.changeFee.amount)} change fee will be added to the club cart.` : 'Moves all of this athlete’s entries for this event to a club member who has membership.'}>
                 <Combo
                   options={unregisteredWithMembership.map((a) => ({ value: a.id, label: `${a.firstName} ${a.lastName}`, sub: a.email }))}
                   value={null}
                   placeholder="Search a club member with membership…"
                   onChange={(toId) => {
                     const to = db.people.find((p) => p.id === toId);
-                    if (to && window.confirm(`Swap ${editingAthlete.firstName} ${editingAthlete.lastName}'s registration to ${to.firstName} ${to.lastName}?${changeFeeApplies && meet.changeFee ? ` A ${fmtMoney(meet.changeFee.amount)} change fee applies.` : ''}`)) {
+                    if (to && window.confirm(`Swap ${editingAthlete.firstName} ${editingAthlete.lastName}'s registration to ${to.firstName} ${to.lastName}?${changeFeeApplies && event.changeFee ? ` A ${fmtMoney(event.changeFee.amount)} change fee applies.` : ''}`)) {
                       swapAthlete(editingAthlete.id, toId);
                     }
                   }}
@@ -1258,7 +1258,7 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
             </div>
           )}
           <RegistrationEditor
-            meet={meet}
+            event={event}
             athlete={editingAthlete}
             clubId={clubId}
             existing={regsFor(editingAthlete.id)}
@@ -1268,7 +1268,7 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
             onSave={(regs) => saveRegs(editingAthlete.id, regs)}
             onCancel={() => setEditingAthleteId(null)}
             changeFeeApplies={changeFeeApplies}
-            incomingPartnerId={db.registrations.find((r) => r.meetId === meet.id && !r.refunded && r.events.includes('SY') && r.partnerAthleteId === editingAthlete.id)?.athleteId ?? null}
+            incomingPartnerId={db.registrations.find((r) => r.eventId === event.id && !r.refunded && r.apparatus.includes('SY') && r.partnerAthleteId === editingAthlete.id)?.athleteId ?? null}
           />
         </Modal>
       )}
@@ -1280,7 +1280,7 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
           onClose={() => setRegisterAthleteId(null)}
         >
           <RegistrationEditor
-            meet={meet}
+            event={event}
             athlete={registerAthlete}
             clubId={clubId}
             existing={[]}
@@ -1289,7 +1289,7 @@ function MeetRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean
             season={season}
             onSave={(regs) => addToCart(registerAthlete.id, regs)}
             onCancel={() => setRegisterAthleteId(null)}
-            incomingPartnerId={db.registrations.find((r) => r.meetId === meet.id && !r.refunded && r.events.includes('SY') && r.partnerAthleteId === registerAthlete.id)?.athleteId ?? null}
+            incomingPartnerId={db.registrations.find((r) => r.eventId === event.id && !r.refunded && r.apparatus.includes('SY') && r.partnerAthleteId === registerAthlete.id)?.athleteId ?? null}
           />
         </Modal>
       )}
@@ -1324,7 +1324,7 @@ export function ClubCart() {
 
   // Cross-club cart cleanup (3d): when this cart loads, drop any pending meet-entry
   // line for an athlete who has SINCE become PAID-registered under a DIFFERENT club
-  // for that meet, and notify the manager. Idempotent (see cleanupCrossClubCart).
+  // for that event, and notify the manager. Idempotent (see cleanupCrossClubCart).
   const allInvoices = useMemo(() =>
     db.invoices
       .filter((i) => i.clubId === (club?.id ?? ''))
@@ -1357,12 +1357,12 @@ export function ClubCart() {
   const discount = couponDef ? (couponDef.amountOff ?? subtotal * (couponDef.pctOff ?? 0) / 100) : 0;
   const total = Math.max(0, subtotal - discount);
 
-  // Group cart items by meet (detect from label) and by memberships
-  const meetNames = Array.from(new Set(
+  // Group cart items by event (detect from label) and by memberships
+  const eventNames = Array.from(new Set(
     cart.filter((i) => i.kind === 'meet-entry').map((i) => {
-      // Label format: "<meet name> entry — <athlete> (<disc>)"
+      // Label format: "<event name> entry — <athlete> (<disc>)"
       const m = i.label.match(/^(.+?) entry —/);
-      return m ? m[1] : 'Meet entries';
+      return m ? m[1] : 'Event entries';
     }),
   ));
   const membershipItems = cart.filter((i) => i.kind === 'membership');
@@ -1370,13 +1370,13 @@ export function ClubCart() {
   // Registration summary per athlete (from the DB)
   const regSummaryForItem = (item: typeof cart[number]): string | null => {
     if (!item.refUserId || item.kind !== 'meet-entry') return null;
-    const meetMatch = item.label.match(/^(.+?) entry —/);
-    if (!meetMatch) return null;
-    const meetName = meetMatch[1];
-    const meet = db.meets.find((m) => m.name === meetName);
-    if (!meet) return null;
+    const eventMatch = item.label.match(/^(.+?) entry —/);
+    if (!eventMatch) return null;
+    const eventName = eventMatch[1];
+    const event = db.events.find((m) => m.name === eventName);
+    if (!event) return null;
     const regs = db.registrations.filter(
-      (r) => r.meetId === meet.id && r.athleteId === item.refUserId && !r.refunded,
+      (r) => r.eventId === event.id && r.athleteId === item.refUserId && !r.refunded,
     );
     if (regs.length === 0) return null;
     const nameOf = (id: string) => {
@@ -1411,7 +1411,7 @@ export function ClubCart() {
     <div style={{ maxWidth: 820 }}>
       <h1 className="page-title display">{club.shortName} — Cart &amp; Receipts</h1>
       <p className="page-sub">
-        Memberships pushed to the club, meet entries, and add-ons.
+        Memberships pushed to the club, event entries, and add-ons.
         Each membership is a separate line item so single refunds stay clean.
       </p>
       <div style={{ marginBottom: 16 }}>
@@ -1421,14 +1421,14 @@ export function ClubCart() {
       {/* Cart grouped by event / memberships */}
       {cart.length > 0 && (
         <>
-          {/* Meet entry cards */}
-          {meetNames.map((meetName) => {
-            const items = cart.filter((i) => i.kind === 'meet-entry' && i.label.startsWith(meetName));
+          {/* Event entry cards */}
+          {eventNames.map((eventName) => {
+            const items = cart.filter((i) => i.kind === 'meet-entry' && i.label.startsWith(eventName));
             return (
-              <div key={meetName} className="card card-pad" style={{ marginBottom: 18 }}>
-                <h3 className="card-title">{meetName}</h3>
+              <div key={eventName} className="card card-pad" style={{ marginBottom: 18 }}>
+                <h3 className="card-title">{eventName}</h3>
                 <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 10 }}>
-                  Meet entries · <Link to={`/club/${club.id}/registrations`}>Return to registration →</Link>
+                  Event entries · <Link to={`/club/${club.id}/registrations`}>Return to registration →</Link>
                 </p>
                 <table className="tbl">
                   <tbody>

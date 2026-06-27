@@ -129,14 +129,14 @@ export const VAULT_DATA: Record<MastersDiscipline, (MastersVault | null)[]> = {
   ],
 };
 
-// UCG event code → Masters apparatus.
-const EVENT_APPARATUS: Record<MastersDiscipline, Record<string, MastersApparatus>> = {
+// UCG apparatus code → Masters apparatus.
+const APPARATUS_MAP: Record<MastersDiscipline, Record<string, MastersApparatus>> = {
   MAG: { FX: 'floor', PH: 'pommel', SR: 'rings', VT: 'vault', PB: 'pbars', HB: 'hbar' },
   WAG: { VT: 'vault', UB: 'bars', BB: 'beam', FX: 'floor' },
 };
 
-export function apparatusFor(discipline: MastersDiscipline, eventCode: string): MastersApparatus {
-  return EVENT_APPARATUS[discipline][eventCode] ?? 'floor';
+export function apparatusFor(discipline: MastersDiscipline, apparatusCode: string): MastersApparatus {
+  return APPARATUS_MAP[discipline][apparatusCode] ?? 'floor';
 }
 
 export function skillValue(age: AgeDecade, level: MastersSkillLevel): number | null {
@@ -164,13 +164,13 @@ export interface MastersState {
   vaultDeductions: string;
 }
 
-export function init(_levelId: string, eventCode: string): MastersState {
+export function init(_levelId: string, apparatusCode: string): MastersState {
   const discipline: MastersDiscipline = _levelId === 'wag-masters' ? 'WAG' : 'MAG';
   return {
     discipline,
     age: '30',
     counts: { 'd+': 0, c: 0, b: 0, a: 0, me: 0, misc: 0 },
-    egs: egLabels(discipline, apparatusFor(discipline, eventCode)).map(() => false),
+    egs: egLabels(discipline, apparatusFor(discipline, apparatusCode)).map(() => false),
     dismountLevel: 'none',
     deductions: '',
     vaultIndex: null,
@@ -183,8 +183,8 @@ function dismountBonus(state: MastersState): number {
   return SKILL_VALUES[state.age][state.dismountLevel] ?? 0;
 }
 
-export function compute(state: MastersState, _levelId: string, eventCode: string): ScoringOutcome {
-  const apparatus = apparatusFor(state.discipline, eventCode);
+export function compute(state: MastersState, _levelId: string, apparatusCode: string): ScoringOutcome {
+  const apparatus = apparatusFor(state.discipline, apparatusCode);
 
   if (apparatus === 'vault') {
     const idx = state.vaultIndex;

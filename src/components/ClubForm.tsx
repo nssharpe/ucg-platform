@@ -57,7 +57,7 @@ export function ClubForm({ club, onClose }: { club?: Club; onClose: () => void }
           </label>
         </Field>
       </div>
-      <Field label="Club managers" hint="Managers can edit the roster, register for meets, and pay the club cart.">
+      <Field label="Club managers" hint="Managers can edit the roster, register for events, and pay the club cart.">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 18px', maxHeight: 160, overflowY: 'auto' }}>
           {/* Keep the list manageable: coaches, this club's roster, and anyone already selected */}
           {db.people

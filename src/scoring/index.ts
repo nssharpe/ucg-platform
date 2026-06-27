@@ -12,8 +12,8 @@ export type { ScoringOutcome, Breakdown } from './types';
 export type CalcKind = 'mag' | 'wag-open' | 'wag-vault' | 'wag-sv' | 'tnt' | 'masters';
 
 const ENGINES: Record<CalcKind, {
-  init(levelId: string, eventCode: string): unknown;
-  compute(state: never, levelId: string, eventCode: string): ScoringOutcome;
+  init(levelId: string, apparatusCode: string): unknown;
+  compute(state: never, levelId: string, apparatusCode: string): ScoringOutcome;
 }> = {
   mag,
   masters,
@@ -23,12 +23,12 @@ const ENGINES: Record<CalcKind, {
   tnt,
 };
 
-export function initScoring(kind: CalcKind, levelId: string, eventCode: string): unknown {
-  return ENGINES[kind].init(levelId, eventCode);
+export function initScoring(kind: CalcKind, levelId: string, apparatusCode: string): unknown {
+  return ENGINES[kind].init(levelId, apparatusCode);
 }
 
-export function computeScoring(kind: CalcKind, state: unknown, levelId: string, eventCode: string): ScoringOutcome {
-  return ENGINES[kind].compute(state as never, levelId, eventCode);
+export function computeScoring(kind: CalcKind, state: unknown, levelId: string, apparatusCode: string): ScoringOutcome {
+  return ENGINES[kind].compute(state as never, levelId, apparatusCode);
 }
 
 /** Versioned calculator state stored on a Score (`calcState`). Older scores

@@ -39,11 +39,11 @@ export interface WagOpenState {
   deductions: string;
 }
 
-export function egLabels(eventCode: string): string[] {
-  return APPARATUS_DATA[eventCode] ?? APPARATUS_DATA.FX;
+export function egLabels(apparatusCode: string): string[] {
+  return APPARATUS_DATA[apparatusCode] ?? APPARATUS_DATA.FX;
 }
 
-export function init(_levelId: string, _eventCode: string): WagOpenState {
+export function init(_levelId: string, _apparatusCode: string): WagOpenState {
   return {
     counts: { a: 0, b: 0, c: 0, d: 0, e: 0 },
     egs: [false, false, false, false],
@@ -51,7 +51,7 @@ export function init(_levelId: string, _eventCode: string): WagOpenState {
   };
 }
 
-export function compute(state: WagOpenState, _levelId: string, _eventCode: string): ScoringOutcome {
+export function compute(state: WagOpenState, _levelId: string, _apparatusCode: string): ScoringOutcome {
   let skills = 0;
   let count = 0;
   for (const letter of SKILL_LETTERS) {

@@ -48,18 +48,18 @@ function OptionControls({ options, values, onChange }: {
   );
 }
 
-export function MagPanel({ levelId, eventCode, value, onChange }: {
-  levelId: string; eventCode: string; value: MagState; onChange: (s: MagState) => void;
+export function MagPanel({ levelId, apparatusCode, value, onChange }: {
+  levelId: string; apparatusCode: string; value: MagState; onChange: (s: MagState) => void;
 }) {
   const ruleset = magRuleset(levelId);
-  const isVault = eventCode === 'VT';
-  const outcome = compute(value, levelId, eventCode);
-  const flags = isVault ? null : rowFlags(value, levelId, eventCode);
-  const bonusOpts = bonusOptions(ruleset, eventCode);
-  const dedOpts = deductionOptions(ruleset, eventCode);
+  const isVault = apparatusCode === 'VT';
+  const outcome = compute(value, levelId, apparatusCode);
+  const flags = isVault ? null : rowFlags(value, levelId, apparatusCode);
+  const bonusOpts = bonusOptions(ruleset, apparatusCode);
+  const dedOpts = deductionOptions(ruleset, apparatusCode);
 
   const reset = (
-    <button className="btn ghost small" type="button" onClick={() => onChange(init(levelId, eventCode))}>Reset</button>
+    <button className="btn ghost small" type="button" onClick={() => onChange(init(levelId, apparatusCode))}>Reset</button>
   );
 
   return (

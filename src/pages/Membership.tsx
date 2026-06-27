@@ -380,7 +380,7 @@ function MembershipInner({ me }: { me: Athlete }) {
 
       <h1 className="page-title display">Membership</h1>
       <p className="page-sub">
-        UCG membership is required for all meet registration. Valid July 1 – June 30 of the membership season.
+        UCG membership is required for all event registration. Valid July 1 – June 30 of the membership season.
       </p>
 
       {/* Season selector */}
@@ -490,7 +490,7 @@ function MembershipInner({ me }: { me: Athlete }) {
               ) : (
                 <>
                   <p style={{ color: 'var(--ink-soft)', marginTop: 0 }}>
-                    Autofilled from your profile. Please actually read it — wrong info here follows you to every meet.
+                    Autofilled from your profile. Please actually read it — wrong info here follows you to every event.
                   </p>
                   <table className="tbl" style={{ marginBottom: 14 }}>
                     <tbody>
