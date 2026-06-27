@@ -51,7 +51,7 @@ export interface MagState {
   hideNeutral: boolean;
 }
 
-export function init(levelId: string, _eventCode: string): MagState {
+export function init(levelId: string, _apparatusCode: string): MagState {
   const n = rowCount(magRuleset(levelId));
   return {
     skills: Array(n).fill(null),
@@ -326,14 +326,14 @@ function shortExerciseDeduction(ruleset: MagRuleset, skillCount: number): number
 }
 
 /** Per-row UI flags for the panel (red excluded chips, green contributing EG chips). */
-export function rowFlags(state: MagState, levelId: string, eventCode: string): { excluded: boolean[]; egContrib: boolean[] } {
-  const a = analyze(state, magRuleset(levelId), eventCode);
+export function rowFlags(state: MagState, levelId: string, apparatusCode: string): { excluded: boolean[]; egContrib: boolean[] } {
+  const a = analyze(state, magRuleset(levelId), apparatusCode);
   return { excluded: a.excluded, egContrib: a.egContrib };
 }
 
-export function compute(state: MagState, levelId: string, eventCode: string): ScoringOutcome {
+export function compute(state: MagState, levelId: string, apparatusCode: string): ScoringOutcome {
   const ruleset = magRuleset(levelId);
-  const apparatus = eventCode;
+  const apparatus = apparatusCode;
   const warnings: string[] = [];
 
   let skillsValue: number;

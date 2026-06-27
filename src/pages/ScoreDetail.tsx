@@ -130,13 +130,13 @@ function ScoreDetailInner({ score }: { score: Score }) {
           <h3 style={{ marginBottom: 8 }}>Calculator as submitted{canAdjust && ' — edit to adjust'}</h3>
           {isNative ? (
             <div className="card card-pad">
-              <ScoringPanel kind={calcCfg!.kind} levelId={level!.id} eventCode={score.apparatus} value={nativeSt} onChange={setNativeSt} />
+              <ScoringPanel kind={calcCfg!.kind} levelId={level!.id} apparatusCode={score.apparatus} value={nativeSt} onChange={setNativeSt} />
             </div>
           ) : (
             <CalcPanel
               ref={calcRef}
               cfg={calcCfg!}
-              eventCode={score.apparatus}
+              apparatusCode={score.apparatus}
               initialState={score.calcState}
               onLive={setLive}
               height={560}

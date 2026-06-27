@@ -51,11 +51,11 @@ export interface WagVaultState {
   deductions: string;
 }
 
-export function init(_levelId: string, _eventCode: string): WagVaultState {
+export function init(_levelId: string, _apparatusCode: string): WagVaultState {
   return { vaultIndex: 0, deductions: '' };
 }
 
-export function compute(state: WagVaultState, _levelId: string, _eventCode: string): ScoringOutcome {
+export function compute(state: WagVaultState, _levelId: string, _apparatusCode: string): ScoringOutcome {
   const d = VAULT_DATA[state.vaultIndex]?.fig ?? 0;
   const ded = num(state.deductions, 0, 10);
   const e = round3(10 - ded);

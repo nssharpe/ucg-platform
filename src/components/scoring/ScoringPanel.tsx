@@ -14,25 +14,25 @@ import { WagOpenPanel, WagVaultPanel } from './WagOpenPanel';
 import { WagSvPanel } from './WagSvPanel';
 import { TntPanel } from './TntPanel';
 
-export function ScoringPanel({ kind, levelId, eventCode, value, onChange }: {
+export function ScoringPanel({ kind, levelId, apparatusCode, value, onChange }: {
   kind: CalcKind;
   levelId: string;
-  eventCode: string;
+  apparatusCode: string;
   value: unknown;
   onChange: (s: unknown) => void;
 }) {
   switch (kind) {
     case 'mag':
-      return <MagPanel levelId={levelId} eventCode={eventCode} value={value as MagState} onChange={onChange} />;
+      return <MagPanel levelId={levelId} apparatusCode={apparatusCode} value={value as MagState} onChange={onChange} />;
     case 'masters':
-      return <MastersPanel levelId={levelId} eventCode={eventCode} value={value as MastersState} onChange={onChange} />;
+      return <MastersPanel levelId={levelId} apparatusCode={apparatusCode} value={value as MastersState} onChange={onChange} />;
     case 'wag-open':
-      return <WagOpenPanel levelId={levelId} eventCode={eventCode} value={value as WagOpenState} onChange={onChange} />;
+      return <WagOpenPanel levelId={levelId} apparatusCode={apparatusCode} value={value as WagOpenState} onChange={onChange} />;
     case 'wag-vault':
-      return <WagVaultPanel levelId={levelId} eventCode={eventCode} value={value as WagVaultState} onChange={onChange} />;
+      return <WagVaultPanel levelId={levelId} apparatusCode={apparatusCode} value={value as WagVaultState} onChange={onChange} />;
     case 'wag-sv':
-      return <WagSvPanel levelId={levelId} eventCode={eventCode} value={value as WagSvState} onChange={onChange} />;
+      return <WagSvPanel levelId={levelId} apparatusCode={apparatusCode} value={value as WagSvState} onChange={onChange} />;
     case 'tnt':
-      return <TntPanel levelId={levelId} eventCode={eventCode} value={value as TntState} onChange={onChange} />;
+      return <TntPanel levelId={levelId} apparatusCode={apparatusCode} value={value as TntState} onChange={onChange} />;
   }
 }

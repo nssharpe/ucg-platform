@@ -117,7 +117,7 @@ export interface WagSvState {
   vaultIndex: number;
 }
 
-export function init(_levelId: string, _eventCode: string): WagSvState {
+export function init(_levelId: string, _apparatusCode: string): WagSvState {
   return {
     vp: { A: 0, B: 0, C: 0 },
     sr: [true, true, true, true],
@@ -140,11 +140,11 @@ function missingVP(level: WagSvLevel, vp: Record<VpPart, number>): number {
   return round2(miss);
 }
 
-export function compute(state: WagSvState, levelId: string, eventCode: string): ScoringOutcome {
+export function compute(state: WagSvState, levelId: string, apparatusCode: string): ScoringOutcome {
   const level = wagSvLevel(levelId);
   const lvl = LEVELS[level];
 
-  if (eventCode === 'VT') {
+  if (apparatusCode === 'VT') {
     const sv = vaultsFor(level)[state.vaultIndex]?.[1] ?? 0;
     return {
       d: round2(sv), e: null, final: null, produces: 'd',

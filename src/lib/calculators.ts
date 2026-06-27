@@ -31,10 +31,10 @@ const BASE = import.meta.env.BASE_URL; // e.g. "/ucg-platform/"
 /** Route to a score's detail page (score ids contain `|`, so encode). */
 export const scoreDetailPath = (scoreId: string) => `/scores/${encodeURIComponent(scoreId)}`;
 
-/** Returns the calculator config for a given level + event, or null if none exists yet.
- *  Vault is scored differently from other apparatus, so the event matters. */
-export function calcForLevel(levelId: string, eventCode?: string): CalcConfig | null {
-  const isVault = eventCode === 'VT';
+/** Returns the calculator config for a given level + apparatus, or null if none exists yet.
+ *  Vault is scored differently from other apparatus, so the apparatus matters. */
+export function calcForLevel(levelId: string, apparatusCode?: string): CalcConfig | null {
+  const isVault = apparatusCode === 'VT';
   switch (levelId) {
     case 'mag-dev':
       return { kind: 'mag', path: `${BASE}calculators/mag/index.html`, ruleset: 'NAIGC Developmental', produces: 'd', label: 'NAIGC MAG SV Calculator — Developmental' };
@@ -73,9 +73,9 @@ export function calcForLevel(levelId: string, eventCode?: string): CalcConfig | 
 }
 
 /** Builds the iframe src with apparatus / ruleset presets. */
-export function calcUrl(cfg: CalcConfig, eventCode: string): string {
+export function calcUrl(cfg: CalcConfig, apparatusCode: string): string {
   const p = new URLSearchParams();
-  p.set('apparatus', eventCode);
+  p.set('apparatus', apparatusCode);
   if (cfg.ruleset) p.set('ruleset', cfg.ruleset);
   if (cfg.level) p.set('level', cfg.level);
   return `${cfg.path}?${p.toString()}`;

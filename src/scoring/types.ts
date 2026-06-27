@@ -1,7 +1,7 @@
 // Shared contract for the native scoring engines (pure TS — no React, no DOM).
 // Each engine module exports a JSON-serializable State plus:
-//   init(levelId, eventCode): State
-//   compute(state, levelId, eventCode): ScoringOutcome
+//   init(levelId, apparatusCode): State
+//   compute(state, levelId, apparatusCode): ScoringOutcome
 
 /** One signed line of the score build-up, for the review/breakdown UI. */
 export interface Breakdown {

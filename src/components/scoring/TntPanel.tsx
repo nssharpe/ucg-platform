@@ -4,13 +4,13 @@ import { STRUCTURE, compute, init, levelNote, passDD, skillsFor, tntEvent } from
 import type { TntState } from '../../scoring/tnt';
 import { BreakdownLine, DecimalInput, PanelSection, WarnBox } from './parts';
 
-export function TntPanel({ levelId, eventCode, value, onChange }: {
-  levelId: string; eventCode: string; value: TntState; onChange: (s: TntState) => void;
+export function TntPanel({ levelId, apparatusCode, value, onChange }: {
+  levelId: string; apparatusCode: string; value: TntState; onChange: (s: TntState) => void;
 }) {
-  const ev = tntEvent(eventCode);
-  const outcome = compute(value, levelId, eventCode);
+  const ev = tntEvent(apparatusCode);
+  const outcome = compute(value, levelId, apparatusCode);
   const listId = useId();
-  const skills = useMemo(() => skillsFor(eventCode), [eventCode]);
+  const skills = useMemo(() => skillsFor(apparatusCode), [apparatusCode]);
   const ddByName = useMemo(() => {
     const m = new Map<string, number>();
     for (const s of skills) m.set(s.n.toLowerCase(), s.dd);
@@ -32,7 +32,7 @@ export function TntPanel({ levelId, eventCode, value, onChange }: {
       <datalist id={listId}>
         {skills.map((s) => <option key={s.n} value={s.n}>{s.dd.toFixed(1)}{s.fig ? ` · ${s.fig}` : ''}</option>)}
       </datalist>
-      <div className="sp-section-sub">{levelNote(levelId, eventCode)}</div>
+      <div className="sp-section-sub">{levelNote(levelId, apparatusCode)}</div>
 
       {STRUCTURE[ev].passes.map((spec, pi) => {
         const pass = value.passes[pi];
@@ -71,7 +71,7 @@ export function TntPanel({ levelId, eventCode, value, onChange }: {
       })}
 
       <PanelSection title="Chair of Panel penalties" sub="e.g. level violation 2.0, missing card 0.2."
-        right={<button className="btn ghost small" type="button" onClick={() => onChange(init(levelId, eventCode))}>Reset</button>}>
+        right={<button className="btn ghost small" type="button" onClick={() => onChange(init(levelId, apparatusCode))}>Reset</button>}>
         <DecimalInput value={value.penalty} step={0.1} max={30}
           onChange={(penalty) => onChange({ ...value, penalty })} />
       </PanelSection>

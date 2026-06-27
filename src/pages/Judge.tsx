@@ -218,7 +218,7 @@ export function Judge() {
 
           {calcCfg && !override && calcSt != null && (
             <div style={{ marginBottom: 14 }}>
-              <ScoringPanel kind={calcCfg.kind} levelId={activeLevel!.id} eventCode={apparatus} value={calcSt} onChange={setCalcSt} />
+              <ScoringPanel kind={calcCfg.kind} levelId={activeLevel!.id} apparatusCode={apparatus} value={calcSt} onChange={setCalcSt} />
             </div>
           )}
 

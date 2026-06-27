@@ -5,13 +5,13 @@ import { VAULT_DATA, compute as computeVault, init as initVault } from '../../sc
 import type { WagVaultState } from '../../scoring/wagVault';
 import { BreakdownLine, CheckRow, DecimalInput, PanelSection, StepperRow, WarnBox } from './parts';
 
-export function WagOpenPanel({ levelId, eventCode, value, onChange }: {
-  levelId: string; eventCode: string; value: WagOpenState; onChange: (s: WagOpenState) => void;
+export function WagOpenPanel({ levelId, apparatusCode, value, onChange }: {
+  levelId: string; apparatusCode: string; value: WagOpenState; onChange: (s: WagOpenState) => void;
 }) {
-  const outcome = compute(value, levelId, eventCode);
+  const outcome = compute(value, levelId, apparatusCode);
   const total = SKILL_LETTERS.reduce((n, l) => n + (value.counts[l] || 0), 0);
   const reset = (
-    <button className="btn ghost small" type="button" onClick={() => onChange(init(levelId, eventCode))}>Reset</button>
+    <button className="btn ghost small" type="button" onClick={() => onChange(init(levelId, apparatusCode))}>Reset</button>
   );
 
   return (
@@ -31,7 +31,7 @@ export function WagOpenPanel({ levelId, eventCode, value, onChange }: {
       </PanelSection>
 
       <PanelSection title="Element group bonus" sub="+0.30 for each group containing a B or better.">
-        {egLabels(eventCode).map((label, i) => (
+        {egLabels(apparatusCode).map((label, i) => (
           <CheckRow key={label} checked={!!value.egs[i]}
             onChange={(v) => onChange({ ...value, egs: value.egs.map((x, j) => (j === i ? v : x)) })}>
             {label}
@@ -49,14 +49,14 @@ export function WagOpenPanel({ levelId, eventCode, value, onChange }: {
   );
 }
 
-export function WagVaultPanel({ levelId, eventCode, value, onChange }: {
-  levelId: string; eventCode: string; value: WagVaultState; onChange: (s: WagVaultState) => void;
+export function WagVaultPanel({ levelId, apparatusCode, value, onChange }: {
+  levelId: string; apparatusCode: string; value: WagVaultState; onChange: (s: WagVaultState) => void;
 }) {
-  const outcome = computeVault(value, levelId, eventCode);
+  const outcome = computeVault(value, levelId, apparatusCode);
   return (
     <div className="sp-panel">
       <PanelSection title="Vault" sub="D-value is the FIG difficulty of the vault performed."
-        right={<button className="btn ghost small" type="button" onClick={() => onChange(initVault(levelId, eventCode))}>Reset</button>}>
+        right={<button className="btn ghost small" type="button" onClick={() => onChange(initVault(levelId, apparatusCode))}>Reset</button>}>
         <select className="input" value={value.vaultIndex}
           onChange={(e) => onChange({ ...value, vaultIndex: parseInt(e.target.value, 10) })}>
           {VAULT_DATA.map((v, i) => (v === null
