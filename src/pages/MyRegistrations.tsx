@@ -86,7 +86,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   // *** CRITICAL self-removal divergence from Club.tsx ***: the member side
   // NEVER deletes a registration. Where Club.tsx deletes regs for disciplines
   // the editor deselected, here we RETAIN the reg and blank it (apparatus: [],
-  // no eventLevels / partner) instead. Deletion only ever happens via a refund
+  // no apparatusLevels / partner) instead. Deletion only ever happens via a refund
   // (out of scope) — so a member can't make their entry vanish on their own.
   const saveRegs = (event: Event, selectedClubId: string, newRegs: Registration[]) => {
     const applyFee = changeFeeApplies(event);
@@ -102,7 +102,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
       for (const old of existingForAthlete) {
         if (!newDiscSet.has(old.discipline)) {
           old.apparatus = [];
-          delete old.eventLevels;
+          delete old.apparatusLevels;
           delete old.partnerAthleteId;
           old.clubId = selectedClubId;
           pushRegistration(old, old.sessionId);

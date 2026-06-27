@@ -183,7 +183,7 @@ export function EventResults() {
           {event.sessions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
         <Tabs
-          tabs={[{ id: 'aa' as const, label: 'All-Around' }, { id: 'events' as const, label: 'By event' }, { id: 'team' as const, label: 'Team' }]}
+          tabs={[{ id: 'aa' as const, label: 'All-Around' }, { id: 'events' as const, label: 'By apparatus' }, { id: 'team' as const, label: 'Team' }]}
           active={view}
           onChange={setView}
         />

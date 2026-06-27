@@ -181,9 +181,9 @@ export function Judge() {
             {eventRec.sessions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </Field>
-        <Field label="Event">
+        <Field label="Apparatus">
           <select className="input" value={apparatus} onChange={(e) => { setApparatus(e.target.value); close(); }}>
-            {apparatusDefs.map((ev) => <option key={ev.code} value={ev.code}>{ev.name}</option>)}
+            {apparatusDefs.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
           </select>
         </Field>
       </div>

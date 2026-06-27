@@ -20,7 +20,7 @@ function evScore(e: AthleteEntry, ev: string): { score: number; status: string }
   return { score: roundScore(es.score), status: es.status };
 }
 
-/** Top-3 included nonzero per event; a team needs >=3 on every event or scores 0.
+/** Top-3 included nonzero per apparatus; a team needs >=3 on every apparatus or scores 0.
  *  Ports `artistic.calculate_score_per_team`. */
 function teamScore(rows: AthleteEntry[], def: DisciplineDef): number {
   let total = 0;
@@ -36,7 +36,7 @@ function teamScore(rows: AthleteEntry[], def: DisciplineDef): number {
   return roundScore(total);
 }
 
-/** Mixed-team score: top-3 nonzero non-scratched per event; the used set must
+/** Mixed-team score: top-3 nonzero non-scratched per apparatus; the used set must
  *  contain both a Men+ and a Women+ scorer. Ports `calculate_mixed_team_single_score`. */
 function mixedTeamScore(rows: AthleteEntry[], def: DisciplineDef): number {
   let total = 0;

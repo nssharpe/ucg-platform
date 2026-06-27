@@ -1019,7 +1019,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
           pushRegistration(r, r.sessionId);
         }
       }
-      // 3e: any OTHER (meet-scoped, non-refunded) registration that named the
+      // 3e: any OTHER (event-scoped, non-refunded) registration that named the
       // swapped-OUT athlete as its synchro partner must now point at the
       // swapped-IN athlete. Scope mirrors the partner model (same event, not
       // refunded). reassignPartners skips the swapped athletes' own rows.

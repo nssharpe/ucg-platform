@@ -51,7 +51,7 @@ export interface DraftReg {
   enabled: boolean;
   levelId: string;
   apparatus: string[];
-  eventLevels: Record<string, string>; // T&T per-event levels
+  apparatusLevels: Record<string, string>; // T&T per-apparatus levels
   partnerAthleteId: string | null; // synchro
   partnerUnknown: boolean;
 }
@@ -76,8 +76,8 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
       ? draft.apparatus.filter((e) => e !== code)
       : [...draft.apparatus, code];
 
-    // Update eventLevels for T&T — add/remove the key
-    const nextEventLevels = { ...draft.eventLevels };
+    // Update apparatusLevels for T&T — add/remove the key
+    const nextEventLevels = { ...draft.apparatusLevels };
     if (isTNT) {
       if (next.includes(code) && !nextEventLevels[code]) {
         nextEventLevels[code] = draft.levelId;
@@ -93,35 +93,35 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
       partnerAthleteId = incomingPartnerId;
       partnerUnknown = false;
     }
-    onChange({ ...draft, apparatus: next, eventLevels: nextEventLevels, partnerAthleteId, partnerUnknown });
+    onChange({ ...draft, apparatus: next, apparatusLevels: nextEventLevels, partnerAthleteId, partnerUnknown });
   };
 
   const selectAllAround = () => {
     const allCodes = apparatusDefs.map((e) => e.code);
     const nextEventLevels: Record<string, string> = {};
     if (isTNT) {
-      for (const code of allCodes) nextEventLevels[code] = draft.eventLevels[code] ?? draft.levelId;
+      for (const code of allCodes) nextEventLevels[code] = draft.apparatusLevels[code] ?? draft.levelId;
     }
     // Auto-link synchro partner when selecting all (which includes SY for T&T).
     const partnerAthleteId = (allCodes.includes('SY') && !draft.partnerAthleteId && incomingPartnerId)
       ? incomingPartnerId : draft.partnerAthleteId;
-    onChange({ ...draft, apparatus: allCodes, eventLevels: nextEventLevels, partnerAthleteId });
+    onChange({ ...draft, apparatus: allCodes, apparatusLevels: nextEventLevels, partnerAthleteId });
   };
 
   const clearAll = () => {
-    onChange({ ...draft, apparatus: [], eventLevels: {} });
+    onChange({ ...draft, apparatus: [], apparatusLevels: {} });
   };
 
   const isAA = draft.apparatus.length === apparatusDefs.length && apparatusDefs.every((e) => draft.apparatus.includes(e.code));
 
   const setMainLevel = (levelId: string) => {
-    // When the main level changes, update any eventLevels that were still at the
+    // When the main level changes, update any apparatusLevels that were still at the
     // previous main level (i.e. not individually overridden).
     const nextEventLevels: Record<string, string> = {};
-    for (const [ev, lvl] of Object.entries(draft.eventLevels)) {
+    for (const [ev, lvl] of Object.entries(draft.apparatusLevels)) {
       nextEventLevels[ev] = lvl === draft.levelId ? levelId : lvl;
     }
-    onChange({ ...draft, levelId, eventLevels: nextEventLevels });
+    onChange({ ...draft, levelId, apparatusLevels: nextEventLevels });
   };
 
   return (
@@ -155,10 +155,10 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
             </Field>
           </div>
 
-          {/* Event checkboxes */}
+          {/* Apparatus checkboxes */}
           <div style={{ marginBottom: 8 }}>
             <div style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 6 }}>
-              Events
+              Apparatus
               <button
                 type="button"
                 className="btn ghost small"
@@ -182,7 +182,7 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
             </div>
           </div>
 
-          {/* T&T per-event level overrides */}
+          {/* T&T per-apparatus level overrides */}
           {isTNT && draft.apparatus.length > 0 && (
             <div style={{ marginTop: 10, marginBottom: 8 }}>
               <div style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 6 }}>
@@ -195,11 +195,11 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
                     <Field key={code} label={`${code} — ${evDef?.name ?? code}`}>
                       <select
                         className="input"
-                        value={draft.eventLevels[code] ?? draft.levelId}
+                        value={draft.apparatusLevels[code] ?? draft.levelId}
                         onChange={(e) => {
                           onChange({
                             ...draft,
-                            eventLevels: { ...draft.eventLevels, [code]: e.target.value },
+                            apparatusLevels: { ...draft.apparatusLevels, [code]: e.target.value },
                           });
                         }}
                       >
@@ -298,7 +298,7 @@ export function RegistrationEditor({
           enabled: true,
           levelId: reg.levelId,
           apparatus: [...reg.apparatus],
-          eventLevels: { ...(reg.eventLevels ?? {}) },
+          apparatusLevels: { ...(reg.apparatusLevels ?? {}) },
           partnerAthleteId: reg.partnerAthleteId ?? null,
           partnerUnknown: reg.partnerAthleteId === null && reg.apparatus.includes('SY'),
         };
@@ -307,7 +307,7 @@ export function RegistrationEditor({
           enabled: false,
           levelId: defaultLevelId,
           apparatus: [],
-          eventLevels: {},
+          apparatusLevels: {},
           partnerAthleteId: null,
           partnerUnknown: false,
         };
@@ -339,7 +339,7 @@ export function RegistrationEditor({
         levelId: d.levelId,
         apparatus: [...d.apparatus],
         sessionId: existing_?.sessionId ?? session?.id ?? null,
-        ...(Object.keys(d.eventLevels).length > 0 ? { eventLevels: d.eventLevels } : {}),
+        ...(Object.keys(d.apparatusLevels).length > 0 ? { apparatusLevels: d.apparatusLevels } : {}),
         ...(d.apparatus.includes('SY') ? { partnerAthleteId: d.partnerUnknown ? null : d.partnerAthleteId } : {}),
         ...(existing_?.refunded !== undefined ? { refunded: existing_.refunded } : {}),
         ...(existing_?.refundRequested !== undefined ? { refundRequested: existing_.refundRequested } : {}),
@@ -373,7 +373,7 @@ export function RegistrationEditor({
           discipline: disc,
           levelId: reg.levelId,
           apparatus: [...reg.apparatus],
-          ...(reg.eventLevels ? { eventLevels: reg.eventLevels } : {}),
+          ...(reg.apparatusLevels ? { apparatusLevels: reg.apparatusLevels } : {}),
         });
       } else {
         const d = drafts[disc];
@@ -382,7 +382,7 @@ export function RegistrationEditor({
           discipline: disc,
           levelId: d.levelId,
           apparatus: [...d.apparatus],
-          ...(Object.keys(d.eventLevels).length > 0 ? { eventLevels: d.eventLevels } : {}),
+          ...(Object.keys(d.apparatusLevels).length > 0 ? { apparatusLevels: d.apparatusLevels } : {}),
         });
       }
     }
@@ -436,7 +436,7 @@ export function RegistrationEditor({
           athlete={athlete}
           levels={levels}
           existing={existing.find((r) => r.discipline === disc && !r.refunded)}
-          draft={drafts[disc] ?? { enabled: false, levelId: '', apparatus: [], eventLevels: {}, partnerAthleteId: null, partnerUnknown: false }}
+          draft={drafts[disc] ?? { enabled: false, levelId: '', apparatus: [], apparatusLevels: {}, partnerAthleteId: null, partnerUnknown: false }}
           onChange={(d) => updateDisc(disc, d)}
           allAthletes={allAthletes}
           season={season}

@@ -103,22 +103,22 @@ describe('changeIsEligible (3h)', () => {
     expect(changeIsEligible(state(), after)).toBe(true);
   });
 
-  it('change a T&T event level via eventLevels → eligible', () => {
+  it('change a T&T event level via apparatusLevels → eligible', () => {
     const before = state({
-      disciplines: [disc({ discipline: 'TNT', apparatus: ['TR', 'DMT'], eventLevels: { TR: 'L3', DMT: 'L3' } })],
+      disciplines: [disc({ discipline: 'TNT', apparatus: ['TR', 'DMT'], apparatusLevels: { TR: 'L3', DMT: 'L3' } })],
     });
     const after = state({
-      disciplines: [disc({ discipline: 'TNT', apparatus: ['TR', 'DMT'], eventLevels: { TR: 'L4', DMT: 'L3' } })],
+      disciplines: [disc({ discipline: 'TNT', apparatus: ['TR', 'DMT'], apparatusLevels: { TR: 'L4', DMT: 'L3' } })],
     });
     expect(changeIsEligible(before, after)).toBe(true);
   });
 
-  it('add a NEW eventLevels key (event-level set where none before) → eligible', () => {
+  it('add a NEW apparatusLevels key (event-level set where none before) → eligible', () => {
     const before = state({
-      disciplines: [disc({ discipline: 'TNT', apparatus: ['TR'], eventLevels: {} })],
+      disciplines: [disc({ discipline: 'TNT', apparatus: ['TR'], apparatusLevels: {} })],
     });
     const after = state({
-      disciplines: [disc({ discipline: 'TNT', apparatus: ['TR'], eventLevels: { TR: 'L4' } })],
+      disciplines: [disc({ discipline: 'TNT', apparatus: ['TR'], apparatusLevels: { TR: 'L4' } })],
     });
     expect(changeIsEligible(before, after)).toBe(true);
   });

@@ -814,7 +814,7 @@ export type Database = {
           club_id: string | null
           created_at: string
           discipline: Database["public"]["Enums"]["discipline"]
-          event_levels: Json | null
+          apparatus_levels: Json | null
           apparatus: string[]
           id: string
           keep_listed: boolean
@@ -832,7 +832,7 @@ export type Database = {
           club_id?: string | null
           created_at?: string
           discipline: Database["public"]["Enums"]["discipline"]
-          event_levels?: Json | null
+          apparatus_levels?: Json | null
           apparatus?: string[]
           id: string
           keep_listed?: boolean
@@ -850,7 +850,7 @@ export type Database = {
           club_id?: string | null
           created_at?: string
           discipline?: Database["public"]["Enums"]["discipline"]
-          event_levels?: Json | null
+          apparatus_levels?: Json | null
           apparatus?: string[]
           id?: string
           keep_listed?: boolean
