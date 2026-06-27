@@ -48,13 +48,13 @@ export function rowToEntry(row: Record<string, unknown>, def: DisciplineDef, ind
   const str = (v: unknown): string => String(v ?? '').trim();
   const gender = str(row.Gender);
   const student = bool(row.Student);
-  const events: AthleteEntry['events'] = {};
-  for (const ev of def.events) {
+  const apparatus: AthleteEntry['apparatus'] = {};
+  for (const ev of def.apparatus) {
     const c = EVENT_COLS[ev];
-    events[ev] = {
-      event: ev,
+    apparatus[ev] = {
+      apparatus: ev,
       score: Number(row[`${c.prefix}_Score`] ?? 0),
-      status: String(row[`${c.prefix}_Event_Status`] ?? '') as AthleteEntry['events'][string]['status'],
+      status: String(row[`${c.prefix}_Event_Status`] ?? '') as AthleteEntry['apparatus'][string]['status'],
       placeEligible: bool(row[`${c.prefix}_Place_Eligible`]),
       sv: row[`${c.prefix}_SV`] == null ? null : Number(row[`${c.prefix}_SV`]),
     };
@@ -70,7 +70,7 @@ export function rowToEntry(row: Record<string, unknown>, def: DisciplineDef, ind
     level: str(row.CompLevel),
     category: deriveCategory(gender, student),
     session: str(row.Session),
-    events,
+    apparatus,
     aaPlaceEligible: bool(row.AA_Place_Eligible),
     aaScore: row.AA_Score == null ? undefined : Number(row.AA_Score),
   };
@@ -89,13 +89,13 @@ export function tntRowToEntry(row: Record<string, unknown>, index: number): Athl
   const str = (v: unknown): string => String(v ?? '').trim();
   const gender = str(row.Gender);
   const student = bool(row.Student);
-  const events: AthleteEntry['events'] = {};
+  const apparatus: AthleteEntry['apparatus'] = {};
   for (const ev of Object.keys(TNT_COLS)) {
     const c = TNT_COLS[ev];
-    events[ev] = {
-      event: ev,
+    apparatus[ev] = {
+      apparatus: ev,
       score: Number(row[c.score] ?? 0),
-      status: String(row[c.status] ?? '') as AthleteEntry['events'][string]['status'],
+      status: String(row[c.status] ?? '') as AthleteEntry['apparatus'][string]['status'],
       placeEligible: bool(row[c.pe]),
       level: str(row[c.level]),
     };
@@ -111,7 +111,7 @@ export function tntRowToEntry(row: Record<string, unknown>, index: number): Athl
     level: '',
     category: deriveCategory(gender, student),
     session: str(row.Session),
-    events,
+    apparatus,
     partnerFirst: str(row.Synch_PartnerFirstName),
     partnerLast: str(row.Synch_PartnerLastName),
   };

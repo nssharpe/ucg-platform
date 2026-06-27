@@ -15,7 +15,7 @@ const WOMEN: Category[] = ['Community Women+', 'Collegiate Women+'];
 const MEN: Category[] = ['Community Men+', 'Collegiate Men+'];
 
 function evScore(e: AthleteEntry, ev: string): { score: number; status: string } | undefined {
-  const es = e.events[ev];
+  const es = e.apparatus[ev];
   if (!es) return undefined;
   return { score: roundScore(es.score), status: es.status };
 }
@@ -24,7 +24,7 @@ function evScore(e: AthleteEntry, ev: string): { score: number; status: string }
  *  Ports `artistic.calculate_score_per_team`. */
 function teamScore(rows: AthleteEntry[], def: DisciplineDef): number {
   let total = 0;
-  for (const ev of def.events) {
+  for (const ev of def.apparatus) {
     const usable = rows
       .map((r) => evScore(r, ev))
       .filter((e): e is { score: number; status: string } => !!e && e.status === 'Included' && e.score !== 0)
@@ -42,7 +42,7 @@ function mixedTeamScore(rows: AthleteEntry[], def: DisciplineDef): number {
   let total = 0;
   let hasMen = false;
   let hasWomen = false;
-  for (const ev of def.events) {
+  for (const ev of def.apparatus) {
     const nonzero = rows
       .filter((r) => {
         const e = evScore(r, ev);

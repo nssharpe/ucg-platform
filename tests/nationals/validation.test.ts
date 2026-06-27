@@ -29,7 +29,7 @@ function buildPrelimQual(year: string, def: typeof WAG | typeof MAG): PrelimQual
   const map: PrelimQualLookup = new Map();
   for (const r of results) {
     const rec: Record<string, QualFlag> = {};
-    for (const ev of def.events) rec[ev] = r.events[ev].qual!;
+    for (const ev of def.apparatus) rec[ev] = r.apparatus[ev].qual!;
     if (r.aa) rec.AA = r.aa.qual!;
     map.set(`${r.entry.first}|${r.entry.last}|${r.entry.club}|${r.level}`, rec);
   }
@@ -59,17 +59,17 @@ describe('nationals validation parity — prelims', () => {
           `${def.abbr} aa`,
         );
         expectSameSet(
-          v.svCap.map((f) => `${f.first}|${f.last}|${f.session}|${NAME[f.event]}|${f.score}`),
+          v.svCap.map((f) => `${f.first}|${f.last}|${f.session}|${NAME[f.apparatus]}|${f.score}`),
           sheets[`${def.abbr} sv cap`].map((r) => `${r.FirstName}|${r.LastName}|${r.Session}|${r.Event}|${num(r.Score)}`),
           `${def.abbr} sv cap`,
         );
         expectSameSet(
-          v.prelimsIncluded.map((f) => `${f.first}|${f.last}|${f.session}|${NAME[f.event]}`),
+          v.prelimsIncluded.map((f) => `${f.first}|${f.last}|${f.session}|${NAME[f.apparatus]}`),
           sheets[`${def.abbr} prelims included`].map((r) => `${r.FirstName}|${r.LastName}|${r.Session}|${r.Event}`),
           `${def.abbr} prelims included`,
         );
         expectSameSet(
-          v.decimal.map((f) => `${f.first}|${f.last}|${f.session}|${SCORE_COL[f.event]}|${f.score}`),
+          v.decimal.map((f) => `${f.first}|${f.last}|${f.session}|${SCORE_COL[f.apparatus]}|${f.score}`),
           sheets[`${def.abbr} decimal`].map((r) => `${r.FirstName}|${r.LastName}|${r.Session}|${r.Event}|${num(r.Score)}`),
           `${def.abbr} decimal`,
         );
@@ -113,22 +113,22 @@ describe('nationals validation parity — finals', () => {
           `${def.abbr} aa`,
         );
         expectSameSet(
-          v.svCap.map((f) => `${f.first}|${f.last}|${f.session}|${NAME[f.event]}|${f.score}`),
+          v.svCap.map((f) => `${f.first}|${f.last}|${f.session}|${NAME[f.apparatus]}|${f.score}`),
           sheets[`${def.abbr} sv cap`].map((r) => `${r.FirstName}|${r.LastName}|${r.Session}|${r.Event}|${num(r.Score)}`),
           `${def.abbr} sv cap`,
         );
 
         // Team completeness
         const teamFindings = validateTeamFinals(entries, def, prelimQualifiedTeams(year, def));
-        const gotTeam = teamFindings.map((f) => `${f.club}|${f.level}|${f.category}|${def.events.map((ev) => `${ev}:${f.validity[ev]}`).join(',')}`);
+        const gotTeam = teamFindings.map((f) => `${f.club}|${f.level}|${f.category}|${def.apparatus.map((ev) => `${ev}:${f.validity[ev]}`).join(',')}`);
         const expTeam = sheets[`${def.abbr} finals included`].map(
-          (r) => `${r.Club_Name}|${r.CompLevel}|${r['Placement Category']}|${def.events.map((ev) => `${ev}:${r[`${ev} Valid`]}`).join(',')}`,
+          (r) => `${r.Club_Name}|${r.CompLevel}|${r['Placement Category']}|${def.apparatus.map((ev) => `${ev}:${r[`${ev} Valid`]}`).join(',')}`,
         );
         expectSameSet(gotTeam, expTeam, `${def.abbr} finals included`);
 
         // Qual check
         const qc = validateQualCheck(entries, def, buildPrelimQual(year, def));
-        const gotQc = qc.map((f) => `${f.first}|${f.last}|${f.club}|${f.level}|${NAME[f.event]}|${f.prelimsQual}|${f.finalsPlaceEligible ? 1 : 0}|${f.problem}`);
+        const gotQc = qc.map((f) => `${f.first}|${f.last}|${f.club}|${f.level}|${NAME[f.apparatus]}|${f.prelimsQual}|${f.finalsPlaceEligible ? 1 : 0}|${f.problem}`);
         const expQc = sheets[`${def.abbr} qual check`].map(
           (r) => `${r.FirstName}|${r.LastName}|${r.Club_Name}|${r.CompLevel}|${r.Event}|${r['Prelims Qual']}|${num(r['Finals Place Eligible'])}|${r.Problem}`,
         );

@@ -21,7 +21,7 @@ export function buildConfig(raw: RawConfig): NationalsEngineConfig {
 
   return {
     cutoffs: {
-      event: catMap('Events'),
+      apparatus: catMap('Events'),
       aa: catMap('AA'),
       team: catMap('Team'),
       teamMixed: numMap(raw['Team Mixed']),
@@ -35,7 +35,7 @@ export function buildConfig(raw: RawConfig): NationalsEngineConfig {
 /** Cutoff ("blue number") lookup; missing entries mean "nobody qualifies" (0). */
 export function cutoffFor(
   config: NationalsEngineConfig,
-  scope: 'event' | 'aa' | 'team',
+  scope: 'apparatus' | 'aa' | 'team',
   level: string,
   category: Category | 'Mixed',
 ): number {

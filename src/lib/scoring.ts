@@ -3,20 +3,20 @@ import { APPARATUS } from './types';
 
 export interface AthleteResult {
   reg: Registration;
-  events: Record<string, Score | undefined>;
-  aa: number; // sum of finals across entered events
-  aaComplete: boolean; // has score on every registered event
+  apparatus: Record<string, Score | undefined>;
+  aa: number; // sum of finals across entered apparatus
+  aaComplete: boolean; // has score on every registered apparatus
 }
 
-export interface EventRanking {
-  event: string;
+export interface ApparatusRanking {
+  apparatus: string;
   rows: { reg: Registration; score: Score; rank: number }[];
 }
 
 export function sessionResults(db: DB, event: Event, sessionId: string): {
   byLevel: Map<string, AthleteResult[]>;
-  eventRankings: EventRanking[];
-  teamScores: { clubId: string; total: number; perEvent: Record<string, number> }[];
+  apparatusRankings: ApparatusRanking[];
+  teamScores: { clubId: string; total: number; perApparatus: Record<string, number> }[];
   discipline: Discipline;
 } {
   const session = event.sessions.find((s) => s.id === sessionId)!;
@@ -26,16 +26,16 @@ export function sessionResults(db: DB, event: Event, sessionId: string): {
   for (const s of scores) scoreMap.set(`${s.regId}|${s.apparatus}`, s);
 
   const results: AthleteResult[] = regs.map((reg) => {
-    const events: Record<string, Score | undefined> = {};
+    const apparatus: Record<string, Score | undefined> = {};
     let aa = 0;
     let aaComplete = true;
     for (const ev of reg.apparatus) {
       const sc = scoreMap.get(`${reg.id}|${ev}`);
-      events[ev] = sc;
+      apparatus[ev] = sc;
       if (sc?.final != null) aa += sc.final;
       else aaComplete = false;
     }
-    return { reg, events, aa: Math.round(aa * 1000) / 1000, aaComplete };
+    return { reg, apparatus, aa: Math.round(aa * 1000) / 1000, aaComplete };
   });
 
   const byLevel = new Map<string, AthleteResult[]>();
@@ -47,37 +47,37 @@ export function sessionResults(db: DB, event: Event, sessionId: string): {
   for (const arr of byLevel.values()) arr.sort((a, b) => b.aa - a.aa);
 
   const evCodes = APPARATUS[session.discipline].map((e) => e.code);
-  const eventRankings: EventRanking[] = evCodes.map((ev) => {
+  const apparatusRankings: ApparatusRanking[] = evCodes.map((ev) => {
     const rows = results
-      .filter((r) => r.events[ev]?.final != null)
-      .map((r) => ({ reg: r.reg, score: r.events[ev]!, rank: 0 }))
+      .filter((r) => r.apparatus[ev]?.final != null)
+      .map((r) => ({ reg: r.reg, score: r.apparatus[ev]!, rank: 0 }))
       .sort((a, b) => (b.score.final ?? 0) - (a.score.final ?? 0));
     rows.forEach((row, i) => {
       // ties share rank
       row.rank = i > 0 && rows[i - 1].score.final === row.score.final ? rows[i - 1].rank : i + 1;
     });
-    return { event: ev, rows };
+    return { apparatus: ev, rows };
   });
 
-  // Team scores: top 3 finals per club per event
+  // Team scores: top 3 finals per club per apparatus
   const clubIds = [...new Set(regs.map((r) => r.clubId))];
   const teamScores = clubIds.map((clubId) => {
-    const perEvent: Record<string, number> = {};
+    const perApparatus: Record<string, number> = {};
     let total = 0;
     for (const ev of evCodes) {
       const finals = results
-        .filter((r) => r.reg.clubId === clubId && r.events[ev]?.final != null)
-        .map((r) => r.events[ev]!.final!)
+        .filter((r) => r.reg.clubId === clubId && r.apparatus[ev]?.final != null)
+        .map((r) => r.apparatus[ev]!.final!)
         .sort((a, b) => b - a)
         .slice(0, 3);
       const sum = Math.round(finals.reduce((s, f) => s + f, 0) * 1000) / 1000;
-      perEvent[ev] = sum;
+      perApparatus[ev] = sum;
       total += sum;
     }
-    return { clubId, total: Math.round(total * 1000) / 1000, perEvent };
+    return { clubId, total: Math.round(total * 1000) / 1000, perApparatus };
   }).sort((a, b) => b.total - a.total);
 
-  return { byLevel, eventRankings, teamScores, discipline: session.discipline };
+  return { byLevel, apparatusRankings, teamScores, discipline: session.discipline };
 }
 
 export const fmtScore = (n: number | null | undefined) =>

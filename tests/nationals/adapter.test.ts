@@ -74,8 +74,8 @@ describe('nationals adapter', () => {
     const a = entries.find((e) => e.first === 'A')!;
     expect(a.category).toBe('Community Women+');
     expect(a.club).toBe('Club One');
-    expect(a.events.VT.score).toBe(10); // 40 / 4
-    expect(a.events.VT.status).toBe('Included');
+    expect(a.apparatus.VT.score).toBe(10); // 40 / 4
+    expect(a.apparatus.VT.status).toBe('Included');
   });
 
   it('computes prelim AA placement + qualification through the engine', () => {
@@ -96,7 +96,7 @@ describe('nationals adapter', () => {
     aVault.scratched = true;
     const { prelims } = computeArtisticDiscipline(db, event, 'WAG');
     const a = prelims.results.find((r) => r.entry.first === 'A')!;
-    expect(a.events.VT.place).toBeNull();
+    expect(a.apparatus.VT.place).toBeNull();
   });
 
   it('computeNationals returns a WAG bundle for a Nationals event', () => {

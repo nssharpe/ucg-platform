@@ -27,20 +27,20 @@ import {
   type Category,
   type DecathlonResult,
   type DisciplineDef,
-  type EventScore,
+  type ApparatusScore,
   type NationalsEngineConfig,
   type OmnithonResult,
   type TeamResult,
 } from '../nationals';
 
-/** Platform TNT: events TR/DM/TU (no Synch Trampoline), one level per registration,
- *  no AA/team — so each event carries the registration's level. */
+/** Platform TNT: apparatus TR/DM/TU (no Synch Trampoline), one level per registration,
+ *  no AA/team — so each apparatus carries the registration's level. */
 export const PLATFORM_TNT: DisciplineDef = {
   abbr: 'tnt',
-  events: ['TR', 'DM', 'TU'],
+  apparatus: ['TR', 'DM', 'TU'],
   hasAA: false,
   hasTeam: false,
-  perEventLevel: true,
+  perApparatusLevel: true,
 };
 
 export const DISCIPLINE_DEFS: Record<Discipline, DisciplineDef> = { WAG, MAG, TNT: PLATFORM_TNT };
@@ -106,7 +106,7 @@ export function platformCategory(
 export function toEngineConfig(cfg: NationalsConfig): NationalsEngineConfig {
   return {
     cutoffs: {
-      event: cfg.cutoffs.event,
+      apparatus: cfg.cutoffs.event,
       aa: cfg.cutoffs.aa,
       team: cfg.cutoffs.team,
       teamMixed: cfg.cutoffs.teamMixed ?? {},
@@ -128,7 +128,7 @@ function sessionsFor(event: Event, discipline: Discipline, phase?: Phase) {
 
 /**
  * Build engine entries for one discipline + phase from the platform DB. AA is the
- * natural event sum (the platform computes scores natively, so there is no
+ * natural apparatus sum (the platform computes scores natively, so there is no
  * separate "provided AA" to diverge from). Scratched apparatus → status
  * 'Scratched'; everything else entered is 'Included'. Finalists are place-eligible.
  */
@@ -147,16 +147,16 @@ export function buildEntries(db: DB, event: Event, discipline: Discipline, phase
   return regs.map((reg) => {
     const athlete = peopleById.get(reg.athleteId);
     const club = clubsById.get(reg.clubId);
-    const events: Record<string, EventScore> = {};
-    for (const ev of def.events) {
+    const apparatus: Record<string, ApparatusScore> = {};
+    for (const ev of def.apparatus) {
       const sc = scoreMap.get(`${reg.id}|${ev}`);
-      events[ev] = {
-        event: ev,
+      apparatus[ev] = {
+        apparatus: ev,
         score: sc?.final ?? 0,
         status: sc?.scratched ? 'Scratched' : 'Included',
         placeEligible: true,
         sv: sc?.sv ?? null,
-        ...(def.perEventLevel ? { level: reg.levelId } : {}),
+        ...(def.perApparatusLevel ? { level: reg.levelId } : {}),
       };
     }
     return {
@@ -172,9 +172,9 @@ export function buildEntries(db: DB, event: Event, discipline: Discipline, phase
       // for category placement (|| catches '' where ?? would not).
       category: platformCategory(athlete?.placement?.[discipline], athlete?.gender ?? '', athlete?.studentStatus || 'Non-Student'),
       session: reg.sessionId ?? '',
-      events,
+      apparatus,
       aaPlaceEligible: true,
-      // aaScore omitted ⇒ engine sums event scores (platform AA is always the sum).
+      // aaScore omitted ⇒ engine sums apparatus scores (platform AA is always the sum).
     } satisfies AthleteEntry;
   });
 }
@@ -246,8 +246,8 @@ export function computeNationalsValidation(db: DB, event: Event): ValidationIssu
 
     const prelimEntries = buildEntries(db, event, discipline, 'prelim');
     const vp = validateArtistic(prelimEntries, def, engineCfg, false);
-    for (const f of vp.svCap) issues.push({ discipline, group: 'Prelim SV cap', detail: `${f.first} ${f.last} — ${NAME[f.event]} ${f.score} over cap` });
-    for (const f of vp.decimal) issues.push({ discipline, group: 'Prelim score precision', detail: `${f.first} ${f.last} — ${NAME[f.event] ?? f.event} ${f.score} not a 0.001 multiple` });
+    for (const f of vp.svCap) issues.push({ discipline, group: 'Prelim SV cap', detail: `${f.first} ${f.last} — ${NAME[f.apparatus]} ${f.score} over cap` });
+    for (const f of vp.decimal) issues.push({ discipline, group: 'Prelim score precision', detail: `${f.first} ${f.last} — ${NAME[f.apparatus] ?? f.apparatus} ${f.score} not a 0.001 multiple` });
 
     const finalEntries = buildEntries(db, event, discipline, 'final');
     if (!finalEntries.length) continue;
@@ -257,16 +257,16 @@ export function computeNationalsValidation(db: DB, event: Event): ValidationIssu
     const prelimQual: PrelimQualLookup = new Map();
     for (const r of prelims.results) {
       const rec: Record<string, QualFlag> = {};
-      for (const ev of def.events) rec[ev] = r.events[ev].qual!;
+      for (const ev of def.apparatus) rec[ev] = r.apparatus[ev].qual!;
       if (r.aa) rec.AA = r.aa.qual!;
       prelimQual.set(`${r.entry.first}|${r.entry.last}|${r.entry.club}|${r.level}`, rec);
     }
     for (const t of validateTeamFinals(finalEntries, def, qualifiedTeams)) {
-      const bad = def.events.filter((ev) => t.validity[ev] !== 'Valid').map((ev) => `${ev}: ${t.validity[ev]}`).join(', ');
+      const bad = def.apparatus.filter((ev) => t.validity[ev] !== 'Valid').map((ev) => `${ev}: ${t.validity[ev]}`).join(', ');
       issues.push({ discipline, group: 'Finals team roster', detail: `${t.club} · ${t.level} · ${t.category} — ${bad}` });
     }
     for (const q of validateQualCheck(finalEntries, def, prelimQual)) {
-      issues.push({ discipline, group: 'Finals eligibility', detail: `${q.first} ${q.last} (${q.level} ${NAME[q.event] ?? q.event}) — ${q.problem}` });
+      issues.push({ discipline, group: 'Finals eligibility', detail: `${q.first} ${q.last} (${q.level} ${NAME[q.apparatus] ?? q.apparatus}) — ${q.problem}` });
     }
   }
   return issues;

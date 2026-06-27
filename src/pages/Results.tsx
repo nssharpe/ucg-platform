@@ -109,8 +109,8 @@ export function EventResults() {
         const group = rows.filter((r) => (r.reg.category ?? '') === cat);
         rank(group.filter((r) => r.aa > 0), (r) => r.aa).forEach((p, r) => aa.set(r.reg.id, p));
         for (const e of sessionEvents) {
-          const scored = group.filter((r) => r.events[e.code]?.final != null);
-          rank(scored, (r) => r.events[e.code]!.final!).forEach((p, r) => ev.set(`${r.reg.id}|${e.code}`, p));
+          const scored = group.filter((r) => r.apparatus[e.code]?.final != null);
+          rank(scored, (r) => r.apparatus[e.code]!.final!).forEach((p, r) => ev.set(`${r.reg.id}|${e.code}`, p));
         }
       }
       void levelId;
@@ -119,7 +119,7 @@ export function EventResults() {
   }, [computed, session]);
 
   if (!event || !session || !computed) return <p>Event not found.</p>;
-  const { byLevel, eventRankings, teamScores } = computed;
+  const { byLevel, apparatusRankings, teamScores } = computed;
   const events = APPARATUS[session.discipline];
   const clubName = (id: string) => db.clubs.find((c) => c.id === id)?.shortName ?? id;
   const athleteName = (athleteId: string) => {
@@ -149,7 +149,7 @@ export function EventResults() {
       if (sort.key === '_club') return clubName(r.reg.clubId).toLowerCase();
       if (sort.key === '_cat') return r.reg.category ?? '';
       if (sort.key === '_aa') return r.aa;
-      return r.events[sort.key]?.final ?? -1;
+      return r.apparatus[sort.key]?.final ?? -1;
     };
     return [...rows].sort((a, b) => {
       const va = val(a), vb = val(b);
@@ -262,9 +262,9 @@ export function EventResults() {
 
       {view === 'events' && (
         <div className="grid cols-2">
-          {eventRankings.map((er) => (
-            <div className="card card-pad" key={er.event}>
-              <h3 className="card-title">{events.find((e) => e.code === er.event)?.name ?? er.event}</h3>
+          {apparatusRankings.map((er) => (
+            <div className="card card-pad" key={er.apparatus}>
+              <h3 className="card-title">{events.find((e) => e.code === er.apparatus)?.name ?? er.apparatus}</h3>
               <table className="tbl">
                 <tbody>
                   {er.rows.slice(0, 10).map((row) => (
@@ -297,7 +297,7 @@ export function EventResults() {
                 <tr key={t.clubId}>
                   <td><span className={`rank-chip r${i + 1}`}>{i + 1}</span></td>
                   <td><strong>{db.clubs.find((c) => c.id === t.clubId)?.name}</strong></td>
-                  {events.map((ev) => <td key={ev.code} className="num score">{fmtScore(t.perEvent[ev.code])}</td>)}
+                  {events.map((ev) => <td key={ev.code} className="num score">{fmtScore(t.perApparatus[ev.code])}</td>)}
                   <td className="num score" style={{ fontSize: 15 }}>{fmtScore(t.total)}</td>
                 </tr>
               ))}
@@ -349,7 +349,7 @@ function ResultRow({ r, events, name, club, showCat, aaPlace, evPlace, linkScore
       <td style={{ fontSize: 13 }}>{club}</td>
       {showCat && <td>{reg.category ? <Badge tone="info">{reg.category}</Badge> : ''}</td>}
       {events.map((ev) => {
-        const sc = r.events[ev];
+        const sc = r.apparatus[ev];
         const p = evPlace(ev);
         return (
           <td key={ev} className={`num score${medalClass(p)}${reg.quals?.[ev] ? ' res-qual' : ''}`}>

@@ -83,7 +83,7 @@ function DisciplineRoster({ discipline, res, cfg, db }: { discipline: string; re
       <h3 className="card-title">{discipline === 'TNT' ? 'T&T' : discipline} finals</h3>
       {finalsLevels.map((levelId) => {
         const rows = res.prelims.results
-          .filter((r) => r.level === levelId && (r.aa?.qual === 'Y' || Object.values(r.events).some((e) => e.qual === 'Y') || r.teamQual === 'Y'))
+          .filter((r) => r.level === levelId && (r.aa?.qual === 'Y' || Object.values(r.apparatus).some((e) => e.qual === 'Y') || r.teamQual === 'Y'))
           .sort((a, b) => (a.aa?.place ?? 999) - (b.aa?.place ?? 999));
         if (!rows.length) return <p key={levelId} style={{ fontSize: 13, color: 'var(--ink-soft)' }}>{levelName(db, levelId)}: no qualifiers yet.</p>;
         return (
