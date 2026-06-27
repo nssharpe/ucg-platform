@@ -84,7 +84,7 @@ What this means for names you'll grep for:
   the `'meet-entry'` invoice_item_kind value, `meet-host` app_role, `meet_kind` enum,
   the persisted `NationalsConfig.cutoffs.event` jsonb key, opaque id-value prefixes
   (`meet-…` seed ids, `scores.id` composite), and DOM/realtime/lifecycle `event`s.
-  (`TntEvent`/`tntEvent` in the TNT engine left as a noted trivial follow-up.)
+  (The TNT engine's `TntEvent`/`tntEvent` were also renamed → `TntApparatus`/`tntApparatus`, completing the disambiguation.)
 - **Routes:** `/meets*`→**`/events*`**; the old `/meets*` paths are kept as
   `<Navigate replace>` redirects (slug-preserving) so bookmarked links survive.
 - **localStorage:** `SEED_VERSION` bumped 5→6 to discard any pre-rename cached DB shape
