@@ -105,7 +105,9 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
           delete old.apparatusLevels;
           delete old.partnerAthleteId;
           old.clubId = selectedClubId;
-          pushRegistration(old, old.sessionId);
+          // squad_id is host-managed (squads table); never write a non-squad id here.
+          // Passing old.sessionId set squad_id to a session id → registrations_squad_id_fkey.
+          pushRegistration(old);
         }
       }
 
