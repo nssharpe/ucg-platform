@@ -459,20 +459,6 @@ function MembershipInner({ me }: { me: Athlete }) {
             );
           })}
 
-          {/* Allow purchasing additional type if one is still missing */}
-          {purchasableTypes.length > 0 && (
-            <div style={{ marginTop: 12, borderTop: '1px solid var(--line)', paddingTop: 12 }}>
-              <p style={{ margin: '0 0 8px', fontSize: 14 }}>
-                You can also add a {purchasableTypes.map(typeLabel).join(' or ')} membership for {season.name}.
-              </p>
-              <button className="btn ghost small" onClick={() => {
-                setSelectedTypes(purchasableTypes);
-                setStep('info');
-              }}>
-                Add {purchasableTypes.map(typeLabel).join(' / ')} membership →
-              </button>
-            </div>
-          )}
         </div>
       ) : step !== 'done' && (
         <>
