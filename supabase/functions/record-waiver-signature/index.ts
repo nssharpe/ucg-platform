@@ -92,6 +92,13 @@ Deno.serve(async (req) => {
   });
   if (insErr) return json({ ok: false, error: insErr.message }, 500);
 
+  // Check if they already have any active memberships before we activate these.
+  const { data: existingActive } = await db.from('memberships')
+    .select('id')
+    .eq('person_id', a.personId)
+    .eq('status', 'active');
+  const hadNoActiveBefore = !existingActive || existingActive.length === 0;
+
   // --- Activate the membership(s) + set convenience pointers ---
   // A single waiver covers ALL of a person's memberships for the season, so this
   // clears every pending-waiver row for (person, season) — not just one type.
@@ -101,10 +108,11 @@ Deno.serve(async (req) => {
   // these updates match 0 rows and are a harmless no-op.)
   const now = new Date().toISOString();
   const ptrs = { waiver_signed_at: now, waiver_signed_by: a.signerName };
-  const { error: upErr } = await db.from('memberships')
+  const { data: activeRows, error: upErr } = await db.from('memberships')
     .update({ status: 'active', ...ptrs })
     .eq('person_id', a.personId).eq('season_id', a.seasonId).eq('status', 'pending-waiver')
-    .neq('paid_via', 'club');
+    .neq('paid_via', 'club')
+    .select('id');
   if (upErr) return json({ ok: false, error: upErr.message }, 500);
   const { data: clubRows, error: upClubErr } = await db.from('memberships')
     .update({ status: 'pending-club-payment', ...ptrs })
@@ -118,6 +126,24 @@ Deno.serve(async (req) => {
       .update({ status: 'completed', completed_at: new Date().toISOString() })
       .eq('token', a.token);
   }
+
+  // --- Trigger welcome email if they just became active ---
+  if (hadNoActiveBefore && activeRows && activeRows.length > 0) {
+    try {
+      const welcomeUrl = `${url}/functions/v1/send-membership-welcome`;
+      await fetch(welcomeUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${serviceKey}`,
+        },
+        body: JSON.stringify({ personId: a.personId }),
+      });
+    } catch (welcomeErr) {
+      console.error('[record-waiver-signature] failed to trigger welcome email:', welcomeErr);
+    }
+  }
+
   // pendingPayment = the membership still owes a club payment (not yet active).
   return json({ ok: true, pendingPayment: (clubRows?.length ?? 0) > 0 });
 });

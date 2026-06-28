@@ -373,8 +373,8 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
               )}
               {!coachOnly && (
                 <Field label="Student status" hint="Full-time student for ≥1 semester this season (Jul–Jun)? Grad students may pick either.">
-                  <select className="input" value={p.studentStatus} onChange={(e) => set({ studentStatus: e.target.value as Athlete['studentStatus'] })} style={missingStyle('studentStatus')}>
-                    <option value="" disabled>Select…</option>
+                  <select className="input" value={p.studentStatus || ''} onChange={(e) => set({ studentStatus: e.target.value as Athlete['studentStatus'] })} style={missingStyle('studentStatus')}>
+                    <option value="" disabled>Select a student status…</option>
                     <option value="Student">Student</option><option value="Non-Student">Non-Student</option>
                   </select>
                   {missingFieldKeys.has('studentStatus') && !p.studentStatus && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Required</div>}

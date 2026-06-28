@@ -139,10 +139,10 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
         )}
         {!coachOnly && (
           <Field label="Student status" required hint="Full-time student for ≥1 semester this season.">
-            <select className="input" value={draft.studentStatus}
+            <select className="input" value={draft.studentStatus || ''}
               style={studentStatusMissing ? { outline: '2px solid var(--coral-600)', borderRadius: 4 } : undefined}
               onChange={(e) => set({ studentStatus: e.target.value as Athlete['studentStatus'] })}>
-              <option value="" disabled>Select…</option>
+              <option value="" disabled>Select a student status…</option>
               <option value="Student">Student</option><option value="Non-Student">Non-Student</option>
             </select>
             {studentStatusMissing && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Select a student status.</div>}

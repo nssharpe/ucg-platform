@@ -95,8 +95,8 @@ function AuthGate() {
     } else {
       // Stash name + kind so auth.ts can pass them to link_or_create_person on
       // the first authenticated load (after email confirmation + sign-in).
-      sessionStorage.setItem('ucg-signup-name', JSON.stringify([first.trim(), last.trim()]));
-      sessionStorage.setItem('ucg-signup-kind', kind);
+      localStorage.setItem('ucg-signup-name', JSON.stringify([first.trim(), last.trim()]));
+      localStorage.setItem('ucg-signup-kind', kind);
 
       // emailRedirectTo ensures the confirmation link returns to the real app
       // instead of Supabase's default localhost:3000. Works in dev and on

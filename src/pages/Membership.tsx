@@ -35,13 +35,18 @@ export function Membership() {
 // Returns a human-readable label for each required field that is missing.
 function missingProfileFields(me: Athlete): string[] {
   const missing: string[] = [];
+  const roles = me.roles ?? { athlete: me.kind !== 'coach', coach: me.kind === 'coach' };
+  const isAthlete = roles.athlete;
+  const coachOnly = roles.coach && !roles.athlete;
+
   if (!me.firstName?.trim()) missing.push('First name');
   if (!me.lastName?.trim()) missing.push('Last name');
   if (!me.dob?.trim()) missing.push('Date of birth');
-  if (!me.state?.trim()) missing.push('Training state');
+  if (!me.outsideUs && !me.state?.trim()) missing.push(coachOnly ? 'Coaching state' : 'Training state');
   if (!me.phone?.trim()) missing.push('Phone number');
   if (!me.shirt?.trim()) missing.push('T-shirt size');
-  if (!me.studentStatus?.trim()) missing.push('Student status');
+  if (isAthlete && !me.studentStatus?.trim()) missing.push('Student status');
+  if (isAthlete && !me.gradYear) missing.push('Undergrad graduation year');
   if (!me.emergency?.contact?.trim()) missing.push('Emergency contact name');
   if (!me.emergency?.phone?.trim()) missing.push('Emergency contact phone');
   return missing;
@@ -325,7 +330,9 @@ function MembershipInner({ me }: { me: Athlete }) {
     // the UX. Conditions checked here: no-club + not Outside US + first
     // membership. The server re-validates no-club + Outside-US before sending.
     if (via !== 'club' && me.mainClubId == null && !me.outsideUs && !hadPriorMembership) {
-      void sendMembershipWelcome(me.id).catch(() => { /* non-fatal */ });
+      if (!isMinor) {
+        void sendMembershipWelcome(me.id).catch(() => { /* non-fatal */ });
+      }
     }
   };
 

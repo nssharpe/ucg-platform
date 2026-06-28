@@ -71,15 +71,6 @@ Deno.serve(async (req) => {
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-  // --- Authenticate (any signed-in user) ---
-  const authHeader = req.headers.get('Authorization') ?? '';
-  const token = authHeader.replace(/^Bearer\s+/i, '');
-  if (!token) return json({ ok: false, error: 'Missing Authorization header.' }, 401);
-
-  const db = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
-  const { data: userData, error: userErr } = await db.auth.getUser(token);
-  if (userErr || !userData.user) return json({ ok: false, error: 'Invalid or expired session.' }, 401);
-
   // --- Validate payload (personId optional; default to caller's own person) ---
   let body: { personId?: string };
   try {
@@ -88,21 +79,44 @@ Deno.serve(async (req) => {
     body = {};
   }
 
-  // --- Resolve the target person ---
-  // Trust the caller's own person row by default. If a personId is supplied, it
-  // must be the caller's OWN row (a member can only welcome themselves).
-  const { data: caller } = await db
-    .from('people')
-    .select('id, first_name, email, state, outside_us, main_club_id')
-    .eq('auth_user_id', userData.user.id)
-    .maybeSingle();
-  if (!caller) return json({ ok: false, error: 'No linked person for caller.' }, 403);
+  // --- Authenticate (any signed-in user or service role) ---
+  const authHeader = req.headers.get('Authorization') ?? '';
+  const token = authHeader.replace(/^Bearer\s+/i, '');
+  if (!token) return json({ ok: false, error: 'Missing Authorization header.' }, 401);
 
-  const personId = (body.personId ?? '').trim();
-  if (personId && personId !== caller.id) {
-    return json({ ok: false, error: 'Can only send a welcome for your own account.' }, 403);
+  const db = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+  const isServiceRole = token === serviceKey;
+  let person;
+
+  if (isServiceRole) {
+    const personId = (body.personId ?? '').trim();
+    if (!personId) {
+      return json({ ok: false, error: 'personId is required for service role call.' }, 400);
+    }
+    const { data: p, error: pErr } = await db
+      .from('people')
+      .select('id, first_name, email, state, outside_us, main_club_id')
+      .eq('id', personId)
+      .maybeSingle();
+    if (pErr || !p) return json({ ok: false, error: 'Person not found.' }, 404);
+    person = p;
+  } else {
+    const { data: userData, error: userErr } = await db.auth.getUser(token);
+    if (userErr || !userData.user) return json({ ok: false, error: 'Invalid or expired session.' }, 401);
+
+    const { data: caller } = await db
+      .from('people')
+      .select('id, first_name, email, state, outside_us, main_club_id')
+      .eq('auth_user_id', userData.user.id)
+      .maybeSingle();
+    if (!caller) return json({ ok: false, error: 'No linked person for caller.' }, 403);
+
+    const personId = (body.personId ?? '').trim();
+    if (personId && personId !== caller.id) {
+      return json({ ok: false, error: 'Can only send a welcome for your own account.' }, 403);
+    }
+    person = caller;
   }
-  const person = caller;
 
   // --- Server-side skip re-checks (can't be misused) ---
   // Must be a no-club (Independent) account.

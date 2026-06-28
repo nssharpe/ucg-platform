@@ -27,7 +27,7 @@ function notifyRoles() { roleListeners.forEach((l) => l()); }
 /** Read first/last name stashed by the sign-up form (Gate.tsx). */
 function stashedName(): [string, string] {
   try {
-    const raw = sessionStorage.getItem('ucg-signup-name');
+    const raw = localStorage.getItem('ucg-signup-name');
     if (raw) { const [f, l] = JSON.parse(raw); return [f ?? '', l ?? '']; }
   } catch { /* ignore */ }
   return ['', ''];
@@ -36,7 +36,7 @@ function stashedName(): [string, string] {
 /** Read the person kind stashed by the sign-up form (Gate.tsx). */
 function stashedKind(): 'athlete' | 'coach' | null {
   try {
-    const raw = sessionStorage.getItem('ucg-signup-kind');
+    const raw = localStorage.getItem('ucg-signup-kind');
     if (raw === 'athlete' || raw === 'coach') return raw;
   } catch { /* ignore */ }
   return null;
@@ -52,7 +52,7 @@ async function onAuthenticated(user: Session['user']) {
   const signupKind = stashedKind();
   const personId = await linkOrCreatePerson(first, last);
   if (personId) {
-    sessionStorage.removeItem('ucg-signup-name');
+    localStorage.removeItem('ucg-signup-name');
     await syncFromSupabase(); // pull the claimed/created person into the snapshot
 
     // If the user registered as a coach, upgrade the freshly-created person row.
@@ -62,7 +62,7 @@ async function onAuthenticated(user: Session['user']) {
     //   (c) they have no memberships yet — a conservative guard that avoids
     //       clobbering an existing athlete who coincidentally shares the email.
     if (signupKind === 'coach') {
-      sessionStorage.removeItem('ucg-signup-kind');
+      localStorage.removeItem('ucg-signup-kind');
       const db = getDB();
       const person = db.people.find((p) => p.id === personId);
       if (person && person.kind === 'athlete' && person.memberships.length === 0) {
@@ -74,7 +74,7 @@ async function onAuthenticated(user: Session['user']) {
         pushPerson(updated); // mirror to Supabase
       }
     } else {
-      sessionStorage.removeItem('ucg-signup-kind');
+      localStorage.removeItem('ucg-signup-kind');
     }
   }
   roles = await fetchMyRoles(user.id);
