@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { fetchSignRequest, fetchPublishedWaiver, recordWaiverSignature } from '../lib/supabase';
 import type { WaiverDocument } from '../lib/types';
 import { sanitizeWaiverHtml } from '../lib/sanitize-html';
+import { expectedWaiverSignerName, waiverNameMatches } from '../lib/waivers-core';
 
 export default function WaiverSign() {
   const { token = '' } = useParams();
@@ -32,6 +33,9 @@ export default function WaiverSign() {
   // advisory — but we still send the matching one for clarity.
   const signerRole: 'self' | 'guardian' = req?.signer_role === 'self' ? 'self' : 'guardian';
   const isSelf = signerRole === 'self';
+
+  const expectedSig = req ? expectedWaiverSignerName(req.first_name, req.last_name) : '';
+  const sigMatchesName = req ? waiverNameMatches(name, req.first_name, req.last_name) : false;
 
   const submit = async () => {
     if (!doc || !req) return;
@@ -77,8 +81,13 @@ export default function WaiverSign() {
       }}
         dangerouslySetInnerHTML={{ __html: sanitizeWaiverHtml(doc?.body ?? '') }} />
       <label style={{ display: 'block', marginBottom: 8 }}>Your full legal name
-        <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
+        <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={isSelf ? expectedSig : undefined} />
       </label>
+      {isSelf && name.trim().length > 0 && !sigMatchesName && (
+        <p style={{ color: 'var(--coral-600)', fontSize: 13, marginTop: -4, marginBottom: 10 }}>
+          Your signature must match your name on file: <strong>{expectedSig}</strong>.
+        </p>
+      )}
       {!isSelf && (
         <label style={{ display: 'block', marginBottom: 8 }}>Relationship to athlete
           <input className="input" value={relationship} onChange={(e) => setRelationship(e.target.value)} />
@@ -91,7 +100,7 @@ export default function WaiverSign() {
           : 'I am the parent/guardian and agree to sign this waiver electronically. Timestamp and IP are recorded.'}</span>
       </label>
       {err && <p style={{ color: 'var(--coral-600)', fontSize: 13 }}>{err}</p>}
-      <button className="btn primary" disabled={busy || consent === false || name.trim().length < 2} onClick={submit}>
+      <button className="btn primary" disabled={busy || consent === false || name.trim().length < 2 || (isSelf && !sigMatchesName)} onClick={submit}>
         {busy ? 'Signing…' : 'Sign waiver'}
       </button>
     </div>

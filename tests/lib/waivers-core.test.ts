@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   sha256Hex, nextVersion, isMinorAt, advanceRequest, certificateText,
+  normaliseName, expectedWaiverSignerName, waiverNameMatches,
 } from '../../src/lib/waivers-core';
 import type { WaiverSignature } from '../../src/lib/types';
 
@@ -69,5 +70,37 @@ describe('certificateText', () => {
     const txt = certificateText(self, 1, 'John Doe');
     expect(txt).toContain('John Doe agreed to');
     expect(txt).not.toContain('guardian');
+  });
+});
+
+describe('name match helper functions', () => {
+  describe('normaliseName', () => {
+    it('lowercases, trims, and squashes multiple spaces', () => {
+      expect(normaliseName('  John   Doe  ')).toBe('john doe');
+      expect(normaliseName('Jane')).toBe('jane');
+      expect(normaliseName('')).toBe('');
+    });
+  });
+
+  describe('expectedWaiverSignerName', () => {
+    it('handles first and last names, removing excess spaces', () => {
+      expect(expectedWaiverSignerName('John', 'Doe')).toBe('John Doe');
+      expect(expectedWaiverSignerName(' John ', '  Doe ')).toBe('John Doe');
+      expect(expectedWaiverSignerName(null, 'Doe')).toBe('Doe');
+      expect(expectedWaiverSignerName('John', undefined)).toBe('John');
+      expect(expectedWaiverSignerName(undefined, undefined)).toBe('');
+    });
+  });
+
+  describe('waiverNameMatches', () => {
+    it('compares signature to first and last names case-insensitively with space tolerance', () => {
+      expect(waiverNameMatches('John Doe', 'John', 'Doe')).toBe(true);
+      expect(waiverNameMatches('john  doe', 'John', 'Doe')).toBe(true);
+      expect(waiverNameMatches('  john doe  ', 'John', 'Doe')).toBe(true);
+      expect(waiverNameMatches('Jane Doe', 'John', 'Doe')).toBe(false);
+      expect(waiverNameMatches('John', 'John', '')).toBe(true);
+      expect(waiverNameMatches('John', 'John', null)).toBe(true);
+      expect(waiverNameMatches('', null, undefined)).toBe(true);
+    });
   });
 });

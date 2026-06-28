@@ -51,3 +51,19 @@ export function certificateText(
     `(hash ${sig.contentHash}) on ${when} from IP ${sig.ip ?? 'unknown'} ` +
     `(consent: ${sig.consent ? 'yes' : 'no'}).`;
 }
+
+/** Normalize a string by trimming it and squashing consecutive whitespace. */
+export function normaliseName(s: string): string {
+  return s.replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/** Formats the expected signature name. */
+export function expectedWaiverSignerName(firstName: string | null | undefined, lastName: string | null | undefined): string {
+  return `${firstName ?? ''} ${lastName ?? ''}`.replace(/\s+/g, ' ').trim();
+}
+
+/** Returns true if the typed signature matches the expected athlete name. */
+export function waiverNameMatches(typedName: string, firstName: string | null | undefined, lastName: string | null | undefined): boolean {
+  const expected = expectedWaiverSignerName(firstName, lastName);
+  return normaliseName(typedName) === normaliseName(expected);
+}

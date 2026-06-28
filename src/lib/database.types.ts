@@ -1439,7 +1439,9 @@ export type Database = {
       get_waiver_sign_request: {
         Args: { p_token: string }
         Returns: {
+          first_name: string
           guardian_email: string
+          last_name: string
           membership_type: string
           person_id: string
           season_id: string

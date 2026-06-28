@@ -8,7 +8,7 @@ import { fmtMoney } from '../lib/scoring';
 import { pushCartItem, redeemCoupon, pushInvoice, pushMembership, fetchPublishedWaiver, recordWaiverSignature, requestGuardianWaiver, notifyClubCart, sendMembershipWelcome, sendReceipt } from '../lib/supabase';
 import type { Athlete, InvoiceItem, Membership, MembershipType, WaiverDocument } from '../lib/types';
 import { GENERAL_WAIVER_TYPE } from '../lib/types';
-import { isMinorAt } from '../lib/waivers-core';
+import { isMinorAt, expectedWaiverSignerName, waiverNameMatches } from '../lib/waivers-core';
 import { membershipHolds } from '../lib/capabilities-core';
 import { sanitizeWaiverHtml } from '../lib/sanitize-html';
 import {
@@ -122,9 +122,8 @@ function MembershipInner({ me }: { me: Athlete }) {
 
   const isMinor = isMinorAt(me.dob ?? '', new Date());
 
-  const expectedSig = `${me.firstName ?? ''} ${me.lastName ?? ''}`.replace(/\s+/g, ' ').trim();
-  const normalise = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
-  const sigMatchesName = normalise(waiverSig) === normalise(expectedSig);
+  const expectedSig = expectedWaiverSignerName(me.firstName, me.lastName);
+  const sigMatchesName = waiverNameMatches(waiverSig, me.firstName, me.lastName);
   const waiverValid = !!waiverDoc && consent && !isMinor && sigMatchesName;
 
   // Task 7: coupon validation via pricing helpers
