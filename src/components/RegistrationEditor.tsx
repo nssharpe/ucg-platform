@@ -25,6 +25,7 @@
 
 import { useState, useMemo } from 'react';
 import { Combo, Field } from './ui';
+import { useToast } from './ui-hooks';
 import { APPARATUS } from '../lib/types';
 import type { Athlete, Discipline, Level, Event, Registration, Season } from '../lib/types';
 import { changeIsEligible } from '../lib/pricing';
@@ -317,9 +318,25 @@ export function RegistrationEditor({
   };
 
   const [drafts, setDrafts] = useState<Record<Discipline, DraftReg>>(initDrafts);
+  const toast = useToast();
 
-  const updateDisc = (disc: Discipline, d: DraftReg) =>
+  // Editing an existing (already-saved) registration must always keep at least
+  // one discipline enabled — fully deselecting the last one is a silent
+  // withdrawal, not a discipline change, so block it instead of letting it
+  // through as a no-op empty save. Only applies when editing (existing.length
+  // > 0); a brand-new registration in progress may legitimately have zero
+  // enabled while the athlete is still choosing.
+  const updateDisc = (disc: Discipline, d: DraftReg) => {
+    const wasEnabled = drafts[disc]?.enabled;
+    if (wasEnabled && !d.enabled && existing.length > 0) {
+      const othersEnabled = (event.disciplines as Discipline[]).some((x) => x !== disc && drafts[x]?.enabled);
+      if (!othersEnabled) {
+        toast('You must stay registered for at least 1 discipline. If you remove all selected events, the meet host will know that you do not plan to compete.');
+        return;
+      }
+    }
     setDrafts((prev) => ({ ...prev, [disc]: d }));
+  };
 
   const handleSave = () => {
     const regs: Registration[] = [];

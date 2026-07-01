@@ -30,7 +30,7 @@ const blank = (): Omit<Athlete, 'id'> => ({
   kind: 'athlete', roles: { athlete: true, coach: false },
   firstName: '', lastName: '', email: '', dob: '', gender: 'Female',
   // 0 = not yet chosen (forces a year or an explicit N/A); 1900 = N/A sentinel.
-  gradYear: 0, studentStatus: '', shirt: 'Adult S', country: 'United States',
+  gradYear: 0, studentStatus: '', shirt: '', country: 'United States',
   state: '', phone: '', mainClubId: null, altClubIds: [], levels: {},
   emergency: { contact: '', relation: '', phone: '' },
   dietary: [], dietaryNotes: '', memberships: [], achievements: [],
@@ -60,10 +60,11 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
   // Student status + grad year are required only for athletes. Coaches skip both gates.
   const studentStatusMissing = !isCoach && !draft.studentStatus;
   const gradYearMissing = !isCoach && unsetGradYear;
+  const shirtMissing = !draft.shirt;
   // Training/Coaching state is required only when NOT training outside the US.
   const stateMissing = !outsideUs && !draft.state;
   const valid = draft.firstName.trim() && draft.lastName.trim() && draft.email.trim()
-    && draft.dob && !stateMissing && !gradYearMissing && !studentStatusMissing && clubChosen;
+    && draft.dob && !stateMissing && !gradYearMissing && !studentStatusMissing && !shirtMissing && clubChosen;
 
   const mainPhoneInvalid = draft.phone && !phoneValid(draft.phone);
   const emergPhoneInvalid = draft.emergency.phone && !phoneValid(draft.emergency.phone);
@@ -71,6 +72,7 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
   const save = () => {
     if (gradYearMissing) { toast('Enter a graduation year or check N/A.'); return; }
     if (studentStatusMissing) { toast('Select a student status.'); return; }
+    if (shirtMissing) { toast('Select a t-shirt size.'); return; }
     if (!clubChosen) { toast('Pick a club, or check "Independent Athlete".'); return; }
     if (!valid) { toast(`Name, email, date of birth, and ${stateLabel.toLowerCase()} are required.`); return; }
     const data = { ...draft, firstName: draft.firstName.trim(), lastName: draft.lastName.trim(), email: draft.email.trim() };
@@ -148,10 +150,14 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
             {studentStatusMissing && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Select a student status.</div>}
           </Field>
         )}
-        <Field label="T-shirt size">
-          <select className="input" value={draft.shirt} onChange={(e) => set({ shirt: e.target.value })}>
+        <Field label="T-shirt size" required>
+          <select className="input" value={draft.shirt || ''}
+            style={shirtMissing ? { outline: '2px solid var(--coral-600)', borderRadius: 4 } : undefined}
+            onChange={(e) => set({ shirt: e.target.value })}>
+            <option value="" disabled>Select a t-shirt size…</option>
             {SHIRT_SIZES.map((s) => <option key={s}>{s}</option>)}
           </select>
+          {shirtMissing && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Select a t-shirt size.</div>}
         </Field>
         <Field label="Country"><input type="text" value={draft.country} onChange={(e) => set({ country: e.target.value })} /></Field>
         <Field label={stateLabel} required={!outsideUs}>

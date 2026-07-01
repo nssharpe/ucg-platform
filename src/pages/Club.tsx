@@ -674,8 +674,18 @@ function RosterTable({
                         if (!m) return <Badge tone="err">None</Badge>;
                         const h = membershipHolds(m);
                         if (h.active) return <Badge tone="ok">✓ {season?.name}</Badge>;
-                        if (h.paymentHold) return <Badge tone="warn">Pending club $</Badge>;
-                        if (h.waiverHold) return <Badge tone="warn">Pending waiver</Badge>;
+                        // The two holds are independent and can both be active at once
+                        // (e.g. a minor whose fee was pushed to the club cart is
+                        // awaiting BOTH the guardian waiver AND the club's payment) —
+                        // render each as its own badge rather than picking just one.
+                        if (h.waiverHold || h.paymentHold) {
+                          return (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                              {h.waiverHold && <Badge tone="warn">Pending waiver</Badge>}
+                              {h.paymentHold && <Badge tone="warn">Pending club $</Badge>}
+                            </div>
+                          );
+                        }
                         return <Badge tone="err">None</Badge>;
                       })()}
                     </td>
