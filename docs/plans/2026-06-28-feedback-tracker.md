@@ -1,21 +1,21 @@
-# Feedback batch — agy offload tracker (2026-06-28)
+# Feedback batch tracker (2026-06-28)
 
-Source: `2026-06-27 Gemini Organized Feedback.md`. Pipeline: agy implements, Claude
-reviews. **Hybrid mode:** mechanical cohort self-drives onto a branch (gate-gated
-auto-commit), Claude reviews the branch once at the end; reviewed cohort handled
-individually with Claude review. Ordered by ROI within each cohort.
+Source: `2026-06-27 Gemini Organized Feedback.md` (+ the pre-organization original for
+detail). **agy (Google Antigravity CLI) offload pipeline was tried and abandoned**
+2026-06-28: it ignored workspace scoping (edited an unrelated Dropbox checkout for
+several tasks) and self-drove git (committed to main, claimed a push that never
+happened), so it wasn't trustworthy unattended. Reverted to direct Claude
+implementation for everything below. See memory `agy-offload-pipeline` for the
+post-mortem if this is ever revisited.
 
-## Cohort A — Mechanical (self-driving batch, `batch-mechanical/`)
-Low blast radius, well-specified, a correct fix is visible in the diff + caught by the
-verify gate. Auto-committed to a branch; Claude reviews the whole branch at the end.
-
-| # | Item | Source |
+## Cohort A — small/mechanical, direct-Claude
+| # | Item | Status |
 |---|------|--------|
-| 01 | Profile/account-creation form fixes: Student Status defaults blank; grad-year "N/A" not pre-checked & required-until-checked; first/last name port to profile (not "New Member"); coaches not blocked by hidden Student Status | §1 |
-| 02 | Remove redundant "add an Athlete membership… Add athlete membership →" text block + separator | §3 |
-| 03 | Render BOTH membership holds as two distinct bubbles when waiver + club-payment holds co-exist (use existing `membershipHolds`) | §3 |
-| 04 | T&T: allow removing disciplines while ≥1 remains; block removing the last one with the specified notification | §6 |
-| 05 | Waiver name enforcement: over-18 direct-link signing must force the same athlete-name match as the inline purchase flow | §3 |
+| 01 | Profile/account-creation form fixes: Student Status defaults blank; grad-year "N/A" not pre-checked & required-until-checked; first/last name port to profile (not "New Member"); coaches not blocked by hidden Student Status; **T-shirt size defaults to no-entry + required** (Nate, 2026-06-28) | TODO |
+| 02 | Remove redundant "add an Athlete membership… Add athlete membership →" text block + separator | ✅ DONE + deployed (commit ae28c25) |
+| 03 | Render BOTH membership holds as two distinct bubbles when waiver + club-payment holds co-exist (use existing `membershipHolds`) | TODO (agy's Dropbox-orphaned attempt lost, redo here) |
+| 04 | T&T: allow removing disciplines while ≥1 remains; block removing the last one with the specified notification | TODO (agy's Dropbox-orphaned attempt lost, redo here) |
+| 05 | Waiver name enforcement: over-18 direct-link signing must force the same athlete-name match as the inline purchase flow | ✅ DONE + deployed (commit 4214a74, incl. migration `20260628125200_waiver_sign_request_names.sql`) |
 
 ## Cohort B — Reviewed / individual (Claude review required)
 Reason each is NOT in the auto-batch in parentheses.
