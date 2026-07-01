@@ -148,6 +148,29 @@ async function fulfill(
   const personId = payment.person_id;
   if (!personId) { console.warn('[stripe-webhook] payment has no person', payment.id); return; }
 
+  // --- Atomically claim this payment before doing any side effects ----------
+  // Stripe redelivers webhooks (at-least-once) and a session can legitimately
+  // receive both a `completed` and a later `async_payment_succeeded` event; the
+  // check above alone leaves a race window between two concurrent deliveries
+  // both passing it before either has written `fulfilled_at`. A conditional
+  // UPDATE ... WHERE fulfilled_at IS NULL is atomic in Postgres: only ONE
+  // concurrent caller can flip `fulfilled_at` from null, so a losing duplicate
+  // bails out here, BEFORE it can read `cart_items` — which the winner may have
+  // already deleted, previously causing a real charge to fulfill with zero
+  // invoice line items (a "$0" receipt despite Stripe actually collecting
+  // payment). `status` stays 'pending' — the final update below sets 'paid' —
+  // `payments.status` has a fixed CHECK constraint with no in-between value.
+  const claimTime = new Date().toISOString();
+  const { data: claimed } = await db.from('payments')
+    .update({ fulfilled_at: claimTime })
+    .eq('id', payment.id)
+    .is('fulfilled_at', null)
+    .select('id');
+  if (!claimed || claimed.length === 0) {
+    console.warn('[stripe-webhook] payment already claimed by a concurrent delivery', payment.id);
+    return;
+  }
+
   // --- Stripe's actual processing fee, from the balance transaction ---
   const piId = typeof session.payment_intent === 'string'
     ? session.payment_intent
@@ -260,6 +283,22 @@ async function fulfill(
       })),
       { onConflict: 'id' },
     );
+  } else if (payment.amount_subtotal != null) {
+    // The referenced cart_items were already gone by the time we read them (a
+    // stale/duplicate delivery, or the cart was cleared some other way) — but a
+    // real charge was captured for `amount_subtotal`. Write a single fallback
+    // line from the payment's own authoritative amount so the receipt/invoice
+    // NEVER shows $0 for a payment that actually collected money.
+    await db.from('invoice_items').upsert([{
+      id: `ii-${payment.id}-0`, invoice_id: invoiceId,
+      // 'membership' is a placeholder — invoice_item_kind is a fixed Postgres enum
+      // with no generic/"other" value, and the true per-line kind is unrecoverable
+      // once cart_items is gone. The point of this fallback is the dollar amount,
+      // not the kind.
+      label: 'Payment', amount: payment.amount_subtotal / 100, kind: 'membership',
+      ref_user_id: null, ref_reg_ids: null, ref_event_id: null, ref_line_type: null,
+      refunded: false,
+    }], { onConflict: 'id' });
   }
 
   // --- Clear the paid cart lines ---

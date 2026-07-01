@@ -35,9 +35,11 @@ export function getCryptoProvider(): Stripe.CryptoProvider {
 // --- Server-side pricing (mirror of src/lib/pricing.ts) --------------------
 
 /** Service fee passed to the payer: 3% + $0.30 of the order subtotal, in CENTS.
- *  Mirrors `processingFee` in pricing.ts. */
+ *  Rounds UP (never to-nearest) so the collected fee never falls a cent short
+ *  of Stripe's actual processing fee on the total charged. Mirrors
+ *  `processingFee` in pricing.ts. */
 export function processingFee(subtotalCents: number): number {
-  return Math.round(subtotalCents * 0.03) + 30;
+  return Math.ceil(subtotalCents * 0.03) + 30;
 }
 
 /** Minimal season slice the membership pricing needs (snake_case DB columns). */
