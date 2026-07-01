@@ -310,7 +310,9 @@ What this means for names you'll grep for:
       Takes `{ cartItemIds }`, **recomputes** every membership amount server-side from
       the season fees + the person's existing memberships (cart `amount` is display-only,
       never trusted), adds the **service-fee** line (`processingFee` = 3% + $0.30 of the
-      cents subtotal), creates an **Embedded Checkout Session** (`ui_mode:'embedded'`,
+      cents subtotal, **rounded UP** via `Math.ceil` — not to-nearest — so it never
+      falls a cent short of Stripe's actual fee; fixed 2026-06-28, mirrored in
+      `src/lib/pricing.ts`), creates an **Embedded Checkout Session** (`ui_mode:'embedded'`,
       `redirect_on_completion:'never'`), and inserts a `pending` `payments` row linking
       session → person → exact `cart_item_ids` (+ `ref_season_id`/`ref_type` when a single
       membership). Returns `{ clientSecret, sessionId, paymentId }`.
@@ -318,7 +320,17 @@ What this means for names you'll grep for:
       signature with **`constructEventAsync`** (async SubtleCrypto) against
       `STRIPE_WEBHOOK_SECRET`; **fail-closed** if the secret is unset. On
       `checkout.session.completed`/`async_payment_succeeded` runs **idempotent** membership
-      fulfillment (idempotent on the Stripe **event id** + the payment row's `fulfilled_at`):
+      fulfillment. **Idempotency is an ATOMIC claim** (fixed 2026-06-28): a conditional
+      `UPDATE payments SET fulfilled_at = now() WHERE id = X AND fulfilled_at IS NULL`
+      runs before any side effect — a losing concurrent/redelivered event sees 0 rows
+      updated and bails out immediately. (The earlier version only *checked*
+      `fulfilled_at`/`status`/`stripe_event_id` without claiming, leaving a race window
+      where a duplicate delivery could read `cart_items` AFTER the winning delivery had
+      already deleted them — fulfilling with a real Stripe charge but ZERO
+      `invoice_items`, i.e. a receipt that displays `$0` despite money actually moving.
+      As a second layer, if `cart_items` still comes back empty despite a captured
+      `amount_subtotal`, a single fallback `invoice_items` row is written from the
+      payment's own authoritative amount, so a real charge can never render as $0.)
       activate the membership(s) (`active` if a `waiver_signatures` row exists for the
       (person,season), else `pending-waiver`; `paid_via:'card'`, clears `club_cart_pending`),
       write the paid invoice (`stripe_payment_intent_id` + **real** `stripe_fee` from the
