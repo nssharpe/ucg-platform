@@ -63,11 +63,36 @@ Reason each is NOT in the auto-batch in parentheses.
   Test updated (`tests/processing-fee.test.ts`). Deployed. §4
 
 **B2 — Cart architecture (large, structural):**
-- Unified cart (merge individual + club cart) (architecture). §4
-- Membership cart isolation + `Checkout Memberships` redirect; remove `Return to membership purchasing →` (routing/checkout). §4
-- Meet cards w/ edit+×, action buttons, Print Invoice, Checkout All (architecture + PDF). §4
-- Cart mutation sync — removal/undo reverts My Registrations / restores eligibility / reverts change (state integrity). §4
-- Club-cart pricing transparency (subtotal/fees) (part of cart redesign). §4
+- Unified cart (merge individual + club cart) — NOT started. §4
+- Membership cart isolation + `Checkout Memberships` redirect — ✅ effectively DONE
+  (commit b13943b, 2026-07-02, found via live testing): `Membership.tsx`'s legacy direct
+  card-pay UI (a decorative, never-wired card form — real bug, zero real charge) is
+  retired; it now redirects into `/cart/memberships`, the same isolated Stripe checkout.
+  The `Return to membership purchasing →` link removal was already done earlier (S3). §4
+- Meet cards w/ edit+×, action buttons, Print Invoice, Checkout All — **× (delete) is
+  DONE** (commit b13943b, generic `Cart.tsx` remove button, any cart line); **edit
+  button, Print Invoice PDF, Checkout-All-aggregation are NOT started**. §4
+- Cart mutation sync — removal/undo reverts My Registrations / restores eligibility /
+  reverts change — **PARTIAL**: removing a cart line now works and unblocks checkout
+  (fixes the concrete "orphaned item permanently blocks checkout" bug), but it does NOT
+  yet revert an associated registration's fields (a "change" line's removal leaves the
+  registration in its edited state) or restore a new registration to "eligible to
+  register" (the registration row is untouched, only the cart line goes away). Full
+  sync is a larger, separate piece of work. §4
+- Club-cart pricing transparency (subtotal/fees) — NOT started (part of cart redesign). §4
+
+**Live-test findings (2026-07-02, not from the original feedback doc):**
+- ✅ **FIXED — critical regression, real money involved:** `stripe-webhook` was
+  unreachable for ~a day (redeployed without `--no-verify-jwt`, which is NOT sticky
+  across redeploys — silently reset to requiring auth Stripe can't provide). A real
+  test-mode Stripe charge succeeded but the membership/registration never activated,
+  with zero errors anywhere. Root-caused via `supabase functions list` showing
+  `verify_jwt: true`; fixed + documented prominently in CLAUDE.md (this WILL bite again
+  on any future redeploy of `stripe-webhook`/`sms-webhook`/`notify-manager-access-denied`
+  without the flag — check `verify_jwt` after every touch). See memory
+  `stripe-webhook-verify-jwt-regression`.
+- ✅ **FIXED** — Purchase History showed dates in the wrong timezone (raw UTC date
+  string vs. the viewer's local day). Now uses the existing `useFmtDate()` hook.
 
 **B3 — Promo codes (money + backend validation):** ✅ **DONE** (commit 52a9ff7, migration
 `20260702012205`, both edge functions redeployed). Root cause of "codes vanish at checkout":
