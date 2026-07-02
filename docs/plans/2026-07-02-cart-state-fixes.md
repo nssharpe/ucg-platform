@@ -5,6 +5,29 @@ M6–M9, L2). Sonnet-tier implementer session(s); pure-logic changes get vitest 
 (the classifier and any new pure helpers). Independent of the security-hardening plan
 except where noted.
 
+> **STATUS — SHIPPED 2026-07-02** (branch merged to `main`). All 8 tasks implemented;
+> build + eslint(touched) + vitest (217) green; smoke-tested (athlete + manager roles,
+> /cart, /my-registrations, /club/:id/registrations all render, zero console errors).
+> **Two defects caught in controller review of the Sonnet draft before merge:**
+> 1. **H6 was a free-membership bug.** The draft "cleared the hold" by mirroring the
+>    payment-SUCCESS path (clubCartPending=false, status→active). But `membershipHolds()`
+>    derives `active` purely from the holds, so clearing them on a signed-waiver adult
+>    row marks it ACTIVE — a free membership. Removing an UNPAID club-pushed membership
+>    is a *cancellation*: the fix DELETES the row (new `deleteMembership` helper), guarded
+>    to `clubCartPending===true` so a since-paid row is never nuked.
+> 2. **H7 could over-charge.** The added-discipline entry-fee branch fired whenever
+>    `changeFee===0`, which includes a non-host event configured with a $0 change fee —
+>    charging full entry for a discipline added *within* the free-change window. Re-gated
+>    on `!changeFeeApplies` (outside the window only), matching MyRegistrations.
+>
+> **Known residuals (minor, non-money-loss, flagged for later):** (a) removing BOTH an
+> entry line and a stacked change line for the same reg leaves the reg as an unpaid
+> orphan (pending, no line) rather than deleted — recoverable, doesn't block checkout;
+> (b) the $0-change-window added discipline lands unpaid-with-no-line (same orphan shape,
+> consistent with MyRegistrations). **Not yet manually exercised in-browser:** the full
+> H6 push→remove and H5 stacked-removal flows (need seeded multi-step setup) — logic is
+> unit-tested + reasoned; worth one manual pass.
+
 ## Task 1 — C5: club cart entry dedupe (small, ship first)
 `Club.tsx` `addToCart`: replace the athlete-only `already` set with a per-event,
 entry-only check: skip the push only if the cart already has a line with

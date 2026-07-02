@@ -105,21 +105,48 @@ function CartScope({
 
   const groups = useMemo(() => groupCartItems(cart, db), [cart, db]);
 
-  // Syncs the underlying registration(s) via removeCartItemWithSync
-  // (unified-cart-b2 Task A): a brand-new unpaid entry line is deleted
-  // entirely; a "change" fee line with a captured snapshot reverts the
-  // registration(s) to their pre-change values; a legacy "change" line with no
-  // snapshot just removes the cart line (toasted honestly — nothing to revert
-  // to); anything else (membership/addon/other) is unaffected, same as before.
+  // Syncs the underlying registration(s)/membership via removeCartItemWithSync
+  // (unified-cart-b2 Task A; extended for H5/H6 2026-07-02): a brand-new unpaid
+  // entry line is deleted entirely; a "change" fee line with a captured
+  // snapshot reverts the registration(s) to their pre-change values; a legacy
+  // "change" line with no snapshot just removes the cart line (toasted
+  // honestly — nothing to revert to); a member-pushed membership line clears
+  // that member's club-payment hold; anything else (addon/other) is
+  // unaffected, same as before. H5: if a registration this line referenced is
+  // STILL referenced by another cart line, it's left alone (not
+  // deleted/reverted) — `keptRegIds` names those so the toast is honest about
+  // what actually happened.
+  //
+  // M9 (smallest useful step): before removing, check for a `pending`
+  // payments row (self-read RLS — db.payments only ever holds the caller's
+  // OWN rows) whose cart_item_ids include this item. A pending row means a
+  // Stripe Embedded Checkout session may be open in another tab/window right
+  // now for this exact line; removing it here wouldn't cancel that session,
+  // so if it later completes the webhook would fulfill against a cart line
+  // that's already gone. Full session-expiry/cancellation is out of scope
+  // (Phase-3 territory per the plan) — this only adds an explicit confirm.
   const removeItem = (item: CartItem) => {
-    const { action } = removeCartItemWithSync(ownerKey, isClub, item);
+    const inFlight = (db.payments ?? []).some(
+      (p) => p.status === 'pending' && p.cartItemIds.includes(item.id),
+    );
+    if (inFlight && !window.confirm(
+      'A checkout for this item may be in progress (in this tab or another). ' +
+      'Removing it now could cause a payment to complete for an item that’s no longer in your cart. Remove anyway?',
+    )) {
+      return;
+    }
+    const { action, keptRegIds } = removeCartItemWithSync(ownerKey, isClub, item);
     const message = {
       'delete-registration': 'Removed from cart and canceled the registration.',
       'revert-registration': 'Removed from cart — registration reverted to its prior state.',
       'no-snapshot-remove-only': 'Removed from cart. This registration was changed before we could track a revert — please check it.',
+      'clear-membership-hold': 'Removed from cart — that unpaid membership request was canceled.',
       'remove-only': 'Removed from cart.',
     }[action];
-    onRemoved(message, action === 'no-snapshot-remove-only');
+    const keptNote = keptRegIds.length > 0
+      ? ` (${keptRegIds.length === 1 ? 'One registration was' : `${keptRegIds.length} registrations were`} kept — another cart line still covers ${keptRegIds.length === 1 ? 'it' : 'them'}.)`
+      : '';
+    onRemoved(message + keptNote, action === 'no-snapshot-remove-only');
   };
 
   const onPaid = () => {
@@ -339,6 +366,11 @@ function ManagedClubSection({ club }: { club: Club }) {
   // Cross-club cart cleanup (3d): run whenever this section renders so a
   // manager visiting /cart also gets the moot-pending-line cleanup that used
   // to only fire on the old dedicated ClubCart page / the registrations view.
+  // M6 audit note (same as Club.tsx's EventRegGrid copy of this effect): `db`
+  // is a stable reference across in-place mutate() calls, so this only
+  // re-fires on mount/`club.id` change or a full resync — judged safe for the
+  // same reason (idempotent, no-op when clean, and the staleness it targets
+  // is a cross-manager/cross-tab condition that surfaces via resync anyway).
   useEffect(() => {
     cleanupCrossClubCart(db, club.id, toast);
     // eslint-disable-next-line react-hooks/exhaustive-deps

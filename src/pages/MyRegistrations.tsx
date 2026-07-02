@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { Badge, Combo, Field, Modal, Tabs } from '../components/ui';
@@ -40,8 +40,16 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
     return p ? `${p.firstName} ${p.lastName}` : 'partner';
   };
 
-  // Group this athlete's (non-refunded) registrations by event.
-  const byEvent = useMemo(() => {
+  // Group this athlete's (non-refunded) registrations by event. NOT memoized
+  // (M6 fix, 2026-07-02): `mutate()` (store.ts) mutates `db.registrations` in
+  // place for an update (`d.registrations[idx] = reg`) rather than reassigning
+  // the array, so a `useMemo` keyed on `db.registrations` never sees an
+  // update-only edit — exactly this page's own `saveRegs` above, meaning the
+  // grid showed stale data right after its own save (M6). `useDB()`'s
+  // subscription already re-renders on every store change, so recomputing
+  // this plain filter/group per render is correct and cheap (same precedent
+  // as Cart.tsx's un-memoized `cart`).
+  const byEvent = (() => {
     const mine = db.registrations.filter((r) => r.athleteId === personId && !r.refunded);
     const groups = new Map<string, Registration[]>();
     for (const r of mine) {
@@ -53,7 +61,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
       .map(([eventId, regs]) => ({ event: db.events.find((m) => m.id === eventId), regs }))
       .filter((g): g is { event: NonNullable<typeof g.event>; regs: Registration[] } => !!g.event)
       .sort((a, b) => b.event.startDate.localeCompare(a.event.startDate));
-  }, [db.registrations, db.events, personId]);
+  })();
 
   const t = today();
   const lq = q.trim().toLowerCase();
@@ -70,10 +78,12 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   const changeFeeApplies = (event: Event) => !!(event.changeFee && new Date() >= new Date(event.changeFee.startsAt));
 
   // Label used for an event's change fee in the athlete's cart — also how we detect
-  // that a change fee for this event is already pending checkout.
+  // that a change fee for this event is already pending checkout (M7: returns the
+  // item itself so saveRegs can extend it in place instead of just checking).
   const changeFeeLabel = (eventName: string) => `${eventName} change fee`;
-  const changeFeePending = (event: Event) =>
-    (db.carts[personId] ?? []).some((c) => c.kind === 'meet-entry' && c.label.startsWith(changeFeeLabel(event.name)));
+  const changeFeePendingItem = (event: Event) =>
+    (db.carts[personId] ?? []).find((c) => c.kind === 'meet-entry' && c.label.startsWith(changeFeeLabel(event.name)));
+  const changeFeePending = (event: Event) => !!changeFeePendingItem(event);
 
   const season = db.seasons.find((s) => s.current)!;
 
@@ -90,7 +100,9 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   // (out of scope) — so a member can't make their entry vanish on their own.
   const saveRegs = (event: Event, selectedClubId: string, newRegs: Registration[]) => {
     const applyFee = changeFeeApplies(event);
-    const alreadyPending = changeFeePending(event);
+    // Captured BEFORE the mutate below so it reflects the pre-edit cart state.
+    const alreadyPendingItem = changeFeePendingItem(event);
+    const alreadyPending = !!alreadyPendingItem;
     mutate((d) => {
       const existingForAthlete = d.registrations.filter(
         (r) => r.eventId === event.id && r.athleteId === personId && !r.refunded,
@@ -155,8 +167,28 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
       }
 
       // Add the fee/entry line to the MEMBER'S OWN cart, linked to the affected
-      // regs via refRegIds so paying flips exactly those to paid.
-      if (changeFee > 0 && !alreadyPending) {
+      // regs via refRegIds so paying flips exactly those to paid. M7/H5: if a
+      // change line for this event is ALREADY pending, EXTEND it in place
+      // (append newly-covered reg ids + snapshot entries for regs not already
+      // covered) instead of silently dropping the fee (the old behavior) or
+      // stacking a second line — stacking is what let removal delete/resurrect
+      // against a stale snapshot. NEVER overwrite an existing snapshot entry:
+      // it must stay the ORIGINAL pre-change state from the FIRST edit.
+      if (changeFee > 0 && alreadyPendingItem) {
+        const cart = d.carts[personId] ?? (d.carts[personId] = []);
+        const line = cart.find((c) => c.id === alreadyPendingItem.id);
+        if (line) {
+          const covered = new Set(line.refRegIds ?? []);
+          line.refRegIds = [...covered, ...newRegs.map((r) => r.id).filter((id) => !covered.has(id))];
+          const snapshotCovered = new Set((line.priorRegSnapshot ?? []).map((r) => r.id));
+          const newSnapshotEntries = newRegs.map((r) => priorById.get(r.id)).filter((r): r is Registration => !!r);
+          line.priorRegSnapshot = [
+            ...(line.priorRegSnapshot ?? []),
+            ...newSnapshotEntries.filter((r) => !snapshotCovered.has(r.id)),
+          ];
+          pushCart(personId, cart, false);
+        }
+      } else if (changeFee > 0) {
         const cart = d.carts[personId] ?? (d.carts[personId] = []);
         cart.push({
           id: `ci-change-${Date.now()}`,
@@ -188,11 +220,13 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
       }
     });
 
-    const fee = applyFee && existingForEvent(event).length > 0 && !alreadyPending
+    const fee = applyFee && existingForEvent(event).length > 0
       ? registrationChangeFee(event, { competingClubId: selectedClubId })
       : 0;
     toast(fee > 0
-      ? `Registration updated. A ${fmtMoney(fee)} change fee was added to your cart — pay it to finalize.`
+      ? alreadyPending
+        ? 'Registration updated. Your pending change fee now covers this edit too — pay it to finalize.'
+        : `Registration updated. A ${fmtMoney(fee)} change fee was added to your cart — pay it to finalize.`
       : 'Registration updated.');
     setEditingEventId(null);
   };
