@@ -10,7 +10,7 @@ rows) distill patterns back into the CLAUDE.md rules and prune distilled rows.
 
 | Date | Task (short) | Type | Model / effort | Outcome | Tokens | Notes |
 |------|--------------|------|----------------|---------|--------|-------|
-| 2026-07-02 | Money-path review (3 parallel read-only reviewers: edge fns, RLS, client state) | review | fable / default | — | — | Fable-week centerpiece; results in docs/plans |
+| 2026-07-02 | Money-path review (3 parallel read-only reviewers: edge fns, RLS, client state) | review | fable / default | pass | ~360k (subagents) | 5 CRITICAL + 8 HIGH real findings; every controller spot-check confirmed; ~1 false-positive-risk finding (H4 retry) needed call-site verification. Fable-tier review of money code: worth it. |
 
 ## Current priors (mirror of CLAUDE.md rules)
 - haiku: mechanical + explicit verify checklist (renames, plumbing recipe, doc sweeps).
