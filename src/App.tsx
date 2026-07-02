@@ -34,12 +34,17 @@ const Profile = lazy(() => loaders.Profile().then((m) => ({ default: m.Profile }
 const AdminProfile = lazy(() => loaders.Profile().then((m) => ({ default: () => <m.Profile adminView /> })));
 const ClubRoster = lazy(() => loaders.Club().then((m) => ({ default: () => <m.ClubPage view="roster" /> })));
 const ClubRegistrations = lazy(() => loaders.Club().then((m) => ({ default: () => <m.ClubPage view="registrations" /> })));
-const ClubCart = lazy(() => loaders.Club().then((m) => ({ default: m.ClubCart })));
 
 /** Redirect bare /club/:clubId → /club/:clubId/roster (default view). */
 function ClubIndexRedirect() {
   const { clubId } = useParams();
   return <Navigate to={`/club/${clubId}/roster`} replace />;
+}
+
+/** Retired route (unified-cart-b2): the per-club cart + receipts page was
+ *  merged into the single `/cart` page (a section per managed club there). */
+function ClubCartRedirect() {
+  return <Navigate to="/cart" replace />;
 }
 
 /** Legacy /meets* → /events* redirects (the Meet→Event rename keeps old links
@@ -221,7 +226,7 @@ export default function App() {
               <Route path="/club/:clubId" element={<RequireAccount><ClubIndexRedirect /></RequireAccount>} />
               <Route path="/club/:clubId/roster" element={<RequireAccount><ClubRoster /></RequireAccount>} />
               <Route path="/club/:clubId/registrations" element={<RequireAccount><ClubRegistrations /></RequireAccount>} />
-              <Route path="/club/:clubId/cart" element={<RequireAccount><ClubCart /></RequireAccount>} />
+              <Route path="/club/:clubId/cart" element={<ClubCartRedirect />} />
               <Route path="/events/:slug/manage" element={<RequireAccount><EventManage /></RequireAccount>} />
               <Route path="/events/:slug/nationals" element={<RequireAccount><Nationals /></RequireAccount>} />
               <Route path="/meets/:slug/manage" element={<MeetManageRedirect />} />

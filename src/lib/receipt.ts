@@ -1,6 +1,6 @@
 // Browser-only: generate and directly download a PDF receipt for an invoice.
 import { jsPDF } from 'jspdf';
-import type { Invoice } from './types';
+import type { CartItem, Invoice } from './types';
 import { fmtMoney } from './scoring';
 
 /** Net total of an invoice (refunded items don't count). */
@@ -77,4 +77,66 @@ export function downloadReceipt(inv: Invoice, forName: string): void {
   doc.text(fmtMoney(invoiceTotal(inv)), pageW - margin, y, { align: 'right' });
 
   doc.save(`receipt-${inv.number}.pdf`);
+}
+
+/** Generate and download a PRE-PAYMENT PDF for a set of cart items — an estimate
+ *  for approval purposes only. Mirrors `downloadReceipt`'s layout (header, item
+ *  loop, subtotal/total) but deliberately does NOT claim payment happened: no
+ *  "Paid" stamp, and an explicit note that it does not process any payment. */
+export function downloadCartInvoice(items: CartItem[], forName: string, title: string): void {
+  const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+  const margin = 56;
+  const pageW = doc.internal.pageSize.getWidth();
+  const width = pageW - margin * 2;
+  const bottom = doc.internal.pageSize.getHeight() - margin;
+  let y = margin;
+  const ensure = (h: number) => { if (y + h > bottom) { doc.addPage(); y = margin; } };
+
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(17); doc.setTextColor(20);
+  doc.text('United Club Gymnastics', margin, y);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(120);
+  doc.text(`Cart estimate — ${title}`, margin, y + 16);
+  const now = new Date();
+  const dateStr = now.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  doc.text(dateStr, pageW - margin, y, { align: 'right' });
+  doc.text('Not paid', pageW - margin, y + 16, { align: 'right' });
+  y += 44;
+  doc.setDrawColor(20); doc.line(margin, y, pageW - margin, y); y += 18;
+
+  doc.setTextColor(90); doc.setFontSize(10);
+  doc.text(`Prepared for: ${forName}`, margin, y); y += 20;
+
+  doc.setFont('helvetica', 'italic'); doc.setFontSize(9.5); doc.setTextColor(140);
+  const disclaimerLines = doc.splitTextToSize(
+    'This is an estimate of items currently in the cart, for review/approval purposes only. It is not a receipt and does not process any payment.',
+    width,
+  );
+  doc.text(disclaimerLines, margin, y);
+  y += disclaimerLines.length * 12 + 10;
+  doc.setFont('helvetica', 'normal');
+
+  doc.setFontSize(10.5);
+  const total = items.reduce((sum, i) => sum + i.amount, 0);
+  for (const i of items) {
+    ensure(16);
+    doc.setTextColor(30);
+    const lines = doc.splitTextToSize(i.label, width - 90);
+    doc.text(lines, margin, y);
+    doc.text(fmtMoney(i.amount), pageW - margin, y, { align: 'right' });
+    y += Math.max(16, lines.length * 13);
+  }
+
+  y += 6; ensure(24);
+  doc.setDrawColor(20); doc.line(margin, y, pageW - margin, y); y += 18;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(20);
+  doc.text('Estimated total', margin, y);
+  doc.text(fmtMoney(total), pageW - margin, y, { align: 'right' });
+  y += 28;
+
+  doc.setFont('helvetica', 'italic'); doc.setFontSize(9); doc.setTextColor(140);
+  ensure(14);
+  doc.text('Final amount due (including any applicable service fee) is calculated at checkout.', margin, y);
+
+  const filenameSafe = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'cart';
+  doc.save(`cart-estimate-${filenameSafe}.pdf`);
 }

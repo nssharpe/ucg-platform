@@ -1,26 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { useDB, mutate, syncFromSupabase } from '../lib/store';
+import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { clubHasActiveMembership, seasonForDate, membershipHolds, paidRegistrationClub } from '../lib/capabilities-core';
 import { Badge, Combo, Field, Modal } from '../components/ui';
-import { useToast, useFmtDate } from '../components/ui-hooks';
-import type { ToastOptions } from '../components/ui-hooks';
+import { useToast } from '../components/ui-hooks';
 import { CLUB_ACCESS_LABELS, STATE_REGIONS } from '../lib/types';
-import type { Athlete, CartItem, Club, ClubAccess, DB, Invoice, Registration, Season } from '../lib/types';
+import type { Athlete, Club, ClubAccess, Registration, Season } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
-import { downloadReceipt, invoiceTotal } from '../lib/receipt';
 import { newRegistrationEntryTotal, reassignPartners, registrationChangeFee } from '../lib/pricing';
 import {
   deleteRegistration, pushCart, pushClub, pushClubManager,
   pushRegistration, requestManagerAccess, sendClubInvite,
   inviteAccount, pushClubMembership, deleteClubMembership,
 } from '../lib/supabase';
-import { removeCartItemWithSync } from '../lib/cart-sync';
+import { cleanupCrossClubCart } from '../lib/cart-sync';
 import type { ClubMembership } from '../lib/types';
 import { ClubForm } from '../components/ClubForm';
 import { RegistrationEditor } from '../components/RegistrationEditor';
-import { CartCheckout } from '../components/CartCheckout';
 
 // ---- sort helpers -----------------------------------------------------------
 
@@ -126,7 +123,7 @@ export function ClubPage({ view }: { view: ClubView }) {
       )}
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
-        <Link className="btn ghost small" to={`/club/${club.id}/cart`}>Club cart & receipts →</Link>
+        <Link className="btn ghost small" to="/cart">Club cart & receipts →</Link>
         {canManage && (
           <>
             <button className="btn ghost small" onClick={() => setEditingClub(true)}>Edit club details</button>
@@ -263,8 +260,9 @@ function ClubSettings({ club }: { club: Club }) {
 // Shows the club's membership status per season. Managers PURCHASE by first
 // reviewing/editing club info on a dedicated screen, then confirming — which
 // adds a club-membership line to the club cart (NOT an instant active row) and
-// routes to the cart. The `club_memberships` row is created only when that cart
-// line is PAID (ClubCart pay handler), so the registration/hosting gate
+// routes to the unified /cart page. The `club_memberships` row is created only
+// when that cart line is PAID (the stripe-webhook fulfillment path, via the
+// club's section on /cart), so the registration/hosting gate
 // (clubHasActiveMembership) stays false until payment. League admins may still
 // grant/revoke an active row directly for any season (an admin override).
 function ClubMembershipCard({ club }: { club: Club }) {
@@ -303,7 +301,7 @@ function ClubMembershipCard({ club }: { club: Club }) {
     if (!season) return;
     if (cartHasSeason(seasonId)) {
       toast(`A ${seasonName(seasonId)} club membership is already in the cart.`);
-      navigate(`/club/${club.id}/cart`);
+      navigate('/cart');
       setReviewSeason(null);
       return;
     }
@@ -321,7 +319,7 @@ function ClubMembershipCard({ club }: { club: Club }) {
     });
     toast(`${seasonName(seasonId)} club membership added to the cart. Pay to activate it.`);
     setReviewSeason(null);
-    navigate(`/club/${club.id}/cart`);
+    navigate('/cart');
   };
 
   const currentActive = currentSeason ? clubHasActiveMembership(db, club.id, currentSeason.id) : false;
@@ -351,7 +349,7 @@ function ClubMembershipCard({ club }: { club: Club }) {
               {active ? <Badge tone="ok">Active</Badge> : inCart ? <Badge tone="info">In cart</Badge> : <Badge tone="warn">None</Badge>}
               <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
                 {!active && canManage && (inCart
-                  ? <Link className="btn small ghost" to={`/club/${club.id}/cart`}>View in cart →</Link>
+                  ? <Link className="btn small ghost" to="/cart">View in cart →</Link>
                   : <button className="btn small primary" onClick={() => setReviewSeason(s.id)}>
                       Purchase
                     </button>)}
@@ -717,65 +715,6 @@ function RosterTable({
       )}
     </div>
   );
-}
-
-// ---- Cross-club cart cleanup (3d) -------------------------------------------
-
-/** Resolve the eventId a club-cart meet-entry line is for: prefer the linked
- *  registration(s) (`refRegIds`), else fall back to the "<event name> entry —"
- *  label parse. */
-function cartItemEventId(db: DB, item: CartItem): string | null {
-  if (item.refRegIds && item.refRegIds.length > 0) {
-    const reg = db.registrations.find((r) => item.refRegIds!.includes(r.id));
-    if (reg) return reg.eventId;
-  }
-  const m = item.label.match(/^(.+?) entry —/);
-  if (m) return db.events.find((mt) => mt.name === m[1])?.id ?? null;
-  return null;
-}
-
-/** The club-cart meet-entry lines for `clubId` whose athlete has SINCE become
- *  PAID-registered under a DIFFERENT club for that event (pending line is moot).
- *  Excludes THIS club so a legitimate same-club pending line is never flagged. */
-function staleCrossClubCartItems(db: DB, clubId: string): CartItem[] {
-  const cart = db.carts[clubId] ?? [];
-  return cart.filter((i) => {
-    if (i.kind !== 'meet-entry' || !i.refUserId) return false;
-    const eventId = cartItemEventId(db, i);
-    if (!eventId) return false;
-    return paidRegistrationClub(db.registrations, {
-      athleteId: i.refUserId, eventId, excludeClubId: clubId,
-    }) !== null;
-  });
-}
-
-/** Remove the stale cross-club cart lines for `clubId` and toast the manager
- *  once per removed athlete. Idempotent: after removal the next pass finds
- *  nothing, so it never re-toasts. Call from a mount effect. No-op when clean. */
-function cleanupCrossClubCart(
-  db: DB,
-  clubId: string,
-  toast: (msg: string, opts?: ToastOptions) => void,
-): void {
-  const removable = staleCrossClubCartItems(db, clubId);
-  if (removable.length === 0) return;
-  const removeIds = new Set(removable.map((i) => i.id));
-  mutate((d) => {
-    d.carts[clubId] = (d.carts[clubId] ?? []).filter((x) => !removeIds.has(x.id));
-    pushCart(clubId, d.carts[clubId], true);
-  });
-  for (const i of removable) {
-    const athlete = db.people.find((p) => p.id === i.refUserId);
-    const name = athlete ? `${athlete.firstName} ${athlete.lastName}` : 'An athlete';
-    const eventId = cartItemEventId(db, i);
-    const otherClubId = eventId && i.refUserId
-      ? paidRegistrationClub(db.registrations, { athleteId: i.refUserId, eventId, excludeClubId: clubId })
-      : null;
-    const otherShort = otherClubId
-      ? db.clubs.find((c) => c.id === otherClubId)?.shortName ?? 'another club'
-      : 'another club';
-    toast(`${name} was removed from the cart — they're now registered with ${otherShort}.`, { variant: 'info' });
-  }
 }
 
 // ---- EventRegGrid (three-card layout) ----------------------------------------
@@ -1316,349 +1255,6 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
             onCancel={() => setRegisterAthleteId(null)}
             incomingPartnerId={db.registrations.find((r) => r.eventId === event.id && !r.refunded && r.apparatus.includes('SY') && r.partnerAthleteId === registerAthlete.id)?.athleteId ?? null}
           />
-        </Modal>
-      )}
-    </div>
-  );
-}
-
-// ---- ClubCart ---------------------------------------------------------------
-
-export function ClubCart() {
-  const { clubId } = useParams();
-  const db = useDB();
-  const toast = useToast();
-  const fmtDate = useFmtDate();
-  const [checkout, setCheckout] = useState<{ items: CartItem[]; title: string } | null>(null);
-  const [detail, setDetail] = useState<Invoice | null>(null);
-  const [receiptSearch, setReceiptSearch] = useState('');
-  const [receiptFrom, setReceiptFrom] = useState('');
-  const [receiptTo, setReceiptTo] = useState('');
-  const club = db.clubs.find((c) => c.id === clubId);
-
-  // The webhook bills the club, activates every membership/registration, clears
-  // the club cart, and emails the paying manager a receipt — the FE only re-syncs.
-  const onPaid = () => {
-    void syncFromSupabase().finally(() => {
-      setCheckout(null);
-      toast('Payment complete — memberships/registrations activated. Receipt emailed to you.');
-    });
-  };
-  const onError = (msg: string) => toast(msg, { variant: 'error' });
-
-  // Cross-club cart cleanup (3d): when this cart loads, drop any pending meet-entry
-  // line for an athlete who has SINCE become PAID-registered under a DIFFERENT club
-  // for that event, and notify the manager. Idempotent (see cleanupCrossClubCart).
-  const allInvoices = useMemo(() =>
-    db.invoices
-      .filter((i) => i.clubId === (club?.id ?? ''))
-      .slice()
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    [db.invoices, club?.id],
-  );
-  const invoices = useMemo(() => {
-    const q = receiptSearch.trim().toLowerCase();
-    return allInvoices.filter((inv) => {
-      if (receiptFrom && inv.createdAt.slice(0, 10) < receiptFrom) return false;
-      if (receiptTo && inv.createdAt.slice(0, 10) > receiptTo) return false;
-      if (!q) return true;
-      if (inv.number.toLowerCase().includes(q)) return true;
-      const totalStr = fmtMoney(invoiceTotal(inv));
-      if (totalStr.includes(q)) return true;
-      return inv.items.some((it) => it.label.toLowerCase().includes(q));
-    });
-  }, [allInvoices, receiptSearch, receiptFrom, receiptTo]);
-
-  useEffect(() => {
-    if (club) cleanupCrossClubCart(db, club.id, toast);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [db, club?.id]);
-
-  if (!club) return <p>Club not found.</p>;
-  const cart = db.carts[club.id] ?? [];
-  const subtotal = cart.reduce((s, i) => s + i.amount, 0);
-
-  // Removes a single line from this club's cart, syncing the underlying
-  // registration(s) via removeCartItemWithSync (unified-cart-b2 Task A): a
-  // brand-new unpaid entry line is deleted entirely; a "change" fee line with
-  // a captured snapshot reverts the registration(s) to their pre-change
-  // values; a legacy "change" line with no snapshot just removes the cart
-  // line (toasted honestly); anything else (membership/addon/other) removes
-  // the cart line only, same as before.
-  const removeItem = (item: CartItem) => {
-    const { action } = removeCartItemWithSync(club.id, true, item);
-    const message = {
-      'delete-registration': 'Removed from cart and canceled the registration.',
-      'revert-registration': 'Removed from cart — registration reverted to its prior state.',
-      'no-snapshot-remove-only': 'Removed from cart. This registration was changed before we could track a revert — please check it.',
-      'remove-only': 'Removed from cart.',
-    }[action];
-    toast(message, action === 'no-snapshot-remove-only' ? { variant: 'error' } : undefined);
-  };
-
-  // Group cart items by event (detect from label) and by memberships
-  const eventNames = Array.from(new Set(
-    cart.filter((i) => i.kind === 'meet-entry').map((i) => {
-      // Label format: "<event name> entry — <athlete> (<disc>)"
-      const m = i.label.match(/^(.+?) entry —/);
-      return m ? m[1] : 'Event entries';
-    }),
-  ));
-  const membershipItems = cart.filter((i) => i.kind === 'membership');
-
-  // Registration summary per athlete (from the DB)
-  const regSummaryForItem = (item: typeof cart[number]): string | null => {
-    if (!item.refUserId || item.kind !== 'meet-entry') return null;
-    const eventMatch = item.label.match(/^(.+?) entry —/);
-    if (!eventMatch) return null;
-    const eventName = eventMatch[1];
-    const event = db.events.find((m) => m.name === eventName);
-    if (!event) return null;
-    const regs = db.registrations.filter(
-      (r) => r.eventId === event.id && r.athleteId === item.refUserId && !r.refunded,
-    );
-    if (regs.length === 0) return null;
-    const nameOf = (id: string) => {
-      const p = db.people.find((x) => x.id === id);
-      return p ? `${p.firstName} ${p.lastName}` : 'partner';
-    };
-    return regs.map((r) => {
-      const lvl = db.levels.find((l) => l.id === r.levelId)?.name ?? '—';
-      return `${r.discipline === 'TNT' ? 'T&T' : r.discipline} – ${lvl} – ${eventsText(r, nameOf)}`;
-    }).join(' / ');
-  };
-
-  if (checkout) {
-    return (
-      <div style={{ maxWidth: 620 }}>
-        <h1 className="page-title display">Checkout — {checkout.title}</h1>
-        <p className="page-sub">Billed to {club.shortName}.</p>
-        <div style={{ marginBottom: 14 }}>
-          <button className="btn ghost small" onClick={() => setCheckout(null)}>← Back to cart</button>
-        </div>
-        <CartCheckout
-          items={checkout.items}
-          title={checkout.title}
-          onPaid={onPaid}
-          onError={onError}
-        />
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ maxWidth: 820 }}>
-      <h1 className="page-title display">{club.shortName} — Cart &amp; Receipts</h1>
-      <p className="page-sub">
-        Memberships pushed to the club, event entries, and add-ons.
-        Each membership is a separate line item so single refunds stay clean.
-      </p>
-      <div style={{ marginBottom: 16 }}>
-        <Link className="btn ghost small" to={`/club/${club.id}`}>← Back to club page</Link>
-      </div>
-
-      {/* Cart grouped by event / memberships */}
-      {cart.length > 0 && (
-        <>
-          {/* Event entry cards */}
-          {eventNames.map((eventName) => {
-            const items = cart.filter((i) => i.kind === 'meet-entry' && i.label.startsWith(eventName));
-            return (
-              <div key={eventName} className="card card-pad" style={{ marginBottom: 18 }}>
-                <h3 className="card-title">{eventName}</h3>
-                <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 10 }}>
-                  Event entries · <Link to={`/club/${club.id}/registrations`}>Return to registration →</Link>
-                </p>
-                <table className="tbl">
-                  <tbody>
-                    {items.map((i) => {
-                      const summary = regSummaryForItem(i);
-                      return (
-                        <tr key={i.id}>
-                          <td>
-                            <div>{i.label} <Badge tone="info">{i.kind}</Badge></div>
-                            {summary && (
-                              <div style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 2 }}>
-                                {summary}
-                              </div>
-                            )}
-                          </td>
-                          <td className="num">{fmtMoney(i.amount)}</td>
-                          <td style={{ width: 40 }}>
-                            <button className="btn small ghost" data-tip="Remove from cart" onClick={() => removeItem(i)}>✕</button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            );
-          })}
-
-          {/* Memberships card */}
-          {membershipItems.length > 0 && (
-            <div className="card card-pad" style={{ marginBottom: 18 }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-                <h3 className="card-title" style={{ margin: 0 }}>Memberships</h3>
-                <button
-                  className="btn primary small"
-                  style={{ marginLeft: 'auto' }}
-                  onClick={() => setCheckout({ items: membershipItems, title: 'Memberships' })}
-                >
-                  Checkout Memberships →
-                </button>
-              </div>
-              <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '6px 0 10px' }}>
-                The club’s own seasonal membership and any member fees pushed to the cart.
-              </p>
-              <table className="tbl">
-                <tbody>
-                  {membershipItems.map((i) => (
-                    <tr key={i.id}>
-                      <td>{i.label} <Badge tone="info">{i.refType === 'club' ? 'club membership' : 'membership'}</Badge></td>
-                      <td className="num">{fmtMoney(i.amount)}</td>
-                      <td style={{ width: 40 }}>
-                        <button className="btn small ghost" onClick={() => removeItem(i)}>✕</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {/* Other items */}
-          {cart.filter((i) => i.kind !== 'meet-entry' && i.kind !== 'membership').length > 0 && (
-            <div className="card card-pad" style={{ marginBottom: 18 }}>
-              <h3 className="card-title">Other items</h3>
-              <table className="tbl">
-                <tbody>
-                  {cart.filter((i) => i.kind !== 'meet-entry' && i.kind !== 'membership').map((i) => (
-                    <tr key={i.id}>
-                      <td>{i.label} <Badge tone="info">{i.kind}</Badge></td>
-                      <td className="num">{fmtMoney(i.amount)}</td>
-                      <td style={{ width: 40 }}>
-                        <button className="btn small ghost" onClick={() => removeItem(i)}>✕</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </>
-      )}
-
-      {/* Summary + checkout */}
-      <div className="card card-pad" style={{ marginBottom: 18 }}>
-        <h3 className="card-title">Club cart ({cart.length})</h3>
-        {cart.length === 0 ? <p style={{ color: 'var(--ink-soft)' }}>Cart is empty.</p> : (
-          <div style={{ display: 'flex', gap: 14, alignItems: 'end', justifyContent: 'flex-end', marginTop: 14, flexWrap: 'wrap' }}>
-            <div style={{ textAlign: 'right', marginBottom: 14 }}>
-              <div style={{ fontSize: 14 }}>{cart.length} item{cart.length !== 1 ? 's' : ''} · Subtotal {fmtMoney(subtotal)}</div>
-              <div style={{ fontSize: 12, color: 'var(--ink-soft)' }}>Promo codes + processing fee are shown on the next step.</div>
-            </div>
-            <button
-              className="btn primary"
-              style={{ marginBottom: 14 }}
-              onClick={() => setCheckout({ items: cart, title: `${club.shortName} cart` })}
-            >
-              Continue to checkout →
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Receipts */}
-      <div style={{ marginTop: 4 }}>
-        <h3 className="card-title" style={{ marginBottom: 10 }}>Receipts</h3>
-        {allInvoices.length > 0 && (
-          <div style={{ display: 'flex', gap: 10, marginBottom: 12, flexWrap: 'wrap', alignItems: 'end' }}>
-            <div style={{ flex: '1 1 180px', minWidth: 140 }}>
-              <label style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--navy-700)', display: 'block', marginBottom: 5 }}>Search</label>
-              <input className="input" type="text" value={receiptSearch} onChange={(e) => setReceiptSearch(e.target.value)}
-                placeholder="Name, item, amount…" />
-            </div>
-            <div style={{ minWidth: 120 }}>
-              <label style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--navy-700)', display: 'block', marginBottom: 5 }}>From</label>
-              <input className="input" type="date" value={receiptFrom} onChange={(e) => setReceiptFrom(e.target.value)} />
-            </div>
-            <div style={{ minWidth: 120 }}>
-              <label style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', color: 'var(--navy-700)', display: 'block', marginBottom: 5 }}>To</label>
-              <input className="input" type="date" value={receiptTo} onChange={(e) => setReceiptTo(e.target.value)} />
-            </div>
-            {(receiptSearch || receiptFrom || receiptTo) && (
-              <button className="btn small ghost" style={{ marginBottom: 2 }}
-                onClick={() => { setReceiptSearch(''); setReceiptFrom(''); setReceiptTo(''); }}>Clear</button>
-            )}
-          </div>
-        )}
-        {allInvoices.length === 0 ? <p style={{ color: 'var(--ink-soft)' }}>No receipts yet.</p>
-        : invoices.length === 0 ? <p style={{ color: 'var(--ink-soft)' }}>No receipts match your filters.</p>
-        : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {invoices.map((inv) => (
-              <div key={inv.id} className="card card-pad">
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-                  <strong>{inv.number}</strong>
-                  <span style={{ color: 'var(--ink-soft)', fontSize: 13 }}>{fmtDate(inv.createdAt.slice(0, 10))}</span>
-                  {inv.paidAt ? <Badge tone="ok">Paid</Badge> : <Badge tone="warn">Unpaid</Badge>}
-                  <strong style={{ marginLeft: 'auto' }}>{fmtMoney(invoiceTotal(inv))}</strong>
-                </div>
-                <p style={{ margin: '8px 0 10px', fontSize: 14, color: 'var(--ink-soft)' }}>
-                  {inv.items.filter((i) => i.kind !== 'discount').map((i) => i.label).join('; ')}
-                </p>
-                <button className="btn small ghost" onClick={() => setDetail(inv)}>Click for details →</button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {detail && (
-        <Modal title={`Receipt ${detail.number}`} onClose={() => setDetail(null)}>
-          <div style={{ fontSize: 13.5, color: 'var(--ink-soft)', marginBottom: 12 }}>
-            {fmtDate(detail.createdAt.slice(0, 10))} · {detail.paidAt ? 'Paid' : 'Unpaid'} · Billed to {club.shortName}
-          </div>
-          {(() => {
-            const lineItems = detail.items.filter((i) => i.kind !== 'discount');
-            const subtotal = lineItems.reduce((s, i) => s + (i.refunded ? 0 : i.amount), 0);
-            const discount = -detail.items.filter((i) => i.kind === 'discount').reduce((s, i) => s + (i.refunded ? 0 : i.amount), 0);
-            const total = subtotal - discount;
-            return (
-              <table className="tbl" style={{ marginBottom: 12 }}>
-                <tbody>
-                  {lineItems.map((i) => (
-                    <tr key={i.id}>
-                      <td>{i.label}{i.refunded ? ' (refunded)' : ''}</td>
-                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtMoney(i.refunded ? 0 : i.amount)}</td>
-                    </tr>
-                  ))}
-                  {discount > 0 && (
-                    <>
-                      <tr style={{ borderTop: '1px solid var(--line)' }}>
-                        <td style={{ color: 'var(--ink-soft)' }}>Subtotal</td>
-                        <td style={{ textAlign: 'right', color: 'var(--ink-soft)' }}>{fmtMoney(subtotal)}</td>
-                      </tr>
-                      <tr>
-                        <td style={{ color: 'var(--ink-soft)' }}>Promo code{detail.couponCode ? ` (${detail.couponCode})` : ''}</td>
-                        <td style={{ textAlign: 'right', color: 'var(--ink-soft)' }}>−{fmtMoney(discount)}</td>
-                      </tr>
-                    </>
-                  )}
-                  <tr style={{ borderTop: '2px solid var(--navy-800)', fontWeight: 700 }}>
-                    <td>Total{discount > 0 ? ' paid' : ''}</td>
-                    <td style={{ textAlign: 'right' }}>{fmtMoney(total)}</td>
-                  </tr>
-                </tbody>
-              </table>
-            );
-          })()}
-          <div style={{ display: 'flex', gap: 10 }}>
-            <button className="btn primary" onClick={() => downloadReceipt(detail, club.shortName)}>Download receipt (PDF)</button>
-            <button className="btn ghost" onClick={() => setDetail(null)}>Close</button>
-          </div>
         </Modal>
       )}
     </div>
