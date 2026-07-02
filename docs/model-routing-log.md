@@ -11,6 +11,7 @@ rows) distill patterns back into the CLAUDE.md rules and prune distilled rows.
 | Date | Task (short) | Type | Model / effort | Outcome | Tokens | Notes |
 |------|--------------|------|----------------|---------|--------|-------|
 | 2026-07-02 | Money-path review (3 parallel read-only reviewers: edge fns, RLS, client state) | review | fable / default | pass | ~360k (subagents) | 5 CRITICAL + 8 HIGH real findings; every controller spot-check confirmed; ~1 false-positive-risk finding (H4 retry) needed call-site verification. Fable-tier review of money code: worth it. |
+| 2026-07-02 | Security hardening Phase 1 (6 DB migrations + verify script) | implement | sonnet / default | rework | ~184k (subagent) | Enumeration + SQL was strong, BUT controller review caught 2 real defects before push: a 2-step staging bypass of the reg-paid trigger (both signal columns client-writable) and a PUBLIC-grant no-op in the coupon revoke. Lesson: money/auth DB triggers WRITTEN by sonnet still need fable-tier review of the SQL before applying — the enumeration is delegable, the invariant-adversarial check is not. |
 
 ## Current priors (mirror of CLAUDE.md rules)
 - haiku: mechanical + explicit verify checklist (renames, plumbing recipe, doc sweeps).
