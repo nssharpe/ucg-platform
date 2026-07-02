@@ -5,6 +5,17 @@ Deep review of the payment/RLS/cart surface by three parallel read-only reviewer
 finding independently re-verified against the code by the controller before inclusion.
 Remediation design: `docs/plans/2026-07-02-security-hardening.md`.
 
+> **Remediation status (2026-07-02):** Phase 1 (DB guard triggers + policy lockdowns)
+> is **shipped & verified live** — it closes **C1, C2, C3, H2, H3** and hardens **M3**
+> (migrations `20260702182709`–`182714`; `scripts/verify-hardening.mjs` passes 10/10).
+> **Still OPEN** (Phase 2/3 of the hardening plan): **C4 and H4** — these run through
+> the *legitimate* Stripe webhook (service-role, which bypasses the guard triggers by
+> design), so they need the Phase 2 server-side fee-schedule derivation + ref-ownership
+> validation + fulfillment snapshot, NOT a DB trigger. Also open: H1 transactional
+> fulfillment, M1/M2/M4/M5, and all of Part 2 (client cart state machine —
+> `docs/plans/2026-07-02-cart-state-fixes.md`). A finding being listed below does not
+> mean it is still open; check this box.
+
 **Context for severity:** the platform is live with real users and (test-mode→soon live)
 real money. Exploits below need only a signed-in user issuing raw PostgREST calls with
 their own JWT — no elevated role. Client-side UI guards do not constrain such a caller.
