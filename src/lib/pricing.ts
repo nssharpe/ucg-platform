@@ -1,7 +1,7 @@
 // Pure pricing & coupon-validity logic — no React/store/Supabase imports (types
 // erase at compile time). Unit-tested in tests/pricing.test.ts. Used by the
 // membership purchase flow (W6) and promo codes (W14).
-import type { Coupon, Discipline, Membership, MembershipType, Season } from './types';
+import type { CartItem, Coupon, Discipline, Membership, MembershipType, Season } from './types';
 
 /** Base fee for a membership type in a season. */
 export function membershipFee(season: Season, type: MembershipType): number {
@@ -299,4 +299,38 @@ export function randomPromoCode(len = 8): string {
     out += alphabet[Math.floor(Math.random() * alphabet.length)];
   }
   return out;
+}
+
+/** Which registration-sync action applies when a cart item is removed
+ *  (unified-cart-b2, Task A). Pure classification off the item's own fields —
+ *  no DB access, so it's fully unit-testable:
+ *  - `delete-registration`: a brand-new unpaid entry line (`refLineType` is
+ *    'entry', or missing/legacy on an old meet-entry row with no other line
+ *    type) — the linked registration(s) never existed before this cart item,
+ *    so removing it should delete them entirely.
+ *  - `revert-registration`: a 'change' line that captured a `priorRegSnapshot`
+ *    at creation — the linked registration(s) should be restored to those
+ *    snapshotted values.
+ *  - `no-snapshot-remove-only`: a 'change' line with NO snapshot (created
+ *    before this feature existed) — nothing to revert to; remove the cart
+ *    item only and let the caller be honest about it in the UI.
+ *  - `remove-only`: anything else (membership/addon/other kinds, or a
+ *    meet-entry line with no refRegIds to act on) — today's existing
+ *    behavior, unchanged.
+ */
+export type CartRemovalAction =
+  | 'delete-registration'
+  | 'revert-registration'
+  | 'no-snapshot-remove-only'
+  | 'remove-only';
+
+export function classifyCartRemoval(item: Pick<CartItem, 'kind' | 'refLineType' | 'refRegIds' | 'priorRegSnapshot'>): CartRemovalAction {
+  if (item.kind !== 'meet-entry' || !item.refRegIds || item.refRegIds.length === 0) return 'remove-only';
+  if (item.refLineType === 'change') {
+    return item.priorRegSnapshot && item.priorRegSnapshot.length > 0 ? 'revert-registration' : 'no-snapshot-remove-only';
+  }
+  // 'entry', or missing/legacy (pre-refLineType meet-entry rows) — treated as
+  // a brand-new-entry line: the registration(s) it points at didn't exist
+  // before this cart item, so deleting it deletes them.
+  return 'delete-registration';
 }

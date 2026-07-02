@@ -278,6 +278,7 @@ function cartItemToRow(ownerKey: string, item: DB['carts'][string][number], isCl
     ref_season_id: item.refSeasonId ?? null, ref_type: item.refType ?? null,
     ref_reg_ids: item.refRegIds ?? null,
     ref_event_id: item.refEventId ?? null, ref_line_type: item.refLineType ?? null,
+    prior_reg_snapshot: item.priorRegSnapshot ?? null,
   };
 }
 
@@ -1145,7 +1146,8 @@ export async function loadAll(): Promise<DB | null> {
         refType: ((r as { ref_type?: string | null }).ref_type ?? undefined) as MembershipType | 'club' | undefined,
         ...((r as { ref_reg_ids?: string[] | null }).ref_reg_ids ? { refRegIds: (r as { ref_reg_ids?: string[] | null }).ref_reg_ids ?? undefined } : {}),
         ...((r as { ref_event_id?: string | null }).ref_event_id ? { refEventId: (r as { ref_event_id?: string | null }).ref_event_id ?? undefined } : {}),
-        ...((r as { ref_line_type?: string | null }).ref_line_type ? { refLineType: (r as { ref_line_type?: string | null }).ref_line_type as Invoice['items'][number]['refLineType'] } : {}) });
+        ...((r as { ref_line_type?: string | null }).ref_line_type ? { refLineType: (r as { ref_line_type?: string | null }).ref_line_type as Invoice['items'][number]['refLineType'] } : {}),
+        ...((r as { prior_reg_snapshot?: Registration[] | null }).prior_reg_snapshot ? { priorRegSnapshot: (r as { prior_reg_snapshot?: Registration[] | null }).prior_reg_snapshot ?? undefined } : {}) });
     }
 
     const clubRequests: ClubRequest[] = (clubRequestsR.error ? [] : clubRequestsR.data ?? []).map(rowToClubRequest);

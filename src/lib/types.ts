@@ -363,6 +363,12 @@ export interface InvoiceItem {
    *  lines, 'tshirt'|'banner' for addon lines. Memberships leave it unset. */
   refLineType?: 'entry' | 'change' | 'tshirt' | 'banner';
   refunded?: boolean;
+  /** For `kind:'meet-entry', refLineType:'change'` lines only: the FULL prior
+   *  Registration row(s) (matching `refRegIds`) as they were BEFORE this change
+   *  was applied, captured at cart-item creation time. Lets deleting the cart
+   *  item revert the registration(s) instead of leaving them mutated. Absent
+   *  for non-change items and for cart items created before this existed. */
+  priorRegSnapshot?: Registration[];
 }
 
 export interface Invoice {

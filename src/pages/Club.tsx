@@ -16,6 +16,7 @@ import {
   pushRegistration, requestManagerAccess, sendClubInvite,
   inviteAccount, pushClubMembership, deleteClubMembership,
 } from '../lib/supabase';
+import { removeCartItemWithSync } from '../lib/cart-sync';
 import type { ClubMembership } from '../lib/types';
 import { ClubForm } from '../components/ClubForm';
 import { RegistrationEditor } from '../components/RegistrationEditor';
@@ -914,7 +915,9 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
       }
 
       // If a (non-host) change fee applies on an edit, add a fee line linked to
-      // the affected regs so paying it flips them back to paid.
+      // the affected regs so paying it flips them back to paid. Snapshot the
+      // FULL prior registration rows (before this function's edits above) so
+      // deleting this cart item later can revert them (unified-cart-b2 Task A).
       if (changeFee > 0 && event.changeFee) {
         const cart = d.carts[clubId] ?? (d.carts[clubId] = []);
         const athlete = d.people.find((p) => p.id === athleteId)!;
@@ -927,6 +930,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
           refRegIds: newRegs.map((r) => r.id),
           refEventId: event.id,
           refLineType: 'change',
+          priorRegSnapshot: newRegs.map((r) => priorById.get(r.id)).filter((r): r is Registration => !!r),
         });
         pushCart(clubId, cart, true);
       }
@@ -1017,8 +1021,13 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
     const swapFee = changeFeeApplies ? registrationChangeFee(event, { competingClubId: clubId }) : 0;
     mutate((d) => {
       const swappedRegIds: string[] = [];
+      // Snapshot the FULL prior registration row (before athleteId/paid/
+      // updatedPending are mutated below) so deleting the resulting change-fee
+      // cart item later can revert the swap (unified-cart-b2 Task A).
+      const priorById = new Map<string, Registration>();
       for (const r of d.registrations) {
         if (r.eventId === event.id && r.athleteId === fromId && r.clubId === clubId && !r.refunded) {
+          priorById.set(r.id, { ...r });
           r.athleteId = toId;
           // A chargeable swap re-pends a previously-paid registration.
           if (swapFee > 0 && r.paid) {
@@ -1049,7 +1058,13 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
 
       if (swapFee > 0 && event.changeFee) {
         const cart = d.carts[clubId] ?? (d.carts[clubId] = []);
-        cart.push({ id: `ci-change-${Date.now()}-${toId}`, label: `${event.name} change fee — swap to ${to.firstName} ${to.lastName}`, amount: swapFee, kind: 'meet-entry', refUserId: toId, refRegIds: swappedRegIds, refEventId: event.id, refLineType: 'change' });
+        cart.push({
+          id: `ci-change-${Date.now()}-${toId}`,
+          label: `${event.name} change fee — swap to ${to.firstName} ${to.lastName}`,
+          amount: swapFee, kind: 'meet-entry', refUserId: toId, refRegIds: swappedRegIds,
+          refEventId: event.id, refLineType: 'change',
+          priorRegSnapshot: swappedRegIds.map((id) => priorById.get(id)).filter((r): r is Registration => !!r),
+        });
         pushCart(clubId, cart, true);
       }
     });
@@ -1363,6 +1378,24 @@ export function ClubCart() {
   const cart = db.carts[club.id] ?? [];
   const subtotal = cart.reduce((s, i) => s + i.amount, 0);
 
+  // Removes a single line from this club's cart, syncing the underlying
+  // registration(s) via removeCartItemWithSync (unified-cart-b2 Task A): a
+  // brand-new unpaid entry line is deleted entirely; a "change" fee line with
+  // a captured snapshot reverts the registration(s) to their pre-change
+  // values; a legacy "change" line with no snapshot just removes the cart
+  // line (toasted honestly); anything else (membership/addon/other) removes
+  // the cart line only, same as before.
+  const removeItem = (item: CartItem) => {
+    const { action } = removeCartItemWithSync(club.id, true, item);
+    const message = {
+      'delete-registration': 'Removed from cart and canceled the registration.',
+      'revert-registration': 'Removed from cart — registration reverted to its prior state.',
+      'no-snapshot-remove-only': 'Removed from cart. This registration was changed before we could track a revert — please check it.',
+      'remove-only': 'Removed from cart.',
+    }[action];
+    toast(message, action === 'no-snapshot-remove-only' ? { variant: 'error' } : undefined);
+  };
+
   // Group cart items by event (detect from label) and by memberships
   const eventNames = Array.from(new Set(
     cart.filter((i) => i.kind === 'meet-entry').map((i) => {
@@ -1452,10 +1485,7 @@ export function ClubCart() {
                           </td>
                           <td className="num">{fmtMoney(i.amount)}</td>
                           <td style={{ width: 40 }}>
-                            <button className="btn small ghost" data-tip="Remove from cart" onClick={() => mutate((d) => {
-                              d.carts[club.id] = (d.carts[club.id] ?? []).filter((x) => x.id !== i.id);
-                              pushCart(club.id, d.carts[club.id], true);
-                            })}>✕</button>
+                            <button className="btn small ghost" data-tip="Remove from cart" onClick={() => removeItem(i)}>✕</button>
                           </td>
                         </tr>
                       );
@@ -1489,10 +1519,7 @@ export function ClubCart() {
                       <td>{i.label} <Badge tone="info">{i.refType === 'club' ? 'club membership' : 'membership'}</Badge></td>
                       <td className="num">{fmtMoney(i.amount)}</td>
                       <td style={{ width: 40 }}>
-                        <button className="btn small ghost" onClick={() => mutate((d) => {
-                          d.carts[club.id] = (d.carts[club.id] ?? []).filter((x) => x.id !== i.id);
-                          pushCart(club.id, d.carts[club.id], true);
-                        })}>✕</button>
+                        <button className="btn small ghost" onClick={() => removeItem(i)}>✕</button>
                       </td>
                     </tr>
                   ))}
@@ -1512,10 +1539,7 @@ export function ClubCart() {
                       <td>{i.label} <Badge tone="info">{i.kind}</Badge></td>
                       <td className="num">{fmtMoney(i.amount)}</td>
                       <td style={{ width: 40 }}>
-                        <button className="btn small ghost" onClick={() => mutate((d) => {
-                          d.carts[club.id] = (d.carts[club.id] ?? []).filter((x) => x.id !== i.id);
-                          pushCart(club.id, d.carts[club.id], true);
-                        })}>✕</button>
+                        <button className="btn small ghost" onClick={() => removeItem(i)}>✕</button>
                       </td>
                     </tr>
                   ))}

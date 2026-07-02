@@ -167,6 +167,9 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
           refRegIds: newRegs.map((r) => r.id),
           refEventId: event.id,
           refLineType: 'change',
+          // Full prior registration row(s) (before this function's edits above),
+          // so deleting this cart item later can revert them (Task A).
+          priorRegSnapshot: newRegs.map((r) => priorById.get(r.id)).filter((r): r is Registration => !!r),
         });
         pushCart(personId, cart, false);
       } else if (entryTotal > 0) {

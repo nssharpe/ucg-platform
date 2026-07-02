@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useDB, mutate, syncFromSupabase } from '../lib/store';
+import { useDB, syncFromSupabase } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { useToast } from '../components/ui-hooks';
 import { fmtMoney } from '../lib/scoring';
-import { pushCart } from '../lib/supabase';
+import { removeCartItemWithSync } from '../lib/cart-sync';
 import { CartCheckout } from '../components/CartCheckout';
 import type { CartItem } from '../lib/types';
 
@@ -101,16 +101,21 @@ function CartInner({ personId, name }: { personId: string; name: string }) {
 
   // Removes a single line from the person's OWN cart (e.g. a stale/orphaned
   // item that fails checkout, or something they just changed their mind
-  // about). NOTE: this only removes the cart line — if it was a "change" fee
-  // for an existing registration, the registration itself keeps its edited
-  // fields (no revert-to-prior-state here; that's a separate, larger piece of
-  // work). For a brand-new unpaid registration's entry line, the
-  // registration row is left as-is too — only the payment-cart line goes away.
+  // about). Syncs the underlying registration(s) via removeCartItemWithSync
+  // (unified-cart-b2 Task A): a brand-new unpaid entry line is deleted
+  // entirely; a "change" fee line with a captured snapshot reverts the
+  // registration(s) to their pre-change values; a legacy "change" line with no
+  // snapshot just removes the cart line (toasted honestly — nothing to revert
+  // to); anything else (membership/addon/other) is unaffected, same as before.
   const removeItem = (item: CartItem) => {
-    const next = cart.filter((i) => i.id !== item.id);
-    mutate((d) => { d.carts[personId] = next; });
-    pushCart(personId, next, false);
-    toast('Removed from cart.');
+    const { action } = removeCartItemWithSync(personId, false, item);
+    const message = {
+      'delete-registration': 'Removed from cart and canceled the registration.',
+      'revert-registration': 'Removed from cart — registration reverted to its prior state.',
+      'no-snapshot-remove-only': 'Removed from cart. This registration was changed before we could track a revert — please check it.',
+      'remove-only': 'Removed from cart.',
+    }[action];
+    toast(message, action === 'no-snapshot-remove-only' ? { variant: 'error' } : undefined);
   };
 
   const onPaid = () => {
