@@ -402,6 +402,20 @@ What this means for names you'll grep for:
   `createWaiverLink`, `fetchManagerAccessRequest`, `decideManagerAccess`, `notifyManagerAccessDenied`.
   Deploy: `supabase functions deploy <name> --project-ref wkyerxlgricfphopocoz` (sandbox
   disabled; Docker NOT required) — the deploy bundles `_shared/resend.ts` automatically.
+  **CRITICAL — `--no-verify-jwt` is NOT sticky across redeploys.** It's a per-deploy CLI
+  flag, not a persisted function setting — a bare `supabase functions deploy <name>`
+  SILENTLY RESETS `verify_jwt` back to `true` even if the function was previously deployed
+  with `--no-verify-jwt`. Three functions require it because their callers can't send a
+  Supabase JWT: `stripe-webhook`, `sms-webhook`, `notify-manager-access-denied`. **Real
+  incident (2026-07-02):** redeploying `stripe-webhook` without the flag (to ship an
+  unrelated fix) silently flipped `verify_jwt` to `true`; every subsequent real Stripe
+  webhook call was rejected by Supabase's OWN gateway before the function code ever ran
+  (no signature error, no function log, nothing — invisible failure). A real customer
+  charge sat forever `pending`/unfulfilled with zero errors anywhere. Caught only via
+  `supabase functions list` showing `"verify_jwt": true` on that function. **Before AND
+  after touching any of these three, run `supabase functions list --project-ref
+  wkyerxlgricfphopocoz` and confirm `"verify_jwt": false` for exactly those three** —
+  redeploy with `--no-verify-jwt` if not.
 - **Edge Function error surfacing:** invokers must unwrap the JSON `error` body via
   `edgeErrorMessage(error)` (returns the function's real message), NOT `error.message`
   (which is the generic "Edge Function returned a non-2xx status code"). Every invoker

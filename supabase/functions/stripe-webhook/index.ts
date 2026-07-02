@@ -120,7 +120,17 @@ Deno.serve(async (req) => {
     }
   } catch (e) {
     console.error('[stripe-webhook] handler error:', e);
-    return json({ error: e instanceof Error ? e.message : String(e) }, 500);
+    const message = e instanceof Error ? e.message : String(e);
+    const stack = e instanceof Error ? e.stack ?? null : null;
+    // Added 2026-07-02: there is no remote function-log access for this project,
+    // so any handler exception is otherwise invisible — record it to the existing
+    // error_logs table (anyone-insert / admin-read RLS already supports this) so
+    // it's visible on the admin Error Log page instead of silently failing.
+    await db.from('error_logs').insert({
+      context: 'stripe-webhook', message, stack,
+      detail: { eventType: event.type, eventId: event.id },
+    }).then(() => {}, () => {});
+    return json({ error: message }, 500);
   }
 });
 
