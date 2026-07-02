@@ -43,6 +43,7 @@ interface PaymentRow {
   invoice_id: string | null;
   stripe_event_id: string | null;
   fulfilled_at: string | null;
+  coupon_code: string | null;
 }
 interface CartItemRow {
   id: string;
@@ -133,7 +134,7 @@ async function fulfill(
   eventId: string,
 ): Promise<void> {
   const { data: payRow } = await db.from('payments')
-    .select('id, person_id, status, amount_subtotal, service_fee, currency, cart_item_ids, invoice_id, stripe_event_id, fulfilled_at')
+    .select('id, person_id, status, amount_subtotal, service_fee, currency, cart_item_ids, invoice_id, stripe_event_id, fulfilled_at, coupon_code')
     .eq('stripe_session_id', session.id)
     .maybeSingle();
   const payment = payRow as PaymentRow | null;
@@ -266,9 +267,15 @@ async function fulfill(
   await db.from('invoices').upsert({
     id: invoiceId, number,
     club_id: clubId, athlete_id: clubId ? null : personId,
-    coupon_code: null, created_at: now, paid_at: now,
+    coupon_code: payment.coupon_code ?? null, created_at: now, paid_at: now,
     stripe_payment_intent_id: piId, stripe_fee: stripeFeeCents,
   }, { onConflict: 'id' });
+  // Record the redemption (atomically bumps used_count, enforcing max_uses) —
+  // the same RPC the legacy client-side coupon path uses; the service role can
+  // call it too, and this is the only place a Stripe-path payment redeems one.
+  if (payment.coupon_code) {
+    await db.rpc('redeem_coupon', { p_code: payment.coupon_code });
+  }
   // Invoice lines mirror ALL paid cart items (human-readable detail). The
   // financial source of truth stays the payment row (server-recomputed subtotal
   // + Stripe's real fee) — these per-line amounts are display.

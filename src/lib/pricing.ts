@@ -254,12 +254,23 @@ export function reassignPartners<T extends PartnerReg>(
   return out;
 }
 
-/** Is a coupon usable at `nowISO`? Checks time window + usage cap. */
-export function couponValid(coupon: Coupon, nowISO: string): boolean {
+/** Is a coupon usable at `nowISO`? Checks time window + usage cap, plus a HARD
+ *  expiration: when scoped to a specific event (`appliesTo === 'meet-entry'` +
+ *  `appliesToEventId`), the code is invalid once that event's end date has
+ *  passed — regardless of `endsAt` (a manual expiration set in the future
+ *  cannot keep a code alive past the event it was created for). Pass the
+ *  scoped event's `endDate` (ISO date) as `eventEndDateISO` when known. */
+export function couponValid(coupon: Coupon, nowISO: string, eventEndDateISO?: string | null): boolean {
   const now = Date.parse(nowISO);
   if (coupon.startsAt && Date.parse(coupon.startsAt) > now) return false;
   if (coupon.endsAt && Date.parse(coupon.endsAt) < now) return false;
   if (coupon.maxUses != null && (coupon.usedCount ?? 0) >= coupon.maxUses) return false;
+  if (coupon.appliesTo === 'meet-entry' && coupon.appliesToEventId && eventEndDateISO) {
+    // End-of-day on the event's end date, so the code stays valid through the
+    // event itself and only hard-expires the day after.
+    const eventCutoff = Date.parse(eventEndDateISO) + 24 * 60 * 60 * 1000;
+    if (eventCutoff < now) return false;
+  }
   return true;
 }
 

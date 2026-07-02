@@ -356,8 +356,9 @@ What this means for names you'll grep for:
       tags. The webhook bills **club-vs-payer** (`invoices.club_id` for club carts, payer
       for self carts), flips the exact `registrations.paid` via `ref_reg_ids`, activates
       member-targeted memberships AND club memberships, and emails the **payer** the receipt
-      (the paying manager for a club cart). Coupons are **not** applied at Stripe checkout
-      (server is amount source-of-truth) — surfaced honestly in the club-cart UI; revisit S5.
+      (the paying manager for a club cart). **Coupons ARE applied at Stripe checkout**
+      (fixed 2026-07-02 — see the Promo codes entry below); the note that they weren't is
+      historical.
     - **S3 — front-end membership checkout (deployed 2026-06-26).** `StripeCheckout`
       (`src/components/StripeCheckout.tsx`) renders Stripe **Embedded Checkout** from a
       server-created session and runs an on-page state machine: `onComplete` (no redirect)
@@ -561,10 +562,33 @@ What this means for names you'll grep for:
   refund, payout/bank check). **Go-live itself (live keys + real money) is Nate's to run.**
   **Still DEFERRED (NOT in S5's task scope):** moving `Membership.tsx` **direct card-pay** to
   Stripe (it still fulfills client-side + `send-receipt`; its invoice legitimately carries no
-  Stripe fee since no Stripe charge happens), **coupon-at-card-checkout** (server is the amount
-  source-of-truth), and an **in-app admin refund** path (refunds are issued **manually in the
+  Stripe fee since no Stripe charge happens — coupons DO still work on this legacy path, just
+  client-side), and an **in-app admin refund** path (refunds are issued **manually in the
   Stripe Dashboard** today — a Dashboard refund doesn't yet reflect back into
   `payments.status`/fulfillment; sketch in the checklist). Still TODO beyond Stripe:
   per-season typed waivers, codeless judge access (URL / 6-digit / QR), multi-judge +
   score-entry-mode meet config, PDF certs, finals rosters. See `docs/specs/` + `docs/plans/`,
   and the roadmap in `docs/README.md`.
+- **Promo codes at Stripe checkout (2026-07-02).** `create-checkout-session` now accepts an
+  optional `couponCode`, looks the coupon up **server-side only** (the client sends a code,
+  never a discount amount), and applies the discount to the ELIGIBLE cart line(s) per the
+  coupon's `appliesTo` scope — not indiscriminately across the whole cart. `Coupon.appliesTo`
+  is `'any' | 'athlete-membership' | 'club-membership' | 'coach-membership' | 'meet-entry'`
+  (+ legacy `'membership'`, kept for old rows — matches any membership type); `'meet-entry'`
+  pairs with `appliesToEventId` to scope a code to ONE specific event (`coupons.applies_to_event_id`,
+  migration `20260702012205_coupon_event_scope_and_payment_code.sql`, **applied**). Each Stripe
+  line item is tagged with a `scope`/`eventId` during construction so the coupon can be matched
+  against it; matching lines are reduced (floor 0, never negative) rather than adding a
+  separate negative Stripe line (Stripe disallows negative `unit_amount`). **Hard expiration:**
+  an event-scoped code dies the day after that event's `end_date`, REGARDLESS of the coupon's
+  own `endsAt` (`couponValid(coupon, nowISO, eventEndDateISO?)` in `pricing.ts` — the 3rd param
+  is new). The applied code is carried on `payments.coupon_code` (same migration) so
+  `stripe-webhook` can write it onto the fulfilled `invoices.coupon_code` (already existed) and
+  call the existing `redeem_coupon` RPC to bump `used_count` — the same atomic redemption path
+  the legacy client-side coupon flow (`Membership.tsx` direct-pay) already used.
+  `CartCheckout.tsx` has the actual promo-code input + Subtotal/Coupon/Fee/Total breakdown (the
+  server returns the PRE-discount subtotal + a separate `discountAmount` so the UI never
+  double-counts); `Club.tsx`'s old pre-checkout coupon preview (never wired to real payment,
+  the literal cause of "codes vanish at checkout" feedback) was removed as redundant/misleading.
+  Admin's promo-code creation (`Admin.tsx` `Promos`) has the matching "Applies to" dropdown +
+  an event picker that only lists future events.

@@ -156,6 +156,7 @@ const rowToClub = (r: Row<'clubs'>): Club => ({
 
 const couponToRow = (c: Coupon) => ({
   code: c.code, pct_off: c.pctOff ?? null, amount_off: c.amountOff ?? null, applies_to: c.appliesTo,
+  applies_to_event_id: c.appliesToEventId ?? null,
   starts_at: c.startsAt ?? null, ends_at: c.endsAt ?? null,
   max_uses: c.maxUses ?? null, used_count: c.usedCount ?? 0,
   restricted_to_person_id: c.restrictedToPersonId ?? null,
@@ -163,6 +164,7 @@ const couponToRow = (c: Coupon) => ({
 const rowToCoupon = (r: Row<'coupons'>): Coupon => ({
   code: r.code, pctOff: r.pct_off == null ? undefined : Number(r.pct_off),
   amountOff: r.amount_off == null ? undefined : Number(r.amount_off), appliesTo: r.applies_to as Coupon['appliesTo'],
+  appliesToEventId: (r as { applies_to_event_id?: string | null }).applies_to_event_id ?? null,
   startsAt: r.starts_at ?? null, endsAt: r.ends_at ?? null,
   maxUses: r.max_uses == null ? null : Number(r.max_uses),
   usedCount: r.used_count == null ? 0 : Number(r.used_count),
@@ -695,11 +697,18 @@ export async function sendReceipt(args: {
  *  `status='paid'`. The verified `stripe-webhook` is the sole completer. */
 export async function createCheckoutSession(args: {
   cartItemIds: string[];
-}): Promise<{ ok: boolean; clientSecret?: string; sessionId?: string; paymentId?: string; amountSubtotal?: number; serviceFee?: number; error?: string }> {
+  couponCode?: string;
+}): Promise<{
+  ok: boolean; clientSecret?: string; sessionId?: string; paymentId?: string;
+  amountSubtotal?: number; discountAmount?: number; serviceFee?: number; error?: string;
+}> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('create-checkout-session', { body: args });
   if (error) return { ok: false, error: await edgeErrorMessage(error) };
-  return data as { ok: boolean; clientSecret?: string; sessionId?: string; paymentId?: string; amountSubtotal?: number; serviceFee?: number };
+  return data as {
+    ok: boolean; clientSecret?: string; sessionId?: string; paymentId?: string;
+    amountSubtotal?: number; discountAmount?: number; serviceFee?: number;
+  };
 }
 
 /** Poll a payment row's fulfillment status (Phase S3). The signed-in person can

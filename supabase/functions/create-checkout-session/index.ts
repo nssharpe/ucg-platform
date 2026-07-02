@@ -87,12 +87,13 @@ Deno.serve(async (req) => {
   const personId = person.id as string;
 
   // --- Validate payload ---
-  let body: { cartItemIds?: unknown };
+  let body: { cartItemIds?: unknown; couponCode?: unknown };
   try { body = await req.json(); } catch { return json({ ok: false, error: 'Invalid JSON body.' }, 400); }
   const cartItemIds = Array.isArray(body.cartItemIds)
     ? body.cartItemIds.filter((x): x is string => typeof x === 'string')
     : [];
   if (cartItemIds.length === 0) return json({ ok: false, error: 'No cart items to pay.' }, 400);
+  const couponCodeInput = typeof body.couponCode === 'string' ? body.couponCode.trim().toUpperCase() : '';
 
   // --- Load the requested cart items (service role; we authorize ownership below) ---
   const { data: itemRows, error: itemErr } = await db
@@ -213,13 +214,17 @@ Deno.serve(async (req) => {
   }
 
   // --- Recompute each line into Stripe line items + subtotal ----------------
-  type Line = { label: string; cents: number };
+  // `scope`/`eventId` are the coupon-matching tags: which "Applies to" category
+  // (per the promo-code feature) this line falls under, so a coupon can be
+  // scoped to e.g. just athlete memberships or just one specific event.
+  type CouponScope = 'athlete-membership' | 'club-membership' | 'coach-membership' | 'meet-entry';
+  type Line = { label: string; cents: number; scope?: CouponScope; eventId?: string };
   const lines: Line[] = [];
   let subtotalCents = 0;
-  const pushLine = (label: string, dollars: number) => {
+  const pushLine = (label: string, dollars: number, scope?: CouponScope, eventId?: string) => {
     const cents = toCents(dollars);
     subtotalCents += cents;
-    if (cents > 0) lines.push({ label, cents });
+    if (cents > 0) lines.push({ label, cents, scope, eventId });
   };
 
   // Membership athlete/coach lines are priced per (targetPerson, season) GROUP so
@@ -253,7 +258,7 @@ Deno.serve(async (req) => {
       const item = g.items.find((i) => i.ref_type === t)!;
       consumed.add(item.id);
       const cents = t === dearest ? combinedCents : 0;
-      if (cents > 0) lines.push({ label: item.label, cents });
+      if (cents > 0) lines.push({ label: item.label, cents, scope: t === 'athlete' ? 'athlete-membership' : 'coach-membership' });
     }
   }
 
@@ -265,7 +270,7 @@ Deno.serve(async (req) => {
       const season = seasons.get(i.ref_season_id);
       if (!season) return json({ ok: false, error: `Unknown season ${i.ref_season_id}.` }, 400);
       const alreadyActive = clubId && clubMembershipSeasons.has(`${clubId}:${i.ref_season_id}`);
-      pushLine(i.label, alreadyActive ? 0 : season.club_fee);
+      pushLine(i.label, alreadyActive ? 0 : season.club_fee, 'club-membership');
       continue;
     }
 
@@ -276,7 +281,7 @@ Deno.serve(async (req) => {
       if (!reg) return json({ ok: false, error: `Change line ${i.id} references no known registration.` }, 400);
       const event = events.get(reg.event_id);
       if (!event) return json({ ok: false, error: `Unknown event ${reg.event_id}.` }, 400);
-      pushLine(i.label, registrationChangeFeeDollars(event, { competingClubId: reg.club_id ?? '' }));
+      pushLine(i.label, registrationChangeFeeDollars(event, { competingClubId: reg.club_id ?? '' }), 'meet-entry', reg.event_id);
       continue;
     }
 
@@ -299,7 +304,7 @@ Deno.serve(async (req) => {
       ).length;
       pushLine(i.label, newRegistrationEntryTotalDollars(event, {
         competingClubId, priorDisciplineCount, newDisciplineCount,
-      }));
+      }), 'meet-entry', reg.event_id);
       continue;
     }
 
@@ -308,7 +313,7 @@ Deno.serve(async (req) => {
       if (!i.ref_event_id) return json({ ok: false, error: `Addon line ${i.id} has no event.` }, 400);
       const event = events.get(i.ref_event_id);
       if (!event) return json({ ok: false, error: `Unknown event ${i.ref_event_id}.` }, 400);
-      pushLine(i.label, addonPriceDollars(event, i.ref_line_type));
+      pushLine(i.label, addonPriceDollars(event, i.ref_line_type), 'meet-entry', i.ref_event_id);
       continue;
     }
 
@@ -319,8 +324,93 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: 'Nothing to pay — these items are already covered.' }, 400);
   }
 
+  // --- Optional coupon: validated + applied entirely server-side. The client
+  //     only ever sends a CODE — never a discount amount. Reduces the actual
+  //     eligible line(s), per the code's "Applies to" scope, not the whole cart
+  //     indiscriminately (a code scoped to "Athlete Membership" or one specific
+  //     event must not discount an unrelated line). ---
+  let discountCents = 0;
+  let appliedCouponCode: string | null = null;
+  if (couponCodeInput) {
+    const { data: couponRow } = await db.from('coupons').select('*').eq('code', couponCodeInput).maybeSingle();
+    if (couponRow) {
+      const nowMs = Date.now();
+      const startsAt = couponRow.starts_at as string | null;
+      const endsAt = couponRow.ends_at as string | null;
+      const maxUses = couponRow.max_uses as number | null;
+      const usedCount = (couponRow.used_count as number | null) ?? 0;
+      const restrictedTo = couponRow.restricted_to_person_id as string | null;
+      const appliesTo = couponRow.applies_to as string;
+      const appliesToEventId = (couponRow.applies_to_event_id as string | null) ?? null;
+
+      let valid = true;
+      if (startsAt && Date.parse(startsAt) > nowMs) valid = false;
+      if (endsAt && Date.parse(endsAt) < nowMs) valid = false;
+      if (maxUses != null && usedCount >= maxUses) valid = false;
+      if (restrictedTo && restrictedTo !== personId) valid = false;
+
+      // Hard expiration: once the scoped event has ended, the code is dead
+      // regardless of `ends_at` — a manual expiration set far in the future
+      // cannot keep it alive past the event it was created for.
+      if (valid && appliesTo === 'meet-entry' && appliesToEventId) {
+        const { data: scopedEvent } = await db.from('events').select('end_date').eq('id', appliesToEventId).maybeSingle();
+        const endDate = (scopedEvent as { end_date?: string } | null)?.end_date;
+        if (endDate) {
+          const cutoff = Date.parse(endDate) + 24 * 60 * 60 * 1000; // through end-of-day
+          if (cutoff < nowMs) valid = false;
+        }
+      }
+
+      if (valid) {
+        const eligible = lines.filter((l) => {
+          if (appliesTo === 'any') return true;
+          if (appliesTo === 'membership') {
+            return l.scope === 'athlete-membership' || l.scope === 'club-membership' || l.scope === 'coach-membership';
+          }
+          if (appliesTo === 'meet-entry') {
+            return l.scope === 'meet-entry' && (!appliesToEventId || l.eventId === appliesToEventId);
+          }
+          return l.scope === appliesTo;
+        });
+        const eligibleCents = eligible.reduce((s, l) => s + l.cents, 0);
+        if (eligibleCents > 0) {
+          const pctOff = couponRow.pct_off == null ? null : Number(couponRow.pct_off);
+          const amountOff = couponRow.amount_off == null ? null : Number(couponRow.amount_off);
+          const raw = amountOff != null ? toCents(amountOff) : pctOff != null ? Math.round(eligibleCents * pctOff / 100) : 0;
+          discountCents = Math.min(raw, eligibleCents);
+          if (discountCents > 0) {
+            // Reduce eligible lines greedily, in order, until the discount is
+            // exhausted; every line stays >= 0 so Stripe's line items stay valid.
+            let remaining = discountCents;
+            for (const l of eligible) {
+              if (remaining <= 0) break;
+              const take = Math.min(l.cents, remaining);
+              l.cents -= take;
+              remaining -= take;
+            }
+            appliedCouponCode = couponCodeInput;
+          }
+        }
+      }
+    }
+  }
+  const preDiscountSubtotalCents = subtotalCents;
+  subtotalCents -= discountCents;
+  if (subtotalCents <= 0) {
+    return json({ ok: false, error: 'This coupon fully covers the cost — nothing left to charge a card for.' }, 400);
+  }
+
   const feeCents = processingFee(subtotalCents);
-  lines.push({ label: 'Service fee (card processing)', cents: feeCents });
+  const stripeLineItems = lines
+    .filter((l) => l.cents > 0)
+    .map((l) => ({
+      price_data: { currency: 'usd', unit_amount: l.cents, product_data: { name: l.label } },
+      quantity: 1,
+    }));
+  stripeLineItems.push({
+    price_data: { currency: 'usd', unit_amount: feeCents, product_data: { name: 'Service fee (card processing)' } },
+    quantity: 1,
+  });
 
   // --- Create the Embedded Checkout Session ---
   let stripe;
@@ -338,14 +428,7 @@ Deno.serve(async (req) => {
       ui_mode: 'embedded',
       mode: 'payment',
       redirect_on_completion: 'never',
-      line_items: lines.map((l) => ({
-        price_data: {
-          currency: 'usd',
-          unit_amount: l.cents,
-          product_data: { name: l.label },
-        },
-        quantity: 1,
-      })),
+      line_items: stripeLineItems,
       metadata: { person_id: personId, club_id: clubId ?? '', kind: 'cart' },
     });
   } catch (e) {
@@ -367,6 +450,7 @@ Deno.serve(async (req) => {
       cart_item_ids: items.map((i) => i.id),
       ref_season_id: single?.ref_season_id ?? null,
       ref_type: single?.ref_type ?? null,
+      coupon_code: appliedCouponCode,
     })
     .select('id')
     .single();
@@ -377,7 +461,11 @@ Deno.serve(async (req) => {
     clientSecret: session.client_secret,
     sessionId: session.id,
     paymentId: payment.id,
-    amountSubtotal: subtotalCents,
+    // Pre-discount subtotal, so the client can show "Subtotal / Coupon -$X /
+    // Service fee / Total" without double-counting the discount (the payments
+    // row itself still records the true post-discount amount_subtotal).
+    amountSubtotal: preDiscountSubtotalCents,
+    discountAmount: discountCents,
     serviceFee: feeCents,
   });
 });

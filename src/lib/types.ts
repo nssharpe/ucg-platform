@@ -411,7 +411,14 @@ export interface Coupon {
   code: string;
   pctOff?: number;
   amountOff?: number;
-  appliesTo: 'membership' | 'meet-entry' | 'any';
+  // 'membership' (legacy: any membership type) is kept for existing coupons;
+  // new codes pick the finer-grained athlete/club/coach-membership scope, or
+  // 'meet-entry' scoped to one specific event via `appliesToEventId`.
+  appliesTo: 'membership' | 'athlete-membership' | 'club-membership' | 'coach-membership' | 'meet-entry' | 'any';
+  /** Only meaningful when appliesTo === 'meet-entry': the one event this code
+   *  is valid for. Hard-expires (regardless of `endsAt`) once that event's
+   *  end_date has passed. */
+  appliesToEventId?: string | null;
   startsAt?: string | null; // ISO; null/absent = no start bound
   endsAt?: string | null; // ISO; null/absent = no end bound
   maxUses?: number | null; // null/absent = unlimited

@@ -1195,6 +1195,9 @@ type CouponDraft = {
   discountType: 'pct' | 'amt';
   value: string;
   appliesTo: Coupon['appliesTo'];
+  /** Only used when appliesTo === 'meet-entry': which future event this code
+   *  is scoped to (it hard-expires once that event ends). */
+  appliesToEventId: string | null;
   // W14 task 9: new fields
   startsAt: string;
   endsAt: string;
@@ -1205,11 +1208,16 @@ type CouponDraft = {
 
 // W14 task 11: inline validity indicator using couponValid()
 function CouponStatusBadge({ coupon }: { coupon: Coupon }) {
+  const db = useDB();
   const now = new Date().toISOString();
-  const valid = couponValid(coupon, now);
+  const scopedEvent = coupon.appliesToEventId ? db.events.find((m) => m.id === coupon.appliesToEventId) : undefined;
+  const valid = couponValid(coupon, now, scopedEvent?.endDate);
   if (!valid) {
     if (coupon.maxUses != null && (coupon.usedCount ?? 0) >= coupon.maxUses) {
       return <Badge tone="err">Limit reached</Badge>;
+    }
+    if (scopedEvent && Date.parse(scopedEvent.endDate) + 86400000 < Date.parse(now)) {
+      return <Badge tone="err">Event ended</Badge>;
     }
     if (coupon.endsAt && Date.parse(coupon.endsAt) < Date.parse(now)) {
       return <Badge tone="err">Expired</Badge>;
@@ -1232,9 +1240,14 @@ function Promos() {
   const db = useDB();
   const toast = useToast();
   const [draft, setDraft] = useState<CouponDraft>({
-    code: '', discountType: 'pct', value: '', appliesTo: 'any',
+    code: '', discountType: 'pct', value: '', appliesTo: 'any', appliesToEventId: null,
     startsAt: '', endsAt: '', maxUses: '', restrictAccount: false, restrictedToPersonId: null,
   });
+  // Only future events (by end date) can be picked — a code scoped to a past
+  // event would be dead on arrival, and this list IS the "Applies to" dropdown
+  // requirement (a coupon can target one specific upcoming event).
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const futureEvents = db.events.filter((m) => m.endDate >= todayISO).sort((a, b) => a.startDate.localeCompare(b.startDate));
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   // W14 task 9: inline edit state per coupon (code → draft)
   const [editingCode, setEditingCode] = useState<string | null>(null);
@@ -1252,10 +1265,12 @@ function Promos() {
       toast('Max uses must be a positive integer or blank for unlimited.'); return;
     }
     if (draft.restrictAccount && !draft.restrictedToPersonId) { toast('Pick the account this code is restricted to, or uncheck the restriction.'); return; }
+    if (draft.appliesTo === 'meet-entry' && !draft.appliesToEventId) { toast('Pick which event this code applies to.'); return; }
     const coupon: Coupon = {
       code,
       ...(draft.discountType === 'pct' ? { pctOff: value } : { amountOff: value }),
       appliesTo: draft.appliesTo,
+      appliesToEventId: draft.appliesTo === 'meet-entry' ? draft.appliesToEventId : null,
       startsAt: draft.startsAt || null,
       endsAt: draft.endsAt || null,
       maxUses: maxUses ?? null,
@@ -1263,7 +1278,7 @@ function Promos() {
       restrictedToPersonId: draft.restrictAccount ? draft.restrictedToPersonId : null,
     };
     mutate((d) => { d.coupons.push(coupon); pushCoupon(coupon); });
-    setDraft({ code: '', discountType: 'pct', value: '', appliesTo: 'any', startsAt: '', endsAt: '', maxUses: '', restrictAccount: false, restrictedToPersonId: null });
+    setDraft({ code: '', discountType: 'pct', value: '', appliesTo: 'any', appliesToEventId: null, startsAt: '', endsAt: '', maxUses: '', restrictAccount: false, restrictedToPersonId: null });
     toast(`Promo code "${code}" created.`);
   };
 
@@ -1351,13 +1366,31 @@ function Promos() {
           <select
             className="input"
             value={draft.appliesTo}
-            onChange={(e) => setDraft({ ...draft, appliesTo: e.target.value as Coupon['appliesTo'] })}
+            onChange={(e) => setDraft({
+              ...draft,
+              appliesTo: e.target.value as Coupon['appliesTo'],
+              appliesToEventId: e.target.value === 'meet-entry' ? draft.appliesToEventId : null,
+            })}
           >
             <option value="any">Any purchase</option>
-            <option value="membership">Membership only</option>
-            <option value="meet-entry">Event entries only</option>
+            <option value="athlete-membership">Athlete Membership</option>
+            <option value="club-membership">Club Membership</option>
+            <option value="coach-membership">Coach Membership</option>
+            <option value="meet-entry">A specific event</option>
           </select>
         </Field>
+        {draft.appliesTo === 'meet-entry' && (
+          <Field label="Which event?" hint="Hard-expires the day after this event ends, regardless of the expiration date below.">
+            <select
+              className="input"
+              value={draft.appliesToEventId ?? ''}
+              onChange={(e) => setDraft({ ...draft, appliesToEventId: e.target.value || null })}
+            >
+              <option value="" disabled>Select an event…</option>
+              {futureEvents.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.startDate})</option>)}
+            </select>
+          </Field>
+        )}
         {/* W14 task 9: start/end dates and max uses on creation */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
           <Field label="Active from (optional)">
@@ -1440,7 +1473,14 @@ function Promos() {
                     {c.pctOff != null ? `${c.pctOff}% off` : c.amountOff != null ? `${fmtMoney(c.amountOff)} off` : '—'}
                   </td>
                   <td>
-                    {c.appliesTo === 'any' ? 'Any purchase' : c.appliesTo === 'membership' ? 'Membership' : 'Event entries'}
+                    {c.appliesTo === 'any' ? 'Any purchase'
+                      : c.appliesTo === 'athlete-membership' ? 'Athlete Membership'
+                      : c.appliesTo === 'club-membership' ? 'Club Membership'
+                      : c.appliesTo === 'coach-membership' ? 'Coach Membership'
+                      : c.appliesTo === 'membership' ? 'Membership (any type)'
+                      : c.appliesToEventId
+                        ? (db.events.find((m) => m.id === c.appliesToEventId)?.name ?? 'Event (deleted)')
+                        : 'Event entries'}
                   </td>
                   {/* W14 task 9: editable start/end/maxUses */}
                   {isEditing ? (

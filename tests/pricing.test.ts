@@ -110,6 +110,29 @@ describe('coupon validity', () => {
   it('treats null maxUses as unlimited', () => {
     expect(couponValid({ ...base, maxUses: null, usedCount: 999 }, now)).toBe(true);
   });
+
+  describe('hard expiration when scoped to a specific event', () => {
+    const eventScoped: Coupon = { ...base, appliesTo: 'meet-entry', appliesToEventId: 'evt-1' };
+
+    it('stays valid through the end of the event day, even with a far-future endsAt', () => {
+      expect(couponValid(
+        { ...eventScoped, endsAt: '2027-01-01T00:00:00Z' },
+        '2026-06-20T23:00:00Z',
+        '2026-06-20',
+      )).toBe(true);
+    });
+    it('hard-expires the day after the event ends, regardless of endsAt', () => {
+      expect(couponValid(
+        { ...eventScoped, endsAt: '2027-01-01T00:00:00Z' },
+        '2026-06-22T00:00:00Z',
+        '2026-06-20',
+      )).toBe(false);
+    });
+    it('ignores the event date when the coupon is not scoped to that event', () => {
+      // appliesTo === 'any', so appliesToEventId (if any) is irrelevant.
+      expect(couponValid({ ...base }, '2026-06-22T00:00:00Z', '2026-06-20')).toBe(true);
+    });
+  });
 });
 
 describe('applyCoupon', () => {

@@ -1314,7 +1314,6 @@ export function ClubCart() {
   const db = useDB();
   const toast = useToast();
   const fmtDate = useFmtDate();
-  const [coupon, setCoupon] = useState('');
   const [checkout, setCheckout] = useState<{ items: CartItem[]; title: string } | null>(null);
   const [detail, setDetail] = useState<Invoice | null>(null);
   const [receiptSearch, setReceiptSearch] = useState('');
@@ -1362,10 +1361,7 @@ export function ClubCart() {
 
   if (!club) return <p>Club not found.</p>;
   const cart = db.carts[club.id] ?? [];
-  const couponDef = db.coupons.find((c) => c.code === coupon.toUpperCase());
   const subtotal = cart.reduce((s, i) => s + i.amount, 0);
-  const discount = couponDef ? (couponDef.amountOff ?? subtotal * (couponDef.pctOff ?? 0) / 100) : 0;
-  const total = Math.max(0, subtotal - discount);
 
   // Group cart items by event (detect from label) and by memberships
   const eventNames = Array.from(new Set(
@@ -1534,26 +1530,17 @@ export function ClubCart() {
       <div className="card card-pad" style={{ marginBottom: 18 }}>
         <h3 className="card-title">Club cart ({cart.length})</h3>
         {cart.length === 0 ? <p style={{ color: 'var(--ink-soft)' }}>Cart is empty.</p> : (
-          <div style={{ display: 'flex', gap: 14, alignItems: 'end', marginTop: 14, flexWrap: 'wrap' }}>
-            <div style={{ flex: 1, minWidth: 180 }}>
-              <Field label="Coupon code"><input type="text" value={coupon} onChange={(e) => setCoupon(e.target.value)} placeholder="EARLYBIRD" /></Field>
-              {coupon.trim() !== '' && (
-                <div style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 4 }}>
-                  Coupon codes aren’t applied to card checkout yet.
-                </div>
-              )}
-            </div>
+          <div style={{ display: 'flex', gap: 14, alignItems: 'end', justifyContent: 'flex-end', marginTop: 14, flexWrap: 'wrap' }}>
             <div style={{ textAlign: 'right', marginBottom: 14 }}>
               <div style={{ fontSize: 14 }}>{cart.length} item{cart.length !== 1 ? 's' : ''} · Subtotal {fmtMoney(subtotal)}</div>
-              {discount > 0 && <div style={{ color: 'var(--green-600)', fontSize: 14 }}>Coupon −{fmtMoney(discount)}</div>}
-              <div style={{ fontSize: 20, fontWeight: 700 }}>Total {fmtMoney(total)}</div>
+              <div style={{ fontSize: 12, color: 'var(--ink-soft)' }}>Promo codes + processing fee are shown on the next step.</div>
             </div>
             <button
               className="btn primary"
               style={{ marginBottom: 14 }}
               onClick={() => setCheckout({ items: cart, title: `${club.shortName} cart` })}
             >
-              Pay {fmtMoney(total)} →
+              Continue to checkout →
             </button>
           </div>
         )}
