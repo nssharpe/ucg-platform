@@ -99,6 +99,15 @@ What this means for names you'll grep for:
 ## Supabase / migrations
 - Project ref `wkyerxlgricfphopocoz` (org NAIGC). Migrations in `supabase/migrations/`.
   CLI is linked (`supabase link` done 2026-06-19). Latest migration is
+  `20260702033412_cart_items_prior_reg_snapshot.sql` (nullable `cart_items.prior_reg_snapshot`
+  jsonb — lets a "change" cart item carry a snapshot of the registration(s) it modified so
+  removing the item can revert them; see "Membership.tsx direct-pay retirement..." /
+  unified-cart-b2 entries below; **applied 2026-07-02**), preceded by
+  `20260702012205_coupon_event_scope_and_payment_code.sql` (promo-code Stripe wiring —
+  `coupons.applies_to_event_id` + `payments.coupon_code`; **applied 2026-07-02**), preceded
+  by `20260628125200_waiver_sign_request_names.sql` (waiver-signer name-match; **applied
+  2026-06-28**). See `supabase/README.md`'s migration table for the full up-to-date list —
+  it's kept current more granularly than this paragraph chain. Before those,
   `20260627120000_rename_event_levels_apparatus.sql` (consistency follow-up —
   `registrations.event_levels`→`apparatus_levels`, the per-apparatus T&T level map;
   TS `eventLevels`→`apparatusLevels`, `SEED_VERSION` bumped 6→7; **applied 2026-06-27**),
