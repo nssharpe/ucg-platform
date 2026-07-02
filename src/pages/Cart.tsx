@@ -1,16 +1,18 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useDB, syncFromSupabase } from '../lib/store';
+import { useDB, mutate, syncFromSupabase } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { useToast } from '../components/ui-hooks';
 import { fmtMoney } from '../lib/scoring';
+import { pushCart } from '../lib/supabase';
 import { CartCheckout } from '../components/CartCheckout';
 import type { CartItem } from '../lib/types';
 
 const sum = (items: CartItem[]) => items.reduce((s, i) => s + i.amount, 0);
 
-function CartCard({ title, items, returnTo, returnLabel, onCheckout }: {
+function CartCard({ title, items, returnTo, returnLabel, onCheckout, onRemove }: {
   title: string; items: CartItem[]; returnTo: string; returnLabel: string; onCheckout: () => void;
+  onRemove: (item: CartItem) => void;
 }) {
   return (
     <div className="card card-pad">
@@ -20,14 +22,27 @@ function CartCard({ title, items, returnTo, returnLabel, onCheckout }: {
       </div>
       <ul style={{ margin: '10px 0', paddingLeft: 18, fontSize: 14 }}>
         {items.map((i) => (
-          <li key={i.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
-            <span>{i.label}</span><strong>{fmtMoney(i.amount)}</strong>
+          <li key={i.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+            <span>{i.label}</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <strong>{fmtMoney(i.amount)}</strong>
+              <button
+                type="button"
+                className="btn ghost small"
+                title="Remove from cart"
+                aria-label={`Remove ${i.label} from cart`}
+                onClick={() => onRemove(i)}
+                style={{ padding: '2px 8px', lineHeight: 1 }}
+              >
+                ✕
+              </button>
+            </span>
           </li>
         ))}
       </ul>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <strong>Subtotal: {fmtMoney(sum(items))}</strong>
-        <button className="btn primary small" style={{ marginLeft: 'auto' }} onClick={onCheckout}>
+        <button className="btn primary small" style={{ marginLeft: 'auto' }} onClick={onCheckout} disabled={items.length === 0}>
           Check out {title}
         </button>
       </div>
@@ -55,7 +70,13 @@ export function Cart() {
 function CartInner({ personId, name }: { personId: string; name: string }) {
   const db = useDB();
   const toast = useToast();
-  const cart = useMemo(() => db.carts[personId] ?? [], [db.carts, personId]);
+  // NOT memoized: `mutate()` mutates the shared db object in place rather than
+  // replacing it, so `db.carts` never gets a new reference for useMemo to key
+  // off — a memo here would silently go stale after any local cart mutation
+  // (e.g. removeItem below). useDB()'s own subscription already re-renders
+  // this component on every store change, so reading fresh here is correct
+  // and cheap (a plain property lookup, not a real computation).
+  const cart = db.carts[personId] ?? [];
   const [checkout, setCheckout] = useState<{ items: CartItem[]; title: string } | null>(null);
 
   // Group: a card per event (matched by name in the label), one "Memberships"
@@ -77,6 +98,20 @@ function CartInner({ personId, name }: { personId: string; name: string }) {
     }
     return { membership, events: [...byEvent.values()], other };
   }, [cart, db.events]);
+
+  // Removes a single line from the person's OWN cart (e.g. a stale/orphaned
+  // item that fails checkout, or something they just changed their mind
+  // about). NOTE: this only removes the cart line — if it was a "change" fee
+  // for an existing registration, the registration itself keeps its edited
+  // fields (no revert-to-prior-state here; that's a separate, larger piece of
+  // work). For a brand-new unpaid registration's entry line, the
+  // registration row is left as-is too — only the payment-cart line goes away.
+  const removeItem = (item: CartItem) => {
+    const next = cart.filter((i) => i.id !== item.id);
+    mutate((d) => { d.carts[personId] = next; });
+    pushCart(personId, next, false);
+    toast('Removed from cart.');
+  };
 
   const onPaid = () => {
     // The invoice, registrations, and cart lines are all written by the webhook —
@@ -122,16 +157,16 @@ function CartInner({ personId, name }: { personId: string; name: string }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {groups.membership.length > 0 && (
           <CartCard title="Memberships" items={groups.membership} returnTo="/cart/memberships" returnLabel="Checkout Memberships"
-            onCheckout={() => setCheckout({ items: groups.membership, title: 'Memberships' })} />
+            onCheckout={() => setCheckout({ items: groups.membership, title: 'Memberships' })} onRemove={removeItem} />
         )}
         {groups.events.map((g) => (
           <CartCard key={g.eventName} title={g.eventName} items={g.items}
             returnTo={g.slug ? `/events/${g.slug}` : '/events'} returnLabel="Return to registration"
-            onCheckout={() => setCheckout({ items: g.items, title: g.eventName })} />
+            onCheckout={() => setCheckout({ items: g.items, title: g.eventName })} onRemove={removeItem} />
         ))}
         {groups.other.length > 0 && (
           <CartCard title="Other" items={groups.other} returnTo="/events" returnLabel="Browse"
-            onCheckout={() => setCheckout({ items: groups.other, title: 'Other' })} />
+            onCheckout={() => setCheckout({ items: groups.other, title: 'Other' })} onRemove={removeItem} />
         )}
       </div>
 

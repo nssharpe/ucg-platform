@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useDB } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { Badge, Modal } from '../components/ui';
+import { useFmtDate } from '../components/ui-hooks';
 import { fmtMoney } from '../lib/scoring';
 import { downloadReceipt, invoiceTotal } from '../lib/receipt';
 import type { DB, Invoice } from '../lib/types';
@@ -43,6 +44,7 @@ function summarize(inv: Invoice, db: DB, personId: string): string {
 
 function PurchaseHistoryInner({ personId, name }: { personId: string; name: string }) {
   const db = useDB();
+  const fmtDate = useFmtDate();
   const [detail, setDetail] = useState<Invoice | null>(null);
 
   const invoices = useMemo(() =>
@@ -66,7 +68,7 @@ function PurchaseHistoryInner({ personId, name }: { personId: string; name: stri
             <div key={inv.id} className="card card-pad">
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
                 <strong>{inv.number}</strong>
-                <span style={{ color: 'var(--ink-soft)', fontSize: 13 }}>{inv.createdAt.slice(0, 10)}</span>
+                <span style={{ color: 'var(--ink-soft)', fontSize: 13 }}>{fmtDate(inv.createdAt)}</span>
                 {inv.paidAt ? <Badge tone="ok">Paid</Badge> : <Badge tone="warn">Unpaid</Badge>}
                 <strong style={{ marginLeft: 'auto' }}>{fmtMoney(invoiceTotal(inv))}</strong>
               </div>
@@ -80,7 +82,7 @@ function PurchaseHistoryInner({ personId, name }: { personId: string; name: stri
       {detail && (
         <Modal title={`Receipt ${detail.number}`} onClose={() => setDetail(null)}>
           <div style={{ fontSize: 13.5, color: 'var(--ink-soft)', marginBottom: 12 }}>
-            {detail.createdAt.slice(0, 10)} · {detail.paidAt ? 'Paid' : 'Unpaid'} · Billed to {name}
+            {fmtDate(detail.createdAt)} · {detail.paidAt ? 'Paid' : 'Unpaid'} · Billed to {name}
           </div>
           {(() => {
             // Lines visible to this viewer (their own line(s) on a shared club

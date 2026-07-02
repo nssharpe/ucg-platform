@@ -377,7 +377,9 @@ What this means for names you'll grep for:
       the grouped **Cart** page cards (meets/other) and the `Club.tsx` pay paths moved to
       Stripe in **S4** — `completePurchase` and `Club.tsx` `payClubItems`/`emailClubReceipt`
       are now deleted (shared `CartCheckout.tsx`). The `Membership.tsx` direct card-pay flow
-      still fulfills client-side + calls `send-receipt` (not part of S4). Verified live (seeded athlete) through the embedded-form render
+      **was retired 2026-07-02** (see "Membership.tsx direct-pay retirement" below) — it's no
+      longer client-side-fulfilling; every mention of it below this point is historical.
+      Verified live (seeded athlete) through the embedded-form render
       + server-authoritative amounts (trust boundary: client cart $ ignored) + RLS poll read +
       responsive 375/768/1280; the literal test-card submission into Stripe's cross-origin
       iframe isn't automatable with the preview/Chrome tooling here — manual `4242`/decline
@@ -556,8 +558,9 @@ What this means for names you'll grep for:
   now go through **Stripe** — their receipt is emailed by the `stripe-webhook` on
   fulfillment, not client-side (the client-side `send-receipt` calls in `Cart.tsx`
   `completePurchase` / `Club.tsx` pay paths were removed when those paths were deleted in
-  S4). The `Membership.tsx` **direct card-pay** flow still calls `send-receipt`
-  client-side (not part of S4 — moves to Stripe in a later phase). Remaining
+  S4). The `Membership.tsx` **direct card-pay** flow was **retired 2026-07-02** (see
+  below) — it no longer calls `send-receipt` client-side; card payment now goes through
+  the same Stripe/`stripe-webhook` receipt path as everything else. Remaining
   payment-emailed PDF receipts (server attachments) still wait on later Stripe phases.
 - **Stripe payments — BUILT (S1–S5); go-live is Nate's remaining action.** S1–S2 (backend
   loop) + **S3 (front-end membership checkout)** are built & deployed; **S4** (meet entries /
@@ -574,10 +577,9 @@ What this means for names you'll grep for:
   `MyRegistrations.tsx` comment remained (fixed). (3) **Go-live checklist** written:
   `docs/stripe-go-live-checklist.md` (test→live key/webhook swap, real ~$1 smoke test +
   refund, payout/bank check). **Go-live itself (live keys + real money) is Nate's to run.**
-  **Still DEFERRED (NOT in S5's task scope):** moving `Membership.tsx` **direct card-pay** to
-  Stripe (it still fulfills client-side + `send-receipt`; its invoice legitimately carries no
-  Stripe fee since no Stripe charge happens — coupons DO still work on this legacy path, just
-  client-side), and an **in-app admin refund** path (refunds are issued **manually in the
+  **`Membership.tsx` direct card-pay was retired 2026-07-02** (see below) — no longer a
+  deferred item. **Still DEFERRED:** an **in-app admin refund** path (refunds are issued
+  **manually in the
   Stripe Dashboard** today — a Dashboard refund doesn't yet reflect back into
   `payments.status`/fulfillment; sketch in the checklist). Still TODO beyond Stripe:
   per-season typed waivers, codeless judge access (URL / 6-digit / QR), multi-judge +
@@ -606,3 +608,37 @@ What this means for names you'll grep for:
   the literal cause of "codes vanish at checkout" feedback) was removed as redundant/misleading.
   Admin's promo-code creation (`Admin.tsx` `Promos`) has the matching "Applies to" dropdown +
   an event picker that only lists future events.
+- **Membership.tsx direct-pay retirement + cart-delete + timezone fixes (2026-07-02).**
+  Found via a real live-purchase test on production: the `Membership.tsx` "Step 3 —
+  Payment" screen still had its OLD pre-Stripe card-entry UI (`<input placeholder="4242
+  4242...">` never wired to `value`/`onChange`, plus a literal "Demo prototype — no real
+  payment is processed" disclaimer) reachable by real users — clicking "Pay $X" completed
+  the membership client-side with **zero real charge**. Retired it: the button is now
+  **"Continue to secure checkout →"**, which pushes the membership item to the member's
+  own cart (`pushCartItem`, mirroring the existing club-cart-push shape) and navigates to
+  `/cart/memberships` — the same Stripe-backed flow everything else uses. `complete()`'s
+  `via` type dropped `'card'`; `'comp'` (Admin Payment Override) and `'club'` (Send to Club
+  Cart) are unchanged/still legitimate non-card paths. The page's own coupon input was
+  removed too (now vestigial — coupons apply at the real Stripe checkout, per the promo-
+  codes entry above). **Known gap:** the "first membership" welcome email
+  (`sendMembershipWelcome`) doesn't yet fire on this new Stripe-backed card path (only on
+  `'comp'`) — would need to move into `stripe-webhook`'s fulfillment, which doesn't
+  currently check a person's prior-membership history; flagged, not yet built.
+  — **Cart item deletion:** `Cart.tsx`'s `CartCard` gained a ✕ button per line
+  (`removeItem`, via `pushCart` replace-semantics) — there was previously NO way to clear
+  a bad cart line, which is what let one orphaned item ("references no known
+  registration") permanently block checkout for the whole cart. **Found and fixed a real
+  bug while wiring this:** `Cart.tsx`'s `cart` was `useMemo(() => db.carts[personId] ??
+  [], [db.carts, personId])` — but `mutate()` (`store.ts`) mutates the shared `db` object
+  **in place** and never reassigns it, so `db.carts` never gets a new reference and that
+  `useMemo` can NEVER see a change from a local mutation (only a full `syncFromSupabase()`
+  reload, which DOES reassign, masked this for every pre-existing cart flow that only
+  ever added via the checkout-then-resync path). `cart` is now read directly each render
+  (no memo) — correct and cheap; watch for this same trap in any other file using
+  `useMemo` keyed on a nested `db.*` path. Also improved `create-checkout-session`'s
+  orphaned-line error message to point the user at the new ✕ button.
+  — **Purchase History dates:** were `inv.createdAt.slice(0, 10)` (the raw UTC calendar
+  date), which shows the WRONG day whenever UTC and the viewer's local zone disagree on
+  what day it is (Nate saw "2026-07-02" while it was still "2026-07-01" in US Eastern).
+  Switched to the existing `useFmtDate()` hook (`ui-hooks.ts`, already used elsewhere,
+  `toLocaleDateString` — respects the browser's local timezone).

@@ -5,7 +5,7 @@ import { useCapabilities } from '../lib/capabilities';
 import { Badge, Field } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 import { fmtMoney } from '../lib/scoring';
-import { pushCartItem, redeemCoupon, pushInvoice, pushMembership, fetchPublishedWaiver, recordWaiverSignature, requestGuardianWaiver, notifyClubCart, sendMembershipWelcome, sendReceipt } from '../lib/supabase';
+import { pushCartItem, pushInvoice, pushMembership, fetchPublishedWaiver, recordWaiverSignature, requestGuardianWaiver, notifyClubCart, sendMembershipWelcome } from '../lib/supabase';
 import type { Athlete, InvoiceItem, Membership, MembershipType, WaiverDocument } from '../lib/types';
 import { GENERAL_WAIVER_TYPE } from '../lib/types';
 import { isMinorAt, expectedWaiverSignerName, waiverNameMatches } from '../lib/waivers-core';
@@ -15,8 +15,6 @@ import {
   offeredMembershipTypes,
   membershipFee,
   priceForTypes,
-  couponValid,
-  applyCoupon,
 } from '../lib/pricing';
 
 export function Membership() {
@@ -98,10 +96,6 @@ function MembershipInner({ me }: { me: Athlete }) {
   const [step, setStep] = useState<'info' | 'waiver' | 'pay' | 'done'>(allOwned ? 'done' : 'info');
   const [confirmed, setConfirmed] = useState(false);
   const [waiverSig, setWaiverSig] = useState('');
-  const [coupon, setCoupon] = useState('');
-  const [payMethod, setPayMethod] = useState<'card' | 'club'>('card');
-  // Task 6: save card on file (disabled/coming-soon)
-  const [saveCard] = useState(false);
 
   // Waiver signing state — a single waiver covers all members regardless of type.
   const [consent, setConsent] = useState(false);
@@ -126,16 +120,6 @@ function MembershipInner({ me }: { me: Athlete }) {
   const sigMatchesName = waiverNameMatches(waiverSig, me.firstName, me.lastName);
   const waiverValid = !!waiverDoc && consent && !isMinor && sigMatchesName;
 
-  // Task 7: coupon validation via pricing helpers
-  const nowISO = new Date().toISOString();
-  const couponDef = db.coupons.find(
-    (c) =>
-      c.code === coupon.toUpperCase() &&
-      (c.appliesTo === 'membership' || c.appliesTo === 'any') &&
-      (!c.restrictedToPersonId || c.restrictedToPersonId === me.id) &&
-      couponValid(c, nowISO),
-  );
-
   // Combined price for the whole selection — "both" costs the higher single fee
   // (athlete), not the sum (per 2026-06-22 feedback). Price for any subset.
   const selPrice = (types: MembershipType[]) => priceForTypes(season, types, me.memberships);
@@ -152,10 +136,8 @@ function MembershipInner({ me }: { me: Athlete }) {
     .sort((a, b) => membershipFee(season, b) - membershipFee(season, a))[0];
   const pricePerType = (t: MembershipType) => (t === topNewType ? selPrice(selectedTypes) : 0);
 
-  // Total for selected types (coupon applied to the combined subtotal)
+  // Total for selected types.
   const subtotal = selPrice(selectedTypes);
-  const discounted = couponDef ? applyCoupon(subtotal, couponDef) : subtotal;
-  const discount = subtotal - discounted;
 
   // Profile return URL — include season so we resume the right one (task 3)
   const profileReturnUrl = `#/me?return=membership${seasonId !== currentSeason.id ? `&season=${seasonId}` : ''}`;
@@ -173,7 +155,6 @@ function MembershipInner({ me }: { me: Athlete }) {
     setStep('info');
     setConfirmed(false);
     setWaiverSig('');
-    setCoupon('');
     // Re-derive purchasable types for new season
     const newSeason = db.seasons.find((s) => s.id === newId)!;
     const newExisting = me.memberships.filter((m) => m.seasonId === newId);
@@ -185,7 +166,13 @@ function MembershipInner({ me }: { me: Athlete }) {
     else if (newSeason) { /* step stays 'info' */ }
   };
 
-  const complete = (via: 'card' | 'club' | 'comp') => {
+  // 'card' is intentionally NOT an option here — that path used to complete a
+  // membership client-side with a decorative, unwired card form (no real
+  // charge). Real card payment goes through addToCartAndCheckout below (the
+  // Stripe-backed /cart/memberships flow). Only the two non-card admin/club
+  // paths remain: 'comp' (admin override, real $0 invoice) and 'club' (push
+  // the fee to the club cart, pending until a manager pays).
+  const complete = (via: 'club' | 'comp') => {
     // "First membership" signal — computed from the PRE-purchase membership list.
     // Welcome fires once: only when the member held no prior active/paid (or
     // club-payment-pending) membership before this purchase. Pending-waiver-only
@@ -194,11 +181,6 @@ function MembershipInner({ me }: { me: Athlete }) {
     const hadPriorMembership = me.memberships.some(
       (m) => m.status === 'active' || m.status === 'pending-club-payment' || m.clubCartPending || m.paidVia != null,
     );
-
-    // Direct-pay (card/comp) invoice, captured so we can email the receipt after
-    // the mutate. Null for the club-cart push (no personal invoice is created).
-    type DirectInvoice = { number: string; items: InvoiceItem[]; couponCode?: string };
-    let directInvoice: DirectInvoice | null = null;
 
     mutate((d) => {
       const p = d.people.find((x) => x.id === me.id)!;
@@ -213,7 +195,7 @@ function MembershipInner({ me }: { me: Athlete }) {
           status: isMinor ? 'pending-waiver' : (via === 'club' ? 'pending-club-payment' : 'active'),
           waiverSignedAt: isMinor ? null : new Date().toISOString(),
           waiverSignedBy: isMinor ? null : waiverSig,
-          paidVia: via === 'comp' ? 'comp' : via === 'card' ? 'card' : 'club',
+          paidVia: via === 'comp' ? 'comp' : 'club',
           // Payment hold is independent of the waiver hold: a club-pushed fee is
           // pending until the club pays, even while a minor's waiver is still open.
           ...(via === 'club' ? { clubCartPending: true } : {}),
@@ -223,9 +205,6 @@ function MembershipInner({ me }: { me: Athlete }) {
         pushMembership(p.id, membership);
       }
 
-      // Build invoice items at full price; the coupon becomes its own negative
-      // "discount" line so the receipt can show each item's real value, a
-      // subtotal, the promo applied, and the final total.
       const invoiceItems: InvoiceItem[] = selectedTypes.map((t, i) => {
         const labelType = t === 'coach' ? 'Coach' : 'Athlete';
         return {
@@ -236,15 +215,6 @@ function MembershipInner({ me }: { me: Athlete }) {
           refUserId: me.id,
         };
       });
-      if (via !== 'comp' && couponDef && discount > 0) {
-        invoiceItems.push({
-          id: `ii-${Date.now()}-disc`,
-          label: `Promo code ${couponDef.code}`,
-          amount: -discount,
-          kind: 'discount',
-          refUserId: me.id,
-        });
-      }
 
       if (via === 'club' && club) {
         const adderName = `${me.firstName} ${me.lastName}`;
@@ -279,22 +249,9 @@ function MembershipInner({ me }: { me: Athlete }) {
           createdAt: new Date().toISOString(),
           paidAt: new Date().toISOString(),
           items: invoiceItems,
-          ...(couponDef ? { couponCode: couponDef.code } : {}),
         };
         d.invoices.push(invoice);
         pushInvoice(invoice);
-        directInvoice = { number: invoice.number, items: invoice.items, couponCode: invoice.couponCode };
-      }
-
-      // Increment coupon usedCount. The remote write goes through a security-
-      // definer RPC (members have no direct UPDATE on coupons); locally we mirror
-      // the bump for immediate UI feedback.
-      if (couponDef && via !== 'club') {
-        const ci = d.coupons.findIndex((c) => c.code === couponDef.code);
-        if (ci >= 0) {
-          d.coupons[ci] = { ...d.coupons[ci], usedCount: (d.coupons[ci].usedCount ?? 0) + 1 };
-          void redeemCoupon(couponDef.code);
-        }
       }
     });
 
@@ -302,37 +259,53 @@ function MembershipInner({ me }: { me: Athlete }) {
 
     if (via === 'comp') {
       toast(`Membership granted by admin override. Activated at $0.`);
-    } else if (via === 'club') {
-      toast(`Sent to ${club?.name} club cart — your membership activates once the club pays.`);
-    } else if (directInvoice) {
-      // Real send: email the account owner their confirmation + HTML receipt
-      // (service-role `send-receipt`, works for a non-admin member). Best-effort;
-      // the toast only claims "emailed" when the send actually succeeds.
-      const inv: DirectInvoice = directInvoice;
-      void sendReceipt({
-        items: inv.items.map((i) => ({ label: i.label, amount: i.amount, kind: i.kind })),
-        total: inv.items.reduce((s, i) => s + i.amount, 0),
-        invoiceNumber: inv.number,
-        couponCode: inv.couponCode,
-      })
-        .then((r) => {
-          if (r.ok && r.sent) toast(`Membership active! Confirmation emailed to ${me.email}.`);
-          else toast('Membership active! Your receipt is saved in Purchase History.');
-        })
-        .catch(() => toast('Membership active! Your receipt is saved in Purchase History.'));
     } else {
-      toast('Membership active!');
+      toast(`Sent to ${club?.name} club cart — your membership activates once the club pays.`);
     }
 
     // "Welcome to UCG" email for a no-club member's FIRST membership-only
-    // purchase (card/comp — NOT the club-cart push). Best-effort; never blocks
-    // the UX. Conditions checked here: no-club + not Outside US + first
+    // purchase via admin comp (NOT the club-cart push, and NOT a real card
+    // payment — that now goes through addToCartAndCheckout below, which does
+    // not yet trigger this welcome email; see its comment). Best-effort; never
+    // blocks the UX. Conditions checked here: no-club + not Outside US + first
     // membership. The server re-validates no-club + Outside-US before sending.
-    if (via !== 'club' && me.mainClubId == null && !me.outsideUs && !hadPriorMembership) {
+    if (via === 'comp' && me.mainClubId == null && !me.outsideUs && !hadPriorMembership) {
       if (!isMinor) {
         void sendMembershipWelcome(me.id).catch(() => { /* non-fatal */ });
       }
     }
+  };
+
+  // Real card payment: push the selected membership(s) to the member's OWN
+  // cart (mirrors the existing club-cart item shape) and hand off to the
+  // Stripe-backed checkout at /cart/memberships — the same flow Cart.tsx uses.
+  // Replaces the old direct-pay card step, which was a decorative, never-wired
+  // "Card number"/"Exp"/"CVC" form that granted the membership immediately with
+  // NO real charge (its own copy said "Demo prototype — no real payment is
+  // processed"). Amounts here are display-only; create-checkout-session
+  // recomputes everything server-side. NOTE: unlike the comp path above, this
+  // does not (yet) trigger the "first membership" welcome email — that would
+  // need to move into stripe-webhook's fulfillment, which doesn't currently
+  // check for a person's prior memberships. Flagged as a follow-up.
+  const addToCartAndCheckout = () => {
+    mutate((d) => {
+      const cart = d.carts[me.id] ?? (d.carts[me.id] = []);
+      for (const t of selectedTypes) {
+        const labelType = t === 'coach' ? 'Coach' : 'Athlete';
+        const item = {
+          id: `ci-${Date.now()}-${t}`,
+          label: `${labelType} membership ${season.name} — ${me.firstName} ${me.lastName}`,
+          amount: pricePerType(t),
+          kind: 'membership' as const,
+          refUserId: me.id,
+          refSeasonId: seasonId,
+          refType: t,
+        };
+        cart.push(item);
+        pushCartItem(me.id, item, false);
+      }
+    });
+    navigate('/cart/memberships');
   };
 
   // Type label helper
@@ -639,77 +612,18 @@ function MembershipInner({ me }: { me: Athlete }) {
                 </div>
               ))}
 
-              {/* Coupon discount */}
-              {couponDef && discount > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--green-600)', fontSize: 14, marginBottom: 4 }}>
-                  <span>Coupon {couponDef.code}</span><span>−{fmtMoney(discount)}</span>
-                </div>
-              )}
-              {couponDef && discount === 0 && (
-                <div style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 4 }}>
-                  Coupon {couponDef.code} applied (no additional discount — price already reduced by existing membership).
-                </div>
-              )}
-
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 17, fontWeight: 700, borderTop: '2px solid var(--navy-800)', paddingTop: 8, marginBottom: 14 }}>
-                <span>Total</span><span>{fmtMoney(discounted)}</span>
+                <span>Total</span><span>{fmtMoney(subtotal)}</span>
               </div>
-
-              {/* Coupon input */}
-              <Field label="Coupon code">
-                <input
-                  type="text"
-                  value={coupon}
-                  onChange={(e) => setCoupon(e.target.value)}
-                  placeholder="e.g. NEWCLUB26"
-                />
-              </Field>
-              {coupon.trim().length > 0 && !couponDef && (
-                <p style={{ color: 'var(--coral-600)', fontSize: 13, marginTop: -8, marginBottom: 10 }}>
-                  {(() => {
-                    const raw = db.coupons.find(
-                      (c) => c.code === coupon.toUpperCase() && (c.appliesTo === 'membership' || c.appliesTo === 'any'),
-                    );
-                    if (!raw) return 'Coupon code not found.';
-                    return 'This coupon is expired or has reached its usage limit.';
-                  })()}
-                </p>
-              )}
 
               <div className="card card-pad" style={{ background: 'var(--coral-100)', border: 'none', marginBottom: 14, padding: 12, fontSize: 13.5 }}>
                 <strong>Membership fees are non-refundable.</strong> Refunds are only issued for genuine
                 mistakes (e.g. duplicate purchase) and require league admin approval.
               </div>
 
-              {/* Payment method */}
-              <Field label="Payment method">
-                <select className="input" value={payMethod} onChange={(e) => setPayMethod(e.target.value as 'card' | 'club')}>
-                  <option value="card">Pay now — credit / debit card</option>
-                </select>
-              </Field>
-
-              <div className="grid cols-2">
-                <Field label="Card number"><input type="text" placeholder="4242 4242 4242 4242" /></Field>
-                <div className="grid cols-2">
-                  <Field label="Exp"><input type="text" placeholder="MM/YY" /></Field>
-                  <Field label="CVC"><input type="text" placeholder="123" /></Field>
-                </div>
-              </div>
-              {/* Task 6: Save card on file — disabled/coming soon */}
-              <label className="checkrow" style={{ opacity: 0.55, cursor: 'not-allowed', marginBottom: 12 }}>
-                <input
-                  type="checkbox"
-                  checked={saveCard}
-                  disabled
-                  style={{ cursor: 'not-allowed' }}
-                  readOnly
-                />
-                Save this card for future use <span style={{ fontSize: 12, color: 'var(--ink-soft)', marginLeft: 4 }}>(coming soon)</span>
-              </label>
-
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button className="btn primary" onClick={() => complete('card')}>
-                  Pay {fmtMoney(discounted)}
+                <button className="btn primary" onClick={addToCartAndCheckout}>
+                  Continue to secure checkout →
                 </button>
 
                 {/* Task 4: Admin Payment Override */}
@@ -737,16 +651,13 @@ function MembershipInner({ me }: { me: Athlete }) {
                 )}
               </div>
 
-              {club?.allowClubPay && (
-                <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginTop: 10, marginBottom: 0 }}>
-                  <strong>Send to Club Cart</strong> adds this {fmtMoney(discounted)} fee to {club.name}'s
-                  cart instead of paying now. Your membership stays <strong>pending</strong> until a club
-                  manager settles the cart — they'll see the item on their dashboard with your name on it.
-                </p>
-              )}
-
-              <p style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 10 }}>
-                Demo prototype — no real payment is processed. Production will use a PCI-compliant processor (Stripe).
+              <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginTop: 10, marginBottom: 0 }}>
+                <strong>Continue to secure checkout</strong> takes you to a Stripe-hosted payment form
+                (card details, any promo code, and the processing fee shown there) — nothing is charged
+                on this page.
+                {club?.allowClubPay && <> Or, <strong>Send to Club Cart</strong> adds this {fmtMoney(subtotal)} fee to {club.name}'s
+                cart instead of paying now — your membership stays <strong>pending</strong> until a club
+                manager settles the cart; they'll see the item on their dashboard with your name on it.</>}
               </p>
             </div>
           )}

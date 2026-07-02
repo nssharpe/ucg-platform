@@ -278,7 +278,10 @@ Deno.serve(async (req) => {
     if (i.kind === 'meet-entry' && i.ref_line_type === 'change') {
       const refRegs = (i.ref_reg_ids ?? []).map((id) => regById.get(id)).filter((r): r is RegRow => !!r);
       const reg = refRegs[0];
-      if (!reg) return json({ ok: false, error: `Change line ${i.id} references no known registration.` }, 400);
+      if (!reg) {
+        return json({ ok: false, error:
+          `"${i.label}" no longer matches a real registration (it may have been refunded or removed) — remove it from your cart (✕) and try checking out again.` }, 400);
+      }
       const event = events.get(reg.event_id);
       if (!event) return json({ ok: false, error: `Unknown event ${reg.event_id}.` }, 400);
       pushLine(i.label, registrationChangeFeeDollars(event, { competingClubId: reg.club_id ?? '' }), 'meet-entry', reg.event_id);
@@ -289,7 +292,10 @@ Deno.serve(async (req) => {
     if (i.kind === 'meet-entry') {
       const refRegs = (i.ref_reg_ids ?? []).map((id) => regById.get(id)).filter((r): r is RegRow => !!r);
       const reg = refRegs[0];
-      if (!reg) return json({ ok: false, error: `Entry line ${i.id} references no known registration.` }, 400);
+      if (!reg) {
+        return json({ ok: false, error:
+          `"${i.label}" no longer matches a real registration (it may have been refunded or removed) — remove it from your cart (✕) and try checking out again.` }, 400);
+      }
       const event = events.get(reg.event_id);
       if (!event) return json({ ok: false, error: `Unknown event ${reg.event_id}.` }, 400);
       const competingClubId = reg.club_id ?? '';
