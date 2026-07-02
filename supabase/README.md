@@ -66,6 +66,8 @@ sequence numbers used in conversation. In order:
 | `20260626150000_rename_meet_entity.sql` | **Meet→Event rename (entity).** `meets`→`events`, `meet_sessions`→`event_sessions`; `meet_id`→`event_id` (event_sessions/registrations/scores); `cart_items.ref_meet_id`/`invoice_items.ref_meet_id`→`ref_event_id`; `sanction_requests.created_meet_id`→`created_event_id`; enum `meet_status`→`event_status`; cosmetic index renames. All renames preserve FKs/RLS/realtime (Postgres tracks dependents by OID). **Applied 2026-06-27.** |
 | `20260626150100_rename_apparatus.sql` | **Apparatus rename.** `registrations.events`→`registrations.apparatus`, `scores.event`→`scores.apparatus` — disambiguates gymnastics apparatus from the renamed competition Event entity. **Applied 2026-06-27.** |
 | `20260627120000_rename_event_levels_apparatus.sql` | **Apparatus consistency follow-up.** `registrations.event_levels`→`apparatus_levels` (the per-apparatus T&T level map — the last apparatus-overloaded column name). Non-destructive rename; no Edge Function references it. **Applied 2026-06-27.** |
+| `20260628125200_waiver_sign_request_names.sql` | Recreates `get_waiver_sign_request` to join `people` and return `first_name`/`last_name`, so the direct-link waiver signing page can enforce the same name-match validation as the inline purchase flow. **Applied 2026-06-28.** |
+| `20260702012205_coupon_event_scope_and_payment_code.sql` | Adds `coupons.applies_to_event_id` (scopes a promo code to one specific event — hard-expires the day after that event ends) and `payments.coupon_code` (carries an applied code through to `stripe-webhook`, which writes it onto `invoices.coupon_code` and calls `redeem_coupon`). **Applied 2026-07-02.** |
 
 > **Naming note (rename applied 2026-06-27):** the schema descriptions above that
 > predate these two migrations still say `meets`/`meet_id`/`ref_meet_id`/
@@ -121,10 +123,18 @@ mirroring `src/lib/pricing.ts` + the meet config). Secrets: `STRIPE_SECRET_KEY`,
 where `supabase.ts` dropped those columns, so **Phase 5 finance now reads the real fee**.
 Go-live (swap test→live keys + webhook secret, $1 smoke test + refund, payout/bank check) is
 a documented runbook: [`../docs/stripe-go-live-checklist.md`](../docs/stripe-go-live-checklist.md).
-**Deferred:** card-checkout coupons, moving `Membership.tsx` direct card-pay to Stripe, and
-an in-app admin refund path (today refunds are issued **manually in the Stripe Dashboard** —
-a Dashboard refund does not yet reflect back into `payments.status`/fulfillment; sketch in
-the checklist).
+**Promo codes at Stripe checkout (2026-07-02):** `create-checkout-session` now validates +
+applies a coupon server-side, scoped to matching cart line(s) via `Coupon.appliesTo`
+(`any`/`athlete-membership`/`club-membership`/`coach-membership`/`meet-entry` +
+`appliesToEventId` for one specific event — hard-expires the day after that event ends,
+regardless of `endsAt`). `payments.coupon_code` carries it to the webhook, which writes
+`invoices.coupon_code` and calls `redeem_coupon`. See CLAUDE.md's "Promo codes at Stripe
+checkout" entry for the full design.
+
+**Still deferred:** moving `Membership.tsx` direct card-pay to Stripe (coupons already work
+on that legacy client-side path), and an in-app admin refund path (today refunds are issued
+**manually in the Stripe Dashboard** — a Dashboard refund does not yet reflect back into
+`payments.status`/fulfillment; sketch in the checklist).
 
 ## Stand it up
 
