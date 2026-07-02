@@ -18,7 +18,11 @@ in [`../CLAUDE.md`](../CLAUDE.md).
   (`registration.unitedgymnastics.org`), pre-launch hardening checklist.
 - [`../supabase/README.md`](../supabase/README.md) — backend schema, RLS model, and
   migration / project-standup steps.
-- [`../CLAUDE.md`](../CLAUDE.md) — build/tooling gotchas, test command, deferred work.
+- [`../CLAUDE.md`](../CLAUDE.md) — build/tooling gotchas, test command, deferred work
+  (operative rules only since 2026-07-02; the full historical version is archived at
+  [`archive/CLAUDE-md-as-of-2026-07-02.md`](archive/CLAUDE-md-as-of-2026-07-02.md)).
+- [`model-routing-log.md`](model-routing-log.md) — observational log of which model
+  tier handled which task (feeds the CLAUDE.md "Model routing" rules).
 
 ## Specs (`specs/`) — validated designs, written before implementation
 
@@ -34,6 +38,8 @@ in [`../CLAUDE.md`](../CLAUDE.md).
 | [feedback-batch-decomposition (6/22)](specs/2026-06-22-feedback-batch-decomposition.md) | Master decomposition of the 6/22–6/23 feedback batch (10 phases + decisions) | ✅ shipped (all phases live) |
 | [topbar-responsive-and-mobile-nav-design](specs/2026-06-24-topbar-responsive-and-mobile-nav-design.md) | One-line topbar badges, measurement-driven degradation, mobile drawer nav, mobile dev pipeline | ✅ shipped |
 | [dev-test-auth](specs/2026-06-25-dev-test-auth.md) | Dev-only real auto-login of a seeded Supabase test user (`.env.local`-gated) so authenticated UI is exercisable locally | ✅ shipped |
+| [stripe-integration](specs/2026-06-25-stripe-integration.md) | Stripe Embedded Checkout architecture (S1–S5) | ✅ shipped |
+| [security-review-findings (7/02)](specs/2026-07-02-security-review-findings.md) | Deep review of the money paths: RLS, edge functions, cart state machine — verified findings by severity | 🟡 findings logged; fixes planned |
 
 ## Plans (`plans/`) — step-by-step implementation records
 
@@ -49,6 +55,10 @@ in [`../CLAUDE.md`](../CLAUDE.md).
 | [club-invites-and-roster](plans/2026-06-23-club-invites-and-roster.md) | Admin-create invites + set-password, Add-athlete, roster club switcher (Phase 3) | ✅ shipped |
 | [topbar-responsive-and-mobile-nav](plans/2026-06-24-topbar-responsive-and-mobile-nav.md) | Topbar one-line badges + measurement degradation + mobile drawer nav | ✅ shipped |
 | [playwright-responsive-tests](plans/2026-06-24-playwright-responsive-tests.md) | Proposed (not built) Playwright responsive screenshot tests in CI | 📓 proposed |
+| [unified-cart-b2](plans/2026-07-02-unified-cart-b2.md) | Unified personal + managed-club `/cart` + cart-registration mutation sync | ✅ shipped |
+| [welcome-email-stripe-path](plans/2026-07-02-welcome-email-stripe-path.md) | Fire the first-membership welcome email from `stripe-webhook` fulfillment | 📋 ready to implement |
+| [security-hardening](plans/2026-07-02-security-hardening.md) | Fixes for the 7/02 security findings: RLS guard triggers, token exposure, checkout ref validation, transactional fulfillment | 📋 ready to implement (Phase 1 = DB-only) |
+| [cart-state-fixes](plans/2026-07-02-cart-state-fixes.md) | Fixes for the 7/02 client cart/registration state-machine findings (C5, H5–H8, M6–M9) | 📋 ready to implement |
 
 ## Research (`research/`) — informational, not commitments
 
@@ -63,11 +73,11 @@ in [`../CLAUDE.md`](../CLAUDE.md).
 
 ## Roadmap (sub-projects)
 
-A ✅ accounts & roles → **Stripe payments** (✅ S1–S5 built — membership + meet-entry +
-club-cart Embedded Checkout, server-authoritative fulfillment, invoices carry the real
-Stripe fee/payment-intent for finance; remaining = Nate deploys the S4 functions + runs
-the [go-live checklist](stripe-go-live-checklist.md) for live keys. Deferred: Membership
-direct card-pay → Stripe, card-checkout coupons, in-app refunds) →
+A ✅ accounts & roles → **Stripe payments** (✅ S1–S5 built & deployed — all payment
+paths (membership, meet-entry, club cart, change fees, coupons) go through Embedded
+Checkout with server-authoritative fulfillment; remaining = the
+[go-live checklist](stripe-go-live-checklist.md) for live keys, in-app refunds, and the
+[security-hardening plan](plans/2026-07-02-security-hardening.md)) →
 B typed memberships + per-season waiver → C club-based registration multi-club picker →
 D codeless judge access (URL / 6-digit / QR) → E meet scoring config (1-vs-2 panels,
 calculator vs. simple entry). Further out: PDF certs, banquet tickets, finals rosters,
