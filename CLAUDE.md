@@ -79,7 +79,9 @@ Run the suite, `npx eslint` the touched files, and confirm the build before push
 - Project ref `wkyerxlgricfphopocoz` (org NAIGC); CLI linked. Migrations in
   `supabase/migrations/` — **the authoritative, current migration list + schema/RLS model
   is `supabase/README.md`**; keep its table updated with every migration. All migrations
-  through `20260702033412_cart_items_prior_reg_snapshot.sql` are applied (2026-07-02).
+  through `20260702182714_club_memberships_insert_lockdown.sql` are applied (2026-07-02;
+  the 182709–182714 batch is security-hardening Phase 1 — DB guard triggers + policy
+  lockdowns, see `docs/plans/2026-07-02-security-hardening.md`).
 - New migrations: `supabase migration new <name>` (timestamp filename format is required).
   Apply via `supabase db push` — network is sandbox-blocked, run with sandbox disabled.
 - **Enum gotcha:** `ALTER TYPE ... ADD VALUE` can't be referenced in the same

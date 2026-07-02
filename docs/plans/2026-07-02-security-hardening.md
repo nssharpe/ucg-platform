@@ -5,6 +5,17 @@ is DB-only and shippable immediately; Phase 2 touches both Edge Functions; Phase
 deferred hardening. Implementer notes assume the CLAUDE.md rules (build/eslint/vitest,
 migrations via `supabase migration new`, enum gotcha, `--no-verify-jwt` trio check).
 
+> **STATUS — Phase 1 DONE & applied 2026-07-02** (migrations `20260702182709`–`182714`,
+> commit on `main`). All exploits verified closed against the live DB by
+> `scripts/verify-hardening.mjs` (seeded users, 10/10). Two controller-review fixes were
+> made to the implementer's draft before push: (1) the C2 registration trigger had a
+> **two-step staging bypass** — `updated_pending` is client-writable, so an attacker
+> could set it true in one write then flip `paid` true via the snapshot-revert allowance
+> in a second; now a non-privileged `updated_pending` false→true is itself rejected
+> unless paired with `paid` going true→false. (2) `redeem_coupon`'s EXECUTE revoke
+> targeted only `authenticated`, but PUBLIC's default grant made that a no-op; now
+> revoked from PUBLIC. **Phase 2 and Phase 3 remain TODO.**
+
 **Design principle:** the DB must enforce what the webhook assumes — "only fulfillment
 writes paid/active state" becomes a trigger-level guarantee, not a convention. Client
 UI keeps working unchanged; only raw-PostgREST abuse is cut off.
