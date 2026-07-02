@@ -531,9 +531,15 @@ What this means for names you'll grep for:
   'pending-club-payment'` (the status is the legacy/server fallback), `active = neither`.
   `clubCartPending` (on `Membership`) is the explicit payment-hold flag: set `true` when a
   member pushes a fee to a club cart (`Membership.complete`, `via==='club'`), cleared when
-  the club pays (`ClubCart` pay handler). The club-pay handler matches the EXACT membership
-  via the cart line's `refSeasonId`+`refType` (added to `InvoiceItem`) and sets `active`
-  only if the waiver is also signed (else `pending-waiver`). `Membership.tsx` and `Club.tsx`
+  the club pays. **Historical note:** this used to clear via a client-side `ClubCart` pay
+  handler; club-cart payments now go through Stripe like everything else, so
+  `stripe-webhook`'s `fulfill()` (server-side) is what actually flips this on payment —
+  see "Stripe payment functions" below. The React `ClubCart` component itself was retired
+  2026-07-02 (unified into `Cart.tsx`'s single `/cart` page — see the Cart/registration
+  entry below); `/club/:id/cart` now redirects there. The match-the-exact-membership
+  logic (via the cart line's `refSeasonId`+`refType`, added to `InvoiceItem`) and the
+  `active` only-if-waiver-signed rule (else `pending-waiver`) are unchanged, just executed
+  server-side now. `Membership.tsx` and `Cart.tsx`'s managed-club sections
   render bubbles off `membershipHolds`, not the raw enum. NOTE: the `record-waiver-signature`
   Edge Function still flips club-pay rows `pending-waiver`→`pending-club-payment` on signing
   and does NOT touch `clubCartPending`; if the club pays BEFORE the guardian signs, that
@@ -651,3 +657,48 @@ What this means for names you'll grep for:
   what day it is (Nate saw "2026-07-02" while it was still "2026-07-01" in US Eastern).
   Switched to the existing `useFmtDate()` hook (`ui-hooks.ts`, already used elsewhere,
   `toLocaleDateString` — respects the browser's local timezone).
+- **Unified cart (`Cart.tsx`) + cart-registration mutation sync (2026-07-02, B2).** Full
+  merge, per Nate: `/cart` now renders the signed-in person's own cart cards AND, for
+  every club in `caps.managedClubIds`, a separate section below rendering that club's
+  cart the same way (grouped Memberships/per-event/Other, its own Stripe checkout, its
+  own Print Invoice, its own Receipts history) — sharing one implementation
+  (`groupCartItems`/`CartCard`/`CartScope`/`ReceiptsSection`) so the personal and
+  managed-club views can't drift apart. The standalone `ClubCart` page/component is
+  **retired**; `/club/:id/cart` is a `<Navigate replace>` redirect to `/cart` (same
+  idiom as the Meet→Event rename's old-route redirects). Cross-entity "checkout
+  everything" spanning personal + multiple clubs in ONE Stripe session is explicitly
+  OUT of scope — `create-checkout-session`'s billing model assumes one payer entity per
+  session (self OR one club), so each scope keeps its own "checkout all" (duplicated at
+  both the top and bottom of every scope, per the original ask) rather than a single
+  mega-button spanning different billers.
+  - **Print Invoice:** new `downloadCartInvoice(items, forName, title)` in
+    `receipt.ts` — a pre-payment jsPDF estimate mirroring `downloadReceipt`'s layout, but
+    explicitly NOT a receipt (no "Paid" stamp, a disclaimer it processes no payment, a
+    closing note that the real total incl. service fee is set at checkout).
+  - **Cart-registration mutation sync** (a prerequisite, landed first as its own piece):
+    deleting a cart line used to just drop the `cart_items` row, leaving the underlying
+    `registrations` row mutated/orphaned. New `cart_items.prior_reg_snapshot` (jsonb,
+    nullable — migration `20260702033412_cart_items_prior_reg_snapshot.sql`) captures the
+    registration(s)' pre-change values at the moment a "change" cart line is created
+    (`Club.tsx`'s `saveRegs`/`swapAthlete`, `MyRegistrations.tsx`'s `saveRegs`). New
+    `src/lib/cart-sync.ts` `removeCartItemWithSync` + the pure classifier
+    `classifyCartRemoval` (`pricing.ts`) decide, on delete: a brand-new unpaid **entry**
+    line → delete the registration(s) entirely (restores "eligible to register" since the
+    row is just gone); a **change** line WITH a snapshot → revert the registration(s) to
+    it; a **change** line with NO snapshot (a legacy pre-this-feature row) → remove the
+    cart line only and tell the caller a revert wasn't possible (toasted honestly, never
+    silently under-delivered); anything else (membership/addon/other) → remove the cart
+    line only, unchanged. The classifier's first guard (no `refRegIds` ⇒ `remove-only`)
+    is the safety net against ambiguous legacy rows — verified against live data that
+    every existing null-`refLineType` row also has null `refRegIds`, so none can be
+    mis-classified into deleting a registration that was actually just a change.
+  - **Live-test note (2026-07-02):** Nate's live purchase test surfaced a stuck Stripe
+    payment (`checkout.session.completed` never fulfilled — real money captured, webhook
+    never ran). Root cause unconfirmed (the webhook infra tested healthy both before and
+    after — likely a transient blip around the same time as an unrelated Supabase
+    platform secret-rotation event); fixed by forcing redelivery:
+    `stripe events resend <event-id> --webhook-endpoint <endpoint-id> --confirm`. Keep
+    this recipe (trigger + wait ~20s before checking `pending_webhooks`, or resend a
+    specific stuck event) if this recurs — checking `pending_webhooks` immediately after
+    `stripe trigger` is itself a false-positive trap, since Stripe hasn't attempted
+    delivery yet at that instant.
