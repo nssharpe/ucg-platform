@@ -69,7 +69,23 @@ Reason each is NOT in the auto-batch in parentheses.
 - Cart mutation sync — removal/undo reverts My Registrations / restores eligibility / reverts change (state integrity). §4
 - Club-cart pricing transparency (subtotal/fees) (part of cart redesign). §4
 
-**B3 — Promo codes (money + backend validation):** Applies-to dropdown incl dynamic events; hard expiration on event-date pass; line-item backend mapping; `Promo code used` ledger column + receipt mapping. §5
+**B3 — Promo codes (money + backend validation):** ✅ **DONE** (commit 52a9ff7, migration
+`20260702012205`, both edge functions redeployed). Root cause of "codes vanish at checkout":
+`create-checkout-session` never accepted or applied a coupon at all — `Club.tsx`'s own UI
+admitted it ("Coupon codes aren't applied to card checkout yet."). Fixed: coupon code
+validated + applied entirely server-side, scoped to the matching cart line(s) via the
+expanded `Coupon.appliesTo` (`any`/`athlete-membership`/`club-membership`/`coach-membership`/
+`meet-entry`); `meet-entry` pairs with a new `appliesToEventId` — the "dynamic list of all
+future events" ask — and hard-expires the day after that event ends regardless of the
+coupon's own expiration date. `payments.coupon_code` carries the applied code to
+`stripe-webhook`, which writes `invoices.coupon_code` (ledger/receipt — already existed, just
+never got populated from the Stripe path) and redeems it via the existing `redeem_coupon` RPC.
+`CartCheckout.tsx` has the real promo input + Subtotal/Coupon/Fee/Total breakdown; `Admin.tsx`'s
+promo-code dropdown + event picker match; `Club.tsx`'s old decorative pre-checkout coupon
+preview (never wired to real payment) removed. Verified live end-to-end: created a 10%-off
+coupon, applied it during a real membership checkout — subtotal $55 → coupon −$5.50 → fee
+recomputed off the discounted amount ($1.79) → total $51.29, confirmed on the actual Stripe
+payment form. Build/lint/197 tests pass (3 new coupon hard-expiry tests added). §5
 
 **B4 — Meet management (RLS/roles/money):** Draft/Live-only + timestamp-driven open/close; `Last date to edit` field + role-gated lockout (migration + RLS); club-transfer change-fee dispatch + roster move + pending flag (money/data); synchronized-trampoline same-level backend check. §6
 
