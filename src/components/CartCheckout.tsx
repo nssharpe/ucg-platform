@@ -73,9 +73,18 @@ export function CartCheckout({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items]);
 
+  // H8 fix (2026-07-02): this used to just reset startedRef + stage and rely
+  // on the mount effect above to re-fire startSession() — but that effect is
+  // keyed on `[items]`, and every caller passes a stable, state-held `items`
+  // reference (Cart.tsx `checkout.items` / `db.carts[...]`), so the effect's
+  // dependency never actually changes and it never re-ran. Any transient
+  // create-checkout-session failure stranded the user on "Try again" forever.
+  // Call startSession() directly instead of hoping the effect re-fires;
+  // startedRef is still set so the mount effect (if it DOES ever re-run,
+  // e.g. items legitimately changes) doesn't race a second session creation.
   const retry = () => {
-    startedRef.current = false;
-    setStage({ kind: 'loading' });
+    startedRef.current = true;
+    startSession();
   };
 
   const applyCoupon = () => {

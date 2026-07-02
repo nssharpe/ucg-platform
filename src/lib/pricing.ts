@@ -302,8 +302,9 @@ export function randomPromoCode(len = 8): string {
 }
 
 /** Which registration-sync action applies when a cart item is removed
- *  (unified-cart-b2, Task A). Pure classification off the item's own fields —
- *  no DB access, so it's fully unit-testable:
+ *  (unified-cart-b2 Task A; extended 2026-07-02 for H5/H6/L2). Pure
+ *  classification off the item's own fields — no DB access, so it's fully
+ *  unit-testable:
  *  - `delete-registration`: a brand-new unpaid entry line (`refLineType` is
  *    'entry', or missing/legacy on an old meet-entry row with no other line
  *    type) — the linked registration(s) never existed before this cart item,
@@ -314,17 +315,39 @@ export function randomPromoCode(len = 8): string {
  *  - `no-snapshot-remove-only`: a 'change' line with NO snapshot (created
  *    before this feature existed) — nothing to revert to; remove the cart
  *    item only and let the caller be honest about it in the UI.
- *  - `remove-only`: anything else (membership/addon/other kinds, or a
- *    meet-entry line with no refRegIds to act on) — today's existing
- *    behavior, unchanged.
+ *  - `clear-membership-hold`: a member-pushed-to-club-cart membership line
+ *    (`kind:'membership'` with `refUserId`+`refSeasonId`+`refType` set and
+ *    `refType !== 'club'` — a club's OWN membership line has no `refUserId`
+ *    and is left as `remove-only`, unchanged). Added for H6: removing this
+ *    line must clear the payment hold it created (see cart-sync.ts).
+ *  - `remove-only`: anything else (addon/other kinds, a club's own membership
+ *    line, or a meet-entry line with no refRegIds to act on) — today's
+ *    existing behavior, unchanged.
+ *
+ *  L2 note: a legacy pre-S4 change line can have `refLineType == null` but a
+ *  non-null `refRegIds` — that would fall through to the 'entry' branch below
+ *  and be misclassified as `delete-registration` (destroying a still-valid
+ *  edited registration instead of reverting it). Live data was checked
+ *  2026-07-02: every existing null-`refLineType` cart_items row also had a
+ *  null `refRegIds`, so this branch is unreachable today and no backfill
+ *  migration was needed. The `!item.refRegIds` guard above is the safety net
+ *  if that ever stops being true — keep it.
  */
 export type CartRemovalAction =
   | 'delete-registration'
   | 'revert-registration'
   | 'no-snapshot-remove-only'
+  | 'clear-membership-hold'
   | 'remove-only';
 
-export function classifyCartRemoval(item: Pick<CartItem, 'kind' | 'refLineType' | 'refRegIds' | 'priorRegSnapshot'>): CartRemovalAction {
+export function classifyCartRemoval(
+  item: Pick<CartItem, 'kind' | 'refLineType' | 'refRegIds' | 'priorRegSnapshot' | 'refUserId' | 'refSeasonId' | 'refType'>,
+): CartRemovalAction {
+  if (item.kind === 'membership') {
+    return item.refUserId && item.refSeasonId && item.refType && item.refType !== 'club'
+      ? 'clear-membership-hold'
+      : 'remove-only';
+  }
   if (item.kind !== 'meet-entry' || !item.refRegIds || item.refRegIds.length === 0) return 'remove-only';
   if (item.refLineType === 'change') {
     return item.priorRegSnapshot && item.priorRegSnapshot.length > 0 ? 'revert-registration' : 'no-snapshot-remove-only';
@@ -333,4 +356,60 @@ export function classifyCartRemoval(item: Pick<CartItem, 'kind' | 'refLineType' 
   // a brand-new-entry line: the registration(s) it points at didn't exist
   // before this cart item, so deleting it deletes them.
   return 'delete-registration';
+}
+
+/** Resolves EXACTLY which registration ids a `delete-registration` or
+ *  `revert-registration` cart-item removal should act on, given the OTHER
+ *  cart lines still in the same scope (H5: a registration can be referenced
+ *  by more than one cart line — e.g. an entry line and a stacked change line
+ *  — and removal must not delete/resurrect a reg another line still needs).
+ *  Pure function, no DB access: the caller passes in exactly the reg-id sets
+ *  it needs from the store.
+ *
+ *  - `toDelete` (delete-registration only): `item.refRegIds` MINUS any id
+ *    still referenced by another cart line's `refRegIds` in `otherRefRegIds`
+ *    — a reg another line still needs is left alone (not deleted) and
+ *    reported in `kept` so the caller can toast which ones survived.
+ *  - `toRevert` (revert-registration only): for each snapshot entry, revert
+ *    it UNLESS its id is still referenced by another cart line (kept
+ *    instead), matching the same "don't touch a reg another line needs"
+ *    rule as delete. `toDelete` also carries any id in `item.refRegIds` that
+ *    has NO snapshot entry — those regs were *created by this change itself*
+ *    (e.g. a newly-added discipline mid-edit has no "before" state), so
+ *    reverting can't restore them to a prior value; the only correct action
+ *    is to delete them, exactly like a brand-new entry — again, unless
+ *    another line still references that id, in which case it's kept.
+ *  - `existingRegIds` guards the H5 "never resurrect" rule: a snapshot whose
+ *    id no longer exists in the live registrations set is DROPPED, never
+ *    re-inserted — reverting cannot bring back a registration something else
+ *    (e.g. a refund, or another removal) already deleted for real.
+ */
+export function resolveRegRemoval(
+  item: Pick<CartItem, 'refRegIds' | 'priorRegSnapshot'>,
+  ctx: { otherRefRegIds: Set<string>; existingRegIds: Set<string> },
+): { toDelete: string[]; toRevert: NonNullable<CartItem['priorRegSnapshot']>; kept: string[] } {
+  const refIds = item.refRegIds ?? [];
+  const stillReferenced = (id: string) => ctx.otherRefRegIds.has(id);
+
+  const snapshotById = new Map((item.priorRegSnapshot ?? []).map((r) => [r.id, r]));
+  const toDelete: string[] = [];
+  const toRevert: NonNullable<CartItem['priorRegSnapshot']> = [];
+  const kept: string[] = [];
+
+  for (const id of refIds) {
+    if (stillReferenced(id)) { kept.push(id); continue; }
+    const snapshot = snapshotById.get(id);
+    if (snapshot) {
+      // Never resurrect a reg that was for-real deleted elsewhere.
+      if (ctx.existingRegIds.has(id)) toRevert.push(snapshot);
+      // else: it's already gone — nothing to revert, nothing to delete.
+    } else {
+      // No snapshot entry ⇒ this id was CREATED by the change this line
+      // represents (or is a brand-new entry line, which has no snapshot at
+      // all) — delete it rather than leaving it stranded.
+      toDelete.push(id);
+    }
+  }
+
+  return { toDelete, toRevert, kept };
 }

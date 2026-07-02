@@ -12,8 +12,9 @@ Remediation design: `docs/plans/2026-07-02-security-hardening.md`.
 > the *legitimate* Stripe webhook (service-role, which bypasses the guard triggers by
 > design), so they need the Phase 2 server-side fee-schedule derivation + ref-ownership
 > validation + fulfillment snapshot, NOT a DB trigger. Also open: H1 transactional
-> fulfillment, M1/M2/M4/M5, and all of Part 2 (client cart state machine —
-> `docs/plans/2026-07-02-cart-state-fixes.md`). A finding being listed below does not
+> fulfillment, M1/M2/M4/M5. **Part 2 (client cart state machine — C5, H5–H8, M6–M9, L2)
+> is SHIPPED 2026-07-02** (`docs/plans/2026-07-02-cart-state-fixes.md`), with two minor
+> non-money-loss residuals noted in that plan. A finding being listed below does not
 > mean it is still open; check this box.
 
 **Context for severity:** the platform is live with real users and (test-mode→soon live)

@@ -58,7 +58,7 @@ in [`../CLAUDE.md`](../CLAUDE.md).
 | [unified-cart-b2](plans/2026-07-02-unified-cart-b2.md) | Unified personal + managed-club `/cart` + cart-registration mutation sync | ✅ shipped |
 | [welcome-email-stripe-path](plans/2026-07-02-welcome-email-stripe-path.md) | Fire the first-membership welcome email from `stripe-webhook` fulfillment | 📋 ready to implement |
 | [security-hardening](plans/2026-07-02-security-hardening.md) | Fixes for the 7/02 security findings: RLS guard triggers, token exposure, checkout ref validation, transactional fulfillment | 🟡 Phase 1 shipped (DB guards, verified live); Phase 2–3 TODO |
-| [cart-state-fixes](plans/2026-07-02-cart-state-fixes.md) | Fixes for the 7/02 client cart/registration state-machine findings (C5, H5–H8, M6–M9) | 📋 ready to implement |
+| [cart-state-fixes](plans/2026-07-02-cart-state-fixes.md) | Fixes for the 7/02 client cart/registration state-machine findings (C5, H5–H8, M6–M9) | ✅ shipped (2 minor residuals noted) |
 
 ## Research (`research/`) — informational, not commitments
 

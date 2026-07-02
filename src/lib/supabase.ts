@@ -392,6 +392,14 @@ export function pushMembership(personId: string, m: Membership) {
   remoteUpsert('memberships', [membershipToRow(personId, m)], 'person_id,season_id,type');
 }
 
+/** Delete a membership row by its (person, season, type) — the same stable id
+ *  `membershipToRow` derives. Used when an UNPAID club-cart-pushed membership
+ *  is canceled by removing its cart line (the push created the row, so removing
+ *  the push removes it — see removeCartItemWithSync / cart-sync.ts). */
+export function deleteMembership(personId: string, seasonId: string, type: string) {
+  remoteDelete('memberships', `${personId}:${seasonId}:${type}`, 'id');
+}
+
 export function pushEvent(m: Event) {
   remoteUpsert('events', [eventToRow(m)]);
   remoteReplace('event_sessions', { event_id: m.id }, m.sessions.map((s) => sessionToRow(m.id, s)));

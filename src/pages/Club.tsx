@@ -526,10 +526,15 @@ function Roster({ clubId, canManage }: { clubId: string; canManage: boolean }) {
 
   const lvlName = (id?: string) => db.levels.find((l) => l.id === id)?.name ?? '—';
 
-  const allRoster = useMemo(
-    () => db.people.filter((p) => p.mainClubId === clubId),
-    [db, clubId],
-  );
+  // NOT memoized on `db` (M6 fix, 2026-07-02): `mutate()` mutates `db.people`
+  // in place for an update rather than reassigning the array/object
+  // reference, so a `useMemo` keyed on the whole `db` object never re-runs
+  // after an in-place edit (e.g. a roster/role change) — only a full
+  // `syncFromSupabase()` reload reassigns `db` and would unstick it. Read
+  // directly per render instead (same precedent as Cart.tsx's `cart`);
+  // `useDB()`'s subscription already re-renders this component on every
+  // store change, so this is correct and cheap.
+  const allRoster = db.people.filter((p) => p.mainClubId === clubId);
 
   const filtered = search.trim()
     ? allRoster.filter((p) =>
@@ -731,12 +736,24 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   const [editingAthleteId, setEditingAthleteId] = useState<string | null>(null);
   const [registerAthleteId, setRegisterAthleteId] = useState<string | null>(null);
 
-  const athletes = useMemo(() => db.people.filter(
+  // NOT memoized on `db` — same M6 in-place-mutation trap as Roster's
+  // allRoster above (mutate() never reassigns db.people, so a useMemo keyed
+  // on `db` misses in-place edits). Read directly per render.
+  const athletes = db.people.filter(
     (p) => p.kind === 'athlete' && p.mainClubId === clubId,
-  ).sort((a, b) => a.lastName.localeCompare(b.lastName)), [db, clubId]);
+  ).sort((a, b) => a.lastName.localeCompare(b.lastName));
 
   // Cross-club cart cleanup (3d): also run when a manager opens the registrations
   // view (not only the cart), so the moot pending line + its toast surface here.
+  // M6 audit note: `db` never gets a new reference on an in-place mutate()
+  // (see allRoster/athletes above), so this effect only re-runs on mount or a
+  // `clubId` change, or after a full `syncFromSupabase()` reload — NOT after
+  // every same-session local mutation. Judged safe as-is: the staleness this
+  // cleans up (an athlete becoming paid-registered elsewhere) is inherently a
+  // cross-manager/cross-tab race that only becomes visible here via a resync
+  // anyway, and the function is idempotent + no-op when clean, so a missed
+  // immediate re-run just means the toast surfaces on the next mount/resync
+  // instead of instantly — not a money-correctness gap like H5/H6/H7 above.
   useEffect(() => {
     cleanupCrossClubCart(db, clubId, toast);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -804,9 +821,28 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
     return db.clubs.find((c) => c.id === otherClubId)?.shortName ?? 'another club';
   };
 
-  // Persist registration changes from RegistrationEditor
-  const saveRegs = (athleteId: string, newRegs: Registration[]) => {
+  // Change-fee label for this event+athlete's club-cart line — also how we
+  // detect an already-pending change line to extend in place (M7/H5 fix,
+  // mirroring MyRegistrations.tsx's changeFeeLabel/changeFeePending).
+  const changeFeeLabel = (athlete: Athlete) => `${event.name} change fee — ${athlete.firstName} ${athlete.lastName}`;
+  const changeFeePendingItem = (athleteId: string) => {
+    const athlete = db.people.find((p) => p.id === athleteId);
+    if (!athlete) return undefined;
+    const label = changeFeeLabel(athlete);
+    return (db.carts[clubId] ?? []).find((c) => c.kind === 'meet-entry' && c.refLineType === 'change' && c.label === label);
+  };
+
+  // Persist registration changes from RegistrationEditor. `opts.skipEntryFeeLine`
+  // is set by `addToCart` below, which handles its OWN entry-fee cart line for a
+  // brand-new registration — saveRegs must not push a second one for the same
+  // regs. The direct Edit-flow caller (RegistrationEditor's onSave) omits it, so
+  // a discipline added mid-edit with no prior registration (H7) gets its own
+  // entry-fee line here instead of silently landing "Registered" for free.
+  const saveRegs = (athleteId: string, newRegs: Registration[], opts?: { skipEntryFeeLine?: boolean }) => {
     if (clubMembershipBlocked()) return;
+    // Captured BEFORE the mutate below so it reflects the pre-edit cart state.
+    const alreadyPendingItem = changeFeePendingItem(athleteId);
+    let addedEntryFee = 0;
     mutate((d) => {
       const existingForAthlete = d.registrations.filter(
         (r) => r.eventId === event.id && r.athleteId === athleteId && r.clubId === clubId && !r.refunded,
@@ -829,10 +865,28 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
         ? registrationChangeFee(event, { competingClubId: clubId })
         : 0;
 
-      // Upsert each new reg. A chargeable edit flips a previously-PAID reg back
-      // to "Updated pending purchase"; otherwise preserve its payment state
-      // (new regs created here get their paid flag set in addToCart's pass).
+      // Brand-new-discipline entry total (H7): regs in newRegs with NO prior
+      // row are disciplines being added right now, regardless of whether the
+      // athlete already has other disciplines registered (unlike the
+      // all-or-nothing !editingExisting check this used to lack entirely).
+      // Skipped when the caller (addToCart) already owns the entry-fee line
+      // for these exact regs.
       const priorById = new Map(existingForAthlete.map((r) => [r.id, r]));
+      const newOnlyRegs = newRegs.filter((r) => !priorById.has(r.id));
+      const priorDisciplineCount = existingForAthlete.filter((r) => r.apparatus.length > 0).length;
+      const entryTotal = !opts?.skipEntryFeeLine && newOnlyRegs.length > 0
+        ? newRegistrationEntryTotal(event, {
+            competingClubId: clubId,
+            priorDisciplineCount,
+            newDisciplineCount: newOnlyRegs.length,
+          })
+        : 0;
+
+      // Upsert each new reg. A chargeable edit flips a previously-PAID reg back
+      // to "Updated pending purchase"; otherwise preserve its payment state.
+      // A reg with NO prior (freshly added discipline): paid only when nothing
+      // is owed for it (host club, or covered elsewhere e.g. addToCart already
+      // stamped it) — never silently "Registered" while a fee is pending.
       for (const reg of newRegs) {
         const prior = priorById.get(reg.id);
         if (prior) {
@@ -843,6 +897,11 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
             reg.paid = prior.paid ?? false;
             reg.updatedPending = prior.updatedPending ?? false;
           }
+        } else if (!opts?.skipEntryFeeLine) {
+          // addToCart pre-stamps paid/updatedPending itself before calling
+          // saveRegs with skipEntryFeeLine — don't overwrite that here.
+          reg.paid = entryTotal === 0;
+          reg.updatedPending = false;
         }
         const idx = d.registrations.findIndex((r) => r.id === reg.id);
         if (idx >= 0) {
@@ -857,19 +916,63 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
       // the affected regs so paying it flips them back to paid. Snapshot the
       // FULL prior registration rows (before this function's edits above) so
       // deleting this cart item later can revert them (unified-cart-b2 Task A).
+      // M7/H5: if a change line for this athlete+event is ALREADY pending,
+      // EXTEND it in place (append newly-covered reg ids + snapshot entries
+      // for regs not already covered) instead of stacking a second line —
+      // stacking is what let removal delete/resurrect against a stale
+      // snapshot. NEVER overwrite an existing snapshot entry: it must stay the
+      // ORIGINAL pre-change state from the FIRST edit, not this edit's.
       if (changeFee > 0 && event.changeFee) {
         const cart = d.carts[clubId] ?? (d.carts[clubId] = []);
         const athlete = d.people.find((p) => p.id === athleteId)!;
+        const newSnapshotEntries = newRegs.map((r) => priorById.get(r.id)).filter((r): r is Registration => !!r);
+        if (alreadyPendingItem) {
+          const line = cart.find((c) => c.id === alreadyPendingItem.id);
+          if (line) {
+            const covered = new Set(line.refRegIds ?? []);
+            line.refRegIds = [...covered, ...newRegs.map((r) => r.id).filter((id) => !covered.has(id))];
+            const snapshotCovered = new Set((line.priorRegSnapshot ?? []).map((r) => r.id));
+            line.priorRegSnapshot = [
+              ...(line.priorRegSnapshot ?? []),
+              ...newSnapshotEntries.filter((r) => !snapshotCovered.has(r.id)),
+            ];
+          }
+        } else {
+          cart.push({
+            id: `ci-change-${Date.now()}-${athleteId}`,
+            label: changeFeeLabel(athlete),
+            amount: changeFee,
+            kind: 'meet-entry',
+            refUserId: athleteId,
+            refRegIds: newRegs.map((r) => r.id),
+            refEventId: event.id,
+            refLineType: 'change',
+            priorRegSnapshot: newSnapshotEntries,
+          });
+        }
+        pushCart(clubId, cart, true);
+      } else if (!changeFeeApplies && entryTotal > 0) {
+        // A discipline added via Edit OUTSIDE the change-fee window (or the
+        // athlete has no prior regs at all but wasn't routed through
+        // addToCart), still owes its entry/second-discipline fee (H7) —
+        // queue a line for exactly the newly-added regs. Gated on
+        // `!changeFeeApplies` so that WITHIN a change window (even one whose
+        // fee is $0) an added discipline is governed by the change fee, not a
+        // full entry fee — otherwise a non-host event configured with a $0
+        // change fee would over-charge an added discipline. (Matches
+        // MyRegistrations.tsx, which likewise only charges outside the window.)
+        const cart = d.carts[clubId] ?? (d.carts[clubId] = []);
+        const athlete = d.people.find((p) => p.id === athleteId)!;
+        addedEntryFee = entryTotal;
         cart.push({
-          id: `ci-change-${Date.now()}-${athleteId}`,
-          label: `${event.name} change fee — ${athlete.firstName} ${athlete.lastName}`,
-          amount: changeFee,
+          id: `ci-${Date.now()}-${athleteId}`,
+          label: `${event.name} entry — ${athlete.firstName} ${athlete.lastName} (${newOnlyRegs.map((r) => r.discipline).join('+')})`,
+          amount: entryTotal,
           kind: 'meet-entry',
           refUserId: athleteId,
-          refRegIds: newRegs.map((r) => r.id),
+          refRegIds: newOnlyRegs.map((r) => r.id),
           refEventId: event.id,
-          refLineType: 'change',
-          priorRegSnapshot: newRegs.map((r) => priorById.get(r.id)).filter((r): r is Registration => !!r),
+          refLineType: 'entry',
         });
         pushCart(clubId, cart, true);
       }
@@ -881,7 +984,9 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
     toast(
       changeFeeApplies && !editedHostFree
         ? 'Registration updated. Change fee added to club cart.'
-        : 'Registration saved.',
+        : addedEntryFee > 0
+          ? `Registration updated. ${fmtMoney(addedEntryFee)} entry fee added to club cart.`
+          : 'Registration saved.',
     );
   };
 
@@ -911,13 +1016,24 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
       }
     });
 
-    saveRegs(athleteId, regs);
+    // skipEntryFeeLine: this function owns the entry-fee cart line below
+    // (needs its own refEventId-aware dedupe check, C5) — saveRegs must not
+    // also queue one for these same regs.
+    saveRegs(athleteId, regs, { skipEntryFeeLine: true });
 
-    // Queue the entry-fee line only when something is owed.
+    // Queue the entry-fee line only when something is owed. C5 fix: dedupe on
+    // (athleteId, event.id, entry-only) — NOT athleteId alone across every
+    // meet-entry line — so a second event for the same athlete (or an
+    // existing change-fee line) never silently suppresses this push and
+    // strands the new registration(s) unpayable.
     mutate((d) => {
       if (hostFree) return;
       const cart = d.carts[clubId] ?? (d.carts[clubId] = []);
-      const already = new Set(cart.filter((c) => c.kind === 'meet-entry').map((c) => c.refUserId));
+      const already = new Set(
+        cart
+          .filter((c) => c.kind === 'meet-entry' && c.refLineType === 'entry' && c.refEventId === event.id)
+          .map((c) => c.refUserId),
+      );
       const athlete = d.people.find((p) => p.id === athleteId)!;
       if (!already.has(athleteId)) {
         cart.push({
@@ -1065,8 +1181,12 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
               {registered.map((a) => {
                 const regs = regsFor(a.id);
                 const anyRefundReq = regs.some((r) => r.refundRequested);
-                const anyUnpaid = regs.some((r) => r.paid === false);
-                const anyUpdatedPending = regs.some((r) => r.paid === false && r.updatedPending);
+                // H7: undefined-safe. `paid` defaults falsy on a new reg but a
+                // strict `=== false` check lets `undefined` slip through and
+                // render the green "Registered" badge for a reg nothing has
+                // ever stamped paid — treat anything that isn't `true` as unpaid.
+                const anyUnpaid = regs.some((r) => r.paid !== true);
+                const anyUpdatedPending = regs.some((r) => r.paid !== true && r.updatedPending);
                 const summary = regSummary(a.id);
                 return (
                   <tr key={a.id}>

@@ -52,6 +52,12 @@ Run the suite, `npx eslint` the touched files, and confirm the build before push
 - **opus/fable-tier:** design/decomposition, review of anything touching money/auth/RLS,
   migrations design, debugging weird failures. Effort: low for mechanical, default
   otherwise, high only for review/debug/design.
+- **Money/auth/RLS/cart implementation → sonnet DRAFTS, controller ALWAYS fable-reviews
+  the diff before merge/push/apply** (learned 2026-07-02 across 2 tasks). Sonnet is
+  reliably good at the mechanical fix + enumeration + tests, but missed a real defect
+  each time on the money-invariant: a 2-step trigger-staging bypass, a PUBLIC-grant
+  no-op, a free-membership "clear the hold", an over-charge edge. The adversarial
+  invariant read is not delegable; budget for it.
 - After each routed task, append a row to `docs/model-routing-log.md` (task type, model,
   first-try outcome, tokens if known). Periodically distill the log back into these rules.
 - `node scripts/usage-report.mjs [--days N] [--json]` reports this project's per-session
