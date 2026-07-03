@@ -85,7 +85,7 @@ Run the suite, `npx eslint` the touched files, and confirm the build before push
 - Project ref `wkyerxlgricfphopocoz` (org NAIGC); CLI linked. Migrations in
   `supabase/migrations/` — **the authoritative, current migration list + schema/RLS model
   is `supabase/README.md`**; keep its table updated with every migration. All migrations
-  through `20260703132252_add_fee_invoice_item_kind.sql` are applied. The 182709–182714
+  through `20260703223152_clubs_manager_no_delete.sql` are applied. The 182709–182714
   batch is security-hardening Phase 1 (DB guard triggers + policy lockdowns); 201710 is
   Phase 2 (the fulfillment snapshot). See `docs/plans/2026-07-02-security-hardening.md`.
   `20260703034325` (2026-07-03) fixes a bug in the 182711 guard trigger — it trusted
@@ -96,7 +96,19 @@ Run the suite, `npx eslint` the touched files, and confirm the build before push
   login RPC for the sign-in gate). `20260703132252` adds an `invoice_item_kind` enum
   value `'fee'` so `stripe-webhook` can persist the Stripe service fee as its own
   Purchase-History/receipt line (previously shown at checkout/in the receipt email only,
-  never saved — receipts always looked whole-dollar).
+  never saved — receipts always looked whole-dollar). **`20260703221303` +
+  `20260703221855` + `20260703222142`** fix two real bugs discovered live while
+  consolidating the club edit UI (B8): (1) `pushClub`'s old client-side
+  delete-then-insert of `club_managers` under RLS was self-referential — a non-admin
+  manager's own permission depended on the row the delete had just removed, silently
+  wiping every manager off the club (fixed via a security-definer
+  `replace_club_managers` RPC, checked once up front); (2) `clubs` had NO write policy
+  at all for a non-admin manager (only `admin_all`), so "Edit club details" never
+  actually persisted for its main non-admin audience — fixed with a `manager_all`
+  policy scoped to `manages_club(id)` (needs BOTH insert+update, not just update, since
+  `pushClub` upserts and Postgres RLS still runs the INSERT policy's check on the
+  conflict-update path — split into separate `manager_insert`/`manager_update` policies
+  rather than `for all`, so a manager isn't also granted DELETE on their own club).
 - New migrations: `supabase migration new <name>` (timestamp filename format is required).
   Apply via `supabase db push` — network is sandbox-blocked, run with sandbox disabled.
 - **Enum gotcha:** `ALTER TYPE ... ADD VALUE` can't be referenced in the same
@@ -320,6 +332,7 @@ open**, see below). Notable open items:
   welcome-email gap was real and is ✅ fixed (see feedback-tracker.md B6 notes).
 - **Feedback tracker B7** — Verify-by-eye: Confirm-My-Account nav flash, hard-refresh
   flash, transactional-email styling polish.
-- **Feedback tracker B8** — Smaller items: club-membership edit screen fields. (Save-vs-
-  Add-to-Cart for no-fee changes, the unknown-email login alert, and the profile-refresh
-  double-submit glitch ✅ done 2026-07-03 — see feedback-tracker.md.)
+- **Feedback tracker B8** — ✅ all items done 2026-07-03 (Save-vs-Add-to-Cart for no-fee
+  changes, the unknown-email login alert, the profile-refresh double-submit glitch, and
+  the club-membership edit screen fields — see feedback-tracker.md for details,
+  including two real RLS bugs found+fixed along the way).

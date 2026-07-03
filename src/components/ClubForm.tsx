@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { useDB, mutate } from '../lib/store';
 import { Combo, Field, Modal } from './ui';
 import { useToast } from './ui-hooks';
-import { STATE_REGIONS } from '../lib/types';
-import type { Club } from '../lib/types';
+import { CLUB_ACCESS_LABELS, STATE_REGIONS } from '../lib/types';
+import type { Club, ClubAccess } from '../lib/types';
 import { pushClub } from '../lib/supabase';
 import { nextId } from '../lib/ids';
 
@@ -11,6 +11,8 @@ const BLANK: Omit<Club, 'id'> = {
   name: '', shortName: '', state: '', region: 'Other',
   managerIds: [], email: '', allowClubPay: true, access: 'open',
 };
+
+const ACCESS_ENTRIES = Object.entries(CLUB_ACCESS_LABELS) as [ClubAccess, string][];
 
 /** Create (club undefined) or edit a club in a modal. */
 export function ClubForm({ club, onClose }: { club?: Club; onClose: () => void }) {
@@ -50,6 +52,11 @@ export function ClubForm({ club, onClose }: { club?: Club; onClose: () => void }
         </Field>
         <Field label="Region" hint="Derived from state."><input type="text" disabled value={draft.state ? region : '—'} /></Field>
         <Field label="Club email"><input type="email" value={draft.email} onChange={(e) => set({ email: e.target.value })} placeholder="club@clubs.ucg.org" /></Field>
+        <Field label="Membership eligibility" hint="Who may register with or compete for this club.">
+          <select className="input" value={draft.access} onChange={(e) => set({ access: e.target.value as ClubAccess })}>
+            {ACCESS_ENTRIES.map(([val, label]) => <option key={val} value={val}>{label}</option>)}
+          </select>
+        </Field>
         <Field label="Payments">
           <label className="checkrow">
             <input type="checkbox" checked={draft.allowClubPay} onChange={(e) => set({ allowClubPay: e.target.checked })} />

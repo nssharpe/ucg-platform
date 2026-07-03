@@ -83,6 +83,10 @@ async function executeWriteOp(op: WriteOp): Promise<ExecResult> {
     const { error } = await del;
     return { error };
   }
+  if (op.kind === 'rpc') {
+    const { error } = await supabase.rpc(op.fn, op.args);
+    return { error };
+  }
   // replace: delete the matched set, then insert the new rows.
   let del = supabase.from(op.table).delete();
   for (const [k, v] of Object.entries(op.match)) del = del.eq(k, v);
@@ -368,7 +372,18 @@ export function deletePerson(id: string) { remoteDelete('people', id, 'id'); }
 
 export function pushClub(c: Club) {
   remoteUpsert('clubs', [clubToRow(c)]);
-  remoteReplace('club_managers', { club_id: c.id }, c.managerIds.map((personId) => ({ club_id: c.id, person_id: personId })));
+  // NOT remoteReplace (plain client-side delete-then-insert under RLS): a
+  // non-admin manager's own permission to re-INSERT the replacement rows is
+  // `manages_club(club_id)`, which the DELETE step (still-authorized at that
+  // point) had just made false by removing their own row — so the INSERT
+  // half then failed its own RLS check, silently wiping every manager off
+  // the club with no error surfaced to the actor. `replace_club_managers`
+  // checks authorization ONCE up front and does both writes atomically,
+  // server-side, bypassing this self-referential trap entirely.
+  writeQueue.enqueue({
+    kind: 'rpc', table: 'club_managers', fn: 'replace_club_managers',
+    args: { p_club_id: c.id, p_person_ids: c.managerIds },
+  }, 'club_managers');
 }
 
 /** Push a person row (+ alt-clubs + memberships) to Supabase.

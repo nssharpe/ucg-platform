@@ -18,7 +18,14 @@ import { reportError } from './report-error';
 export type WriteOp =
   | { kind: 'upsert'; table: string; rows: Record<string, unknown>[]; onConflict?: string }
   | { kind: 'delete'; table: string; match: Record<string, unknown> }
-  | { kind: 'replace'; table: string; match: Record<string, unknown>; rows: Record<string, unknown>[] };
+  | { kind: 'replace'; table: string; match: Record<string, unknown>; rows: Record<string, unknown>[] }
+  // A security-definer RPC that performs its own delete+insert atomically,
+  // server-side, with an authorization check made ONCE up front — for
+  // replace-style writes where a plain client-side delete-then-insert under
+  // RLS is a self-referential trap (the actor's own permission to write can
+  // depend on the very rows the delete just removed). `table` is a display
+  // label only (matches the affected table for the write-status UI/logs).
+  | { kind: 'rpc'; table: string; fn: string; args: Record<string, unknown> };
 
 /** Result shape mirrors a Supabase/PostgREST call: `{ error }`, null on success. */
 export type ExecResult = { error: unknown };

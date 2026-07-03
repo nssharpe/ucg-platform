@@ -172,6 +172,21 @@ payment form. Build/lint/197 tests pass (3 new coupon hard-expiry tests added). 
   Verified live in the browser for both cases.
 - Club-membership edit screen must expose: Club name, Short name, State, Club Email,
   Membership Eligibility, "Athletes may push fees to club cart" toggle. orig L78–79.
+  ✅ **DONE** (2026-07-03): all fields already existed except Membership Eligibility
+  (`Club.access`), which was only editable in a SEPARATE always-visible "Club settings"
+  card, not the "Edit club details" modal — added it to `ClubForm.tsx` and removed the
+  now-redundant `ClubSettings` card (its `allowClubPay` field was already duplicated in
+  `ClubForm`; keeping both would have created a stale-state conflict between two
+  independent `useState`s for the same field). While verifying this live, found and
+  fixed TWO real, pre-existing RLS bugs (unrelated to the consolidation, discovered
+  because it's the first time this exact "non-admin manager saves club details" path
+  got exercised in this session): (1) `pushClub`'s `club_managers` replace was
+  self-referential and silently wiped every manager off the club on save; (2) `clubs`
+  had no write policy at all for non-admin managers, so this screen never actually
+  persisted anything for them. Both fixed via migration (see supabase/README.md
+  2026-07-03 entries). Also found the "Region" field silently showing "Other" was a
+  dev-seed data bug (`dev-club.state='CO'` instead of `'Colorado'`, not matching
+  `STATE_REGIONS`'s full-name keys) — corrected the seed data, not a code bug.
 - Profile Refresh Glitch: refresh after club-cart push / waiting-on-waiver reverts to
   Confirm Profile and allows duplicate club-cart submits (state + double-submit guard). §1 / orig L75.
   ✅ **DONE** (2026-07-03): root cause was `Membership.tsx`'s `allOwned`/initial-`step`

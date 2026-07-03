@@ -5,8 +5,8 @@ import { useCapabilities } from '../lib/capabilities';
 import { clubHasActiveMembership, seasonForDate, membershipHolds, paidRegistrationClub } from '../lib/capabilities-core';
 import { Badge, Combo, Field, Modal } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
-import { CLUB_ACCESS_LABELS, STATE_REGIONS } from '../lib/types';
-import type { Athlete, Club, ClubAccess, Registration, Season } from '../lib/types';
+import { STATE_REGIONS } from '../lib/types';
+import type { Athlete, Club, Registration, Season } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
 import { newRegistrationEntryTotal, reassignPartners, registrationChangeFee, changeIsEligible } from '../lib/pricing';
 import type { RegChangeState } from '../lib/pricing';
@@ -151,7 +151,6 @@ export function ClubPage({ view }: { view: ClubView }) {
         <>
           <ClubMembershipCard club={club} />
           {canManage && <ClubManagers club={club} />}
-          {canManage && <ClubSettings club={club} />}
           <h2 className="card-title" style={{ marginBottom: 10 }}>Roster ({rosterSize})</h2>
           <Roster clubId={club.id} canManage={canManage} />
         </>
@@ -204,56 +203,6 @@ function AddPersonModal({ clubId, clubName, kind, onClose }: { clubId: string; c
         <button className="btn ghost" onClick={onClose}>Cancel</button>
       </div>
     </Modal>
-  );
-}
-
-// ---- ClubSettings (access + allowClubPay) -----------------------------------
-
-function ClubSettings({ club }: { club: Club }) {
-  const toast = useToast();
-  const [access, setAccess] = useState<ClubAccess>(club.access ?? 'open');
-  const [allowClubPay, setAllowClubPay] = useState(club.allowClubPay);
-
-  const save = () => {
-    mutate((d) => {
-      const c = d.clubs.find((x) => x.id === club.id)!;
-      c.access = access;
-      c.allowClubPay = allowClubPay;
-      pushClub(c);
-    });
-    toast('Club settings saved.');
-  };
-
-  return (
-    <div className="card card-pad" style={{ marginBottom: 18 }}>
-      <h3 className="card-title">Club settings</h3>
-      <div className="grid cols-2" style={{ gap: 12 }}>
-        <Field label="Membership eligibility" hint="Who may register with or compete for this club.">
-          <select
-            className="input"
-            value={access}
-            onChange={(e) => setAccess(e.target.value as ClubAccess)}
-          >
-            {(Object.entries(CLUB_ACCESS_LABELS) as [ClubAccess, string][]).map(([val, label]) => (
-              <option key={val} value={val}>{label}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Club payments">
-          <label className="checkrow" style={{ paddingTop: 8 }}>
-            <input
-              type="checkbox"
-              checked={allowClubPay}
-              onChange={(e) => setAllowClubPay(e.target.checked)}
-            />
-            Athletes may push membership fees to the club cart
-          </label>
-        </Field>
-      </div>
-      <div style={{ marginTop: 12 }}>
-        <button className="btn primary small" onClick={save}>Save settings</button>
-      </div>
-    </div>
   );
 }
 
