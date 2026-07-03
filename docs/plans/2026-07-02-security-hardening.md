@@ -14,7 +14,20 @@ migrations via `supabase migration new`, enum gotcha, `--no-verify-jwt` trio che
 > in a second; now a non-privileged `updated_pending` false→true is itself rejected
 > unless paired with `paid` going true→false. (2) `redeem_coupon`'s EXECUTE revoke
 > targeted only `authenticated`, but PUBLIC's default grant made that a no-op; now
-> revoked from PUBLIC. **Phase 2 and Phase 3 remain TODO.**
+> revoked from PUBLIC.
+>
+> **STATUS — Phase 2 DONE & deployed 2026-07-02** (migration `20260702201710`; both edge
+> functions redeployed — `stripe-webhook` with `--no-verify-jwt`, trio `verify_jwt`
+> re-checked false before+after). Closes **C4, H4, M5** and achieves **H1**. Verified:
+> webhook signature/no-crash via `stripe trigger` (2xx); create-side C4 pricing + snapshot
+> write + M5 amounts via `scripts/verify-phase2.mjs` (5/5 live). **Deviation from the plan
+> as written:** H1 was NOT done as a plpgsql `fulfill_payment` RPC. Instead the snapshot
+> (2a) removed fulfillment's dependency on `cart_items`, which let the webhook move its
+> atomic claim to the END of an all-idempotent write sequence — retryable partial failure
+> in TS, far lower risk than porting ~120 lines of money logic to plpgsql. **Not
+> automatable here:** the full webhook FULFILLMENT (snapshot→membership/reg activation)
+> needs a real card in Stripe's iframe — covered by code review; flagged for one manual
+> `4242` test. **Phase 3 remains TODO.**
 
 **Design principle:** the DB must enforce what the webhook assumes — "only fulfillment
 writes paid/active state" becomes a trigger-level guarantee, not a convention. Client

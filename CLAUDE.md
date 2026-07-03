@@ -85,9 +85,10 @@ Run the suite, `npx eslint` the touched files, and confirm the build before push
 - Project ref `wkyerxlgricfphopocoz` (org NAIGC); CLI linked. Migrations in
   `supabase/migrations/` — **the authoritative, current migration list + schema/RLS model
   is `supabase/README.md`**; keep its table updated with every migration. All migrations
-  through `20260702182714_club_memberships_insert_lockdown.sql` are applied (2026-07-02;
-  the 182709–182714 batch is security-hardening Phase 1 — DB guard triggers + policy
-  lockdowns, see `docs/plans/2026-07-02-security-hardening.md`).
+  through `20260702201710_payments_lines_snapshot.sql` are applied (2026-07-02). The
+  182709–182714 batch is security-hardening Phase 1 (DB guard triggers + policy
+  lockdowns); 201710 is Phase 2 (the fulfillment snapshot). See
+  `docs/plans/2026-07-02-security-hardening.md`.
 - New migrations: `supabase migration new <name>` (timestamp filename format is required).
   Apply via `supabase db push` — network is sandbox-blocked, run with sandbox disabled.
 - **Enum gotcha:** `ALTER TYPE ... ADD VALUE` can't be referenced in the same
@@ -224,24 +225,32 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
 - `create-checkout-session` (auth'd; caller must own the cart items or manage the club):
   **recomputes every line server-side** — cart `amount`s are display-only and NEVER
   trusted. Handles all line kinds (memberships incl. club/member-targeted, event entries,
-  change fees, addons; honors host-club $0 via `ref_line_type`/`ref_event_id` tags).
-  Service fee = 3% + $0.30 of the cents subtotal **rounded UP** (`Math.ceil`, mirrored in
-  `src/lib/pricing.ts` — never round-to-nearest, it can fall a cent short). Coupons:
-  client sends only a code; server validates (`couponValid` incl. hard event-end
-  expiration) and reduces eligible lines per `appliesTo` scope (floor 0 — Stripe forbids
-  negative lines); code recorded on `payments.coupon_code`. Inserts a `pending`
-  `payments` row (all money cols CENTS) linking session → payer → exact `cart_item_ids`.
+  change fees, addons; honors host-club $0). **Entry-vs-change is derived from the
+  referenced registrations' STATE (`paid`/`updated_pending`), NOT the client
+  `ref_line_type` tag** (C4 fix — a brand-new reg can't be tagged 'change' to pay a cheap
+  change fee; a line is 'change' only when EVERY referenced reg is already
+  purchased/re-pended). **Ownership (H4):** every `ref_reg_ids` reg must belong to the
+  payer (self cart) or the club (club cart); membership `ref_user_id` must be the payer or
+  a club-affiliated person — else 403. Service fee = 3% + $0.30 rounded UP (`Math.ceil`,
+  mirrored in `src/lib/pricing.ts`). Coupons: client sends only a code; server validates +
+  reduces eligible lines per `appliesTo` scope (floor 0). Inserts a `pending` `payments`
+  row (money cols CENTS) with **`lines_snapshot`** — the validated, server-priced line set
+  frozen onto the row so the webhook fulfills from it, not from re-read (client-writable)
+  `cart_items` (closes the TOCTOU where a line's refs could be mutated post-create).
 - `stripe-webhook` (deploy `--no-verify-jwt`; signature via `constructEventAsync`,
-  fail-closed): on completed/async-succeeded, fulfillment is guarded by an **atomic
-  claim** — `UPDATE payments SET fulfilled_at = now() WHERE id=? AND fulfilled_at IS
-  NULL` before ANY side effect (losers bail). Fallback: if cart lines vanished but money
-  moved, one `invoice_items` row is written from the payment's own amount so a real
-  charge never renders $0. Fulfills: activate memberships (`active` iff waiver signed,
-  else `pending-waiver`; clears `club_cart_pending`), flip `registrations.paid` via
-  `ref_reg_ids`, write paid invoice (club-billed for club carts via `invoices.club_id`,
-  else payer; real `stripe_fee` from the balance txn), clear cart lines, `redeem_coupon`
-  RPC + `invoices.coupon_code`, email the PAYER a receipt (Resend). Trusts the
-  server-written `payments` amounts, never the client.
+  fail-closed): fulfills **from `payments.lines_snapshot`** (falls back to live
+  `cart_items` only for pre-2026-07-02 pending payments with no snapshot). Because
+  fulfillment no longer depends on `cart_items`, the **atomic idempotency claim is at the
+  END** — all writes (membership activate, `registrations.paid` flip via `ref_reg_ids`,
+  invoice + `invoice_items` from snapshot amounts, `cart_items` delete) are idempotent
+  deterministic-id upserts, so a mid-fulfillment failure leaves `fulfilled_at` NULL and
+  Stripe's retry re-runs cleanly (H1 — no more permanently-stuck partial fulfillment); a
+  losing concurrent delivery redoes the same idempotent rows and only the claim WINNER
+  redeems the coupon (`redeem_coupon(code, payer)`) + emails the receipt. **M5:** before
+  fulfilling, asserts `session.amount_total === amount_subtotal + service_fee`; on mismatch
+  it logs to `error_logs` and does NOT fulfill (leaves the payment pending for review).
+  Club-billed for club carts (`invoices.club_id`), else payer; real `stripe_fee` from the
+  balance txn. Trusts the server-written `payments`/snapshot amounts, never the client.
 - FE: `StripeCheckout.tsx` (embedded form + poll `payments` self-read until
   `paid`/`failed`, ~60s cap, never falsely claims success; `loadStripe` once at module
   scope) inside shared `CartCheckout.tsx` (promo input + server-returned

@@ -61,6 +61,8 @@ interface RegRow {
   athlete_id: string;
   club_id: string | null;
   refunded: boolean;
+  paid: boolean | null;
+  updated_pending: boolean | null;
 }
 
 Deno.serve(async (req) => {
@@ -136,12 +138,33 @@ Deno.serve(async (req) => {
   if (allRefRegIds.length) {
     const { data: rr, error: rrErr } = await db
       .from('registrations')
-      .select('id, event_id, athlete_id, club_id, refunded')
+      .select('id, event_id, athlete_id, club_id, refunded, paid, updated_pending')
       .in('id', allRefRegIds);
     if (rrErr) return json({ ok: false, error: rrErr.message }, 500);
     regsByLine = (rr ?? []) as RegRow[];
   }
   const regById = new Map(regsByLine.map((r) => [r.id, r]));
+
+  // --- H4: authorize the REFERENCED registrations, not just the cart rows ----
+  // The cart-row ownership check above (person_id/club_id) does NOT constrain
+  // the regs a meet-entry line POINTS AT via ref_reg_ids. Without this, a
+  // crafted line could make the webhook flip a victim's registration to paid
+  // (cross-account), and it's the same trust gap C4 exploits for cheap entry.
+  // Self cart ⇒ every referenced reg is the payer's own; club cart ⇒ every
+  // referenced reg belongs to that club.
+  for (const r of regsByLine) {
+    const owned = isSelfCart ? r.athlete_id === personId : r.club_id === clubId;
+    if (!owned) {
+      return json({ ok: false, error: 'A cart line references a registration that is not yours to pay for.' }, 403);
+    }
+  }
+  // Every referenced reg id must actually resolve (a line pointing at a
+  // nonexistent/refunded reg is rejected here rather than silently priced/flipped).
+  const missingRef = allRefRegIds.find((id) => !regById.has(id));
+  if (missingRef) {
+    return json({ ok: false, error:
+      'A cart line references a registration that no longer exists — remove it from your cart (✕) and try again.' }, 400);
+  }
 
   // Event ids = explicit ref_event_id ∪ the events of any referenced regs.
   const eventIds = Array.from(new Set([
@@ -196,6 +219,29 @@ Deno.serve(async (req) => {
     }
   }
 
+  // --- H4: authorize the membership TARGET(s) (ref_user_id) ------------------
+  // Self cart ⇒ you can only buy an athlete/coach membership for YOURSELF.
+  // Club cart ⇒ only for a person affiliated with THIS club (main club or an
+  // alternate-club affiliation) — a manager can't grant a membership to an
+  // arbitrary person outside their club.
+  if (targetPersonIds.length) {
+    if (isSelfCart) {
+      const bad = targetPersonIds.find((id) => id !== personId);
+      if (bad) return json({ ok: false, error: 'You can only buy a membership for yourself in your own cart.' }, 403);
+    } else if (clubId) {
+      const affiliated = new Set<string>();
+      const { data: pr } = await db.from('people').select('id, main_club_id').in('id', targetPersonIds);
+      for (const p of pr ?? []) {
+        if ((p as { main_club_id?: string }).main_club_id === clubId) affiliated.add(p.id as string);
+      }
+      const { data: alt } = await db.from('person_alt_clubs')
+        .select('person_id').eq('club_id', clubId).in('person_id', targetPersonIds);
+      for (const a of alt ?? []) affiliated.add((a as { person_id: string }).person_id);
+      const bad = targetPersonIds.find((id) => !affiliated.has(id));
+      if (bad) return json({ ok: false, error: 'A membership targets a person who is not on this club’s roster.' }, 403);
+    }
+  }
+
   // Active club_memberships for the involved (club, season) pairs (club-fee $0 check).
   const clubMembershipSeasons = new Set<string>(); // `${clubId}:${seasonId}` that are already active
   const clubMemSeasonIds = Array.from(new Set(
@@ -221,9 +267,15 @@ Deno.serve(async (req) => {
   type Line = { label: string; cents: number; scope?: CouponScope; eventId?: string };
   const lines: Line[] = [];
   let subtotalCents = 0;
-  const pushLine = (label: string, dollars: number, scope?: CouponScope, eventId?: string) => {
+  // Per-cart-item server-priced cents (PRE-discount), for the fulfillment
+  // snapshot's `amount_cents`. EVERY item gets an entry (incl. $0 host-club /
+  // already-covered lines) so the webhook can fulfill it. Grouped memberships:
+  // the dearest item carries the combined amount, the rest 0.
+  const serverCentsByItem = new Map<string, number>();
+  const pushLine = (itemId: string, label: string, dollars: number, scope?: CouponScope, eventId?: string) => {
     const cents = toCents(dollars);
     subtotalCents += cents;
+    serverCentsByItem.set(itemId, cents);
     if (cents > 0) lines.push({ label, cents, scope, eventId });
   };
 
@@ -258,6 +310,7 @@ Deno.serve(async (req) => {
       const item = g.items.find((i) => i.ref_type === t)!;
       consumed.add(item.id);
       const cents = t === dearest ? combinedCents : 0;
+      serverCentsByItem.set(item.id, cents);
       if (cents > 0) lines.push({ label: item.label, cents, scope: t === 'athlete' ? 'athlete-membership' : 'coach-membership' });
     }
   }
@@ -270,25 +323,20 @@ Deno.serve(async (req) => {
       const season = seasons.get(i.ref_season_id);
       if (!season) return json({ ok: false, error: `Unknown season ${i.ref_season_id}.` }, 400);
       const alreadyActive = clubId && clubMembershipSeasons.has(`${clubId}:${i.ref_season_id}`);
-      pushLine(i.label, alreadyActive ? 0 : season.club_fee, 'club-membership');
+      pushLine(i.id, i.label, alreadyActive ? 0 : season.club_fee, 'club-membership');
       continue;
     }
 
-    // --- Event-entry change fee ---
-    if (i.kind === 'meet-entry' && i.ref_line_type === 'change') {
-      const refRegs = (i.ref_reg_ids ?? []).map((id) => regById.get(id)).filter((r): r is RegRow => !!r);
-      const reg = refRegs[0];
-      if (!reg) {
-        return json({ ok: false, error:
-          `"${i.label}" no longer matches a real registration (it may have been refunded or removed) — remove it from your cart (✕) and try checking out again.` }, 400);
-      }
-      const event = events.get(reg.event_id);
-      if (!event) return json({ ok: false, error: `Unknown event ${reg.event_id}.` }, 400);
-      pushLine(i.label, registrationChangeFeeDollars(event, { competingClubId: reg.club_id ?? '' }), 'meet-entry', reg.event_id);
-      continue;
-    }
-
-    // --- Event-entry (new entry; 'entry' or legacy null line type) ---
+    // --- Event entry / change fee ---
+    // C4: entry-vs-change is derived from the REFERENCED REGISTRATIONS' STATE,
+    // never from the client-supplied `ref_line_type` tag (which is trusted only
+    // for display/grouping). A reg already purchased or re-pended by an edit
+    // (`paid` or `updated_pending`) is a CHANGE; a brand-new unpaid reg is an
+    // ENTRY. Rule: treat as change ONLY when EVERY referenced reg is
+    // already-purchased/changed — if ANY is brand-new, price the (more
+    // expensive, correct) entry total, so a new reg can't be smuggled into a
+    // "change" line to be underpriced (the literal C4 exploit: a $0/cheap
+    // change fee for what should be a full entry).
     if (i.kind === 'meet-entry') {
       const refRegs = (i.ref_reg_ids ?? []).map((id) => regById.get(id)).filter((r): r is RegRow => !!r);
       const reg = refRegs[0];
@@ -299,18 +347,23 @@ Deno.serve(async (req) => {
       const event = events.get(reg.event_id);
       if (!event) return json({ ok: false, error: `Unknown event ${reg.event_id}.` }, 400);
       const competingClubId = reg.club_id ?? '';
-      const lineRegIds = new Set(i.ref_reg_ids ?? []);
-      const newDisciplineCount = refRegs.length;
-      // Prior = other non-refunded regs for (event, athlete, competing club) not in this line.
-      const priorDisciplineCount = allEventRegs.filter((r) =>
-        r.event_id === reg.event_id &&
-        r.athlete_id === reg.athlete_id &&
-        (r.club_id ?? '') === competingClubId &&
-        !lineRegIds.has(r.id),
-      ).length;
-      pushLine(i.label, newRegistrationEntryTotalDollars(event, {
-        competingClubId, priorDisciplineCount, newDisciplineCount,
-      }), 'meet-entry', reg.event_id);
+      const isChange = refRegs.every((r) => r.paid === true || r.updated_pending === true);
+      if (isChange) {
+        pushLine(i.id, i.label, registrationChangeFeeDollars(event, { competingClubId }), 'meet-entry', reg.event_id);
+      } else {
+        const lineRegIds = new Set(i.ref_reg_ids ?? []);
+        const newDisciplineCount = refRegs.length;
+        // Prior = other non-refunded regs for (event, athlete, competing club) not in this line.
+        const priorDisciplineCount = allEventRegs.filter((r) =>
+          r.event_id === reg.event_id &&
+          r.athlete_id === reg.athlete_id &&
+          (r.club_id ?? '') === competingClubId &&
+          !lineRegIds.has(r.id),
+        ).length;
+        pushLine(i.id, i.label, newRegistrationEntryTotalDollars(event, {
+          competingClubId, priorDisciplineCount, newDisciplineCount,
+        }), 'meet-entry', reg.event_id);
+      }
       continue;
     }
 
@@ -319,7 +372,7 @@ Deno.serve(async (req) => {
       if (!i.ref_event_id) return json({ ok: false, error: `Addon line ${i.id} has no event.` }, 400);
       const event = events.get(i.ref_event_id);
       if (!event) return json({ ok: false, error: `Unknown event ${i.ref_event_id}.` }, 400);
-      pushLine(i.label, addonPriceDollars(event, i.ref_line_type), 'meet-entry', i.ref_event_id);
+      pushLine(i.id, i.label, addonPriceDollars(event, i.ref_line_type), 'meet-entry', i.ref_event_id);
       continue;
     }
 
@@ -428,6 +481,28 @@ Deno.serve(async (req) => {
   // matching can key on it (vestigial); multi-item ones rely on cart_item_ids.
   const single = items.length === 1 && items[0].kind === 'membership' ? items[0] : null;
 
+  // --- Freeze the validated, server-priced line set onto the payment row -----
+  // The webhook fulfills FROM THIS SNAPSHOT, not from live `cart_items` (which
+  // stays client-writable until fulfillment — the TOCTOU closed here). One
+  // entry per cart item the payment covers, incl. $0 (host-club / already
+  // covered) lines so they still get fulfilled. `amount_cents` is the
+  // server-computed PRE-discount charge (grouped memberships: dearest carries
+  // the combined amount, the rest 0) — used for invoice_items, never trusted
+  // from the client.
+  const linesSnapshot = items.map((i) => ({
+    id: i.id,
+    kind: i.kind,
+    label: i.label,
+    amount_cents: serverCentsByItem.get(i.id) ?? 0,
+    club_id: i.club_id,
+    ref_user_id: i.ref_user_id,
+    ref_season_id: i.ref_season_id,
+    ref_type: i.ref_type,
+    ref_reg_ids: i.ref_reg_ids,
+    ref_event_id: i.ref_event_id,
+    ref_line_type: i.ref_line_type,
+  }));
+
   let session;
   try {
     session = await stripe.checkout.sessions.create({
@@ -454,6 +529,7 @@ Deno.serve(async (req) => {
       service_fee: feeCents,
       currency: 'usd',
       cart_item_ids: items.map((i) => i.id),
+      lines_snapshot: linesSnapshot,
       ref_season_id: single?.ref_season_id ?? null,
       ref_type: single?.ref_type ?? null,
       coupon_code: appliedCouponCode,
