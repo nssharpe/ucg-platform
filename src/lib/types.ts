@@ -342,7 +342,7 @@ export interface InvoiceItem {
   id: string;
   label: string;
   amount: number;
-  kind: 'membership' | 'meet-entry' | 'banquet' | 'addon' | 'donation' | 'discount';
+  kind: 'membership' | 'meet-entry' | 'banquet' | 'addon' | 'donation' | 'discount' | 'fee';
   refUserId?: string;
   /** For membership cart/invoice lines: the exact season + type this fee covers,
    *  so paying the line activates the RIGHT membership (a person may hold several

@@ -325,6 +325,21 @@ async function fulfill(
       refunded: false,
     }], { onConflict: 'id' });
   }
+  // The service fee (the only source of non-whole-dollar cents in what the
+  // customer actually paid — entry/membership/change fees are always
+  // whole-dollar configured amounts) was previously computed for checkout
+  // display and the receipt EMAIL only, never persisted — so Purchase
+  // History / the receipt PDF silently dropped it and always looked like a
+  // rounded whole-dollar total. Write it as its own line so it's summed into
+  // the invoice total like any other item.
+  if ((payment.service_fee ?? 0) > 0) {
+    await db.from('invoice_items').upsert([{
+      id: `ii-${payment.id}-fee`, invoice_id: invoiceId,
+      label: 'Service fee (card processing)', amount: (payment.service_fee ?? 0) / 100, kind: 'fee',
+      ref_user_id: null, ref_reg_ids: null, ref_event_id: null, ref_line_type: null,
+      refunded: false,
+    }], { onConflict: 'id' });
+  }
 
   // --- Clear the paid cart lines (idempotent delete-by-id) ---
   if (cartItemIds.length) {
