@@ -2,6 +2,7 @@
 import { jsPDF } from 'jspdf';
 import type { CartItem, Invoice } from './types';
 import { fmtMoney } from './scoring';
+import { processingFee } from './pricing';
 
 /** Net total of an invoice (refunded items don't count). */
 export function invoiceTotal(inv: Invoice): number {
@@ -116,7 +117,7 @@ export function downloadCartInvoice(items: CartItem[], forName: string, title: s
   doc.setFont('helvetica', 'normal');
 
   doc.setFontSize(10.5);
-  const total = items.reduce((sum, i) => sum + i.amount, 0);
+  const subtotal = items.reduce((sum, i) => sum + i.amount, 0);
   for (const i of items) {
     ensure(16);
     doc.setTextColor(30);
@@ -125,6 +126,22 @@ export function downloadCartInvoice(items: CartItem[], forName: string, title: s
     doc.text(fmtMoney(i.amount), pageW - margin, y, { align: 'right' });
     y += Math.max(16, lines.length * 13);
   }
+
+  // Service fee: same formula the real checkout charges (processingFee, 3% +
+  // $0.30 of the subtotal, rounded UP), so this estimate matches what the
+  // member actually sees at checkout instead of just gesturing at "calculated
+  // at checkout." No coupon is applied here (coupons are entered AT checkout,
+  // not on this pre-checkout estimate) — matches create-checkout-session,
+  // which computes the real fee off the POST-discount subtotal.
+  const fee = subtotal > 0 ? processingFee(Math.round(subtotal * 100)) / 100 : 0;
+  const total = subtotal + fee;
+
+  y += 4; ensure(16); doc.setTextColor(90); doc.setFontSize(10.5);
+  doc.text('Subtotal', margin, y);
+  doc.text(fmtMoney(subtotal), pageW - margin, y, { align: 'right' }); y += 16;
+  ensure(16);
+  doc.text('Service fee (card processing)', margin, y);
+  doc.text(fmtMoney(fee), pageW - margin, y, { align: 'right' }); y += 16;
 
   y += 6; ensure(24);
   doc.setDrawColor(20); doc.line(margin, y, pageW - margin, y); y += 18;
@@ -135,7 +152,11 @@ export function downloadCartInvoice(items: CartItem[], forName: string, title: s
 
   doc.setFont('helvetica', 'italic'); doc.setFontSize(9); doc.setTextColor(140);
   ensure(14);
-  doc.text('Final amount due (including any applicable service fee) is calculated at checkout.', margin, y);
+  const disclaimer2 = doc.splitTextToSize(
+    'This estimate includes the service fee at the rate charged today; a promo code applied at checkout is not reflected here.',
+    width,
+  );
+  doc.text(disclaimer2, margin, y);
 
   const filenameSafe = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'cart';
   doc.save(`cart-estimate-${filenameSafe}.pdf`);
