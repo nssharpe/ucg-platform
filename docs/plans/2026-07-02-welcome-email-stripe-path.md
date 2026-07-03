@@ -1,6 +1,18 @@
 # Plan: fire the first-membership welcome email on the Stripe card path
 
-**Status:** ready to implement (Sonnet-tier task; ~half day).
+**Status:** ✅ shipped 2026-07-03 (deployed to `stripe-webhook`, `verify_jwt:false`
+confirmed). Implemented via the self-HTTP-fetch pattern already proven in
+`record-waiver-signature/index.ts` (service-role bearer token to
+`send-membership-welcome`) rather than the shared-module extraction sketched
+below — lower-risk (no changes to `send-membership-welcome`'s own auth
+wrapper) and consistent with the one existing precedent. The "first
+membership" check uses ANY prior membership row (any status), matching
+requirement 1 below, computed in a single batched query before the
+fulfillment loop's writes. Adversarially reviewed (money/state-safe: correct
+`!clubId` self-cart partitioning verified against `create-checkout-session`'s
+hard self-vs-club split, retry-idempotent, defense-in-depth via
+`send-membership-welcome`'s own no-club/not-Outside-US re-check, per-target
+Set-based logic for multi-athlete purchases).
 **Context:** `sendMembershipWelcome` ("Welcome to UCG", no-club member's first
 membership) currently fires only on the client `'comp'` path in `Membership.tsx`.
 Since the direct card-pay retirement (2026-07-02), card purchases go through Stripe +

@@ -234,6 +234,31 @@ async function fulfill(
   // Waiver state is resolved server-side from waiver_signatures for the TARGET
   // person: signed ⇒ active, else pending-waiver. paid_via reflects who paid
   // (card for a self cart, club for a club cart); the club-cart hold is cleared.
+  //
+  // "First membership" welcome email: previously only fired on the admin-comp
+  // path (Membership.tsx) — a real card payment (this path) never triggered it,
+  // even for the exact no-club/Independent member it's meant for. Snapshot
+  // which target people had NO membership row AT ALL (any status — active,
+  // pending-waiver, or pending-club-payment all count as "already engaged the
+  // purchase flow once") before this fulfillment, so we can tell, after the
+  // loop, which ones just got their first one. Per-docs/plans/2026-07-02-
+  // welcome-email-stripe-path.md's requirement — broader than a plain
+  // status='active' check, so an abandoned/never-paid prior attempt still
+  // correctly suppresses a duplicate welcome.
+  const membershipTargets = Array.from(new Set(
+    items
+      .filter((i) => i.kind === 'membership' && i.ref_season_id && (i.ref_type === 'athlete' || i.ref_type === 'coach'))
+      .map((i) => i.ref_user_id ?? personId),
+  ));
+  const hadPriorMembership = new Set<string>();
+  if (membershipTargets.length) {
+    const { data: priorRows } = await db.from('memberships')
+      .select('person_id')
+      .in('person_id', membershipTargets);
+    for (const r of (priorRows ?? []) as { person_id: string }[]) hadPriorMembership.add(r.person_id);
+  }
+  const becameActive = new Set<string>();
+
   for (const item of items) {
     if (item.kind !== 'membership' || !item.ref_season_id) continue;
     const seasonId = item.ref_season_id;
@@ -268,6 +293,27 @@ async function fulfill(
         activated_by_admin: false,
         club_cart_pending: false,
       }, { onConflict: 'person_id,season_id,type' });
+      if (signed && !clubId) becameActive.add(targetPerson);
+    }
+  }
+
+  // Fire the welcome email for each target that just got their FIRST active
+  // membership via a real card payment (never wired before this fix). Only
+  // ever applies to a self/card cart (!clubId) — a club-cart payment implies
+  // the target belongs to a club, and send-membership-welcome's own
+  // server-side re-check (no-club only) would reject it anyway. Best-effort,
+  // never blocks fulfillment; mirrors the same trigger in
+  // record-waiver-signature/index.ts.
+  for (const targetPerson of becameActive) {
+    if (hadPriorMembership.has(targetPerson)) continue;
+    try {
+      await fetch(`${Deno.env.get('SUPABASE_URL')!}/functions/v1/send-membership-welcome`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!}` },
+        body: JSON.stringify({ personId: targetPerson }),
+      });
+    } catch (welcomeErr) {
+      console.error('[stripe-webhook] failed to trigger welcome email:', welcomeErr);
     }
   }
 

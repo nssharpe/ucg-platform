@@ -309,10 +309,10 @@ function MembershipInner({ me }: { me: Athlete }) {
   // "Card number"/"Exp"/"CVC" form that granted the membership immediately with
   // NO real charge (its own copy said "Demo prototype — no real payment is
   // processed"). Amounts here are display-only; create-checkout-session
-  // recomputes everything server-side. NOTE: unlike the comp path above, this
-  // does not (yet) trigger the "first membership" welcome email — that would
-  // need to move into stripe-webhook's fulfillment, which doesn't currently
-  // check for a person's prior memberships. Flagged as a follow-up.
+  // recomputes everything server-side. The "first membership" welcome email
+  // for THIS path fires from stripe-webhook's fulfillment (once the payment
+  // actually clears), not from here — it checks each target's prior
+  // memberships itself, mirroring the once-only guard above.
   const addToCartAndCheckout = () => {
     mutate((d) => {
       const cart = d.carts[me.id] ?? (d.carts[me.id] = []);

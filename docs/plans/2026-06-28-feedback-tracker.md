@@ -132,6 +132,34 @@ payment form. Build/lint/197 tests pass (3 new coupon hard-expiry tests added). 
 
 **B6 — Email/state regressions (server logic):** waiver-checkout "email sent" but none sent; in-cart membership labeled paid but bubble conflicts (state); admin-access requests routing to League instead of Club Managers; denial-email not firing (notify-manager-access-denied exists — likely a wiring regression); under-18 welcome email AND receipt suppressed until waiver signed + membership active (even when club pays); memberships-checkout completion should email owner confirmation + PDF receipt. §2/§3/§8 / orig L6,72,77
 
+**Investigation notes (2026-07-03) — 5 of 6 items checked, one real fix shipped:**
+- Waiver-checkout "email sent" toast, admin-access routing to League, and
+  denial-email-not-firing: all three read as CORRECT in current code (client
+  toast only fires on a real `ok:true` response; `request-manager-access`
+  only falls back to admins when the club genuinely has zero managers;
+  `notify-manager-access-denied` is deployed `verify_jwt:false` and wired
+  correctly). No reproducible bug found — likely already fixed in an earlier
+  session, or against a stale build, like several "already fixed" B1 findings.
+- In-cart membership "paid" label conflict: **false positive** — `Cart.tsx`'s
+  membership `CartCard` line renders ONLY the label + amount, no status
+  badge at all; `membershipHolds()` bubbles only ever render on
+  Membership.tsx/Club.tsx roster, never inside the cart itself. No conflict
+  exists in current code.
+- "Receipt suppressed" half of the under-18 item: **false positive** — the
+  live receipt path (`stripe-webhook`'s `emailReceipt()`) sends
+  unconditionally on fulfillment with no waiver/active gate. The
+  `send-receipt` edge function DOES have misleading hardcoded "your
+  membership is now active" copy, but it's dead code — not called from
+  anywhere in `src/` currently, so it isn't a live bug.
+- "Welcome email suppressed... even when club pays" — **narrower than
+  described, but real**: the welcome email is by design only for no-club
+  (Independent) members (`send-membership-welcome`'s own server-side gate
+  requires `main_club_id IS NULL`), so a club-pay purchase was never meant to
+  trigger it. The REAL gap was the standalone CLAUDE.md item — a no-club
+  member's real Stripe CARD payment never fired it at all (comp-only). ✅
+  **FIXED** (2026-07-03) — see
+  [welcome-email-stripe-path](2026-07-02-welcome-email-stripe-path.md), now shipped.
+
 **B8 — Smaller items (review-light):**
 - Login: unknown email → immediate alert "No account exists for that email" instead of
   offering reset/magic-link (needs an existence check — `people`-by-email lookup or RPC;
