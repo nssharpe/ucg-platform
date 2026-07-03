@@ -77,6 +77,11 @@ export function EventResults() {
       setLivePatches((prev) => applyScorePatch(prev, payload));
     });
     return unsubscribe;
+    // Deliberately keyed on event?.id, not the whole `event` object: `event`
+    // is a fresh reference on every store mutation, which would tear down and
+    // re-subscribe the realtime channel far more often than the subscription
+    // target (the event id) actually changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [event?.id]);
 
   const effectiveDb: DB = useMemo(() => {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
@@ -474,7 +474,10 @@ function Roster({ clubId, canManage }: { clubId: string; canManage: boolean }) {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const season = db.seasons.find((s) => s.current)!;
 
-  const lvlName = (id?: string) => db.levels.find((l) => l.id === id)?.name ?? '—';
+  // useCallback (not a plain inline function) so it has a stable reference
+  // across renders and can be honestly included in `sorted`'s useMemo deps
+  // below, instead of a new closure on every render defeating the memo.
+  const lvlName = useCallback((id?: string) => db.levels.find((l) => l.id === id)?.name ?? '—', [db.levels]);
 
   // NOT memoized on `db` (M6 fix, 2026-07-02): `mutate()` mutates `db.people`
   // in place for an update rather than reassigning the array/object
@@ -494,7 +497,7 @@ function Roster({ clubId, canManage }: { clubId: string; canManage: boolean }) {
 
   const sorted = useMemo(
     () => sortRoster(filtered, sortCol, sortDir, lvlName),
-    [filtered, sortCol, sortDir, db.levels],
+    [filtered, sortCol, sortDir, lvlName],
   );
 
   // A person appears under Athletes if they hold the athlete role, and under

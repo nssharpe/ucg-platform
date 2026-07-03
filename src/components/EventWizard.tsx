@@ -147,7 +147,7 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
   const takenSlugs = db.events.filter((m) => m.id !== editEvent?.id).map((m) => m.slug);
   const slug = useMemo(
     () => isEdit ? editEvent!.slug : uniqueSlug(name, takenSlugs),
-    [name, takenSlugs, isEdit],
+    [name, takenSlugs, isEdit, editEvent],
   );
 
   const allCompetingLevelIds = useMemo(() => [...new Set(sessions.flatMap((s) => s.levelIds))], [sessions]);
