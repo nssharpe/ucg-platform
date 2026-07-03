@@ -40,16 +40,21 @@ interface PaymentRow {
   service_fee: number | null;
   currency: string;
   cart_item_ids: string[] | null;
+  lines_snapshot: SnapshotItem[] | null;
   invoice_id: string | null;
   stripe_event_id: string | null;
   fulfilled_at: string | null;
   coupon_code: string | null;
 }
-interface CartItemRow {
+// The unit of fulfillment — one per cart item the payment covers. `amount_cents`
+// is the server-priced (pre-discount) charge frozen at session-create time.
+// Sourced from `payments.lines_snapshot` (the trusted path); for legacy pending
+// payments with no snapshot it's reconstructed from live `cart_items`.
+interface SnapshotItem {
   id: string;
   club_id: string | null;
   label: string;
-  amount: number;
+  amount_cents: number;
   kind: string;
   ref_user_id: string | null;
   ref_season_id: string | null;
@@ -134,9 +139,13 @@ Deno.serve(async (req) => {
   }
 });
 
-/** Complete a cart purchase (memberships, registrations, addons). Idempotent on
- *  the Stripe event id and on the payment row's `fulfilled_at` — a redelivered
- *  event is a no-op. */
+/** Complete a cart purchase (memberships, registrations, addons). Fulfills FROM
+ *  THE SNAPSHOT on the payment row (never from live cart_items), which lets the
+ *  idempotency claim sit at the END: all writes below use deterministic ids and
+ *  are safe to repeat, so a mid-fulfillment failure leaves `fulfilled_at` null
+ *  and Stripe's retry re-runs cleanly (fixes H1 — no more permanently-stuck
+ *  partial fulfillment), while two concurrent deliveries both write the same
+ *  idempotent rows and only the claim winner redeems the coupon + emails. */
 async function fulfill(
   db: DB,
   stripe: ReturnType<typeof getStripe>,
@@ -144,7 +153,7 @@ async function fulfill(
   eventId: string,
 ): Promise<void> {
   const { data: payRow } = await db.from('payments')
-    .select('id, person_id, status, amount_subtotal, service_fee, currency, cart_item_ids, invoice_id, stripe_event_id, fulfilled_at, coupon_code')
+    .select('id, person_id, status, amount_subtotal, service_fee, currency, cart_item_ids, lines_snapshot, invoice_id, stripe_event_id, fulfilled_at, coupon_code')
     .eq('stripe_session_id', session.id)
     .maybeSingle();
   const payment = payRow as PaymentRow | null;
@@ -153,36 +162,28 @@ async function fulfill(
     console.warn('[stripe-webhook] no payments row for session', session.id);
     return;
   }
-  if (payment.fulfilled_at || payment.status === 'paid' || payment.stripe_event_id === eventId) {
-    return; // already handled
-  }
+  // Fast-path early-out for an obviously-finished payment. NOT the race guard —
+  // that's the conditional claim at the very end.
+  if (payment.status === 'paid' || payment.fulfilled_at) return;
   const personId = payment.person_id;
   if (!personId) { console.warn('[stripe-webhook] payment has no person', payment.id); return; }
 
-  // --- Atomically claim this payment before doing any side effects ----------
-  // Stripe redelivers webhooks (at-least-once) and a session can legitimately
-  // receive both a `completed` and a later `async_payment_succeeded` event; the
-  // check above alone leaves a race window between two concurrent deliveries
-  // both passing it before either has written `fulfilled_at`. A conditional
-  // UPDATE ... WHERE fulfilled_at IS NULL is atomic in Postgres: only ONE
-  // concurrent caller can flip `fulfilled_at` from null, so a losing duplicate
-  // bails out here, BEFORE it can read `cart_items` — which the winner may have
-  // already deleted, previously causing a real charge to fulfill with zero
-  // invoice line items (a "$0" receipt despite Stripe actually collecting
-  // payment). `status` stays 'pending' — the final update below sets 'paid' —
-  // `payments.status` has a fixed CHECK constraint with no in-between value.
-  const claimTime = new Date().toISOString();
-  const { data: claimed } = await db.from('payments')
-    .update({ fulfilled_at: claimTime })
-    .eq('id', payment.id)
-    .is('fulfilled_at', null)
-    .select('id');
-  if (!claimed || claimed.length === 0) {
-    console.warn('[stripe-webhook] payment already claimed by a concurrent delivery', payment.id);
+  // --- M5: reconcile what Stripe actually collected against the server-written
+  //     amounts (defense-in-depth against tampering / a pricing bug). ---------
+  const expectedTotal = (payment.amount_subtotal ?? 0) + (payment.service_fee ?? 0);
+  if (typeof session.amount_total === 'number' && session.amount_total !== expectedTotal) {
+    await db.from('error_logs').insert({
+      context: 'stripe-webhook',
+      message: `amount mismatch: Stripe collected ${session.amount_total} but the payment row expects ${expectedTotal} (subtotal ${payment.amount_subtotal} + fee ${payment.service_fee})`,
+      detail: { paymentId: payment.id, sessionId: session.id, eventId },
+    }).then(() => {}, () => {});
+    // Do NOT fulfill a mismatched charge. Leave the payment 'pending' (not
+    // 'failed' — money WAS collected) for manual review; return 2xx so Stripe
+    // stops retrying a condition that won't self-resolve. Visible in error_logs.
     return;
   }
 
-  // --- Stripe's actual processing fee, from the balance transaction ---
+  // --- Stripe's actual processing fee, from the balance transaction ---------
   const piId = typeof session.payment_intent === 'string'
     ? session.payment_intent
     : session.payment_intent?.id ?? null;
@@ -200,17 +201,34 @@ async function fulfill(
     }
   }
 
-  // --- Load the exact cart items this payment covers ---
+  // --- The lines to fulfill: the frozen snapshot (trusted path), or, for a
+  //     pending payment created before the snapshot column existed, the live
+  //     cart_items as a fallback. ---
   const cartItemIds = payment.cart_item_ids ?? [];
-  const { data: itemRows } = cartItemIds.length
-    ? await db.from('cart_items')
-      .select('id, club_id, label, amount, kind, ref_user_id, ref_season_id, ref_type, ref_reg_ids, ref_event_id, ref_line_type')
-      .in('id', cartItemIds)
-    : { data: [] as CartItemRow[] };
-  const items = (itemRows ?? []) as CartItemRow[];
+  let items: SnapshotItem[];
+  if (payment.lines_snapshot && payment.lines_snapshot.length) {
+    items = payment.lines_snapshot;
+  } else {
+    const { data: itemRows } = cartItemIds.length
+      ? await db.from('cart_items')
+        .select('id, club_id, label, amount, kind, ref_user_id, ref_season_id, ref_type, ref_reg_ids, ref_event_id, ref_line_type')
+        .in('id', cartItemIds)
+      : { data: [] as Record<string, unknown>[] };
+    items = (itemRows ?? []).map((i) => ({
+      id: i.id as string, club_id: (i.club_id as string | null) ?? null,
+      label: i.label as string, amount_cents: Math.round(((i.amount as number) ?? 0) * 100),
+      kind: i.kind as string, ref_user_id: (i.ref_user_id as string | null) ?? null,
+      ref_season_id: (i.ref_season_id as string | null) ?? null, ref_type: (i.ref_type as string | null) ?? null,
+      ref_reg_ids: (i.ref_reg_ids as string[] | null) ?? null, ref_event_id: (i.ref_event_id as string | null) ?? null,
+      ref_line_type: (i.ref_line_type as string | null) ?? null,
+    }));
+  }
   // A club cart ⇒ any item carries the club_id (person carts have it null).
   const clubId = items.find((i) => i.club_id)?.club_id ?? null;
   const now = new Date().toISOString();
+
+  // === All writes below are IDEMPOTENT (deterministic ids / set-true-again /
+  // === delete-by-id) so a Stripe retry re-runs them harmlessly. ==============
 
   // --- Fulfill memberships + club memberships -------------------------------
   // Waiver state is resolved server-side from waiver_signatures for the TARGET
@@ -222,15 +240,13 @@ async function fulfill(
 
     if (item.ref_type === 'club') {
       if (!clubId) continue;
-      const { data: existingCm } = await db.from('club_memberships')
-        .select('id').eq('club_id', clubId).eq('season_id', seasonId).eq('status', 'active').maybeSingle();
-      if (!existingCm) {
-        await db.from('club_memberships').insert({
-          id: crypto.randomUUID(),
-          club_id: clubId, season_id: seasonId,
-          status: 'active', granted_by_admin: false, created_at: now,
-        });
-      }
+      // Upsert-ignore on the (club, season) unique key — idempotent under retry
+      // (a second delivery is a no-op instead of a duplicate/uuid churn).
+      await db.from('club_memberships').upsert({
+        id: crypto.randomUUID(),
+        club_id: clubId, season_id: seasonId,
+        status: 'active', granted_by_admin: false, created_at: now,
+      }, { onConflict: 'club_id,season_id', ignoreDuplicates: true });
       continue;
     }
 
@@ -256,6 +272,8 @@ async function fulfill(
   }
 
   // --- Flip the paid registrations (event entries + change fees) -------------
+  // Service role bypasses the guard_registration_paid trigger (Phase 1), so the
+  // webhook remains the authoritative writer of registrations.paid.
   const paidRegIds = Array.from(new Set(items.flatMap((i) => i.ref_reg_ids ?? [])));
   if (paidRegIds.length) {
     await db.from('registrations')
@@ -267,12 +285,14 @@ async function fulfill(
   // Club cart ⇒ billed to the club; self cart ⇒ billed to the payer.
   const invoiceId = payment.invoice_id ?? `inv-${payment.id}`;
   let number: string;
-  if (!payment.invoice_id) {
+  const { data: existingInv } = await db.from('invoices').select('number').eq('id', invoiceId).maybeSingle();
+  if (existingInv) {
+    // Already created by an earlier (partial) attempt — reuse its number so a
+    // retry doesn't renumber the invoice.
+    number = (existingInv as { number?: string }).number ?? `UCG-${payment.id}`;
+  } else {
     const { count } = await db.from('invoices').select('id', { count: 'exact', head: true });
     number = `UCG-2026-${String((count ?? 0) + 1).padStart(4, '0')}`;
-  } else {
-    const { data: existingInv } = await db.from('invoices').select('number').eq('id', invoiceId).maybeSingle();
-    number = (existingInv as { number?: string } | null)?.number ?? `UCG-${payment.id}`;
   }
   await db.from('invoices').upsert({
     id: invoiceId, number,
@@ -280,20 +300,14 @@ async function fulfill(
     coupon_code: payment.coupon_code ?? null, created_at: now, paid_at: now,
     stripe_payment_intent_id: piId, stripe_fee: stripeFeeCents,
   }, { onConflict: 'id' });
-  // Record the redemption (atomically bumps used_count, enforcing max_uses) —
-  // the same RPC the legacy client-side coupon path uses; the service role can
-  // call it too, and this is the only place a Stripe-path payment redeems one.
-  if (payment.coupon_code) {
-    await db.rpc('redeem_coupon', { p_code: payment.coupon_code });
-  }
-  // Invoice lines mirror ALL paid cart items (human-readable detail). The
-  // financial source of truth stays the payment row (server-recomputed subtotal
-  // + Stripe's real fee) — these per-line amounts are display.
+  // Invoice lines mirror ALL paid items (human-readable detail; amounts from the
+  // server snapshot, not the client). Financial source of truth stays the
+  // payment row (server-recomputed subtotal + Stripe's real fee).
   if (items.length) {
     await db.from('invoice_items').upsert(
       items.map((i, idx) => ({
         id: `ii-${payment.id}-${idx}`, invoice_id: invoiceId,
-        label: i.label, amount: i.amount, kind: i.kind,
+        label: i.label, amount: i.amount_cents / 100, kind: i.kind,
         ref_user_id: i.ref_user_id ?? null,
         ref_reg_ids: i.ref_reg_ids, ref_event_id: i.ref_event_id, ref_line_type: i.ref_line_type,
         refunded: false,
@@ -301,40 +315,48 @@ async function fulfill(
       { onConflict: 'id' },
     );
   } else if (payment.amount_subtotal != null) {
-    // The referenced cart_items were already gone by the time we read them (a
-    // stale/duplicate delivery, or the cart was cleared some other way) — but a
-    // real charge was captured for `amount_subtotal`. Write a single fallback
-    // line from the payment's own authoritative amount so the receipt/invoice
-    // NEVER shows $0 for a payment that actually collected money.
+    // No snapshot AND the legacy cart_items were already gone — but a real
+    // charge was captured. Write a single fallback line from the payment's own
+    // authoritative amount so the receipt/invoice NEVER shows $0.
     await db.from('invoice_items').upsert([{
       id: `ii-${payment.id}-0`, invoice_id: invoiceId,
-      // 'membership' is a placeholder — invoice_item_kind is a fixed Postgres enum
-      // with no generic/"other" value, and the true per-line kind is unrecoverable
-      // once cart_items is gone. The point of this fallback is the dollar amount,
-      // not the kind.
       label: 'Payment', amount: payment.amount_subtotal / 100, kind: 'membership',
       ref_user_id: null, ref_reg_ids: null, ref_event_id: null, ref_line_type: null,
       refunded: false,
     }], { onConflict: 'id' });
   }
 
-  // --- Clear the paid cart lines ---
+  // --- Clear the paid cart lines (idempotent delete-by-id) ---
   if (cartItemIds.length) {
     await db.from('cart_items').delete().in('id', cartItemIds);
   }
 
-  // --- Flip the payment row to paid (records the event id for idempotency) ---
-  await db.from('payments').update({
+  // --- Finalize: ATOMIC claim at the END --------------------------------------
+  // Only one caller flips `fulfilled_at` from null (Postgres-atomic conditional
+  // UPDATE). All the writes above already ran idempotently for BOTH a winner and
+  // any concurrent/duplicate delivery; the loser simply skips the once-only
+  // side effects below. Because the claim is here (not before the work), a
+  // mid-fulfillment throw leaves `fulfilled_at` null ⇒ Stripe's retry re-runs.
+  const { data: claimed } = await db.from('payments').update({
     status: 'paid',
     stripe_payment_intent_id: piId,
     stripe_fee: stripeFeeCents,
     invoice_id: invoiceId,
     stripe_event_id: eventId,
     fulfilled_at: now,
-  }).eq('id', payment.id);
+  }).eq('id', payment.id).is('fulfilled_at', null).select('id');
+  if (!claimed || claimed.length === 0) {
+    console.warn('[stripe-webhook] payment finalized by a concurrent delivery; skipping once-only steps', payment.id);
+    return;
+  }
 
-  // --- Email the REAL payer a receipt (best-effort; never fails fulfillment) ---
-  // Payer = payment.person_id (the manager for a club cart).
+  // --- Winner-only, once-only side effects -----------------------------------
+  // Coupon redemption bumps used_count, so it must run exactly once — pass the
+  // payer so a person-restricted code (Phase 1's redeem_coupon check) validates.
+  if (payment.coupon_code) {
+    await db.rpc('redeem_coupon', { p_code: payment.coupon_code, p_person_id: personId });
+  }
+  // Email the REAL payer a receipt (best-effort; never fails fulfillment).
   try {
     await emailReceipt(db, personId, items, payment, number);
   } catch (e) {
@@ -347,7 +369,7 @@ async function fulfill(
 async function emailReceipt(
   db: DB,
   personId: string,
-  items: CartItemRow[],
+  items: SnapshotItem[],
   payment: PaymentRow,
   invoiceNumber: string,
 ): Promise<void> {
@@ -358,13 +380,16 @@ async function emailReceipt(
   if (!EMAIL_RE.test(toEmail)) return;
   const forName = `${person?.first_name ?? ''} ${person?.last_name ?? ''}`.trim() || 'Member';
 
-  const subtotal = payment.amount_subtotal ?? items.reduce((s, i) => s + Math.round(i.amount * 100), 0);
+  const subtotal = payment.amount_subtotal ?? items.reduce((s, i) => s + i.amount_cents, 0);
   const fee = payment.service_fee ?? 0;
   const total = subtotal + fee;
 
+  // Only list lines that carry a charge (grouped-membership "included" lines and
+  // $0 host-club lines are server-priced to 0 and would just clutter the receipt).
   const rows = items
+    .filter((i) => i.amount_cents > 0)
     .map((i) => `<tr><td style="padding:6px 16px 6px 0;color:#1d2a38;">${esc(i.label)}</td>` +
-      `<td style="padding:6px 0;text-align:right;white-space:nowrap;color:#1d2a38;">${fmtMoney(Math.round(i.amount * 100))}</td></tr>`)
+      `<td style="padding:6px 0;text-align:right;white-space:nowrap;color:#1d2a38;">${fmtMoney(i.amount_cents)}</td></tr>`)
     .join('');
   const feeRow = `<tr><td style="padding:6px 16px 6px 0;color:#5b6b7a;">Service fee (card processing)</td>` +
     `<td style="padding:6px 0;text-align:right;white-space:nowrap;color:#5b6b7a;">${fmtMoney(fee)}</td></tr>`;

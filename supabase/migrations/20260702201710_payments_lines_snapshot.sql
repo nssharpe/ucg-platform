@@ -1,0 +1,31 @@
+-- Phase 2 (C4/H4/H1): give the payments row a self-contained, server-validated
+-- snapshot of the exact lines it fulfills, so the webhook fulfills FROM THE
+-- SNAPSHOT instead of re-reading live `cart_items`.
+--
+-- Why: `cart_items` is client-writable and stays writable AFTER a checkout
+-- session is created but BEFORE the webhook fulfills it (TOCTOU). Validating
+-- refs only at session-create time (C4/H4) is therefore not enough — an
+-- attacker could mutate a line's `ref_reg_ids`/`ref_type` post-create to
+-- redirect fulfillment at a victim's registration/membership while having paid
+-- the correct amount. Freezing the validated, server-priced line set onto the
+-- payment row at create time closes that window (the row is service-role write
+-- only; RLS lets the payer self-READ their own row, which is fine — it's their
+-- own cart detail).
+--
+-- Bonus (H1): because fulfillment no longer depends on `cart_items` still being
+-- present, the webhook can move its atomic idempotency claim to the END of
+-- fulfillment (all writes are idempotent, deterministic-id upserts) instead of
+-- the START. That makes a mid-fulfillment failure RETRYABLE by Stripe (the
+-- claim never got set) instead of leaving a captured payment stuck 'pending'
+-- forever — without porting the whole fulfillment to plpgsql.
+--
+-- Shape (array of objects, one per cart item the payment covers):
+--   { id, kind, label, amount_cents, club_id, ref_user_id, ref_season_id,
+--     ref_type, ref_reg_ids, ref_event_id, ref_line_type }
+-- `amount_cents` is the SERVER-computed, post-discount charge for that item
+-- (grouped memberships: the dearest carries the combined amount, the rest 0),
+-- so invoice_items written from it match what Stripe actually collected.
+--
+-- Nullable: pending payments created before this deploy have no snapshot; the
+-- webhook keeps its existing `cart_items`-based path as a fallback for those.
+alter table payments add column if not exists lines_snapshot jsonb;

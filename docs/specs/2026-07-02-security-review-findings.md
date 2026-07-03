@@ -8,11 +8,12 @@ Remediation design: `docs/plans/2026-07-02-security-hardening.md`.
 > **Remediation status (2026-07-02):** Phase 1 (DB guard triggers + policy lockdowns)
 > is **shipped & verified live** — it closes **C1, C2, C3, H2, H3** and hardens **M3**
 > (migrations `20260702182709`–`182714`; `scripts/verify-hardening.mjs` passes 10/10).
-> **Still OPEN** (Phase 2/3 of the hardening plan): **C4 and H4** — these run through
-> the *legitimate* Stripe webhook (service-role, which bypasses the guard triggers by
-> design), so they need the Phase 2 server-side fee-schedule derivation + ref-ownership
-> validation + fulfillment snapshot, NOT a DB trigger. Also open: H1 transactional
-> fulfillment, M1/M2/M4/M5. **Part 2 (client cart state machine — C5, H5–H8, M6–M9, L2)
+> **Phase 2 (DEPLOYED 2026-07-02)** closes **C4, H4, H1, M5**: `create-checkout-session`
+> now derives entry-vs-change from reg state (not the client tag) and validates ref
+> ownership, and freezes a server-priced `lines_snapshot` onto the payment row;
+> `stripe-webhook` fulfills from that snapshot with an end-of-sequence atomic claim
+> (retryable partial failure) + an amount-reconciliation check. **Still OPEN** (Phase 3):
+> M1/M2/M4 + the LOW items. **Part 2 (client cart state machine — C5, H5–H8, M6–M9, L2)
 > is SHIPPED 2026-07-02** (`docs/plans/2026-07-02-cart-state-fixes.md`), with two minor
 > non-money-loss residuals noted in that plan. A finding being listed below does not
 > mean it is still open; check this box.
