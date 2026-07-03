@@ -28,7 +28,7 @@ import { Combo, Field } from './ui';
 import { useToast } from './ui-hooks';
 import { APPARATUS } from '../lib/types';
 import type { Athlete, Discipline, Level, Event, Registration, Season } from '../lib/types';
-import { changeIsEligible } from '../lib/pricing';
+import { changeIsEligible, regChangeHasDiff } from '../lib/pricing';
 import type { RegChangeState, RegDisciplineEntry } from '../lib/pricing';
 
 // ---- per-discipline section -------------------------------------------------
@@ -417,9 +417,21 @@ export function RegistrationEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drafts, existing, clubId, originalClubId, athlete.id, isEditingExisting]);
 
-  const saveDisabled = !anyEnabled || (isEditingExisting && !eligible);
+  // Broader than `eligible`: also true for a FREE change (pure apparatus tweak
+  // or discipline removal) that `eligible` deliberately excludes from being
+  // chargeable. Gates the Save button's enabled state so those free edits can
+  // still be committed instead of being stuck with no way to save (B8).
+  const hasChange = useMemo(() => {
+    if (!isEditingExisting) return true;
+    const before: RegChangeState = { clubId: originalClubId ?? clubId, athleteId: athlete.id, disciplines: draftToEntries(true) };
+    const after: RegChangeState = { clubId, athleteId: athlete.id, disciplines: draftToEntries(false) };
+    return regChangeHasDiff(before, after);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drafts, existing, clubId, originalClubId, athlete.id, isEditingExisting]);
+
+  const saveDisabled = !anyEnabled || (isEditingExisting && !hasChange);
   const saveLabel = isEditingExisting
-    ? 'Add change to cart'
+    ? (eligible ? 'Add change to cart' : 'Save')
     : (changeFeeApplies ? 'Add to cart' : 'Register');
 
   return (

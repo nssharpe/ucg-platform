@@ -85,10 +85,14 @@ Run the suite, `npx eslint` the touched files, and confirm the build before push
 - Project ref `wkyerxlgricfphopocoz` (org NAIGC); CLI linked. Migrations in
   `supabase/migrations/` — **the authoritative, current migration list + schema/RLS model
   is `supabase/README.md`**; keep its table updated with every migration. All migrations
-  through `20260702201710_payments_lines_snapshot.sql` are applied (2026-07-02). The
+  through `20260703034325_fix_guard_registration_paid_upsert.sql` are applied. The
   182709–182714 batch is security-hardening Phase 1 (DB guard triggers + policy
   lockdowns); 201710 is Phase 2 (the fulfillment snapshot). See
-  `docs/plans/2026-07-02-security-hardening.md`.
+  `docs/plans/2026-07-02-security-hardening.md`. `20260703034325` (2026-07-03) fixes a
+  bug in the 182711 guard trigger — it trusted `tg_op`/`OLD` to detect "is this an
+  update," but the app's writes are always whole-row upserts, so Postgres fires the
+  BEFORE INSERT phase unconditionally and the trigger's snapshot-revert/no-op-transition
+  allowances were unreachable. Now re-resolves the pre-write row by `id` explicitly.
 - New migrations: `supabase migration new <name>` (timestamp filename format is required).
   Apply via `supabase db push` — network is sandbox-blocked, run with sandbox disabled.
 - **Enum gotcha:** `ALTER TYPE ... ADD VALUE` can't be referenced in the same
@@ -314,5 +318,5 @@ open**, see below). Notable open items:
 - **Feedback tracker B7** — Verify-by-eye: Confirm-My-Account nav flash, hard-refresh
   flash, transactional-email styling polish.
 - **Feedback tracker B8** — Smaller items: unknown-email login alert, club-membership
-  edit screen fields, profile-refresh double-submit glitch, Save-vs-Add-to-Cart for
-  no-fee changes.
+  edit screen fields, profile-refresh double-submit glitch. (Save-vs-Add-to-Cart for
+  no-fee changes ✅ done 2026-07-03 — see feedback-tracker.md.)

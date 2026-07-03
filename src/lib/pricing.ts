@@ -216,6 +216,36 @@ export function changeIsEligible(before: RegChangeState, after: RegChangeState):
   return false;
 }
 
+/**
+ * Did ANYTHING change between `before` and `after`? Broader than
+ * `changeIsEligible` — also true for a REMOVED discipline or an apparatus
+ * add/remove within a shared discipline, which `changeIsEligible` deliberately
+ * excludes from being chargeable. Used to enable a FREE "Save" for edits that
+ * changed something but aren't eligible for a change fee (e.g. a pure T&T
+ * apparatus tweak), while still disabling Save when nothing actually changed.
+ */
+export function regChangeHasDiff(before: RegChangeState, after: RegChangeState): boolean {
+  if (before.clubId !== after.clubId) return true;
+  if (before.athleteId !== after.athleteId) return true;
+
+  const beforeMap = byDiscipline(before);
+  const afterMap = byDiscipline(after);
+  const allDisciplines = new Set([...beforeMap.keys(), ...afterMap.keys()]);
+
+  for (const disc of allDisciplines) {
+    const b = beforeMap.get(disc);
+    const a = afterMap.get(disc);
+    if (!b || !a) return true; // added or removed discipline
+    if (a.levelId !== b.levelId) return true;
+    if (apparatusLevelsDiffer(a.apparatusLevels, b.apparatusLevels)) return true;
+    const aSet = new Set(a.apparatus);
+    const bSet = new Set(b.apparatus);
+    if (aSet.size !== bSet.size) return true;
+    for (const x of aSet) if (!bSet.has(x)) return true;
+  }
+  return false;
+}
+
 // --- Synchro-partner reassignment on athlete swap (3e) ---------------------
 // When athlete `fromId` is swapped out for `toId` on their registrations, any
 // OTHER registration that named `fromId` as its synchro partner must be

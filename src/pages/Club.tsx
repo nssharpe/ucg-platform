@@ -8,7 +8,8 @@ import { useToast } from '../components/ui-hooks';
 import { CLUB_ACCESS_LABELS, STATE_REGIONS } from '../lib/types';
 import type { Athlete, Club, ClubAccess, Registration, Season } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
-import { newRegistrationEntryTotal, reassignPartners, registrationChangeFee } from '../lib/pricing';
+import { newRegistrationEntryTotal, reassignPartners, registrationChangeFee, changeIsEligible } from '../lib/pricing';
+import type { RegChangeState } from '../lib/pricing';
 import {
   deleteRegistration, pushCart, pushClub, pushClubManager,
   pushRegistration, requestManagerAccess, sendClubInvite,
@@ -843,6 +844,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
     // Captured BEFORE the mutate below so it reflects the pre-edit cart state.
     const alreadyPendingItem = changeFeePendingItem(athleteId);
     let addedEntryFee = 0;
+    let chargedChangeFee = 0;
     mutate((d) => {
       const existingForAthlete = d.registrations.filter(
         (r) => r.eventId === event.id && r.athleteId === athleteId && r.clubId === clubId && !r.refunded,
@@ -859,11 +861,20 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
         }
       }
 
-      // A chargeable edit (change fee applies, editing existing regs, and the
-      // fee is non-zero — i.e. NOT the host club's own athletes).
-      const changeFee = changeFeeApplies && existingForAthlete.length > 0
+      // A chargeable edit (change fee applies, editing existing regs, the fee
+      // is non-zero — i.e. NOT the host club's own athletes — AND the change
+      // is actually eligible per `changeIsEligible`: adding a discipline,
+      // changing a level, or switching clubs. A pure apparatus tweak or
+      // discipline-removal-only edit is NOT eligible and stays free (B8) —
+      // the RegistrationEditor's "Save" (vs. "Add change to cart") label
+      // mirrors this same predicate for the button.
+      const before: RegChangeState = { clubId, athleteId, disciplines: existingForAthlete };
+      const after: RegChangeState = { clubId, athleteId, disciplines: newRegs };
+      const eligible = existingForAthlete.length > 0 && changeIsEligible(before, after);
+      const changeFee = changeFeeApplies && eligible
         ? registrationChangeFee(event, { competingClubId: clubId })
         : 0;
+      chargedChangeFee = changeFee;
 
       // Brand-new-discipline entry total (H7): regs in newRegs with NO prior
       // row are disciplines being added right now, regardless of whether the
@@ -980,9 +991,8 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
 
     setEditingAthleteId(null);
     setRegisterAthleteId(null);
-    const editedHostFree = changeFeeApplies && registrationChangeFee(event, { competingClubId: clubId }) === 0;
     toast(
-      changeFeeApplies && !editedHostFree
+      chargedChangeFee > 0
         ? 'Registration updated. Change fee added to club cart.'
         : addedEntryFee > 0
           ? `Registration updated. ${fmtMoney(addedEntryFee)} entry fee added to club cart.`

@@ -3,6 +3,7 @@ import {
   registrationEntryFee,
   registrationChangeFee,
   changeIsEligible,
+  regChangeHasDiff,
   type RegFeeEvent,
   type RegChangeState,
   type RegDisciplineEntry,
@@ -157,5 +158,67 @@ describe('changeIsEligible (3h)', () => {
   it('reordering events (same set/level) → NOT eligible', () => {
     const after = state({ disciplines: [disc({ apparatus: ['PH', 'FX'] })] });
     expect(changeIsEligible(state(), after)).toBe(false);
+  });
+});
+
+// --- B8: regChangeHasDiff (gates the free "Save" button) --------------------
+
+describe('regChangeHasDiff (B8)', () => {
+  it('no change at all → no diff', () => {
+    expect(regChangeHasDiff(state(), state())).toBe(false);
+  });
+
+  it('reordering apparatus (same set/level) → no diff', () => {
+    const after = state({ disciplines: [disc({ apparatus: ['PH', 'FX'] })] });
+    expect(regChangeHasDiff(state(), after)).toBe(false);
+  });
+
+  it('add an apparatus within an existing discipline → diff (free save)', () => {
+    const after = state({ disciplines: [disc({ apparatus: ['FX', 'PH', 'SR'] })] });
+    expect(regChangeHasDiff(state(), after)).toBe(true);
+  });
+
+  it('remove an apparatus within an existing discipline → diff (free save)', () => {
+    const after = state({ disciplines: [disc({ apparatus: ['FX'] })] });
+    expect(regChangeHasDiff(state(), after)).toBe(true);
+  });
+
+  it('remove a discipline entirely → diff (free save)', () => {
+    const before = state({
+      disciplines: [disc(), disc({ discipline: 'WAG', levelId: 'L4' })],
+    });
+    const after = state({ disciplines: [disc()] });
+    expect(regChangeHasDiff(before, after)).toBe(true);
+  });
+
+  it('add a discipline → diff', () => {
+    const after = state({ disciplines: [disc(), disc({ discipline: 'WAG', levelId: 'L4' })] });
+    expect(regChangeHasDiff(state(), after)).toBe(true);
+  });
+
+  it('change level → diff', () => {
+    const after = state({ disciplines: [disc({ levelId: 'L6' })] });
+    expect(regChangeHasDiff(state(), after)).toBe(true);
+  });
+
+  it('change club → diff', () => {
+    expect(regChangeHasDiff(state(), state({ clubId: 'club-b' }))).toBe(true);
+  });
+
+  it('swap athlete → diff', () => {
+    expect(regChangeHasDiff(state(), state({ athleteId: 'ath-2' }))).toBe(true);
+  });
+
+  it('every case eligible per changeIsEligible also has a diff (hasChange is a superset)', () => {
+    const cases: [RegChangeState, RegChangeState][] = [
+      [state(), state({ disciplines: [disc(), disc({ discipline: 'WAG', levelId: 'L4' })] })],
+      [state(), state({ disciplines: [disc({ levelId: 'L6' })] })],
+      [state(), state({ clubId: 'club-b' })],
+      [state(), state({ athleteId: 'ath-2' })],
+    ];
+    for (const [before, after] of cases) {
+      expect(changeIsEligible(before, after)).toBe(true);
+      expect(regChangeHasDiff(before, after)).toBe(true);
+    }
   });
 });
