@@ -123,7 +123,9 @@ Run the suite, `npx eslint` the touched files, and confirm the build before push
 - Launch configs (`.claude/launch.json`): `ucg-dev` (5173), `ucg-preview` (5176,
   `--strictPort`). If you run `vite preview` (serves `dist/`): rebuild first and clear
   the service worker or it serves the previous bundle.
-- `npm run lint` has never been clean (pre-existing debt) — lint only files you touch.
+- `npm run lint` is fully clean project-wide as of 2026-07-03 (the last 3 warnings were
+  fixed then) — keep it that way; still lint touched files before pushing rather than
+  relying on this staying true implicitly.
 - **CI gate:** the deploy workflow runs `npm run lint` and fails on any lint **error**
   (existing warnings tolerated). `npm run build` does NOT run eslint — a clean build can
   still break the deploy. ALWAYS `npx eslint <touched files>` before pushing. ESLint also
