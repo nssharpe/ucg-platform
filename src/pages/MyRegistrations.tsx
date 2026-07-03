@@ -5,7 +5,8 @@ import { Badge, Combo, Field, Modal, Tabs } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 import { pushRegistration, pushCart } from '../lib/supabase';
 import { RegistrationEditor } from '../components/RegistrationEditor';
-import { newRegistrationEntryTotal, registrationChangeFee } from '../lib/pricing';
+import { newRegistrationEntryTotal, registrationChangeFee, changeIsEligible } from '../lib/pricing';
+import type { RegChangeState } from '../lib/pricing';
 import { fmtMoney } from '../lib/scoring';
 import type { Athlete, Club, Level, Event, Registration, Season } from '../lib/types';
 
@@ -103,12 +104,26 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
     // Captured BEFORE the mutate below so it reflects the pre-edit cart state.
     const alreadyPendingItem = changeFeePendingItem(event);
     const alreadyPending = !!alreadyPendingItem;
+    let chargedFee = 0;
     mutate((d) => {
       const existingForAthlete = d.registrations.filter(
         (r) => r.eventId === event.id && r.athleteId === personId && !r.refunded,
       );
       const editingExisting = existingForAthlete.length > 0;
       const newDiscSet = new Set(newRegs.map((r) => r.discipline));
+
+      // Snapshot the PRE-edit state for the eligibility check below, before the
+      // retain-and-blank loop mutates these same row objects in place (it sets
+      // old.clubId = selectedClubId on deselected rows) — computing `before`
+      // from `existingForAthlete` AFTER that loop would silently see the NEW
+      // club on a deselected discipline and mask a chargeable club switch.
+      const beforeClubId = existingForAthlete[0]?.clubId ?? selectedClubId;
+      const beforeDisciplines = existingForAthlete.map((r) => ({
+        discipline: r.discipline,
+        levelId: r.levelId,
+        apparatus: [...r.apparatus],
+        ...(r.apparatusLevels ? { apparatusLevels: r.apparatusLevels } : {}),
+      }));
 
       // Retain (do NOT delete) deselected disciplines: blank them out instead.
       for (const old of existingForAthlete) {
@@ -123,10 +138,19 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
         }
       }
 
-      // Chargeable edit (fee live, editing an existing reg, non-host fee).
-      const changeFee = applyFee && editingExisting
+      // Chargeable edit (fee live, editing an existing reg, non-host fee, AND
+      // the change is actually eligible per `changeIsEligible`: adding a
+      // discipline, changing a level, or switching clubs. A pure apparatus
+      // tweak or discipline-removal-only edit is NOT eligible and stays free
+      // (B8) — `before.clubId` uses the registrations' OWN pre-edit club so a
+      // club-only switch is recognized as eligible.
+      const before: RegChangeState = { clubId: beforeClubId, athleteId: personId, disciplines: beforeDisciplines };
+      const after: RegChangeState = { clubId: selectedClubId, athleteId: personId, disciplines: newRegs };
+      const eligible = editingExisting && changeIsEligible(before, after);
+      const changeFee = applyFee && eligible
         ? registrationChangeFee(event, { competingClubId: selectedClubId })
         : 0;
+      chargedFee = changeFee;
 
       // Brand-new entry total for disciplines with no prior reg (host = $0).
       const priorDisciplineCount = existingForAthlete.filter((r) => r.apparatus.length > 0).length;
@@ -220,13 +244,10 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
       }
     });
 
-    const fee = applyFee && existingForEvent(event).length > 0
-      ? registrationChangeFee(event, { competingClubId: selectedClubId })
-      : 0;
-    toast(fee > 0
+    toast(chargedFee > 0
       ? alreadyPending
         ? 'Registration updated. Your pending change fee now covers this edit too — pay it to finalize.'
-        : `Registration updated. A ${fmtMoney(fee)} change fee was added to your cart — pay it to finalize.`
+        : `Registration updated. A ${fmtMoney(chargedFee)} change fee was added to your cart — pay it to finalize.`
       : 'Registration updated.');
     setEditingEventId(null);
   };

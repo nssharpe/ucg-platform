@@ -142,7 +142,19 @@ payment form. Build/lint/197 tests pass (3 new coupon hard-expiry tests added). 
 - Profile Refresh Glitch: refresh after club-cart push / waiting-on-waiver reverts to
   Confirm Profile and allows duplicate club-cart submits (state + double-submit guard). §1 / orig L75.
 - Save-vs-Add-to-Cart: no-fee changes (e.g. add/remove T&T apparatus) show `Save`
-  (commit immediately) instead of `Add to Cart`. §6 / orig L84,89.
+  (commit immediately) instead of `Add to Cart`. §6 / orig L84,89. ✅ **DONE** (2026-07-03):
+  the Save button on an EXISTING registration was previously disabled outright whenever
+  the edit wasn't "eligible" for a change fee (a pure apparatus tweak or discipline
+  removal) — there was no way to commit those free edits at all. Added
+  `regChangeHasDiff` (pricing.ts) to separately gate enablement (any real change) from
+  `changeIsEligible` (chargeable change); button now reads "Save" and commits instantly
+  when the edit is free. Also had to close a real gap this surfaced: `Club.tsx`/
+  `MyRegistrations.tsx`'s change-fee computation didn't consult `changeIsEligible` at
+  all (any edit to an existing non-host reg was charged the flat fee whenever the change
+  window was open) — now gated so only genuinely eligible edits are charged. Live testing
+  surfaced a SEPARATE pre-existing DB bug this exposed: `guard_registration_paid`
+  (security hardening 182711) trusted `tg_op`/`OLD`, which are unreliable for the app's
+  upsert write pattern — fixed in migration `20260703034325` (see supabase/README.md).
 
 **B7 — Verify-by-eye (no UI tests, hard to auto-verify):** Confirm-My-Account nav flash; hard-refresh flash; transactional-email styling polish. §2
 
