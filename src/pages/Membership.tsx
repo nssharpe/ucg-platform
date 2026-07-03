@@ -90,8 +90,22 @@ function MembershipInner({ me }: { me: Athlete }) {
   };
   const [selectedTypes, setSelectedTypes] = useState<MembershipType[]>(defaultSelectedTypes);
 
-  // Check whether everything is already owned
-  const allOwned = purchasableTypes.length === 0 && existingForSeason.length > 0;
+  // Check whether every offered type has ALREADY been submitted this season —
+  // active, or already sent off and awaiting the club's payment or a guardian
+  // waiver. Broader than `purchasableTypes` (which only excludes ACTIVE, since
+  // it also drives default type-selection/pricing for a NEW purchase): without
+  // this, a refresh right after pushing a fee to the club cart (or sending a
+  // guardian waiver) re-initialized `step` to 'info' instead of 'done',
+  // restarting the purchase flow at "Step 1 of 3 — Confirm your info" and
+  // letting the member click "Send to Club Cart" again for the same
+  // membership (B8 — duplicate club-cart line; the underlying membership row
+  // itself upserts safely, but each push creates a NEW cart_items row).
+  const alreadySubmittedTypes = new Set(
+    existingForSeason.filter((m) => m.status !== 'none').map((m) => m.type),
+  );
+  const allOwned = offeredTypes.length > 0
+    && offeredTypes.every((t) => alreadySubmittedTypes.has(t))
+    && existingForSeason.length > 0;
 
   const [step, setStep] = useState<'info' | 'waiver' | 'pay' | 'done'>(allOwned ? 'done' : 'info');
   const [confirmed, setConfirmed] = useState(false);
@@ -162,8 +176,13 @@ function MembershipInner({ me }: { me: Athlete }) {
       (t) => !newExisting.some((m) => m.type === t && m.status === 'active'),
     );
     setSelectedTypes(newPurchasable);
-    if (newPurchasable.length === 0 && newExisting.length > 0) setStep('done');
-    else if (newSeason) { /* step stays 'info' */ }
+    // Same broadened check as `allOwned` above (B8): a type already sent off
+    // and awaiting the club's payment or a guardian waiver also counts as
+    // "done" here, not just active.
+    const newAlreadySubmitted = new Set(newExisting.filter((m) => m.status !== 'none').map((m) => m.type));
+    if (offeredTypes.length > 0 && offeredTypes.every((t) => newAlreadySubmitted.has(t)) && newExisting.length > 0) {
+      setStep('done');
+    } else if (newSeason) { /* step stays 'info' */ }
   };
 
   // 'card' is intentionally NOT an option here — that path used to complete a
@@ -223,8 +242,13 @@ function MembershipInner({ me }: { me: Athlete }) {
         for (const t of selectedTypes) {
           const labelType = t === 'coach' ? 'Coach' : 'Athlete';
           const label = `${labelType} Membership ${season.name} — ${adderName} (added by ${adderName})`;
+          // Deterministic id (person+season+type, not Date.now()) so a repeat
+          // submit — e.g. the member double-clicking, or a stale page reaching
+          // this action again before the `allOwned` fix above kicks in — is a
+          // safe upsert onto the SAME cart line instead of adding a second one
+          // (B8 double-submit guard).
           const item = {
-            id: `ci-${Date.now()}-${t}`,
+            id: `ci-membership-${club.id}-${me.id}-${seasonId}-${t}`,
             label,
             amount: pricePerType(t),
             kind: 'membership' as const,
@@ -232,7 +256,9 @@ function MembershipInner({ me }: { me: Athlete }) {
             refSeasonId: seasonId,
             refType: t,
           };
-          cart.push(item);
+          const existingIdx = cart.findIndex((c) => c.id === item.id);
+          if (existingIdx >= 0) cart[existingIdx] = item;
+          else cart.push(item);
           // Append only this member's own row — a member can't replace the whole
           // club cart under RLS (that's a manager-only operation).
           pushCartItem(club.id, item, true);

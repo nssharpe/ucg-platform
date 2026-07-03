@@ -318,6 +318,6 @@ open**, see below). Notable open items:
   under-18 welcome/receipt suppression, memberships-checkout confirmation email+PDF.
 - **Feedback tracker B7** — Verify-by-eye: Confirm-My-Account nav flash, hard-refresh
   flash, transactional-email styling polish.
-- **Feedback tracker B8** — Smaller items: club-membership edit screen fields,
-  profile-refresh double-submit glitch. (Save-vs-Add-to-Cart for no-fee changes and the
-  unknown-email login alert ✅ done 2026-07-03 — see feedback-tracker.md.)
+- **Feedback tracker B8** — Smaller items: club-membership edit screen fields. (Save-vs-
+  Add-to-Cart for no-fee changes, the unknown-email login alert, and the profile-refresh
+  double-submit glitch ✅ done 2026-07-03 — see feedback-tracker.md.)

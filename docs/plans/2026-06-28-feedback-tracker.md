@@ -146,6 +146,20 @@ payment form. Build/lint/197 tests pass (3 new coupon hard-expiry tests added). 
   Membership Eligibility, "Athletes may push fees to club cart" toggle. orig L78–79.
 - Profile Refresh Glitch: refresh after club-cart push / waiting-on-waiver reverts to
   Confirm Profile and allows duplicate club-cart submits (state + double-submit guard). §1 / orig L75.
+  ✅ **DONE** (2026-07-03): root cause was `Membership.tsx`'s `allOwned`/initial-`step`
+  computation only treating `status === 'active'` as "already done" — a
+  `pending-club-payment`/`pending-waiver` row still counted as purchasable, so a remount
+  (browser refresh) always re-initialized `step` to `'info'` ("Step 1 of 3 — Confirm your
+  info"), even though the member had already completed the flow. Fixed by broadening the
+  "already submitted" check to `status !== 'none'` for the `allOwned`/step-init decision
+  only (pricing/default-selection logic elsewhere in the file is unchanged). Also hardened
+  the actual double-submit path: the club-cart-push `cart_items` id is now deterministic
+  (`ci-membership-<club>-<person>-<season>-<type>` instead of `Date.now()`-based) so a
+  repeat submit safely upserts onto the same cart line instead of adding a duplicate
+  charge line, with the local in-memory cart replaced-in-place to match. Verified live by
+  temporarily setting a dev-seed membership to `pending-club-payment` and reloading — the
+  page correctly showed the "Pending Payment by club" summary instead of reverting to
+  Step 1; DB state restored after.
 - Save-vs-Add-to-Cart: no-fee changes (e.g. add/remove T&T apparatus) show `Save`
   (commit immediately) instead of `Add to Cart`. §6 / orig L84,89. ✅ **DONE** (2026-07-03):
   the Save button on an EXISTING registration was previously disabled outright whenever
