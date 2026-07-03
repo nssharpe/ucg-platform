@@ -136,7 +136,12 @@ payment form. Build/lint/197 tests pass (3 new coupon hard-expiry tests added). 
 - Login: unknown email → immediate alert "No account exists for that email" instead of
   offering reset/magic-link (needs an existence check — `people`-by-email lookup or RPC;
   account-enumeration is accepted per Nate). §2 / orig L73. *(Out of auto-batch: the
-  existence check has a right/wrong implementation.)*
+  existence check has a right/wrong implementation.)* ✅ **DONE** (2026-07-03): added
+  `email_has_account` RPC (migration `20260703035157`, checks `auth.users` not `people`
+  — "has an account" means "can sign in") and wired it into `Gate.tsx`'s sign-in failure
+  path — a failed sign-in now shows "No account exists for that email." for an unknown
+  email and the original Supabase message (e.g. "Invalid login credentials") otherwise.
+  Verified live in the browser for both cases.
 - Club-membership edit screen must expose: Club name, Short name, State, Club Email,
   Membership Eligibility, "Athletes may push fees to club cart" toggle. orig L78–79.
 - Profile Refresh Glitch: refresh after club-cart push / waiting-on-waiver reverts to

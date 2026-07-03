@@ -937,6 +937,19 @@ export async function requestGuardianWaiver(args: {
   return data as { ok: boolean; error?: string };
 }
 
+/** No-login check of whether an email has a sign-in account (auth.users),
+ *  used on a failed sign-in to show "No account exists for that email"
+ *  instead of a generic wrong-password error. Account-enumeration via this
+ *  check is an accepted tradeoff (confirmed with Nate) — defaults to `true`
+ *  (i.e. falls back to the generic error) on any failure so we never
+ *  incorrectly claim "no account" for a real one. */
+export async function emailHasAccount(email: string): Promise<boolean> {
+  if (!supabase) return true;
+  const { data, error } = await supabase.rpc('email_has_account', { p_email: email });
+  if (error) { console.error('[supabase] email_has_account failed:', error); return true; }
+  return data === true;
+}
+
 /** No-login lookup of a manager-access request by its review token. */
 export async function fetchManagerAccessRequest(token: string): Promise<{ status: string; requesterName: string; clubName: string } | null> {
   if (!supabase) return null;

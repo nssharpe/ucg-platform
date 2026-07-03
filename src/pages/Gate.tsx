@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { checkPassword } from '../lib/store';
-import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import { isSupabaseConfigured, supabase, emailHasAccount } from '../lib/supabase';
 
 // Keep in step with the Supabase password policy (Auth → Policies). See
 // docs/research/2026-06-22-password-policy.md.
@@ -89,8 +89,16 @@ function AuthGate() {
     clearMsg();
     if (mode === 'sign-in') {
       const { error } = await supabase.auth.signInWithPassword({ email, password: pw });
-      setBusy(false);
-      if (error) setErr(error.message);
+      if (error) {
+        // Distinguish "no account for this email" from a wrong password —
+        // otherwise the Forgot-password/magic-link buttons below silently
+        // "work" but no email ever arrives for an account that doesn't exist.
+        const hasAccount = await emailHasAccount(email);
+        setBusy(false);
+        setErr(hasAccount ? error.message : 'No account exists for that email.');
+      } else {
+        setBusy(false);
+      }
       // onAuthStateChange picks up the new session and re-renders App.
     } else {
       // Stash name + kind so auth.ts can pass them to link_or_create_person on
