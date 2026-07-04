@@ -8,6 +8,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendOne } from '../_shared/resend.ts';
+import { renderEmail } from '../_shared/email-layout.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -63,16 +64,22 @@ Deno.serve(async (req) => {
   if (kind === 'membership') {
     const link = `${appUrl}/#/membership`;
     subject = `Purchase your ${club.short_name} membership`;
-    html = `<p>${greeting}</p>
-<p><strong>${esc(club.name)}</strong> has invited you to purchase your United Club Gymnastics membership.</p>
-<p><a href="${link}">Choose &amp; purchase your membership &rarr;</a></p>`;
+    html = renderEmail({
+      heading: 'Purchase your membership',
+      bodyHtml: `<p>${greeting}</p>
+<p><strong>${esc(club.name)}</strong> has invited you to purchase your United Club Gymnastics membership.</p>`,
+      cta: { text: 'Choose & purchase your membership', href: link },
+    });
   } else {
     const link = `${appUrl}/#/?signup=1`;
     subject = `You're invited to join ${club.short_name} on United Club Gymnastics`;
-    html = `<p>${greeting}</p>
+    html = renderEmail({
+      heading: `You're invited to join ${esc(club.short_name)}`,
+      bodyHtml: `<p>${greeting}</p>
 <p><strong>${esc(club.name)}</strong> has added you as a coach on the United Club Gymnastics platform.
-Sign up using <strong>this email address</strong> (${esc(email)}) to claim your account:</p>
-<p><a href="${link}">Create your account &rarr;</a></p>`;
+Sign up using <strong>this email address</strong> (${esc(email)}) to claim your account.</p>`,
+      cta: { text: 'Create your account', href: link },
+    });
   }
 
   try {

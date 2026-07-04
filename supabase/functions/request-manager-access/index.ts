@@ -8,6 +8,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendBatch, type EmailMessage } from '../_shared/resend.ts';
+import { renderEmail } from '../_shared/email-layout.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -99,11 +100,14 @@ Deno.serve(async (req) => {
 
   const link = `${appUrl}/#/manager-access/${reviewToken}`;
   const subject = `Manager access requested for ${club.short_name}`;
-  const html = `<p>Hello,</p>
+  const html = renderEmail({
+    heading: 'Manager access requested',
+    bodyHtml: `<p>Hello,</p>
 <p><strong>${esc(requester)}</strong>${requesterEmail ? ` (${esc(requesterEmail)})` : ''} has requested admin/manager access to <strong>${esc(club.name)}</strong> on the United Club Gymnastics platform.</p>
-<p>Review and approve or deny — no login required:</p>
-<p><a href="${link}">Review this request &rarr;</a></p>
-<p style="color:#667;font-size:13px">The first manager or admin to respond decides the request.</p>`;
+<p>Review and approve or deny — no login required.</p>`,
+    cta: { text: 'Review this request', href: link },
+    footnoteHtml: 'The first manager or admin to respond decides the request.',
+  });
 
   const messages: EmailMessage[] = recipients.map((r) => ({
     to: `${r.first_name} ${r.last_name} <${(r.email as string).trim()}>`,

@@ -293,6 +293,13 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
 ## Email / Edge Functions (Resend)
 - Shared helper `supabase/functions/_shared/resend.ts` (`sendOne`/`sendBatch`, optional
   `cc`). Secrets: `RESEND_API_KEY`, `RESEND_FROM` (naigc.org is verified), `APP_PUBLIC_URL`.
+- All transactional emails render through `_shared/email-layout.ts` (`renderEmail({
+  heading, bodyHtml, cta?, footnoteHtml? })`) — the branded navy-header/white-card/
+  orange-CTA wrapper matching Supabase's magic-link email. New email-sending functions
+  should use it rather than composing bare `<p>` HTML. Exceptions: `send-email` (admin
+  free-text broadcast — caller controls the full body) and Supabase Auth's own
+  templates (magic-link/invite/recovery — configured in the Supabase Dashboard, not
+  in this repo).
 - Deploy: `supabase functions deploy <name> --project-ref wkyerxlgricfphopocoz`
   (sandbox disabled; no Docker; `_shared/` bundles automatically).
 - **CRITICAL — `--no-verify-jwt` is NOT sticky.** A bare redeploy silently resets

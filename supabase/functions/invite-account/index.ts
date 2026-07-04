@@ -10,6 +10,7 @@
 // Auth: any signed-in user who manages the target club, or an admin.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendOne } from '../_shared/resend.ts';
+import { renderEmail } from '../_shared/email-layout.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -99,11 +100,15 @@ Deno.serve(async (req) => {
 
   const fullName = `${firstName} ${lastName}`;
   const subject = `Set up your United Club Gymnastics account (${club.short_name})`;
-  const html = `<p>Hi ${esc(firstName)},</p>
-<p><strong>${esc(club.name)}</strong> has created a United Club Gymnastics account for you.</p>
-<p><a href="${esc(actionLink)}">Click here to set your password</a>. Once set, you'll be taken
-to the membership page where you can purchase your membership${club.short_name ? ` or send it to ${esc(club.short_name)}'s club cart` : ''}.</p>
-<p>If you didn't expect this, you can ignore this email.</p>`;
+  const html = renderEmail({
+    heading: 'Set up your account',
+    bodyHtml: `<p>Hi ${esc(firstName)},</p>
+<p><strong>${esc(club.name)}</strong> has created a United Club Gymnastics account for you. Set your
+password to get started — you'll land on the membership page where you can purchase your
+membership${club.short_name ? ` or send it to ${esc(club.short_name)}'s club cart` : ''}.</p>`,
+    cta: { text: 'Set your password', href: esc(actionLink) },
+    footnoteHtml: "If you didn't expect this, you can ignore this email.",
+  });
 
   try {
     await sendOne({ to: `${fullName} <${email}>`, subject, html });

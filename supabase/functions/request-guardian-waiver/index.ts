@@ -7,6 +7,7 @@
 // Auth: any signed-in user who owns the athlete record (people.auth_user_id match).
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendOne } from '../_shared/resend.ts';
+import { renderEmail } from '../_shared/email-layout.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -85,11 +86,14 @@ Deno.serve(async (req) => {
   // --- Send email to guardian ---
   const link = `${appUrl}/#/waiver/sign/${signToken}`;
   const athlete = `${person.first_name} ${person.last_name}`;
-  const html = `<p>Hello ${esc(body.guardianName ?? '')},</p>
+  const html = renderEmail({
+    heading: 'Signature requested',
+    bodyHtml: `<p>Hello ${esc(body.guardianName ?? '')},</p>
 <p>${esc(athlete)} has requested that you, as parent/guardian, sign the
-NAIGC waiver for United Club Gymnastics.</p>
-<p><a href="${link}">Click here to review and sign the waiver</a>.</p>
-<p>This is an electronic signature with timestamp and IP recorded.</p>`;
+NAIGC waiver for United Club Gymnastics.</p>`,
+    cta: { text: 'Review & sign the waiver', href: link },
+    footnoteHtml: 'This is an electronic signature with timestamp and IP recorded.',
+  });
 
   try {
     await sendOne({ to: guardianEmail, subject: `Sign the NAIGC waiver for ${athlete}`, html });

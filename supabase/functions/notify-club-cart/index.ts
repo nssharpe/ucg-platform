@@ -9,6 +9,7 @@
 // caller has no linked person, we fall back to the addedByName in the payload.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendBatch, type EmailMessage } from '../_shared/resend.ts';
+import { renderEmail } from '../_shared/email-layout.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -116,15 +117,18 @@ Deno.serve(async (req) => {
       `<td style="padding:4px 0;text-align:right;white-space:nowrap;">${fmtMoney(i.amount ?? 0)}</td></tr>`)
     .join('');
   const subject = `${addedBy} added ${items.length} item${items.length > 1 ? 's' : ''} to the ${club.short_name} club cart`;
-  const html = `<p>Hello,</p>
+  const html = renderEmail({
+    heading: 'New items in the club cart',
+    bodyHtml: `<p>Hello,</p>
 <p><strong>${esc(addedBy)}</strong> added the following to <strong>${esc(club.name)}</strong>'s club cart:</p>
-<table style="border-collapse:collapse;margin:8px 0;font-size:14px;">${rows}
+<table style="border-collapse:collapse;margin:8px 0;font-size:14px;width:100%;">${rows}
 <tr><td style="padding:8px 12px 0 0;border-top:2px solid #1d2a38;font-weight:700;">Total</td>
 <td style="padding:8px 0 0;border-top:2px solid #1d2a38;text-align:right;font-weight:700;">${fmtMoney(total)}</td></tr>
 </table>
-<p>These memberships stay pending until a club manager pays the cart.</p>
-<p><a href="${cartLink}">View &amp; pay the club cart &rarr;</a></p>
-<p style="color:#5b6b7a;font-size:12px;">You're receiving this because you manage ${esc(club.short_name)} on the United Club Gymnastics platform.</p>`;
+<p>These memberships stay pending until a club manager pays the cart.</p>`,
+    cta: { text: 'View & pay the club cart', href: cartLink },
+    footnoteHtml: `You're receiving this because you manage ${esc(club.short_name)} on the United Club Gymnastics platform.`,
+  });
 
   // --- Send one message per manager (no leaked recipient list) ---
   const messages: EmailMessage[] = recipients.map((r) => ({
