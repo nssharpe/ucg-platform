@@ -3,9 +3,9 @@ import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { Badge, Combo, Field, Modal, Tabs } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
-import { pushRegistration, pushCart } from '../lib/supabase';
+import { pushRegistration, pushCart, syncSynchroPartnerLevelRemote } from '../lib/supabase';
 import { RegistrationEditor } from '../components/RegistrationEditor';
-import { newRegistrationEntryTotal, registrationChangeFee, changeIsEligible } from '../lib/pricing';
+import { newRegistrationEntryTotal, registrationChangeFee, changeIsEligible, syncSynchroPartnerLevel } from '../lib/pricing';
 import type { RegChangeState } from '../lib/pricing';
 import { fmtMoney } from '../lib/scoring';
 import type { Athlete, Club, Level, Event, Registration, Season } from '../lib/types';
@@ -190,6 +190,25 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
         if (idx >= 0) d.registrations[idx] = reg;
         else d.registrations.push(reg);
         pushRegistration(reg);
+      }
+
+      // Synchro same-level auto-sync (B4.4): whoever actively saves a partner
+      // selection sets the SY level for BOTH — not a validation, an active
+      // sync. Update the local snapshot optimistically; the actual remote
+      // write goes through sync_synchro_partner_level (an RPC, NOT a plain
+      // upsert) because the caller typically lacks RLS write access to the
+      // PARTNER's own registration row (a different athlete, often a
+      // different club) — the RPC re-derives + authorizes it server-side
+      // from the caller's OWN just-saved registration.
+      const eventRegsForSync = d.registrations.filter((r) => r.eventId === event.id && !r.refunded);
+      for (const reg of newRegs) {
+        const partnerUpdate = syncSynchroPartnerLevel(eventRegsForSync, reg);
+        const mySyLevel = reg.apparatusLevels?.SY;
+        if (partnerUpdate && mySyLevel) {
+          const idx = d.registrations.findIndex((r) => r.id === partnerUpdate.id);
+          if (idx >= 0) d.registrations[idx] = partnerUpdate;
+          syncSynchroPartnerLevelRemote(reg.id, mySyLevel);
+        }
       }
 
       // Add the fee/entry line to the MEMBER'S OWN cart, linked to the affected

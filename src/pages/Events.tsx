@@ -11,10 +11,10 @@ import { RegistrationEditor } from '../components/RegistrationEditor';
 import { EventStatusBadge } from './Home';
 import { APPARATUS, SHIRT_SIZES } from '../lib/types';
 import type { Athlete, CartItem, Event, EventSession, Registration } from '../lib/types';
-import { deleteRegistration, pushCart, pushEventSessions, pushRegistration } from '../lib/supabase';
+import { deleteRegistration, pushCart, pushEventSessions, pushRegistration, syncSynchroPartnerLevelRemote } from '../lib/supabase';
 import { stateCode } from '../lib/sanction';
 import { fmtMoney } from '../lib/scoring';
-import { newRegistrationEntryTotal, registrationChangeFee } from '../lib/pricing';
+import { newRegistrationEntryTotal, registrationChangeFee, syncSynchroPartnerLevel, findIncomingSynchroPartner } from '../lib/pricing';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -460,6 +460,25 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
         pushRegistration(reg);
       }
 
+      // Synchro same-level auto-sync (B4.4): whoever actively saves a partner
+      // selection sets the SY level for BOTH — not a validation, an active
+      // sync. Update the local snapshot optimistically; the actual remote
+      // write goes through sync_synchro_partner_level (an RPC, NOT a plain
+      // upsert) because the caller typically lacks RLS write access to the
+      // PARTNER's own registration row (a different athlete, often a
+      // different club) — the RPC re-derives + authorizes it server-side
+      // from the caller's OWN just-saved registration.
+      const eventRegsForSync = d.registrations.filter((r) => r.eventId === event.id && !r.refunded);
+      for (const reg of regs) {
+        const partnerUpdate = syncSynchroPartnerLevel(eventRegsForSync, reg);
+        const mySyLevel = reg.apparatusLevels?.SY;
+        if (partnerUpdate && mySyLevel) {
+          const idx = d.registrations.findIndex((r) => r.id === partnerUpdate.id);
+          if (idx >= 0) d.registrations[idx] = partnerUpdate;
+          syncSynchroPartnerLevelRemote(reg.id, mySyLevel);
+        }
+      }
+
       // Cart: entry / change fee for new or re-pending registrations.
       const cart = d.carts[athlete.id] ?? (d.carts[athlete.id] = []);
 
@@ -585,7 +604,11 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
           onSave={handleRegSave}
           onCancel={onClose}
           changeFeeApplies={changeFeeApplies}
-          incomingPartnerId={db.registrations.find((r) => r.eventId === event.id && !r.refunded && r.apparatus.includes('SY') && r.partnerAthleteId === athlete.id)?.athleteId ?? null}
+          incomingPartnerId={findIncomingSynchroPartner(db.registrations, event.id, athlete.id)?.athleteId ?? null}
+          incomingPartnerSyLevel={(() => {
+            const r = findIncomingSynchroPartner(db.registrations, event.id, athlete.id);
+            return r ? (r.apparatusLevels?.SY ?? r.levelId) : null;
+          })()}
         />
       )}
 

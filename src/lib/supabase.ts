@@ -445,6 +445,21 @@ export function pushRegistration(r: Registration, squadId: string | null = null)
 }
 export function deleteRegistration(id: string) { remoteDelete('registrations', id); }
 
+/** B4.4: sync a synchro partner's SY level server-side via
+ *  sync_synchro_partner_level — NOT a plain upsert, since the caller
+ *  typically doesn't have RLS write access to the PARTNER's own
+ *  registration row (a different athlete, often a different club). Pass the
+ *  id of the registration the caller just saved (their OWN, which they DO
+ *  have access to) plus its SY level; the RPC re-derives the named partner
+ *  and authorizes against the caller's own row server-side. See the
+ *  migration's comment for the full rationale. */
+export function syncSynchroPartnerLevelRemote(myRegId: string, syLevel: string) {
+  writeQueue.enqueue({
+    kind: 'rpc', table: 'registrations', fn: 'sync_synchro_partner_level',
+    args: { p_my_reg_id: myRegId, p_sy_level: syLevel },
+  }, 'registrations');
+}
+
 export function pushScore(s: Score) { remoteUpsert('scores', [scoreToRow(s)]); }
 
 /** Replace an owner's (club or athlete) cart with the given items. Uses a

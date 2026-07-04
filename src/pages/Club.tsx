@@ -9,12 +9,13 @@ import { useToast } from '../components/ui-hooks';
 import { STATE_REGIONS } from '../lib/types';
 import type { Athlete, Club, Registration, Season } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
-import { newRegistrationEntryTotal, reassignPartners, registrationChangeFee, changeIsEligible } from '../lib/pricing';
+import { newRegistrationEntryTotal, reassignPartners, registrationChangeFee, changeIsEligible, syncSynchroPartnerLevel, findIncomingSynchroPartner } from '../lib/pricing';
 import type { RegChangeState } from '../lib/pricing';
 import {
   deleteRegistration, pushCart, pushClub, pushClubManager,
   pushRegistration, requestManagerAccess, sendClubInvite,
   inviteAccount, pushClubMembership, deleteClubMembership,
+  syncSynchroPartnerLevelRemote,
 } from '../lib/supabase';
 import { cleanupCrossClubCart } from '../lib/cart-sync';
 import type { ClubMembership } from '../lib/types';
@@ -894,6 +895,25 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
         pushRegistration(reg);
       }
 
+      // Synchro same-level auto-sync (B4.4): whoever actively saves a partner
+      // selection sets the SY level for BOTH — not a validation, an active
+      // sync. Update the local snapshot optimistically; the actual remote
+      // write goes through sync_synchro_partner_level (an RPC, NOT a plain
+      // upsert) because the caller typically lacks RLS write access to the
+      // PARTNER's own registration row (a different athlete, often a
+      // different club) — the RPC re-derives + authorizes it server-side
+      // from the caller's OWN just-saved registration.
+      const eventRegsForSync = d.registrations.filter((r) => r.eventId === event.id && !r.refunded);
+      for (const reg of newRegs) {
+        const partnerUpdate = syncSynchroPartnerLevel(eventRegsForSync, reg);
+        const mySyLevel = reg.apparatusLevels?.SY;
+        if (partnerUpdate && mySyLevel) {
+          const idx = d.registrations.findIndex((r) => r.id === partnerUpdate.id);
+          if (idx >= 0) d.registrations[idx] = partnerUpdate;
+          syncSynchroPartnerLevelRemote(reg.id, mySyLevel);
+        }
+      }
+
       // If a (non-host) change fee applies on an edit, add a fee line linked to
       // the affected regs so paying it flips them back to paid. Snapshot the
       // FULL prior registration rows (before this function's edits above) so
@@ -1341,7 +1361,11 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
             onSave={(regs) => saveRegs(editingAthlete.id, regs)}
             onCancel={() => setEditingAthleteId(null)}
             changeFeeApplies={changeFeeApplies}
-            incomingPartnerId={db.registrations.find((r) => r.eventId === event.id && !r.refunded && r.apparatus.includes('SY') && r.partnerAthleteId === editingAthlete.id)?.athleteId ?? null}
+            incomingPartnerId={findIncomingSynchroPartner(db.registrations, event.id, editingAthlete.id)?.athleteId ?? null}
+            incomingPartnerSyLevel={(() => {
+              const r = findIncomingSynchroPartner(db.registrations, event.id, editingAthlete.id);
+              return r ? (r.apparatusLevels?.SY ?? r.levelId) : null;
+            })()}
           />
         </Modal>
       )}
@@ -1362,7 +1386,11 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
             season={season}
             onSave={(regs) => addToCart(registerAthlete.id, regs)}
             onCancel={() => setRegisterAthleteId(null)}
-            incomingPartnerId={db.registrations.find((r) => r.eventId === event.id && !r.refunded && r.apparatus.includes('SY') && r.partnerAthleteId === registerAthlete.id)?.athleteId ?? null}
+            incomingPartnerId={findIncomingSynchroPartner(db.registrations, event.id, registerAthlete.id)?.athleteId ?? null}
+            incomingPartnerSyLevel={(() => {
+              const r = findIncomingSynchroPartner(db.registrations, event.id, registerAthlete.id);
+              return r ? (r.apparatusLevels?.SY ?? r.levelId) : null;
+            })()}
           />
         </Modal>
       )}

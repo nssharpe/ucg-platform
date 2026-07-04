@@ -126,7 +126,7 @@ coupon, applied it during a real membership checkout — subtotal $55 → coupon
 recomputed off the discounted amount ($1.79) → total $51.29, confirmed on the actual Stripe
 payment form. Build/lint/197 tests pass (3 new coupon hard-expiry tests added). §5
 
-**B4 — Meet management (RLS/roles/money):** 🟡 in progress, 4 sub-items — Draft/Live-only + timestamp-driven open/close; `Last date to edit` field + role-gated lockout (migration + RLS); club-transfer change-fee dispatch + roster move + pending flag (money/data); synchronized-trampoline same-level backend check. §6
+**B4 — Meet management (RLS/roles/money):** ✅ **ALL 4 SUB-ITEMS DONE** (2026-07-04) — Draft/Live-only + timestamp-driven open/close; `Last date to edit` field + role-gated lockout (migration + RLS); club-transfer change-fee dispatch + roster move + pending flag (money/data); synchronized-trampoline same-level backend check. §6
 
 - **Sub-item 1 (Draft/Live + timestamp-driven open/close)** ✅ **DONE** (2026-07-04).
   `events.status` simplified from a 5-value manually-flipped enum to `draft`/`live`
@@ -170,7 +170,41 @@ payment form. Build/lint/197 tests pass (3 new coupon hard-expiry tests added). 
   Verified live: simulated a club-switch (moved one discipline's `clubId` to
   a different club) and confirmed both the losing and gaining club's
   registration pages now show the correct, accurate state.
-- **Sub-item 4** (synchro same-level auto-sync) — not yet started.
+- **Sub-item 4 (synchro same-level auto-sync)** ✅ **DONE** (2026-07-04) — **B4
+  is now fully complete.** Nate's spec: not a validation, an active sync —
+  whoever selects a partner sets the SY level for BOTH ("if A is HF and
+  selects B (previously NF), the pair gets registered ... as a High Flyer
+  synchro pair"). Pure logic (`syncSynchroPartnerLevel`,
+  `findIncomingSynchroPartner` in `src/lib/pricing.ts`, unit tested) computes
+  the sync; persisted via a new `sync_synchro_partner_level` RPC
+  (`src/lib/supabase.ts`'s `syncSynchroPartnerLevelRemote`) because the
+  caller (an athlete saving their own reg, or their club manager) generally
+  lacks RLS write access to the PARTNER's own registration row (a different
+  athlete, often a different club) — the RPC re-derives + authorizes against
+  the caller's OWN just-saved registration server-side. Wired into all 3
+  registration-save flows (Club.tsx, MyRegistrations.tsx, Events.tsx) plus
+  `RegistrationEditor.tsx`'s existing partner auto-link (a fresh SY
+  registration now defaults to the partner's level, not an arbitrary one).
+  **Adversarial review caught a CRITICAL fail-open auth bug** in the first
+  RPC draft: `if not (is_admin() or athlete_id = my_person_id() or
+  manages_club(club_id))` used the SAME expression as the `regs_write` RLS
+  policy but NOT its fail-closed semantics — for an anonymous caller,
+  `my_person_id()` is null, so the OR-chain evaluates to Postgres's NULL
+  (not false), and `if not NULL` doesn't raise, silently ALLOWING the write.
+  Since the function is SECURITY DEFINER, this bypassed RLS entirely,
+  letting anyone push a SY-level change onto any registration's partner.
+  Fixed by wrapping the predicate in `coalesce(..., false)` (verified live —
+  the exact same anon-equivalent call now correctly raises
+  "not authorized"), plus revoked the default Postgres `PUBLIC` execute
+  grant and the unneeded `anon` grant as defense-in-depth. Migrations
+  `20260704044529` + `20260704133502` (the fix) + `20260704133734` (grant
+  hardening). **Noted for Nate, not fixed:** this sync intentionally leaves
+  the partner's `paid`/`updated_pending` untouched (a free administrative
+  sync, matching the B8 apparatus-tweak-is-free precedent) — meaning a level
+  change that would normally be chargeable through the front-door editor is
+  free when it arrives via this sync onto an already-paid partner. Flagged
+  as a real but minor economic asymmetry, not a security issue; confirm this
+  is the intended behavior.
 
 **B5 — Finance dashboards (whole epic):** event + org tiers, date defaults, Summary/Invoices tabs, account codes. Likely defer given budget. §7
 

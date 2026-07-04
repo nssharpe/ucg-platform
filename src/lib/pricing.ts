@@ -284,6 +284,64 @@ export function reassignPartners<T extends PartnerReg>(
   return out;
 }
 
+/** Minimal slice of a registration the synchro-level-sync logic needs. */
+export type SynchroReg = {
+  athleteId: string;
+  apparatus: string[];
+  apparatusLevels?: Record<string, string>;
+  partnerAthleteId?: string | null;
+};
+
+/**
+ * Synchro (T&T "SY") same-level auto-sync (B4.4): whoever actively selects a
+ * partner sets the SY level for BOTH — not a validation, an active sync.
+ * Given `savedReg` (the registration just being saved, with SY selected and a
+ * partner named) and `existingRegs` (every OTHER registration for this event,
+ * to find the partner's own row in), returns the partner's registration
+ * updated to match `savedReg`'s SY level — or `null` if there's nothing to
+ * sync (no SY/partner on `savedReg`, no partner registration found yet, or
+ * the levels already match).
+ */
+export function syncSynchroPartnerLevel<T extends SynchroReg>(
+  existingRegs: T[],
+  savedReg: SynchroReg,
+): T | null {
+  if (!savedReg.apparatus.includes('SY') || !savedReg.partnerAthleteId) return null;
+  const mySyLevel = savedReg.apparatusLevels?.SY;
+  if (!mySyLevel) return null;
+  const partnerReg = existingRegs.find(
+    (r) => r.athleteId === savedReg.partnerAthleteId && r.apparatus.includes('SY'),
+  );
+  if (!partnerReg) return null;
+  if (partnerReg.apparatusLevels?.SY === mySyLevel) return null;
+  return { ...partnerReg, apparatusLevels: { ...partnerReg.apparatusLevels, SY: mySyLevel } };
+}
+
+/** Minimal slice of a registration `findIncomingSynchroPartner` needs. */
+export type IncomingSynchroReg = {
+  eventId: string;
+  athleteId: string;
+  apparatus: string[];
+  levelId: string;
+  apparatusLevels?: Record<string, string>;
+  partnerAthleteId?: string | null;
+  refunded?: boolean;
+};
+
+/** Find the registration (if any) that already named `athleteId` as its SY
+ *  partner for this event — i.e. "who selected me". Used both to auto-link
+ *  the reciprocal side (existing behavior) and, per B4.4, to read THEIR SY
+ *  level so a fresh auto-linked registration defaults to matching it. */
+export function findIncomingSynchroPartner<T extends IncomingSynchroReg>(
+  regs: T[],
+  eventId: string,
+  athleteId: string,
+): T | undefined {
+  return regs.find(
+    (r) => r.eventId === eventId && !r.refunded && r.apparatus.includes('SY') && r.partnerAthleteId === athleteId,
+  );
+}
+
 /** Is a coupon usable at `nowISO`? Checks time window + usage cap, plus a HARD
  *  expiration: when scoped to a specific event (`appliesTo === 'meet-entry'` +
  *  `appliesToEventId`), the code is invalid once that event's end date has

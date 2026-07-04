@@ -45,6 +45,8 @@ interface DiscSectionProps {
   season: Season;
   /** Athlete who already named this athlete as their synchro partner, if any. */
   incomingPartnerId?: string | null;
+  /** That athlete's own SY level, if known (B4.4). */
+  incomingPartnerSyLevel?: string | null;
 }
 
 /** Draft shape for one discipline */
@@ -57,7 +59,7 @@ export interface DraftReg {
   partnerUnknown: boolean;
 }
 
-function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, season, incomingPartnerId }: DiscSectionProps) {
+function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, season, incomingPartnerId, incomingPartnerSyLevel }: DiscSectionProps) {
   const discLevels = levels.filter((l) => l.discipline === disc && !l.retired);
   const apparatusDefs = APPARATUS[disc];
   const isTNT = disc === 'TNT';
@@ -88,11 +90,15 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
     }
     // Auto-link the synchro partner: if someone already named this athlete as
     // their partner, default this athlete's partner to them when they add SY.
+    // B4.4: also default the SY level to THEIRS (whoever selects a partner
+    // sets the level for both — this athlete is being auto-linked, so match
+    // the level already chosen by the one who selected them).
     let partnerAthleteId = draft.partnerAthleteId;
     let partnerUnknown = draft.partnerUnknown;
     if (code === 'SY' && next.includes('SY') && !partnerAthleteId && incomingPartnerId) {
       partnerAthleteId = incomingPartnerId;
       partnerUnknown = false;
+      if (incomingPartnerSyLevel) nextEventLevels.SY = incomingPartnerSyLevel;
     }
     onChange({ ...draft, apparatus: next, apparatusLevels: nextEventLevels, partnerAthleteId, partnerUnknown });
   };
@@ -103,9 +109,11 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
     if (isTNT) {
       for (const code of allCodes) nextEventLevels[code] = draft.apparatusLevels[code] ?? draft.levelId;
     }
-    // Auto-link synchro partner when selecting all (which includes SY for T&T).
-    const partnerAthleteId = (allCodes.includes('SY') && !draft.partnerAthleteId && incomingPartnerId)
-      ? incomingPartnerId : draft.partnerAthleteId;
+    // Auto-link synchro partner when selecting all (which includes SY for T&T),
+    // and default the SY level to theirs (B4.4 — see toggleEvent).
+    const autoLinking = allCodes.includes('SY') && !draft.partnerAthleteId && incomingPartnerId;
+    const partnerAthleteId = autoLinking ? incomingPartnerId : draft.partnerAthleteId;
+    if (autoLinking && incomingPartnerSyLevel) nextEventLevels.SY = incomingPartnerSyLevel;
     onChange({ ...draft, apparatus: allCodes, apparatusLevels: nextEventLevels, partnerAthleteId });
   };
 
@@ -271,6 +279,10 @@ export interface RegistrationEditorProps {
   changeFeeApplies?: boolean;
   /** Athlete who already named this athlete as their synchro partner, if any. */
   incomingPartnerId?: string | null;
+  /** That athlete's own SY level, if known (B4.4: whoever selects a partner
+   *  sets the level for both — a fresh SY registration auto-linked to them
+   *  should default to THEIR level, not an arbitrary one). */
+  incomingPartnerSyLevel?: string | null;
 }
 
 export function RegistrationEditor({
@@ -286,6 +298,7 @@ export function RegistrationEditor({
   onCancel,
   changeFeeApplies = false,
   incomingPartnerId = null,
+  incomingPartnerSyLevel = null,
 }: RegistrationEditorProps) {
   // Build initial draft state from existing regs (or defaults from athlete.levels)
   const initDrafts = (): Record<Discipline, DraftReg> => {
@@ -470,6 +483,7 @@ export function RegistrationEditor({
           allAthletes={allAthletes}
           season={season}
           incomingPartnerId={disc === 'TNT' ? incomingPartnerId : null}
+          incomingPartnerSyLevel={disc === 'TNT' ? incomingPartnerSyLevel : null}
         />
       ))}
 

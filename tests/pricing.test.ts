@@ -8,8 +8,9 @@ import {
   applyCoupon,
   newRegistrationEntryTotal,
   reassignPartners,
+  syncSynchroPartnerLevel,
 } from '../src/lib/pricing';
-import type { PartnerReg, RegFeeEvent } from '../src/lib/pricing';
+import type { PartnerReg, RegFeeEvent, SynchroReg } from '../src/lib/pricing';
 import type { Coupon, Membership, Season } from '../src/lib/types';
 
 const season: Season = {
@@ -204,5 +205,51 @@ describe('reassignPartners (synchro swap, 3e)', () => {
     expect(r.partnerAthleteId).toBe('a1'); // original unchanged
     expect(out[0].partnerAthleteId).toBe('a2');
     expect(out[0]).not.toBe(r);
+  });
+});
+
+describe('syncSynchroPartnerLevel (B4.4 — first-to-select sets the level for both)', () => {
+  const syReg = (athleteId: string, level: string | undefined, partner: string | null = null): SynchroReg => ({
+    athleteId,
+    apparatus: ['SY'],
+    ...(level ? { apparatusLevels: { SY: level } } : {}),
+    partnerAthleteId: partner,
+  });
+
+  it('A selects B (High Flyer) — B (previously Novice Flyer) syncs to High Flyer', () => {
+    const existing = [syReg('b', 'novice-flyer')];
+    const saved = syReg('a', 'high-flyer', 'b');
+    const out = syncSynchroPartnerLevel(existing, saved);
+    expect(out?.apparatusLevels?.SY).toBe('high-flyer');
+    expect(out?.athleteId).toBe('b');
+  });
+
+  it('does nothing if the partner has no existing SY registration yet', () => {
+    const out = syncSynchroPartnerLevel([], syReg('a', 'high-flyer', 'b'));
+    expect(out).toBeNull();
+  });
+
+  it('does nothing if the levels already match', () => {
+    const existing = [syReg('b', 'high-flyer')];
+    const out = syncSynchroPartnerLevel(existing, syReg('a', 'high-flyer', 'b'));
+    expect(out).toBeNull();
+  });
+
+  it('does nothing if the saved reg has no partner named', () => {
+    const existing = [syReg('b', 'novice-flyer')];
+    const out = syncSynchroPartnerLevel(existing, syReg('a', 'high-flyer', null));
+    expect(out).toBeNull();
+  });
+
+  it('does nothing if the saved reg does not include SY', () => {
+    const existing = [syReg('b', 'novice-flyer')];
+    const saved: SynchroReg = { athleteId: 'a', apparatus: ['TR'], apparatusLevels: { TR: 'high-flyer' }, partnerAthleteId: 'b' };
+    expect(syncSynchroPartnerLevel(existing, saved)).toBeNull();
+  });
+
+  it("preserves the partner's OTHER apparatus levels, only touching SY", () => {
+    const existing = [{ athleteId: 'b', apparatus: ['SY', 'TR'], apparatusLevels: { SY: 'novice-flyer', TR: 'intermediate-flyer' }, partnerAthleteId: null }];
+    const out = syncSynchroPartnerLevel(existing, syReg('a', 'high-flyer', 'b'));
+    expect(out?.apparatusLevels).toEqual({ SY: 'high-flyer', TR: 'intermediate-flyer' });
   });
 });
