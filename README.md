@@ -64,12 +64,15 @@ npm install
 npm run dev      # http://localhost:5173/ucg-platform/
 npm run build    # production build to dist/
 npm test         # Vitest — scoring engines + capability derivation
+npm run test:e2e # Playwright smoke suite vs the staging backend
 npm run lint
 ```
 
 Tests live in [`tests/`](tests) (Vitest, node env): ground-truth checks for every
 scoring engine plus the capability logic. `npm test` / `npx vitest` work normally
-from the `C:\dev` path.
+from the `C:\dev` path. E2E smoke specs live in [`e2e/`](e2e) (Playwright) and run
+against the **staging** Supabase project (see [`supabase/README.md`](supabase/README.md)
+→ "Staging project"; needs the gitignored `.env.staging.local`).
 
 Without Supabase env vars the app uses the password gate `fortheloveofthesport`
 (SHA-256 in `src/lib/store.ts` `GATE_HASH`) — obfuscation for private demos, not
