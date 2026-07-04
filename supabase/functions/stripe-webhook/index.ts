@@ -426,7 +426,7 @@ async function fulfill(
 }
 
 /** Email the payer their confirmation + HTML receipt. Recipient is the payer's
- *  own people.email (resolved server-side). Mirrors `send-receipt`'s template. */
+ *  own people.email (resolved server-side). */
 async function emailReceipt(
   db: DB,
   personId: string,

@@ -236,10 +236,10 @@ payment form. Build/lint/197 tests pass (3 new coupon hard-expiry tests added). 
   exists in current code.
 - "Receipt suppressed" half of the under-18 item: **false positive** — the
   live receipt path (`stripe-webhook`'s `emailReceipt()`) sends
-  unconditionally on fulfillment with no waiver/active gate. The
-  `send-receipt` edge function DOES have misleading hardcoded "your
-  membership is now active" copy, but it's dead code — not called from
-  anywhere in `src/` currently, so it isn't a live bug.
+  unconditionally on fulfillment with no waiver/active gate. The dead
+  `send-receipt` edge function DID have misleading hardcoded "your
+  membership is now active" copy but was never called from `src/`; removed
+  entirely 2026-07-04 rather than left as a landmine.
 - "Welcome email suppressed... even when club pays" — **narrower than
   described, but real**: the welcome email is by design only for no-club
   (Independent) members (`send-membership-welcome`'s own server-side gate

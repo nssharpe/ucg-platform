@@ -317,9 +317,10 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   once-only guard is CLIENT-side in `Membership.tsx`), `send-club-invite`,
   `invite-account` (admin-create auth user + set-password link), `request-manager-access`
   / `notify-manager-access-denied` (no-login manager-access review),
-  `notify-sanction`, `send-receipt` (caller self-receipt only). Notify-style functions
-  allow any signed-in caller and resolve recipients server-side; only
-  `send-email`/`send-sms` are admin-gated.
+  `notify-sanction`. Notify-style functions allow any signed-in caller and resolve
+  recipients server-side; only `send-email`/`send-sms` are admin-gated. (`send-receipt`
+  was removed 2026-07-04 — dead code, never called from `src/`; `stripe-webhook`'s own
+  `emailReceipt()` is the actual live receipt path.)
 - **SMS consent is opt-OUT, not opt-in** (changed 2026-07-04): `people.sms_consent`
   defaults to `true` — SMS is covered by the liability waiver signed at registration
   (confirmed with Julia), so there's no Profile.tsx checkbox anymore. A STOP-family
