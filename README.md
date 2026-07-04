@@ -101,10 +101,18 @@ meet/session/squad builder + meet wizard · native scoring engines for all disci
 nationals finals-qual / awards engine · live results · imported real Nationals 2026
 data · **transactional email via Resend + SMS via Telnyx** (Communicate broadcast with a
 persistent communication log, guardian-waiver links, club-cart notices, invites) ·
-**client error-log DB + admin Error Log** · PWA + perf work · test suite.
+**client error-log DB + admin Error Log** · PWA + perf work · test suite ·
+**Stripe Embedded Checkout payments** (memberships, event entries, change fees, coupons —
+server-authoritative fulfillment; test mode) · **security hardening Phases 1–2** (RLS
+guard triggers, token exposure, retryable fulfillment) · **event "Meet management"**
+(Draft/Live publication state + timestamp-driven registration open/close, a
+role-gated last-date-to-edit lockout, correct cross-club registration visibility on a
+club-transfer, synchro same-level auto-sync).
 
-**Next (sub-projects):** Stripe payments (+ server-emailed PDF receipts) → typed
-memberships + per-season waiver (B) → codeless judge access (D) → meet 1-vs-2-panel +
+**Next:** Stripe go-live checklist (live keys, in-app refunds — Nate's action; see
+[checklist](docs/stripe-go-live-checklist.md)) → security hardening Phase 3 (deferred
+hardening items) → typed memberships + per-season waiver (sub-project B) → club-based
+multi-club registration picker (C) → codeless judge access (D) → meet 1-vs-2-panel +
 calculator-vs-simple config (E) → MFA/passkeys (see
 [research note](docs/research/2026-06-22-auth-2fa-passkeys.md)). Further out: PDF certs,
 banquet tickets, external API, finals rosters. Full status in [`CLAUDE.md`](CLAUDE.md);

@@ -8,6 +8,17 @@ happened), so it wasn't trustworthy unattended. Reverted to direct Claude
 implementation for everything below. See memory `agy-offload-pipeline` for the
 post-mortem if this is ever revisited.
 
+## Status at a glance (2026-07-04)
+**Still open:**
+- **B5** — Finance dashboards (whole epic). Flagged "likely defer given budget" —
+  not started, no active plan.
+- **B7** — "Transactional-email styling polish" (the only remaining B7 item — the
+  other two, Confirm-My-Account nav flash and hard-refresh flash, are resolved/decided).
+  **Needs specific direction from Nate before starting** (which emails, what's wrong).
+
+**Fully done:** Cohort A, B1, B2, B3, B4 (all 4 sub-items), B6, B8, and 2 of 3 B7 items.
+Full detail on everything below, in order.
+
 ## Cohort A — small/mechanical, direct-Claude
 | # | Item | Status |
 |---|------|--------|
@@ -333,6 +344,9 @@ payment form. Build/lint/197 tests pass (3 new coupon hard-expiry tests added). 
 - §8 FK item: now two concrete DB bugs (see B1).
 - Login: "No account exists for that email" wording confirmed; enumeration accepted (B8).
 
-## Suggested sequence
+## Suggested sequence (historical — all steps below are now done)
 1. Run Cohort A (self-driving). 2. Claude: B1 (critical payments) with review.
 3. B6 (cheap server-logic regressions). 4. B2/B3/B4 as budget allows. 5. Defer B5/B7.
+**Actual outcome:** all of 1–4 shipped, plus B7's other 2 items and all of B8. Only
+B5 (deferred by design) and B7's transactional-email-styling item remain — see
+"Status at a glance" at the top of this file.

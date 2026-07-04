@@ -8,7 +8,7 @@ in [`../CLAUDE.md`](../CLAUDE.md).
 
 > **Status legend:** ✅ shipped to `main` (live) · 🟡 partial / on a branch ·
 > 📘 reference (ongoing) · 📓 research (informational, not a commitment).
-> Last reconciled with the codebase: **2026-06-23**.
+> Last reconciled with the codebase: **2026-07-04**.
 
 ## Reference docs
 - [`production-readiness.md`](production-readiness.md) — **gap analysis + phased plan**
