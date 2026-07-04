@@ -1275,7 +1275,9 @@ export async function pushAll(db: DB, onProgress?: (label: string) => void): Pro
   });
   await step('Memberships', () => {
     const rows = db.people.flatMap((p) => p.memberships.map((m) => membershipToRow(p.id, m)));
-    return rows.length ? supabase!.from('memberships').upsert(rows, { onConflict: 'person_id,season_id' }) : undefined;
+    // 20260618000007 replaced the 2-col unique with (person_id, season_id, type);
+    // the old 2-col spec matches no constraint on a from-migrations database.
+    return rows.length ? supabase!.from('memberships').upsert(rows, { onConflict: 'person_id,season_id,type' }) : undefined;
   });
   await step('Events', () => supabase!.from('events').upsert(db.events.map(eventToRow)));
   await step('Event sessions', () => {

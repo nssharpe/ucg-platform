@@ -145,6 +145,7 @@ export function buildSeed(): DB {
       startDate: '2026-07-09', endDate: '2026-07-11', status: 'live',
       regOpens: '2026-04-15T12:00', regCloses: '2026-06-24T23:59',
       entryFee: 95, secondDisciplineFee: 45,
+      tshirtAddon: { price: 15, sizes: ['Adult S', 'Adult M', 'Adult L', 'Adult XL'] },
       disciplines: ['MAG', 'WAG', 'TNT'],
       sessions: [
         { id: 'nat26-s1', name: 'Session 1 — WAG Xcel Silver', discipline: 'WAG', date: '2026-07-09', time: '09:00', levelIds: ['wag-silver'], squads: [] },

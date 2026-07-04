@@ -153,6 +153,37 @@ on that legacy client-side path), and an in-app admin refund path (today refunds
 **manually in the Stripe Dashboard** — a Dashboard refund does not yet reflect back into
 `payments.status`/fulfillment; sketch in the checklist).
 
+## Staging project (`ucg-staging`, since 2026-07-04)
+
+A second Supabase project in the NAIGC org — ref **`xogpiksqtkayxwmczlbx`** — so
+migrations and E2E tests stop hitting prod first. The CLI stays **linked to prod**;
+target staging explicitly:
+
+- **Migrations:** `supabase db push --db-url "postgresql://postgres:$STAGING_DB_PASSWORD@db.xogpiksqtkayxwmczlbx.supabase.co:5432/postgres" --include-all`
+  (password + keys live in gitignored `.env.local` under `STAGING_*`).
+- **Ad-hoc SQL:** `supabase db query --db-url ... -f <file>` — ONE statement per call
+  (the CLI uses a prepared statement; multi-statement scripts must be split).
+- **Functions:** all 15 deployed with `--project-ref xogpiksqtkayxwmczlbx`; the same
+  three (`stripe-webhook`, `sms-webhook`, `notify-manager-access-denied`) need
+  `--no-verify-jwt`, same non-sticky trap as prod.
+- **Secrets:** `RESEND_API_KEY`/`RESEND_FROM`/`STRIPE_SECRET_KEY` mirror prod (test
+  keys); `APP_PUBLIC_URL=http://localhost:5177`; `STRIPE_WEBHOOK_SECRET` is
+  staging-specific — a dedicated Stripe **test** webhook endpoint
+  (`STAGING_STRIPE_WEBHOOK_ENDPOINT_ID` in `.env.local`) points at the staging
+  functions URL. Telnyx secrets are NOT set (SMS untested on staging).
+- **Seeded state:** demo seed pushed via Admin → Demo tools → `pushAll`, plus the
+  three dev test-auth users (same emails/passwords as prod, staging-specific auth
+  UUIDs in `.env.local`) with the `.jtmp/seed-dev-users.sql` fixtures adapted:
+  `dev-club`, Dev Athlete (active s26 membership + 2-line cart, $60), Dev Manager
+  (manages `dev-club`), Dev Admin (`admin` role). `scores` realtime is enabled.
+- **App against staging:** `.env.staging.local` (gitignored) holds the staging
+  VITE_ vars; `npm run dev -- --mode staging` (launch config `ucg-staging`,
+  port 5177). Playwright E2E boots its own on 5178.
+- **Fresh-backend boot order gotcha:** seed `seasons` BEFORE any sign-in. A signed-in
+  boot against a season-less backend crashes (`Layout.tsx` assumes a current season
+  exists), and the first sign-in's `link_or_create_person` row defeats
+  `syncFromSupabase`'s empty-remote guard, wiping the local seed you'd push from.
+
 ## Stand it up
 
 1. Create a project at https://supabase.com (free tier is fine to start).

@@ -39,3 +39,7 @@ scripts/scoreflippers-import/import.sql
 
 # Claude Code personal per-project settings (not shared)
 .claude/settings.local.json
+
+# Playwright E2E artifacts
+test-results/
+playwright-report/

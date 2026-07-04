@@ -12,6 +12,10 @@ already built, deployed, and proven in **test** mode (account `acct_1TjNQ73b3Mn8
 
 ## 0. Pre-flight (account readiness)
 
+- [ ] **Supabase Pro upgrade (backups, optionally PITR).** Deliberately deferred during
+      development (decided 2026-07-04) — **hard gate before taking live money**: do not
+      run the §2 smoke test until the production project has automated backups.
+      Dashboard → NAIGC org → project `wkyerxlgricfphopocoz` → Settings → Billing → Pro.
 - [ ] **Stripe account activated for live payments.** In the Stripe Dashboard, complete
       business profile / activation (legal entity, statement descriptor = "UNITED CLUB
       GYMNASTICS" or similar, support email, website).
