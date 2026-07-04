@@ -22,3 +22,4 @@ rows) distill patterns back into the CLAUDE.md rules and prune distilled rows.
 - opus/fable: design, decomposition, money/auth/RLS review, gnarly debugging.
 - Subagent vs inline: subagent when the task reads many files the controller doesn't
   need; inline when spawn overhead (~full context re-read per agent) exceeds the work.
+| 2026-07-04 | Admin.tsx (2578 ln) split into pages/admin/* barrel + 11 modules (pure code motion) | refactor | sonnet / default | pass | ~167k (subagent) | Clean first try. Only off-brief decision: kept `REGION_OPTIONS` module-private (react-refresh lint). Controller verified cheaply via sorted-line diff (only import-depth + export-keyword deltas) + build/lint/250 tests + live smoke of all 4 admin pages / 7 league tabs. Good routing fit: big mechanical motion = sonnet; the diff-based review made fable verification ~free. |
