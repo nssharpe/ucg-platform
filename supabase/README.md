@@ -131,9 +131,9 @@ mirroring `src/lib/pricing.ts` + the meet config). Secrets: `STRIPE_SECRET_KEY`,
 `STRIPE_WEBHOOK_SECRET` (test values first). Register the webhook endpoint
 `https://<ref>.supabase.co/functions/v1/stripe-webhook` for events
 `checkout.session.{completed,async_payment_succeeded,async_payment_failed,expired}`.
-**S4 status:** both functions are generalized to all cart-line kinds + club carts but are
-**built, not yet deployed** (Nate deploys at phase end); the new `cart_items`/`invoice_items`
-`ref_meet_id` + `ref_line_type` columns are already live.
+**S4 status:** both functions are generalized to all cart-line kinds + club carts and are
+**deployed + verified live** (test mode); the `cart_items`/`invoice_items`
+`ref_event_id` + `ref_line_type` columns are live.
 
 **S5 (finance wiring + go-live):** the webhook already records `invoices.stripe_fee` +
 `invoices.stripe_payment_intent_id` (real cents from the balance txn); S5 closed the FE gap
@@ -275,13 +275,12 @@ until payment). League admins still grant/revoke any season directly. The gate i
 
 ## Not covered yet (future migrations)
 
-Payments are **built** (Stripe Embedded Checkout, Phases S1–S5 — `payments`/`invoices`/
-`cart_items` tables + the `create-checkout-session`/`stripe-webhook` functions above; finance
-fee/payment-intent wiring done). Remaining before real money flows: Nate deploys the S4
-functions and runs the go-live checklist (live keys). Still future: the membership-expiry
-notification cron, scheduled
-database backups, and the public API
-surface for other leagues. (Waiver e-signature **is** built — migrations 0010–0030 +
+Payments are **built and deployed in test mode** (Stripe Embedded Checkout, Phases S1–S5 —
+`payments`/`invoices`/`cart_items` tables + the `create-checkout-session`/`stripe-webhook`
+functions above; finance fee/payment-intent wiring done; security hardening Phases 1–2
+applied). Remaining before real money flows: Nate runs the go-live checklist (live keys).
+Still future: the membership-expiry notification cron, scheduled database backups, and the
+public API surface for other leagues. (Waiver e-signature **is** built — migrations 0010–0030 +
 `record-waiver-signature` / `request-guardian-waiver`; it stores a structured signature
 evidence record. PDF proof and receipts are generated **client-side** (jsPDF) on demand;
 server-emailed PDF attachments will come with the payments work.)

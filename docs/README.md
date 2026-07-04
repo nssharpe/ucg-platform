@@ -2,18 +2,18 @@
 
 Project documentation. The top-level [`README.md`](../README.md) is the overview;
 this folder holds design **specs**, implementation **plans**, and **research** notes.
-Repo-wide layout is mapped in [`../../PROJECT_STRUCTURE.md`](../../PROJECT_STRUCTURE.md)
-(at the outer project folder). Live build/tooling notes + the deferred-work list live
-in [`../CLAUDE.md`](../CLAUDE.md).
+Live build/tooling notes live in [`../CLAUDE.md`](../CLAUDE.md); open work is the
+[What's next](#whats-next--the-authoritative-list) list below.
 
 > **Status legend:** ✅ shipped to `main` (live) · 🟡 partial / on a branch ·
 > 📘 reference (ongoing) · 📓 research (informational, not a commitment).
 > Last reconciled with the codebase: **2026-07-04**.
 
 ## Reference docs
-- [`production-readiness.md`](production-readiness.md) — **gap analysis + phased plan**
-  to reach production gold standards (UX, security, reliability, observability, legal),
-  with steps split between Nate and Claude. Start here for "what's left to launch."
+- [`production-readiness.md`](production-readiness.md) — **gap analysis by dimension**
+  (UX, security, reliability, observability, legal) with steps split between Nate and
+  Claude; refreshed 2026-07-04. The ordered list of what to do next is the
+  [What's next](#whats-next--the-authoritative-list) section below.
 - [`hosting-and-launch.md`](hosting-and-launch.md) — hosting model, production target
   (`registration.unitedgymnastics.org`), pre-launch hardening checklist.
 - [`../supabase/README.md`](../supabase/README.md) — backend schema, RLS model, and
@@ -72,17 +72,50 @@ in [`../CLAUDE.md`](../CLAUDE.md).
 | [error-logging-observability](research/2026-06-22-error-logging-observability.md) | Error-log strategy (DB + admin search; Sentry optional) | 📓 research → **shipped (error_logs)** |
 | [admin-refresh-flash](research/2026-06-22-admin-refresh-flash.md) | Diagnosis + fix for the admin-page "access denied" flash on refresh | 📓 research → **shipped (rolesLoaded)** |
 
-## Roadmap (sub-projects)
+## What's next — the authoritative list
 
-A ✅ accounts & roles → **Stripe payments** (✅ S1–S5 built & deployed — all payment
-paths (membership, meet-entry, club cart, change fees, coupons) go through Embedded
-Checkout with server-authoritative fulfillment; remaining = the
-[go-live checklist](stripe-go-live-checklist.md) for live keys, in-app refunds, and the
-[security-hardening plan](plans/2026-07-02-security-hardening.md)) →
-B typed memberships + per-season waiver → C club-based registration multi-club picker →
-D codeless judge access (URL / 6-digit / QR) → E meet scoring config (1-vs-2 panels,
-calculator vs. simple entry). Further out: PDF certs, banquet tickets, finals rosters,
-external API. Live status is tracked in [`../CLAUDE.md`](../CLAUDE.md).
+**This is the single source of truth for open work** (reconciled 2026-07-04).
+[`production-readiness.md`](production-readiness.md) is the per-dimension gap
+analysis, [`plans/2026-06-28-feedback-tracker.md`](plans/2026-06-28-feedback-tracker.md)
+the feedback-item history, and [`../CLAUDE.md`](../CLAUDE.md) keeps only a pointer
+here — update THIS list when priorities change, not rival copies.
+
+### Launch blockers (ordered by leverage; 👤 = only Nate can do it)
+1. 👤 **Supabase Pro + backups/PITR** — the DB already holds real people + payment
+   records with no backups; the single cheapest risk reducer ($25/mo).
+2. 👤 **Uptime monitor + alerting** (free tier, ~15 min) · 🤖 then a daily digest
+   of new `error_logs` / stuck `pending` payments (scheduled function).
+3. 👤 **Stripe go-live** — [stripe-go-live-checklist.md](stripe-go-live-checklist.md)
+   (live keys, $1 smoke + refund).
+4. 👤 **Legal** (longest lead time — start early): counsel review of waiver,
+   privacy policy, ToS, minors/COPPA. 🤖 drafts the policy docs.
+5. 👤 approve → 🤖 **Staging Supabase project + Playwright smoke E2E** for the
+   money journeys (stop testing migrations on prod).
+6. 🤖 **Security hardening Phase 3** ([plan](plans/2026-07-02-security-hardening.md))
+   + **rate limiting/CAPTCHA** on sign-up and the public email-sending functions.
+
+### Quality passes (pre- or just post-launch)
+- 🤖 Accessibility audit to WCAG AA + loading/empty/error state consistency.
+- 🤖 In-app "Report a problem" widget + version stamp (`error_logs` is passive today).
+- 🤖 In-app admin refunds (Dashboard-only today; sketch in the go-live checklist).
+- 🤖 New-club-request email to `newclubinquiries@naigc.org` (transport exists, not wired).
+- 🤖 Verify the PWA production update path (stale service-worker bundle → add an
+  update prompt if needed).
+
+### Feature roadmap (as prioritized)
+- Feedback tracker leftovers: **B5** finance dashboards (whole epic — likely defer);
+  **B7** transactional-email styling (needs specific direction from Nate).
+- B typed memberships + per-season waiver → C multi-club registration picker →
+  D codeless judge access (URL / 6-digit / QR) → E scoring config (1-vs-2 panels,
+  calculator vs. simple entry).
+- Further out: MFA/passkeys, PDF certs, banquet tickets, finals rosters,
+  server-emailed PDF receipts, external API.
+
+### Architecture watch-list
+Not gaps yet — trigger conditions and known warts are written down in
+[`production-readiness.md`](production-readiness.md#architecture-watch-list-not-gaps-yet--written-down-so-they-dont-surprise-us):
+data-layer `loadAll` scaling cliff, realtime-only-on-scores staleness, the
+`record-waiver-signature` stale-hold wart.
 
 ## Branches
 All feature work is merged to `main` — there are no outstanding feature branches. (The

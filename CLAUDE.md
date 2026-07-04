@@ -83,37 +83,31 @@ Run the suite, `npx eslint` the touched files, and confirm the build before push
 
 ## Supabase / migrations
 - Project ref `wkyerxlgricfphopocoz` (org NAIGC); CLI linked. Migrations in
-  `supabase/migrations/` — **the authoritative, current migration list + schema/RLS model
-  is `supabase/README.md`**; keep its table updated with every migration. All migrations
-  through `20260704133734_sync_synchro_revoke_public_grant.sql` are applied. The 182709–182714
-  batch is security-hardening Phase 1 (DB guard triggers + policy lockdowns); 201710 is
-  Phase 2 (the fulfillment snapshot). See `docs/plans/2026-07-02-security-hardening.md`.
-  `20260703034325` (2026-07-03) fixes a bug in the 182711 guard trigger — it trusted
-  `tg_op`/`OLD` to detect "is this an update," but the app's writes are always whole-row
-  upserts, so Postgres fires the BEFORE INSERT phase unconditionally and the trigger's
-  snapshot-revert/no-op-transition allowances were unreachable. Now re-resolves the
-  pre-write row by `id` explicitly. `20260703035157` adds `email_has_account` (B8, no-
-  login RPC for the sign-in gate). `20260703132252` adds an `invoice_item_kind` enum
-  value `'fee'` so `stripe-webhook` can persist the Stripe service fee as its own
-  Purchase-History/receipt line (previously shown at checkout/in the receipt email only,
-  never saved — receipts always looked whole-dollar). **`20260703221303` +
-  `20260703221855` + `20260703222142`** fix two real bugs discovered live while
-  consolidating the club edit UI (B8): (1) `pushClub`'s old client-side
-  delete-then-insert of `club_managers` under RLS was self-referential — a non-admin
-  manager's own permission depended on the row the delete had just removed, silently
-  wiping every manager off the club (fixed via a security-definer
-  `replace_club_managers` RPC, checked once up front); (2) `clubs` had NO write policy
-  at all for a non-admin manager (only `admin_all`), so "Edit club details" never
-  actually persisted for its main non-admin audience — fixed with a `manager_all`
-  policy scoped to `manages_club(id)` (needs BOTH insert+update, not just update, since
-  `pushClub` upserts and Postgres RLS still runs the INSERT policy's check on the
-  conflict-update path — split into separate `manager_insert`/`manager_update` policies
-  rather than `for all`, so a manager isn't also granted DELETE on their own club).
+  `supabase/migrations/` — **the authoritative migration list + per-migration narrative +
+  schema/RLS model is `supabase/README.md`**; keep its table updated with every migration
+  (detail goes THERE, not here). All migrations through
+  `20260704133734_sync_synchro_revoke_public_grant.sql` are applied. Security hardening:
+  Phase 1+2 applied; Phase 3 TODO (`docs/plans/2026-07-02-security-hardening.md`).
 - New migrations: `supabase migration new <name>` (timestamp filename format is required).
   Apply via `supabase db push` — network is sandbox-blocked, run with sandbox disabled.
 - **Enum gotcha:** `ALTER TYPE ... ADD VALUE` can't be referenced in the same
   transaction — put each enum addition in its OWN migration file.
 - Ids are app-generated **text**, not uuids (incl. FK cols like `payments.person_id`).
+- **Upsert-trigger trap:** the app writes whole-row upserts (`INSERT ... ON CONFLICT DO
+  UPDATE`), so BEFORE INSERT triggers fire with `tg_op='INSERT'`/`OLD=NULL` even when the
+  row exists — guard triggers must re-SELECT the pre-write row by `id`, never trust
+  `tg_op`/`OLD` (bit us live: `20260703034325`).
+- **RLS upsert trap:** an upsert must pass an INSERT policy's WITH CHECK even on the
+  conflict-update path — a manager-editable table needs BOTH insert+update policies.
+  Prefer separate insert/update policies over `for all` (which silently grants DELETE).
+- **RLS self-reference trap:** never client-side delete-then-insert rows the caller's
+  own permission derives from (e.g. `club_managers`) — the delete revokes the actor's
+  right to re-insert. Use a security-definer RPC that authorizes ONCE up front
+  (`replace_club_managers` is the pattern; write-queue op kind `'rpc'`).
+- **Fail-closed SQL:** in SECURITY DEFINER functions, wrap auth predicates in
+  `coalesce(..., false)` — for an anon caller an OR-chain over NULL evaluates to NULL
+  and `if not NULL` does NOT raise (bit us: `20260704133502`). Also revoke the default
+  PUBLIC execute grant on new functions.
 
 ## Build / tooling gotchas
 - Keep the working copy at `C:\dev\ucg-platform` (short, space-free, outside Dropbox —
@@ -153,9 +147,10 @@ Run the suite, `npx eslint` the touched files, and confirm the build before push
   lock in port correctness. No DOM/component tests yet (would need jsdom + @testing-library).
 
 ## Docs
-- `README.md` overview; `docs/README.md` index + roadmap; `supabase/README.md` backend
-  schema/RLS/migration table; `docs/specs/` design specs; `docs/plans/` implementation
-  plans (do NOT recreate `docs/superpowers/`); `docs/stripe-go-live-checklist.md`.
+- `README.md` overview; `docs/README.md` index + **the authoritative "What's next"
+  list**; `supabase/README.md` backend schema/RLS/migration table; `docs/specs/` design
+  specs; `docs/plans/` implementation plans (do NOT recreate `docs/superpowers/`);
+  `docs/stripe-go-live-checklist.md`.
 - **Keep docs current after every commit** — a `PostToolUse` hook fires after `git commit`
   reminding you to sweep README/CLAUDE.md/docs/supabase-README in the same session.
   For THIS file that means update-in-place, keep it lean, push detail into specs/plans.
@@ -330,19 +325,10 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   `true` EXCEPT anyone who'd already sent a STOP reply (matched against `sms_messages`).
 
 ## Deferred / TODO
-Roadmap lives in `docs/README.md`; feedback tracker in
-`docs/plans/2026-06-28-feedback-tracker.md` — **Cohort A + B1–B4, B6, B8 all shipped.
-Only B5 and one B7 item remain open**, both low-priority/no active work planned (see
-feedback-tracker.md for full history/detail on everything shipped). Notable open items:
-- **In-app admin refunds** (Dashboard-only today; sketch in the go-live checklist).
-- **New-club-request email** to `newclubinquiries@naigc.org` (transport exists, not wired).
-- **MFA/passkeys** (`docs/research/2026-06-22-auth-2fa-passkeys.md`).
-- Per-season typed waivers, codeless judge access, multi-judge + score-entry-mode config,
-  PDF certs, finals rosters, server-emailed PDF receipt attachments.
-- **Feedback tracker B5** — Finance dashboards (whole epic): event/org tiers, date
-  defaults, Summary/Invoices tabs, account codes. Flagged "likely defer given budget";
-  not started.
-- **Feedback tracker B7 (1 item left)** — "Transactional-email styling polish" is the
-  only remaining item (the other two — Confirm-My-Account nav flash, hard-refresh flash
-  — are resolved/decided). **Needs specific direction from Nate before starting** (which
-  emails, what's wrong with the current styling).
+**The single authoritative open-work list is `docs/README.md` → "What's next"** —
+update it there; don't grow a rival list here. Operative notes only:
+- Feedback tracker (`docs/plans/2026-06-28-feedback-tracker.md`): Cohort A + B1–B4, B6,
+  B8 all shipped; only **B5** (finance dashboards — likely defer) and one **B7** item
+  (transactional-email styling — **needs specific direction from Nate**) remain open.
+- Refunds are Stripe-Dashboard-only today; a Dashboard refund does NOT reflect back
+  into `payments.status` (in-app refund path is on the what's-next list).
