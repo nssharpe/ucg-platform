@@ -117,6 +117,10 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
   const [regOpens, setRegOpens] = useState(editEvent?.regOpens ?? `${new Date().toISOString().slice(0, 10)}T12:00`);
   const [regCloses, setRegCloses] = useState(editEvent?.regCloses ?? `${addDays(defaultStart, -14)}T23:59`);
   const regClosesDirty = useRef(isEdit);
+  // Last date to edit (B4): optional edit-lockout, past which only an admin
+  // or the event's host club may still edit a registration.
+  const [hasEditLockout, setHasEditLockout] = useState(!!editEvent?.lastDateToEdit);
+  const [lastDateToEdit, setLastDateToEdit] = useState(editEvent?.lastDateToEdit ?? `${addDays(defaultStart, -7)}T23:59`);
   // Fees
   const [entryFee, setEntryFee] = useState(String(editEvent?.entryFee ?? 60));
   const [secondFee, setSecondFee] = useState(String(editEvent?.secondDisciplineFee ?? 30));
@@ -216,6 +220,7 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
       if (!Number.isFinite(a) || a < 0) return setError('Change fee must be a valid dollar amount.');
       if (!changeFeeStartsAt) return setError('Change fee needs a start date/time.');
     }
+    if (hasEditLockout && !lastDateToEdit) return setError('Last date to edit needs a date/time, or turn the toggle off.');
 
     const nationals = kind === 'nationals';
     if (nationals && !sessions.some((s) => s.phase === 'prelim')) return setError('A Nationals event needs at least one prelim session.');
@@ -244,6 +249,7 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
       ...(hasTshirt ? { tshirtAddon: { price: Number(tshirtPrice), sizes: tshirtSizes } } : { tshirtAddon: undefined }),
       ...(hasBanner ? { bannerAddon: { price: Number(bannerPrice) } } : { bannerAddon: undefined }),
       ...(hasChangeFee ? { changeFee: { amount: Number(changeFeeAmount), startsAt: changeFeeStartsAt } } : { changeFee: undefined }),
+      lastDateToEdit: hasEditLockout ? lastDateToEdit : null,
       ...(nationals
         ? {
             kind: 'nationals' as const,
@@ -374,6 +380,18 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
           <Field label="Change fee ($)"><input className="input" type="number" min={0} step={5} value={changeFeeAmount} onChange={(e) => setChangeFeeAmount(e.target.value)} /></Field>
           <Field label={`Applies after (${timezone})`} hint="Changes made after this date/time incur the fee.">
             <input className="input" type="datetime-local" value={changeFeeStartsAt} onChange={(e) => setChangeFeeStartsAt(e.target.value)} />
+          </Field>
+        </div>
+      )}
+
+      {/* Last date to edit (B4) */}
+      <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, marginTop: 8, marginBottom: hasEditLockout ? 8 : 0 }}>
+        <input type="checkbox" checked={hasEditLockout} onChange={(e) => setHasEditLockout(e.target.checked)} /> Lock out editing after a date
+      </label>
+      {hasEditLockout && (
+        <div className="grid cols-3" style={{ marginBottom: 8 }}>
+          <Field label={`Last date to edit (${timezone})`} hint="Past this, only an admin or this event's host club can still edit a registration.">
+            <input className="input" type="datetime-local" value={lastDateToEdit} onChange={(e) => setLastDateToEdit(e.target.value)} />
           </Field>
         </div>
       )}

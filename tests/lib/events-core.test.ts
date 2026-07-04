@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deriveEventPhase, eventIsInPhase, type EventPhaseInput } from '../../src/lib/events-core';
+import { deriveEventPhase, eventIsInPhase, canStillEditRegistration, type EventPhaseInput } from '../../src/lib/events-core';
 
 function event(overrides: Partial<EventPhaseInput> = {}): EventPhaseInput {
   return {
@@ -62,5 +62,32 @@ describe('eventIsInPhase', () => {
     const e = { status: 'live', ...event() };
     expect(eventIsInPhase(e, 'reg-open', new Date('2026-01-15'))).toBe(true);
     expect(eventIsInPhase(e, 'in-progress', new Date('2026-01-15'))).toBe(false);
+  });
+});
+
+describe('canStillEditRegistration (B4.2)', () => {
+  it('no lastDateToEdit ⇒ always editable, for anyone', () => {
+    expect(canStillEditRegistration({ lastDateToEdit: null }, false)).toBe(true);
+    expect(canStillEditRegistration({}, false)).toBe(true);
+  });
+
+  it('before the deadline, anyone can edit', () => {
+    const ev = { lastDateToEdit: '2026-06-01T00:00:00' };
+    expect(canStillEditRegistration(ev, false, new Date('2026-05-01'))).toBe(true);
+  });
+
+  it('exactly at the deadline, still editable (inclusive)', () => {
+    const ev = { lastDateToEdit: '2026-06-01T00:00:00' };
+    expect(canStillEditRegistration(ev, false, new Date('2026-06-01T00:00:00'))).toBe(true);
+  });
+
+  it('past the deadline, a plain member/other-club manager is locked out', () => {
+    const ev = { lastDateToEdit: '2026-06-01T00:00:00' };
+    expect(canStillEditRegistration(ev, false, new Date('2026-06-02'))).toBe(false);
+  });
+
+  it('past the deadline, an admin or the host club (bypasses=true) can still edit', () => {
+    const ev = { lastDateToEdit: '2026-06-01T00:00:00' };
+    expect(canStillEditRegistration(ev, true, new Date('2026-06-02'))).toBe(true);
   });
 });

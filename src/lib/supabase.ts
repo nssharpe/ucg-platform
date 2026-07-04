@@ -210,7 +210,8 @@ const rowToMembership = (r: Row<'memberships'>): Membership => ({
 const eventToRow = (m: Event) => ({
   id: m.id, slug: m.slug, name: m.name, host_club_id: m.hostClubId, city: m.city, state: m.state,
   timezone: m.timezone, start_date: m.startDate || null, end_date: m.endDate || null, status: m.status,
-  reg_opens: m.regOpens || null, reg_closes: m.regCloses || null, entry_fee: m.entryFee,
+  reg_opens: m.regOpens || null, reg_closes: m.regCloses || null,
+  last_date_to_edit: m.lastDateToEdit || null, entry_fee: m.entryFee,
   second_discipline_fee: m.secondDisciplineFee, disciplines: m.disciplines,
   private_reg_code: m.privateRegCode ?? null, banquet: m.banquet ?? null,
   tshirt_addon: m.tshirtAddon ?? null, banner_addon: m.bannerAddon ?? null,
@@ -1140,6 +1141,7 @@ export async function loadAll(): Promise<DB | null> {
       id: r.id, slug: r.slug, name: r.name, hostClubId: r.host_club_id ?? '', city: r.city ?? '',
       state: r.state ?? '', timezone: r.timezone, startDate: r.start_date ?? '', endDate: r.end_date ?? '',
       status: r.status as Event['status'], regOpens: r.reg_opens ?? '', regCloses: r.reg_closes ?? '',
+      lastDateToEdit: r.last_date_to_edit ?? null,
       entryFee: Number(r.entry_fee), secondDisciplineFee: Number(r.second_discipline_fee),
       disciplines: (r.disciplines ?? []) as Event['disciplines'], sessions: sessionsByEvent.get(r.id) ?? [],
       ...(r.private_reg_code ? { privateRegCode: r.private_reg_code } : {}),

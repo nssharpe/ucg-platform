@@ -226,6 +226,11 @@ export interface Event {
   status: EventStatus;
   regOpens: string;
   regCloses: string;
+  /** Optional last date/time a registration may still be edited. Past this,
+   *  only an admin or the event's HOST club's managers may still edit
+   *  (enforced server-side by the `registrations_edit_lockout` trigger, not
+   *  just client-side). Absent ⇒ no lockout. */
+  lastDateToEdit?: string | null;
   entryFee: number; // per discipline
   secondDisciplineFee: number;
   disciplines: Discipline[];

@@ -3,7 +3,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { clubHasActiveMembership, seasonForDate, membershipHolds, paidRegistrationClub } from '../lib/capabilities-core';
-import { eventIsInPhase } from '../lib/events-core';
+import { eventIsInPhase, canStillEditRegistration } from '../lib/events-core';
 import { Badge, Combo, Field, Modal } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 import { STATE_REGIONS } from '../lib/types';
@@ -680,11 +680,16 @@ function RosterTable({
 
 function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean }) {
   const db = useDB();
+  const caps = useCapabilities();
   const toast = useToast();
   const openEvents = db.events.filter((m) => eventIsInPhase(m, 'reg-open') || eventIsInPhase(m, 'reg-closed'));
   const [eventId, setEventId] = useState(openEvents.find((m) => eventIsInPhase(m, 'reg-open'))?.id ?? openEvents[0]?.id);
   const event = db.events.find((m) => m.id === eventId);
   const season = db.seasons.find((s) => s.current)!;
+  // B4.2: past the event's last-date-to-edit, only an admin or the event's
+  // HOST club may still edit (client-side UX only — registrations_edit_lockout
+  // enforces this server-side regardless).
+  const canStillEdit = event ? canStillEditRegistration(event, caps.isEventHost(event.id)) : false;
 
   // Modal state for RegistrationEditor
   const [editingAthleteId, setEditingAthleteId] = useState<string | null>(null);
@@ -1166,13 +1171,21 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
                     </td>
                     {canManage && (
                       <td style={{ whiteSpace: 'nowrap', display: 'flex', gap: 6 }}>
-                        {!regClosed && (
+                        {!regClosed && canStillEdit && (
                           <button
                             className="btn small ghost"
                             onClick={() => setEditingAthleteId(a.id)}
                           >
                             Edit
                           </button>
+                        )}
+                        {!regClosed && !canStillEdit && (
+                          <span
+                            style={{ fontSize: 12, color: 'var(--ink-soft)' }}
+                            data-tip="This event's edit deadline has passed; only an admin or the host club can still edit."
+                          >
+                            Edit locked
+                          </span>
                         )}
                         {!anyRefundReq && (
                           <button

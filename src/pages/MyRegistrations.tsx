@@ -9,6 +9,7 @@ import { newRegistrationEntryTotal, registrationChangeFee, changeIsEligible } fr
 import type { RegChangeState } from '../lib/pricing';
 import { fmtMoney } from '../lib/scoring';
 import type { Athlete, Club, Level, Event, Registration, Season } from '../lib/types';
+import { canStillEditRegistration } from '../lib/events-core';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -29,6 +30,7 @@ export function MyRegistrations() {
 
 function MyRegistrationsInner({ personId }: { personId: string }) {
   const db = useDB();
+  const caps = useCapabilities();
   const toast = useToast();
   const [tab, setTab] = useState<'upcoming' | 'past'>('upcoming');
   const [q, setQ] = useState('');
@@ -280,6 +282,12 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
             const isOpen = expanded === event.id;
             const club = db.clubs.find((c) => c.id === regs[0]?.clubId);
             const regClosed = event.regCloses < t;
+            // B4.2: client-side UX mirror of the registrations_edit_lockout DB
+            // trigger — a member editing their OWN registration is never the
+            // event's host club, so this is effectively "locked out past the
+            // deadline" for the self-service flow (an admin impersonating
+            // still bypasses via caps.isEventHost).
+            const canStillEdit = canStillEditRegistration(event, caps.isEventHost(event.id));
             return (
               <div key={event.id} className="card card-pad">
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, cursor: 'pointer', flexWrap: 'wrap' }}
@@ -290,13 +298,16 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                   </span>
                   {club && <Badge tone="navy">{club.shortName || club.name}</Badge>}
                   <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 10, alignItems: 'center' }}>
-                    {isOpen && tab === 'upcoming' && !regClosed && (
+                    {isOpen && tab === 'upcoming' && !regClosed && canStillEdit && (
                       <button
                         className="btn ghost small"
                         onClick={(e) => { e.stopPropagation(); setEditingEventId(event.id); }}
                       >
                         Edit
                       </button>
+                    )}
+                    {isOpen && tab === 'upcoming' && !regClosed && !canStillEdit && (
+                      <span style={{ fontSize: 12, color: 'var(--ink-soft)' }}>Edit deadline passed</span>
                     )}
                     <span style={{ color: 'var(--accent)', fontSize: 13 }}>{isOpen ? 'Hide' : 'Details'}</span>
                   </span>

@@ -586,6 +586,7 @@ export type Database = {
           host_club_id: string | null
           id: string
           kind: Database["public"]["Enums"]["meet_kind"]
+          last_date_to_edit: string | null
           name: string
           nationals_config: Json | null
           private_reg_code: string | null
@@ -614,6 +615,7 @@ export type Database = {
           host_club_id?: string | null
           id: string
           kind?: Database["public"]["Enums"]["meet_kind"]
+          last_date_to_edit?: string | null
           name: string
           nationals_config?: Json | null
           private_reg_code?: string | null
@@ -642,6 +644,7 @@ export type Database = {
           host_club_id?: string | null
           id?: string
           kind?: Database["public"]["Enums"]["meet_kind"]
+          last_date_to_edit?: string | null
           name?: string
           nationals_config?: Json | null
           private_reg_code?: string | null

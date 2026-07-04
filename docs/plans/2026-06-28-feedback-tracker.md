@@ -140,9 +140,20 @@ payment form. Build/lint/197 tests pass (3 new coupon hard-expiry tests added). 
   verified live end-to-end (edited an event's close date, confirmed the
   registration-open badge/CTA flipped automatically). Migrations
   `20260704035120` + `20260704035144`.
-- **Sub-items 2–4** (last-date-to-edit lockout; athlete self-service
-  club-transfer roster-affiliation update; synchro same-level auto-sync) — not
-  yet started.
+- **Sub-item 2 (`Last date to edit` field + role-gated lockout)** ✅ **DONE**
+  (2026-07-04). Optional `events.lastDateToEdit` — past it, only an admin or
+  the event's HOST club may still edit a registration (Nate's call). Enforced
+  server-side by a new `guard_registration_edit_lockout` trigger mirroring
+  `guard_registration_paid`'s established pattern (privileged bypass first so
+  `stripe-webhook` is never blocked; re-resolves the pre-write row by id to
+  avoid the exact upsert-trigger-phase trap that bit `guard_registration_paid`
+  once already). Client-side UX mirror (`canStillEditRegistration`,
+  `src/lib/events-core.ts`) hides Edit / shows "Edit locked" in
+  Club.tsx/MyRegistrations.tsx. Adversarially reviewed (no findings) and
+  verified live (non-host manager sees "Edit locked"; admin still sees
+  "Edit"). Migration `20260704041049`.
+- **Sub-items 3–4** (athlete self-service club-transfer roster-affiliation
+  update; synchro same-level auto-sync) — not yet started.
 
 **B5 — Finance dashboards (whole epic):** event + org tiers, date defaults, Summary/Invoices tabs, account codes. Likely defer given budget. §7
 

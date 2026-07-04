@@ -37,3 +37,21 @@ export function eventIsInPhase(
 ): boolean {
   return event.status === 'live' && deriveEventPhase(event, now) === phase;
 }
+
+/**
+ * Client-side mirror of the `registrations_edit_lockout` DB trigger (B4) —
+ * for UX only (a friendly disabled state / message), NOT the authoritative
+ * gate; the trigger enforces this server-side regardless of what the client
+ * thinks. Past `lastDateToEdit`, only an admin or the event's HOST club's
+ * managers may still edit (pass `caps.isEventHost(event.id)` as `bypasses` —
+ * it already covers both). No `lastDateToEdit` set ⇒ always editable.
+ */
+export function canStillEditRegistration(
+  event: { lastDateToEdit?: string | null },
+  bypasses: boolean,
+  now: Date = new Date(),
+): boolean {
+  if (!event.lastDateToEdit) return true;
+  if (now.getTime() <= new Date(event.lastDateToEdit).getTime()) return true;
+  return bypasses;
+}
