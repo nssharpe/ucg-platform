@@ -59,7 +59,7 @@ Live build/tooling notes live in [`../CLAUDE.md`](../CLAUDE.md); open work is th
 | [welcome-email-stripe-path](plans/2026-07-02-welcome-email-stripe-path.md) | Fire the first-membership welcome email from `stripe-webhook` fulfillment | ✅ shipped |
 | [security-hardening](plans/2026-07-02-security-hardening.md) | Fixes for the 7/02 security findings: RLS guard triggers, token exposure, checkout ref validation, retryable fulfillment | 🟡 Phase 1 + 2 shipped & deployed (verified live); Phase 3 TODO |
 | [cart-state-fixes](plans/2026-07-02-cart-state-fixes.md) | Fixes for the 7/02 client cart/registration state-machine findings (C5, H5–H8, M6–M9) | ✅ shipped (2 minor residuals noted) |
-| [feedback-tracker](plans/2026-06-28-feedback-tracker.md) | 6/27 Gemini-organized feedback batch, cohorted A + B1–B8 | 🟡 Cohort A + B1–B4 + B6 + B8 shipped; **B5, B7 (1 item) open** (see [CLAUDE.md](../CLAUDE.md) Deferred/TODO) |
+| [feedback-tracker](plans/2026-06-28-feedback-tracker.md) | 6/27 Gemini-organized feedback batch, cohorted A + B1–B8 | 🟡 Cohort A + B1–B4 + B6 + B7 + B8 shipped; **B5 open** (see [CLAUDE.md](../CLAUDE.md) Deferred/TODO) |
 
 ## Research (`research/`) — informational, not commitments
 
@@ -103,8 +103,7 @@ here — update THIS list when priorities change, not rival copies.
   update prompt if needed).
 
 ### Feature roadmap (as prioritized)
-- Feedback tracker leftovers: **B5** finance dashboards (whole epic — likely defer);
-  **B7** transactional-email styling (needs specific direction from Nate).
+- Feedback tracker leftovers: **B5** finance dashboards (whole epic — likely defer).
 - B typed memberships + per-season waiver → C multi-club registration picker →
   D codeless judge access (URL / 6-digit / QR) → E scoring config (1-vs-2 panels,
   calculator vs. simple entry).

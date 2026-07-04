@@ -31,7 +31,7 @@ review/hardening cycle all shipped in between).
 | Observability / monitoring | 🟡 Errors logged | Alerted | Nothing *notifies* us — no uptime check, no alerts, no analytics |
 | Bug reporting | 🔴 Passive only | In-app + triage | `error_logs` captures crashes; users still can't report problems |
 | Testing / CI | 🟡 Gated | Gated + E2E + staging | No component/E2E tests; no staging env — migrations hit prod first |
-| Email / notifications | 🟢 Production ESP | — | Resend on verified naigc.org; styling polish (B7) optional |
+| Email / notifications | 🟢 Production ESP | — | Resend on verified naigc.org; branded template shipped (B7 done) |
 | Hosting / infra | 🟡 Dev-grade | Prod stack | GitHub Pages + HashRouter; free Supabase; **no backups/PITR** |
 | Legal / compliance | 🔴 Gap | Counsel-blessed | No privacy policy / ToS; waiver unblessed; minors → COPPA |
 | Data integrity / DR | 🔴 Free tier | Backups + drills | No PITR; migrations untested pre-prod; no restore drill |
@@ -174,8 +174,10 @@ the [go-live checklist](stripe-go-live-checklist.md) (👤 live keys, smoke test
 
 **Done.** Transport is **Resend** on the verified `naigc.org` domain with scoped
 API keys, via the shared `_shared/resend.ts` helper; receipts, waivers, invites,
-and notify-flows all use it. Remaining polish is optional: transactional-email
-styling (feedback tracker B7 — needs Nate's direction on which emails/what look).
+and notify-flows all use it. Every transactional email now shares a branded
+template (`_shared/email-layout.ts` — navy header, white card, orange CTA, muted
+footer, matching the Supabase sign-in-link email) — feedback tracker **B7 done**
+2026-07-04.
 
 ## 9. Hosting / infra  🟡
 

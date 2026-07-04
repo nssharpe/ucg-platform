@@ -335,7 +335,6 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
 **The single authoritative open-work list is `docs/README.md` → "What's next"** —
 update it there; don't grow a rival list here. Operative notes only:
 - Feedback tracker (`docs/plans/2026-06-28-feedback-tracker.md`): Cohort A + B1–B4, B6,
-  B8 all shipped; only **B5** (finance dashboards — likely defer) and one **B7** item
-  (transactional-email styling — **needs specific direction from Nate**) remain open.
+  B7, B8 all shipped; only **B5** (finance dashboards — likely defer) remains open.
 - Refunds are Stripe-Dashboard-only today; a Dashboard refund does NOT reflect back
   into `payments.status` (in-app refund path is on the what's-next list).

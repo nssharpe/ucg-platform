@@ -12,11 +12,8 @@ post-mortem if this is ever revisited.
 **Still open:**
 - **B5** — Finance dashboards (whole epic). Flagged "likely defer given budget" —
   not started, no active plan.
-- **B7** — "Transactional-email styling polish" (the only remaining B7 item — the
-  other two, Confirm-My-Account nav flash and hard-refresh flash, are resolved/decided).
-  **Needs specific direction from Nate before starting** (which emails, what's wrong).
 
-**Fully done:** Cohort A, B1, B2, B3, B4 (all 4 sub-items), B6, B8, and 2 of 3 B7 items.
+**Fully done:** Cohort A, B1, B2, B3, B4 (all 4 sub-items), B6, B7 (all 3 items), B8.
 Full detail on everything below, in order.
 
 ## Cohort A — small/mechanical, direct-Claude
@@ -338,7 +335,21 @@ payment form. Build/lint/197 tests pass (3 new coupon hard-expiry tests added). 
   async) — Nate's call: leave as-is (the current behavior never shows wrong content,
   just reveals extra items slightly late; not worth a universal loading-gate delay on
   every page load to eliminate). No change made.
-- **Transactional-email styling polish**: still open, no specific direction given yet.
+- **Transactional-email styling polish** ✅ **DONE** (2026-07-04). Direction from Nate:
+  match the polish/style of the Supabase magic-link sign-in email (dark navy header
+  with the UCG wordmark, white card, orange CTA button, muted footer). Added a shared
+  `supabase/functions/_shared/email-layout.ts` wrapper (`renderEmail({ heading,
+  bodyHtml, cta?, footnoteHtml? })`) and applied it to every Resend-sent email:
+  `invite-account`, `send-club-invite`, `request-guardian-waiver`,
+  `request-manager-access`, `notify-club-cart`, `notify-manager-access-denied`,
+  `notify-sanction`, `send-membership-welcome`, the `stripe-webhook` receipt, and the
+  `sms-webhook` admin alert — previously all bare `<p>`-tag emails with no shared
+  styling. Left `send-email` (admin free-text broadcast) unwrapped since the admin
+  composes the full body directly. Verified the color pairs by hand against WCAG AA
+  (caught and fixed a footer-text pair that was only ~2.2:1 before shipping). Build +
+  lint + vitest (incl. a new `tests/email-layout.test.ts`) all pass; deployed all 10
+  functions, re-verifying `verify_jwt: false` on the three functions that need it
+  (`stripe-webhook`, `sms-webhook`, `notify-manager-access-denied`).
 
 ## Clarifications — RESOLVED (2026-06-28)
 - §8 FK item: now two concrete DB bugs (see B1).
@@ -347,6 +358,5 @@ payment form. Build/lint/197 tests pass (3 new coupon hard-expiry tests added). 
 ## Suggested sequence (historical — all steps below are now done)
 1. Run Cohort A (self-driving). 2. Claude: B1 (critical payments) with review.
 3. B6 (cheap server-logic regressions). 4. B2/B3/B4 as budget allows. 5. Defer B5/B7.
-**Actual outcome:** all of 1–4 shipped, plus B7's other 2 items and all of B8. Only
-B5 (deferred by design) and B7's transactional-email-styling item remain — see
-"Status at a glance" at the top of this file.
+**Actual outcome:** all of 1–4 shipped, plus all of B7 and B8. Only B5 (deferred by
+design) remains — see "Status at a glance" at the top of this file.
