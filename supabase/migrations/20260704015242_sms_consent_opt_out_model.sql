@@ -1,0 +1,6 @@
+-- Intentional no-op: this file was auto-created by `supabase migration new`
+-- before the actual SQL was written (an interrupted command re-ran the
+-- generator, producing a duplicate-named file a moment later:
+-- 20260704015417_sms_consent_opt_out_model.sql, which has the real content).
+-- Already applied to the remote as a no-op, so kept rather than deleted to
+-- avoid local/remote migration-history drift.

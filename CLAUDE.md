@@ -85,7 +85,7 @@ Run the suite, `npx eslint` the touched files, and confirm the build before push
 - Project ref `wkyerxlgricfphopocoz` (org NAIGC); CLI linked. Migrations in
   `supabase/migrations/` — **the authoritative, current migration list + schema/RLS model
   is `supabase/README.md`**; keep its table updated with every migration. All migrations
-  through `20260703223152_clubs_manager_no_delete.sql` are applied. The 182709–182714
+  through `20260704015417_sms_consent_opt_out_model.sql` are applied. The 182709–182714
   batch is security-hardening Phase 1 (DB guard triggers + policy lockdowns); 201710 is
   Phase 2 (the fulfillment snapshot). See `docs/plans/2026-07-02-security-hardening.md`.
   `20260703034325` (2026-07-03) fixes a bug in the 182711 guard trigger — it trusted
@@ -320,6 +320,13 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   `notify-sanction`, `send-receipt` (caller self-receipt only). Notify-style functions
   allow any signed-in caller and resolve recipients server-side; only
   `send-email`/`send-sms` are admin-gated.
+- **SMS consent is opt-OUT, not opt-in** (changed 2026-07-04): `people.sms_consent`
+  defaults to `true` — SMS is covered by the liability waiver signed at registration
+  (confirmed with Julia), so there's no Profile.tsx checkbox anymore. A STOP-family
+  reply (`sms-webhook`, unchanged) is the ONLY way to become ineligible —
+  `partitionByConsent` (`src/lib/sms-send.ts`) excludes only explicit `false`, treating
+  `undefined`/`true` as eligible. Migration `20260704015417` backfilled everyone to
+  `true` EXCEPT anyone who'd already sent a STOP reply (matched against `sms_messages`).
 
 ## Deferred / TODO
 Roadmap lives in `docs/README.md`; feedback tracker in
@@ -335,11 +342,11 @@ open**, see below). Notable open items:
   change-fee/roster/pending flag, synchronized-trampoline same-level backend check.
 - **Feedback tracker B5** — Finance dashboards (whole epic): event/org tiers, date
   defaults, Summary/Invoices tabs, account codes. Flagged "likely defer given budget."
-- **Feedback tracker B6** — Email/state regressions: memberships-checkout confirmation
-  email+PDF (still open). The other 5 items were investigated 2026-07-03: 4 read as
-  already-correct/false-positive in current code (waiver-checkout "email sent" toast,
-  in-cart membership bubble conflict, admin-access routing, denial-email not firing); the
-  welcome-email gap was real and is ✅ fixed (see feedback-tracker.md B6 notes).
+- **Feedback tracker B6** — ✅ all items done 2026-07-03/04 (4 read as
+  already-correct/false-positive in current code — waiver-checkout "email sent" toast,
+  in-cart membership bubble conflict, admin-access routing, denial-email not firing; the
+  welcome-email gap was real and is fixed; the memberships-checkout confirmation
+  email/PDF was confirmed fine as-is with Julia — see feedback-tracker.md B6 notes).
 - **Feedback tracker B7** — Verify-by-eye: Confirm-My-Account nav flash, hard-refresh
   flash, transactional-email styling polish.
 - **Feedback tracker B8** — ✅ all items done 2026-07-03 (Save-vs-Add-to-Cart for no-fee

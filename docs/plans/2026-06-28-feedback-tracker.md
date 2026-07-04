@@ -130,7 +130,7 @@ payment form. Build/lint/197 tests pass (3 new coupon hard-expiry tests added). 
 
 **B5 — Finance dashboards (whole epic):** event + org tiers, date defaults, Summary/Invoices tabs, account codes. Likely defer given budget. §7
 
-**B6 — Email/state regressions (server logic):** waiver-checkout "email sent" but none sent; in-cart membership labeled paid but bubble conflicts (state); admin-access requests routing to League instead of Club Managers; denial-email not firing (notify-manager-access-denied exists — likely a wiring regression); under-18 welcome email AND receipt suppressed until waiver signed + membership active (even when club pays); memberships-checkout completion should email owner confirmation + PDF receipt. §2/§3/§8 / orig L6,72,77
+**B6 — Email/state regressions (server logic):** ✅ **ALL DONE** (2026-07-03/04). waiver-checkout "email sent" but none sent; in-cart membership labeled paid but bubble conflicts (state); admin-access requests routing to League instead of Club Managers; denial-email not firing (notify-manager-access-denied exists — likely a wiring regression); under-18 welcome email AND receipt suppressed until waiver signed + membership active (even when club pays); memberships-checkout completion should email owner confirmation + PDF receipt. §2/§3/§8 / orig L6,72,77
 
 **Investigation notes (2026-07-03) — 5 of 6 items checked, one real fix shipped:**
 - Waiver-checkout "email sent" toast, admin-access routing to League, and
@@ -159,6 +159,11 @@ payment form. Build/lint/197 tests pass (3 new coupon hard-expiry tests added). 
   member's real Stripe CARD payment never fired it at all (comp-only). ✅
   **FIXED** (2026-07-03) — see
   [welcome-email-stripe-path](2026-07-02-welcome-email-stripe-path.md), now shipped.
+- **Memberships-checkout confirmation email + PDF receipt**: ✅ **CONFIRMED ALREADY
+  CORRECT** (2026-07-04) — Nate confirmed with Julia that the current behavior (a
+  confirmation email with the receipt as the email text itself, plus the ability to
+  download a PDF anytime from Purchase History) is fine as-is. No code change; the
+  original ask (a separate PDF attachment) is not needed.
 
 **B8 — Smaller items (review-light):**
 - Login: unknown email → immediate alert "No account exists for that email" instead of

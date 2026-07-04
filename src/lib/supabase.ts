@@ -182,7 +182,11 @@ const personToRow = (p: Athlete) => ({
   dob: p.dob || null, gender: p.gender, placement: p.placement ?? {}, grad_year: p.gradYear || null,
   student_status: p.studentStatus || null, shirt: p.shirt, country: p.country, state: p.state,
   outside_us: p.outsideUs ?? false,
-  phone: p.phone, sms_consent: p.smsConsent ?? false, sms_consent_at: p.smsConsentAt ?? null,
+  // Opt-OUT model (SMS is covered by the liability waiver): consenting by
+  // default unless explicitly set false (a STOP reply — sms-webhook). A
+  // brand-new person (p.smsConsent undefined) defaults to true, matching the
+  // people.sms_consent column default.
+  phone: p.phone, sms_consent: p.smsConsent ?? true, sms_consent_at: p.smsConsentAt ?? null,
   main_club_id: p.mainClubId, levels: p.levels ?? {},
   emergency: p.emergency ?? {}, dietary: p.dietary ?? [], dietary_notes: p.dietaryNotes ?? '',
   achievements: p.achievements ?? [],

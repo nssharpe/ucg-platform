@@ -22,9 +22,13 @@ export interface ConsentPartition<T> {
 }
 
 /**
- * Split recipients into those who have opted in to SMS (`smsConsent === true`)
- * and those who have not. Only strict `true` counts as consent — `false` and
- * `undefined` are both excluded. Order is preserved within each bucket.
+ * Split recipients into those eligible for SMS (`smsConsent !== false`) and
+ * those who are not. Opt-OUT model: SMS is covered by the liability waiver
+ * signed at registration, so everyone is eligible by default — only an
+ * explicit `false` (set exclusively by a STOP-family reply, sms-webhook)
+ * excludes someone. `undefined` (e.g. a stale client-side object missing the
+ * field) is treated as eligible, matching the `people.sms_consent` column's
+ * `true` default. Order is preserved within each bucket.
  */
 export function partitionByConsent<T extends { smsConsent?: boolean }>(
   recipients: T[],
@@ -32,8 +36,8 @@ export function partitionByConsent<T extends { smsConsent?: boolean }>(
   const eligible: T[] = [];
   const excluded: T[] = [];
   for (const r of recipients) {
-    if (r.smsConsent === true) eligible.push(r);
-    else excluded.push(r);
+    if (r.smsConsent === false) excluded.push(r);
+    else eligible.push(r);
   }
   return { eligible, excluded };
 }
