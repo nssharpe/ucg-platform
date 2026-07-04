@@ -152,8 +152,25 @@ payment form. Build/lint/197 tests pass (3 new coupon hard-expiry tests added). 
   Club.tsx/MyRegistrations.tsx. Adversarially reviewed (no findings) and
   verified live (non-host manager sees "Edit locked"; admin still sees
   "Edit"). Migration `20260704041049`.
-- **Sub-items 3–4** (athlete self-service club-transfer roster-affiliation
-  update; synchro same-level auto-sync) — not yet started.
+- **Sub-item 3 (club-transfer "roster move")** ✅ **DONE** (2026-07-04) —
+  **reframed after Nate's clarification** that only the athlete (or an admin)
+  can change an athlete's club, never a club manager — there is no
+  manager-initiated transfer to build; the existing self-service club-switch
+  (`MyRegistrations.tsx`, already dispatches the change fee + `updatedPending`
+  flag correctly, confirmed by investigation) IS the intended mechanism.
+  The REAL gap: `Club.tsx`'s `EventRegGrid` built its athlete list purely from
+  `mainClubId` (the club roster), while registrations are matched by
+  `registration.clubId` — so after a member switched which club they compete
+  for at an event, the OLD club still showed them as "not yet registered"
+  (their reg's clubId moved away) and the NEW club couldn't see the
+  registration AT ALL (their `mainClubId` never changed, so the roster
+  filter never included them). Fixed by unioning the roster (mainClubId)
+  with anyone holding an actual registration for this event under this
+  club's `clubId`. Purely additive read-side filter — no RLS/write changes.
+  Verified live: simulated a club-switch (moved one discipline's `clubId` to
+  a different club) and confirmed both the losing and gaining club's
+  registration pages now show the correct, accurate state.
+- **Sub-item 4** (synchro same-level auto-sync) — not yet started.
 
 **B5 — Finance dashboards (whole epic):** event + org tiers, date defaults, Summary/Invoices tabs, account codes. Likely defer given budget. §7
 

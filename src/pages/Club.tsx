@@ -698,8 +698,21 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   // NOT memoized on `db` — same M6 in-place-mutation trap as Roster's
   // allRoster above (mutate() never reassigns db.people, so a useMemo keyed
   // on `db` misses in-place edits). Read directly per render.
+  //
+  // B4.3: this club's roster (mainClubId) UNION anyone with an actual
+  // registration.clubId === this club for this event, even if their home
+  // roster is elsewhere. Without the union, an athlete who switches which
+  // club they compete for at THIS event (MyRegistrations.tsx's self-service
+  // club-only registration switch — only the athlete/an admin can do this,
+  // never a manager) becomes invisible here in BOTH directions: their old
+  // club's roster still lists them as "not yet registered" (registration.
+  // clubId moved away), and their new club can't see the registration at all
+  // (roster filter never included them, since mainClubId never changes).
+  const eventRegAthleteIds = new Set(
+    db.registrations.filter((r) => r.eventId === event?.id && r.clubId === clubId && !r.refunded).map((r) => r.athleteId),
+  );
   const athletes = db.people.filter(
-    (p) => p.kind === 'athlete' && p.mainClubId === clubId,
+    (p) => p.kind === 'athlete' && (p.mainClubId === clubId || eventRegAthleteIds.has(p.id)),
   ).sort((a, b) => a.lastName.localeCompare(b.lastName));
 
   // Cross-club cart cleanup (3d): also run when a manager opens the registrations
