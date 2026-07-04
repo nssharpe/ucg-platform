@@ -52,7 +52,7 @@ export async function loadNationals(): Promise<{ athletes: number; scores: numbe
     hostClubId: 'club-1',
     city: 'Pittsburgh', state: 'Pennsylvania', timezone: 'America/New_York',
     startDate: '2026-04-08', endDate: '2026-04-11',
-    status: 'complete',
+    status: 'live', // dates are in the past, so the derived phase is 'complete' anyway
     regOpens: '2026-01-15T12:00', regCloses: '2026-03-15T23:59',
     entryFee: 95, secondDisciplineFee: 45,
     disciplines,

@@ -1,0 +1,12 @@
+-- B4: simplify events.status to Draft/Live only. The real-time phase
+-- (reg-open/reg-closed/in-progress/complete) is now DERIVED from
+-- regOpens/regCloses/startDate/endDate at read time (deriveEventPhase in
+-- src/lib/events-core.ts), not manually flipped by an admin — previously
+-- `status` was a 5-value enum an admin had to remember to update by hand
+-- (e.g. "Override: reopen reg"), which the actual registration-gating logic
+-- (Club.tsx) trusted directly instead of the already-present regOpens/
+-- regCloses timestamps.
+--
+-- Enum values can't be added and used in the same transaction, so this is
+-- split into its own migration (add 'live') before the backfill.
+alter type event_status add value if not exists 'live';

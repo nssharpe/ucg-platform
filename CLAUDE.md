@@ -85,7 +85,7 @@ Run the suite, `npx eslint` the touched files, and confirm the build before push
 - Project ref `wkyerxlgricfphopocoz` (org NAIGC); CLI linked. Migrations in
   `supabase/migrations/` — **the authoritative, current migration list + schema/RLS model
   is `supabase/README.md`**; keep its table updated with every migration. All migrations
-  through `20260704015417_sms_consent_opt_out_model.sql` are applied. The 182709–182714
+  through `20260704035144_event_status_backfill_live.sql` are applied. The 182709–182714
   batch is security-hardening Phase 1 (DB guard triggers + policy lockdowns); 201710 is
   Phase 2 (the fulfillment snapshot). See `docs/plans/2026-07-02-security-hardening.md`.
   `20260703034325` (2026-07-03) fixes a bug in the 182711 guard trigger — it trusted

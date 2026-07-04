@@ -126,7 +126,23 @@ coupon, applied it during a real membership checkout — subtotal $55 → coupon
 recomputed off the discounted amount ($1.79) → total $51.29, confirmed on the actual Stripe
 payment form. Build/lint/197 tests pass (3 new coupon hard-expiry tests added). §5
 
-**B4 — Meet management (RLS/roles/money):** Draft/Live-only + timestamp-driven open/close; `Last date to edit` field + role-gated lockout (migration + RLS); club-transfer change-fee dispatch + roster move + pending flag (money/data); synchronized-trampoline same-level backend check. §6
+**B4 — Meet management (RLS/roles/money):** 🟡 in progress, 4 sub-items — Draft/Live-only + timestamp-driven open/close; `Last date to edit` field + role-gated lockout (migration + RLS); club-transfer change-fee dispatch + roster move + pending flag (money/data); synchronized-trampoline same-level backend check. §6
+
+- **Sub-item 1 (Draft/Live + timestamp-driven open/close)** ✅ **DONE** (2026-07-04).
+  `events.status` simplified from a 5-value manually-flipped enum to `draft`/`live`
+  only; the real-time phase (reg-open/reg-closed/in-progress/complete) is now
+  DERIVED from `regOpens`/`regCloses`/`startDate`/`endDate` (`deriveEventPhase`,
+  `src/lib/events-core.ts`) instead of trusted from the manually-set field — the
+  actual registration-gating check in Club.tsx previously ignored the
+  already-present timestamps entirely. Removed the now-redundant "Override:
+  reopen reg" admin button (editing `regCloses` via the normal "Edit event" flow
+  achieves the same declaratively). Adversarially reviewed (no findings) and
+  verified live end-to-end (edited an event's close date, confirmed the
+  registration-open badge/CTA flipped automatically). Migrations
+  `20260704035120` + `20260704035144`.
+- **Sub-items 2–4** (last-date-to-edit lockout; athlete self-service
+  club-transfer roster-affiliation update; synchro same-level auto-sync) — not
+  yet started.
 
 **B5 — Finance dashboards (whole epic):** event + org tiers, date defaults, Summary/Invoices tabs, account codes. Likely defer given budget. §7
 

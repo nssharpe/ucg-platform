@@ -140,8 +140,9 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
   // Disciplines & sessions
   const [disciplines, setDisciplines] = useState<Discipline[]>(editEvent?.disciplines ?? []);
   const [sessions, setSessions] = useState<SessionDraft[]>(initialSessions);
-  // Status — edit shows all statuses; create shows a subset
-  const [status, setStatus] = useState<EventStatus>(editEvent?.status ?? 'reg-open');
+  // Publication state (B4: Draft/Live only — the real-time phase is derived
+  // from regOpens/regCloses/startDate/endDate, not manually set).
+  const [status, setStatus] = useState<EventStatus>(editEvent?.status ?? 'live');
   const [error, setError] = useState('');
 
   const takenSlugs = db.events.filter((m) => m.id !== editEvent?.id).map((m) => m.slug);
@@ -264,14 +265,6 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
   const sectionTitle = (t: string) => (
     <h3 className="card-title" style={{ margin: '14px 0 8px', paddingTop: 10, borderTop: '1px solid var(--line)' }}>{t}</h3>
   );
-
-  const ALL_STATUSES: { value: EventStatus; label: string }[] = [
-    { value: 'draft', label: 'Draft' },
-    { value: 'reg-open', label: 'Registration open' },
-    { value: 'reg-closed', label: 'Registration closed' },
-    { value: 'in-progress', label: 'In progress' },
-    { value: 'complete', label: 'Complete' },
-  ];
 
   return (
     <Modal title={isEdit ? `Edit event — ${editEvent!.name}` : 'Sanction a new event'} onClose={onClose}>
@@ -470,20 +463,18 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
       )}
 
       {sectionTitle('Status')}
-      {isEdit ? (
-        <select className="input" style={{ maxWidth: 260 }} value={status} onChange={(e) => setStatus(e.target.value as EventStatus)}>
-          {ALL_STATUSES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-        </select>
-      ) : (
-        <div style={{ display: 'flex', gap: 16, marginBottom: 6 }}>
-          {(['reg-open', 'draft'] as const).map((s) => (
-            <label key={s} style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
-              <input type="radio" name="meet-status" checked={status === s} onChange={() => setStatus(s)} />
-              {s === 'reg-open' ? 'Open registration now' : 'Save as draft'}
-            </label>
-          ))}
-        </div>
-      )}
+      <div style={{ display: 'flex', gap: 16, marginBottom: 6 }}>
+        {(['live', 'draft'] as const).map((s) => (
+          <label key={s} style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
+            <input type="radio" name="meet-status" checked={status === s} onChange={() => setStatus(s)} />
+            {s === 'live' ? 'Live (published)' : 'Draft (hidden)'}
+          </label>
+        ))}
+      </div>
+      <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '0 0 6px' }}>
+        A Live event is visible and follows the registration-open/close dates below automatically —
+        it doesn't need to be manually reopened or closed. A Draft event is hidden from everyone but admins.
+      </p>
 
       {error && <p style={{ color: 'var(--coral-600)', fontSize: 13.5, fontWeight: 600, margin: '8px 0 0' }}>{error}</p>}
       <div style={{ display: 'flex', justifyContent: 'end', gap: 8, marginTop: 16 }}>

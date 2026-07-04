@@ -12,6 +12,7 @@ import { getSession, useAuthLoading, useRolesLoaded } from '../lib/auth';
 import { escapeHtml } from '../lib/sanitize-html';
 import { downloadWaiverProof, formatSignedAt } from '../lib/waiver-proof';
 import { isMinorAt } from '../lib/waivers-core';
+import { eventIsInPhase } from '../lib/events-core';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -940,9 +941,12 @@ function AdminMembershipControls({
         em.status = 'none';
         pushMembership(personInDraft.id, em);
       }
-      // Remove from upcoming events
-      const openStatuses = new Set(['draft', 'reg-open', 'reg-closed']);
-      const openEventIds = new Set(d.events.filter((m) => openStatuses.has(m.status)).map((m) => m.id));
+      // Remove from upcoming events (draft, or live-and-not-yet-happened).
+      const openEventIds = new Set(
+        d.events
+          .filter((m) => m.status === 'draft' || eventIsInPhase(m, 'reg-open') || eventIsInPhase(m, 'reg-closed'))
+          .map((m) => m.id),
+      );
       const toRemove = d.registrations.filter((r) => r.athleteId === personId && openEventIds.has(r.eventId));
       removedCount = toRemove.length;
       toRemove.forEach((r) => deleteRegistration(r.id));

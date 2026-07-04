@@ -4,6 +4,7 @@ import { useCapabilities } from '../lib/capabilities';
 import { Stat, Badge } from '../components/ui';
 import { useFmtDate } from '../components/ui-hooks';
 import { fmtMoney } from '../lib/scoring';
+import { deriveEventPhase, eventIsInPhase, type EventPhaseInput } from '../lib/events-core';
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -18,15 +19,18 @@ function isUnder18(dob: string): boolean {
 
 // ── shared sub-components ──────────────────────────────────────────────────
 
-export function EventStatusBadge({ status }: { status: string }) {
+/** Shows Draft for an unpublished event; otherwise derives the real-time
+ *  phase from the event's dates (B4 — phase is never stored). */
+export function EventStatusBadge({ event }: { event: { status: string } & EventPhaseInput }) {
   const map: Record<string, { tone: 'ok' | 'warn' | 'err' | 'info' | 'navy'; label: string }> = {
     'draft': { tone: 'info', label: 'Draft' },
     'reg-open': { tone: 'ok', label: 'Reg open' },
     'reg-closed': { tone: 'warn', label: 'Reg closed' },
-    'in-progress': { tone: 'err', label: '● Live' },
+    'in-progress': { tone: 'err', label: '● In progress' },
     'complete': { tone: 'navy', label: 'Final' },
   };
-  const m = map[status] ?? map.draft;
+  const key = event.status === 'draft' ? 'draft' : deriveEventPhase(event);
+  const m = map[key] ?? map.draft;
   return <Badge tone={m.tone}>{m.label}</Badge>;
 }
 
@@ -42,7 +46,7 @@ function EventList() {
               <Link to={`/events/${m.slug}`} style={{ fontWeight: 600 }}>{m.name}</Link><br />
               <span style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>{m.city}, {m.state} · {fmtDate(m.startDate)}</span>
             </td>
-            <td style={{ textAlign: 'right' }}><EventStatusBadge status={m.status} /></td>
+            <td style={{ textAlign: 'right' }}><EventStatusBadge event={m} /></td>
           </tr>
         ))}
       </tbody>
@@ -54,7 +58,7 @@ function EventList() {
 function OpenEventsStrip() {
   const db = useDB();
   const fmtDate = useFmtDate();
-  const openEvents = db.events.filter((m) => m.status === 'reg-open');
+  const openEvents = db.events.filter((m) => eventIsInPhase(m, 'reg-open'));
   if (openEvents.length === 0) return null;
   return (
     <div className="card card-pad" style={{ marginTop: 16, borderLeft: '4px solid var(--coral-500)' }}>
@@ -74,7 +78,7 @@ function OpenEventsStrip() {
 
 function Hero() {
   const db = useDB();
-  const liveEvents = db.events.filter((m) => m.status === 'in-progress');
+  const liveEvents = db.events.filter((m) => eventIsInPhase(m, 'in-progress'));
   return (
     <div className="card" style={{ background: 'var(--navy-800)', color: 'var(--white)', border: 'none', overflow: 'hidden', position: 'relative', marginBottom: 24 }}>
       <div className="card-pad" style={{ padding: '34px 28px' }}>
@@ -258,7 +262,7 @@ function ClubManagerCard({ clubId }: { clubId: string }) {
                 <span style={{ color: 'var(--ink-soft)', marginLeft: 8 }}>{fmtDate(m.startDate)}</span>
               </span>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <EventStatusBadge status={m.status} />
+                <EventStatusBadge event={m} />
                 <Link to={`/events/${m.slug}`} className="btn small ghost">Edit reg →</Link>
               </div>
             </div>
@@ -329,7 +333,7 @@ function AthleteDashboard() {
 
   const membership = me.memberships.find((m) => m.seasonId === season.id);
   const myRegs = db.registrations.filter((r) => r.athleteId === me.id && !r.refunded);
-  const openEvents = db.events.filter((m) => m.status === 'reg-open');
+  const openEvents = db.events.filter((m) => eventIsInPhase(m, 'reg-open'));
 
   // Clubs the athlete is associated with
   const mainClub = me.mainClubId ? db.clubs.find((c) => c.id === me.mainClubId) : null;
@@ -406,7 +410,7 @@ function AthleteDashboard() {
               <div key={mid} style={{ padding: '8px 0', borderBottom: '1px solid var(--line)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <Link to={`/events/${event.slug}`} style={{ fontWeight: 600 }}>{event.name}</Link>
-                  <EventStatusBadge status={event.status} />
+                  <EventStatusBadge event={event} />
                 </div>
                 <div style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
                   {fmtDate(event.startDate)} · {regs.map((r) => `${r.discipline} (${r.apparatus.join(', ')})`).join(' + ')}
@@ -435,7 +439,7 @@ function AthleteDashboard() {
               <div key={m.id} style={{ padding: '10px 0', borderBottom: '1px solid var(--line)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
                   <Link to={`/events/${m.slug}`} style={{ fontWeight: 600 }}>{m.name}</Link>
-                  <EventStatusBadge status={m.status} />
+                  <EventStatusBadge event={m} />
                 </div>
                 <p style={{ color: 'var(--ink-soft)', margin: '4px 0 8px', fontSize: 13 }}>
                   {m.city}, {m.state} · {fmtDate(m.startDate)}
@@ -474,23 +478,23 @@ function GuestView() {
         </div>
         <div className="card card-pad">
           <h3 className="card-title">Upcoming events</h3>
-          {db.events.filter((m) => m.status !== 'complete').slice(0, 4).map((m) => (
+          {db.events.filter((m) => m.status === 'live' && deriveEventPhase(m) !== 'complete').slice(0, 4).map((m) => (
             <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid var(--line)', fontSize: 14 }}>
               <span>
                 <Link to={`/results/${m.slug}`} style={{ fontWeight: 600 }}>{m.name}</Link>
                 <span style={{ color: 'var(--ink-soft)', marginLeft: 8 }}>{m.city}, {m.state} · {fmtDate(m.startDate)}</span>
               </span>
-              <EventStatusBadge status={m.status} />
+              <EventStatusBadge event={m} />
             </div>
           ))}
         </div>
       </div>
       <div className="grid cols-2">
-        {db.events.map((m) => (
+        {db.events.filter((m) => m.status === 'live').map((m) => (
           <div className="card card-pad" key={m.id}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
               <h3 style={{ fontSize: 18 }}>{m.name}</h3>
-              <EventStatusBadge status={m.status} />
+              <EventStatusBadge event={m} />
             </div>
             <p style={{ color: 'var(--ink-soft)', margin: '6px 0 14px' }}>
               {m.city}, {m.state} · {fmtDate(m.startDate)}

@@ -86,6 +86,12 @@ export type Database = {
           kind: Database["public"]["Enums"]["invoice_item_kind"]
           label: string
           person_id: string | null
+          prior_reg_snapshot: Json | null
+          ref_event_id: string | null
+          ref_line_type: string | null
+          ref_reg_ids: string[] | null
+          ref_season_id: string | null
+          ref_type: string | null
           ref_user_id: string | null
         }
         Insert: {
@@ -96,6 +102,12 @@ export type Database = {
           kind: Database["public"]["Enums"]["invoice_item_kind"]
           label: string
           person_id?: string | null
+          prior_reg_snapshot?: Json | null
+          ref_event_id?: string | null
+          ref_line_type?: string | null
+          ref_reg_ids?: string[] | null
+          ref_season_id?: string | null
+          ref_type?: string | null
           ref_user_id?: string | null
         }
         Update: {
@@ -106,6 +118,12 @@ export type Database = {
           kind?: Database["public"]["Enums"]["invoice_item_kind"]
           label?: string
           person_id?: string | null
+          prior_reg_snapshot?: Json | null
+          ref_event_id?: string | null
+          ref_line_type?: string | null
+          ref_reg_ids?: string[] | null
+          ref_season_id?: string | null
+          ref_type?: string | null
           ref_user_id?: string | null
         }
         Relationships: [
@@ -179,6 +197,51 @@ export type Database = {
             columns: ["person_id"]
             isOneToOne: false
             referencedRelation: "public_competitors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      club_memberships: {
+        Row: {
+          club_id: string
+          created_at: string
+          granted_by_admin: boolean
+          id: string
+          purchased_by: string | null
+          season_id: string
+          status: string
+        }
+        Insert: {
+          club_id: string
+          created_at?: string
+          granted_by_admin?: boolean
+          id?: string
+          purchased_by?: string | null
+          season_id: string
+          status?: string
+        }
+        Update: {
+          club_id?: string
+          created_at?: string
+          granted_by_admin?: boolean
+          id?: string
+          purchased_by?: string | null
+          season_id?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "club_memberships_club_id_fkey"
+            columns: ["club_id"]
+            isOneToOne: false
+            referencedRelation: "clubs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "club_memberships_season_id_fkey"
+            columns: ["season_id"]
+            isOneToOne: false
+            referencedRelation: "seasons"
             referencedColumns: ["id"]
           },
         ]
@@ -286,177 +349,181 @@ export type Database = {
         }
         Relationships: []
       }
+      comm_log: {
+        Row: {
+          body: string | null
+          channel: string
+          cost_estimate: number | null
+          encoding: string | null
+          error: string | null
+          failed_count: number | null
+          id: string
+          is_test: boolean
+          recipient_count: number
+          recipients: Json | null
+          segments: number | null
+          sender_person_id: string | null
+          sender_user_id: string
+          sent_at: string
+          sent_count: number | null
+          subject: string | null
+        }
+        Insert: {
+          body?: string | null
+          channel: string
+          cost_estimate?: number | null
+          encoding?: string | null
+          error?: string | null
+          failed_count?: number | null
+          id?: string
+          is_test?: boolean
+          recipient_count?: number
+          recipients?: Json | null
+          segments?: number | null
+          sender_person_id?: string | null
+          sender_user_id?: string
+          sent_at?: string
+          sent_count?: number | null
+          subject?: string | null
+        }
+        Update: {
+          body?: string | null
+          channel?: string
+          cost_estimate?: number | null
+          encoding?: string | null
+          error?: string | null
+          failed_count?: number | null
+          id?: string
+          is_test?: boolean
+          recipient_count?: number
+          recipients?: Json | null
+          segments?: number | null
+          sender_person_id?: string | null
+          sender_user_id?: string
+          sent_at?: string
+          sent_count?: number | null
+          subject?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "comm_log_sender_person_id_fkey"
+            columns: ["sender_person_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "comm_log_sender_person_id_fkey"
+            columns: ["sender_person_id"]
+            isOneToOne: false
+            referencedRelation: "public_competitors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       coupons: {
         Row: {
           amount_off: number | null
           applies_to: string
+          applies_to_event_id: string | null
           code: string
           ends_at: string | null
           max_uses: number | null
           pct_off: number | null
+          restricted_to_person_id: string | null
           starts_at: string | null
           used_count: number
         }
         Insert: {
           amount_off?: number | null
           applies_to?: string
+          applies_to_event_id?: string | null
           code: string
           ends_at?: string | null
           max_uses?: number | null
           pct_off?: number | null
+          restricted_to_person_id?: string | null
           starts_at?: string | null
           used_count?: number
         }
         Update: {
           amount_off?: number | null
           applies_to?: string
+          applies_to_event_id?: string | null
           code?: string
           ends_at?: string | null
           max_uses?: number | null
           pct_off?: number | null
+          restricted_to_person_id?: string | null
           starts_at?: string | null
           used_count?: number
         }
-        Relationships: []
-      }
-      invoice_items: {
-        Row: {
-          amount: number
-          id: string
-          invoice_id: string
-          kind: Database["public"]["Enums"]["invoice_item_kind"]
-          label: string
-          ref_user_id: string | null
-          refunded: boolean
-        }
-        Insert: {
-          amount?: number
-          id: string
-          invoice_id: string
-          kind: Database["public"]["Enums"]["invoice_item_kind"]
-          label: string
-          ref_user_id?: string | null
-          refunded?: boolean
-        }
-        Update: {
-          amount?: number
-          id?: string
-          invoice_id?: string
-          kind?: Database["public"]["Enums"]["invoice_item_kind"]
-          label?: string
-          ref_user_id?: string | null
-          refunded?: boolean
-        }
         Relationships: [
           {
-            foreignKeyName: "invoice_items_invoice_id_fkey"
-            columns: ["invoice_id"]
+            foreignKeyName: "coupons_applies_to_event_id_fkey"
+            columns: ["applies_to_event_id"]
             isOneToOne: false
-            referencedRelation: "invoices"
+            referencedRelation: "events"
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "invoice_items_ref_user_id_fkey"
-            columns: ["ref_user_id"]
+            foreignKeyName: "coupons_restricted_to_person_id_fkey"
+            columns: ["restricted_to_person_id"]
             isOneToOne: false
             referencedRelation: "people"
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "invoice_items_ref_user_id_fkey"
-            columns: ["ref_user_id"]
+            foreignKeyName: "coupons_restricted_to_person_id_fkey"
+            columns: ["restricted_to_person_id"]
             isOneToOne: false
             referencedRelation: "public_competitors"
             referencedColumns: ["id"]
           },
         ]
       }
-      invoices: {
+      error_logs: {
         Row: {
-          athlete_id: string | null
-          club_id: string | null
-          coupon_code: string | null
+          app_version: string | null
+          auth_user_id: string | null
+          context: string | null
           created_at: string
+          detail: Json | null
+          email: string | null
           id: string
-          number: string
-          paid_at: string | null
+          message: string
+          person_id: string | null
+          stack: string | null
+          url: string | null
+          user_agent: string | null
         }
         Insert: {
-          athlete_id?: string | null
-          club_id?: string | null
-          coupon_code?: string | null
+          app_version?: string | null
+          auth_user_id?: string | null
+          context?: string | null
           created_at?: string
-          id: string
-          number: string
-          paid_at?: string | null
+          detail?: Json | null
+          email?: string | null
+          id?: string
+          message: string
+          person_id?: string | null
+          stack?: string | null
+          url?: string | null
+          user_agent?: string | null
         }
         Update: {
-          athlete_id?: string | null
-          club_id?: string | null
-          coupon_code?: string | null
+          app_version?: string | null
+          auth_user_id?: string | null
+          context?: string | null
           created_at?: string
+          detail?: Json | null
+          email?: string | null
           id?: string
-          number?: string
-          paid_at?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "invoices_athlete_id_fkey"
-            columns: ["athlete_id"]
-            isOneToOne: false
-            referencedRelation: "people"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "invoices_athlete_id_fkey"
-            columns: ["athlete_id"]
-            isOneToOne: false
-            referencedRelation: "public_competitors"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "invoices_club_id_fkey"
-            columns: ["club_id"]
-            isOneToOne: false
-            referencedRelation: "clubs"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "invoices_coupon_code_fkey"
-            columns: ["coupon_code"]
-            isOneToOne: false
-            referencedRelation: "coupons"
-            referencedColumns: ["code"]
-          },
-        ]
-      }
-      levels: {
-        Row: {
-          discipline: Database["public"]["Enums"]["discipline"]
-          id: string
-          name: string
-          retired: boolean
-          sort_order: number
-          sv_max: number | null
-          vaults: number
-        }
-        Insert: {
-          discipline: Database["public"]["Enums"]["discipline"]
-          id: string
-          name: string
-          retired?: boolean
-          sort_order?: number
-          sv_max?: number | null
-          vaults?: number
-        }
-        Update: {
-          discipline?: Database["public"]["Enums"]["discipline"]
-          id?: string
-          name?: string
-          retired?: boolean
-          sort_order?: number
-          sv_max?: number | null
-          vaults?: number
+          message?: string
+          person_id?: string | null
+          stack?: string | null
+          url?: string | null
+          user_agent?: string | null
         }
         Relationships: []
       }
@@ -464,9 +531,9 @@ export type Database = {
         Row: {
           date: string | null
           discipline: Database["public"]["Enums"]["discipline"]
+          event_id: string
           id: string
           level_ids: string[]
-          event_id: string
           name: string
           phase: string | null
           sort_order: number
@@ -475,9 +542,9 @@ export type Database = {
         Insert: {
           date?: string | null
           discipline: Database["public"]["Enums"]["discipline"]
+          event_id: string
           id: string
           level_ids?: string[]
-          event_id: string
           name: string
           phase?: string | null
           sort_order?: number
@@ -486,9 +553,9 @@ export type Database = {
         Update: {
           date?: string | null
           discipline?: Database["public"]["Enums"]["discipline"]
+          event_id?: string
           id?: string
           level_ids?: string[]
-          event_id?: string
           name?: string
           phase?: string | null
           sort_order?: number
@@ -496,7 +563,7 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "event_sessions_event_id_fkey"
+            foreignKeyName: "meet_sessions_meet_id_fkey"
             columns: ["event_id"]
             isOneToOne: false
             referencedRelation: "events"
@@ -599,9 +666,221 @@ export type Database = {
           },
         ]
       }
+      invoice_items: {
+        Row: {
+          amount: number
+          id: string
+          invoice_id: string
+          kind: Database["public"]["Enums"]["invoice_item_kind"]
+          label: string
+          ref_event_id: string | null
+          ref_line_type: string | null
+          ref_reg_ids: string[] | null
+          ref_user_id: string | null
+          refunded: boolean
+        }
+        Insert: {
+          amount?: number
+          id: string
+          invoice_id: string
+          kind: Database["public"]["Enums"]["invoice_item_kind"]
+          label: string
+          ref_event_id?: string | null
+          ref_line_type?: string | null
+          ref_reg_ids?: string[] | null
+          ref_user_id?: string | null
+          refunded?: boolean
+        }
+        Update: {
+          amount?: number
+          id?: string
+          invoice_id?: string
+          kind?: Database["public"]["Enums"]["invoice_item_kind"]
+          label?: string
+          ref_event_id?: string | null
+          ref_line_type?: string | null
+          ref_reg_ids?: string[] | null
+          ref_user_id?: string | null
+          refunded?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invoice_items_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoice_items_ref_user_id_fkey"
+            columns: ["ref_user_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoice_items_ref_user_id_fkey"
+            columns: ["ref_user_id"]
+            isOneToOne: false
+            referencedRelation: "public_competitors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      invoices: {
+        Row: {
+          athlete_id: string | null
+          club_id: string | null
+          coupon_code: string | null
+          created_at: string
+          id: string
+          number: string
+          paid_at: string | null
+          stripe_fee: number | null
+          stripe_payment_intent_id: string | null
+        }
+        Insert: {
+          athlete_id?: string | null
+          club_id?: string | null
+          coupon_code?: string | null
+          created_at?: string
+          id: string
+          number: string
+          paid_at?: string | null
+          stripe_fee?: number | null
+          stripe_payment_intent_id?: string | null
+        }
+        Update: {
+          athlete_id?: string | null
+          club_id?: string | null
+          coupon_code?: string | null
+          created_at?: string
+          id?: string
+          number?: string
+          paid_at?: string | null
+          stripe_fee?: number | null
+          stripe_payment_intent_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invoices_athlete_id_fkey"
+            columns: ["athlete_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoices_athlete_id_fkey"
+            columns: ["athlete_id"]
+            isOneToOne: false
+            referencedRelation: "public_competitors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoices_club_id_fkey"
+            columns: ["club_id"]
+            isOneToOne: false
+            referencedRelation: "clubs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoices_coupon_code_fkey"
+            columns: ["coupon_code"]
+            isOneToOne: false
+            referencedRelation: "coupons"
+            referencedColumns: ["code"]
+          },
+        ]
+      }
+      levels: {
+        Row: {
+          discipline: Database["public"]["Enums"]["discipline"]
+          id: string
+          name: string
+          retired: boolean
+          sort_order: number
+          sv_max: number | null
+          vaults: number
+        }
+        Insert: {
+          discipline: Database["public"]["Enums"]["discipline"]
+          id: string
+          name: string
+          retired?: boolean
+          sort_order?: number
+          sv_max?: number | null
+          vaults?: number
+        }
+        Update: {
+          discipline?: Database["public"]["Enums"]["discipline"]
+          id?: string
+          name?: string
+          retired?: boolean
+          sort_order?: number
+          sv_max?: number | null
+          vaults?: number
+        }
+        Relationships: []
+      }
+      manager_access_requests: {
+        Row: {
+          club_id: string
+          created_at: string
+          decided_at: string | null
+          decided_by: string | null
+          id: string
+          requester_person_id: string
+          status: string
+          token: string
+        }
+        Insert: {
+          club_id: string
+          created_at?: string
+          decided_at?: string | null
+          decided_by?: string | null
+          id?: string
+          requester_person_id: string
+          status?: string
+          token: string
+        }
+        Update: {
+          club_id?: string
+          created_at?: string
+          decided_at?: string | null
+          decided_by?: string | null
+          id?: string
+          requester_person_id?: string
+          status?: string
+          token?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "manager_access_requests_club_id_fkey"
+            columns: ["club_id"]
+            isOneToOne: false
+            referencedRelation: "clubs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "manager_access_requests_requester_person_id_fkey"
+            columns: ["requester_person_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "manager_access_requests_requester_person_id_fkey"
+            columns: ["requester_person_id"]
+            isOneToOne: false
+            referencedRelation: "public_competitors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       memberships: {
         Row: {
           activated_by_admin: boolean
+          club_cart_pending: boolean
           created_at: string
           id: string
           paid_via: Database["public"]["Enums"]["pay_method"] | null
@@ -614,6 +893,7 @@ export type Database = {
         }
         Insert: {
           activated_by_admin?: boolean
+          club_cart_pending?: boolean
           created_at?: string
           id: string
           paid_via?: Database["public"]["Enums"]["pay_method"] | null
@@ -626,6 +906,7 @@ export type Database = {
         }
         Update: {
           activated_by_admin?: boolean
+          club_cart_pending?: boolean
           created_at?: string
           id?: string
           paid_via?: Database["public"]["Enums"]["pay_method"] | null
@@ -660,6 +941,101 @@ export type Database = {
           },
         ]
       }
+      payments: {
+        Row: {
+          amount_subtotal: number | null
+          cart_item_ids: string[] | null
+          coupon_code: string | null
+          created_at: string
+          currency: string
+          fulfilled_at: string | null
+          id: string
+          invoice_id: string | null
+          lines_snapshot: Json | null
+          person_id: string | null
+          ref_reg_ids: string[] | null
+          ref_season_id: string | null
+          ref_type: string | null
+          service_fee: number | null
+          status: string
+          stripe_event_id: string | null
+          stripe_fee: number | null
+          stripe_payment_intent_id: string | null
+          stripe_session_id: string | null
+        }
+        Insert: {
+          amount_subtotal?: number | null
+          cart_item_ids?: string[] | null
+          coupon_code?: string | null
+          created_at?: string
+          currency?: string
+          fulfilled_at?: string | null
+          id?: string
+          invoice_id?: string | null
+          lines_snapshot?: Json | null
+          person_id?: string | null
+          ref_reg_ids?: string[] | null
+          ref_season_id?: string | null
+          ref_type?: string | null
+          service_fee?: number | null
+          status?: string
+          stripe_event_id?: string | null
+          stripe_fee?: number | null
+          stripe_payment_intent_id?: string | null
+          stripe_session_id?: string | null
+        }
+        Update: {
+          amount_subtotal?: number | null
+          cart_item_ids?: string[] | null
+          coupon_code?: string | null
+          created_at?: string
+          currency?: string
+          fulfilled_at?: string | null
+          id?: string
+          invoice_id?: string | null
+          lines_snapshot?: Json | null
+          person_id?: string | null
+          ref_reg_ids?: string[] | null
+          ref_season_id?: string | null
+          ref_type?: string | null
+          service_fee?: number | null
+          status?: string
+          stripe_event_id?: string | null
+          stripe_fee?: number | null
+          stripe_payment_intent_id?: string | null
+          stripe_session_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payments_coupon_code_fkey"
+            columns: ["coupon_code"]
+            isOneToOne: false
+            referencedRelation: "coupons"
+            referencedColumns: ["code"]
+          },
+          {
+            foreignKeyName: "payments_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payments_person_id_fkey"
+            columns: ["person_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payments_person_id_fkey"
+            columns: ["person_id"]
+            isOneToOne: false
+            referencedRelation: "public_competitors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       people: {
         Row: {
           achievements: string[]
@@ -679,6 +1055,7 @@ export type Database = {
           last_name: string
           levels: Json
           main_club_id: string | null
+          outside_us: boolean
           phone: string | null
           placement: Json
           roles: Json
@@ -707,6 +1084,7 @@ export type Database = {
           last_name: string
           levels?: Json
           main_club_id?: string | null
+          outside_us?: boolean
           phone?: string | null
           placement?: Json
           roles?: Json
@@ -735,6 +1113,7 @@ export type Database = {
           last_name?: string
           levels?: Json
           main_club_id?: string | null
+          outside_us?: boolean
           phone?: string | null
           placement?: Json
           roles?: Json
@@ -792,6 +1171,21 @@ export type Database = {
           },
         ]
       }
+      regional_rep_regions: {
+        Row: {
+          region: string
+          user_id: string
+        }
+        Insert: {
+          region: string
+          user_id: string
+        }
+        Update: {
+          region?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       regions: {
         Row: {
           region: string
@@ -809,58 +1203,64 @@ export type Database = {
       }
       registrations: {
         Row: {
+          apparatus: string[]
+          apparatus_levels: Json | null
           athlete_id: string
           camp_survey: Json | null
           club_id: string | null
           created_at: string
           discipline: Database["public"]["Enums"]["discipline"]
-          apparatus_levels: Json | null
-          apparatus: string[]
+          event_id: string
           id: string
           keep_listed: boolean
           level_id: string | null
-          event_id: string
+          paid: boolean
           partner_athlete_id: string | null
           refund_requested: boolean
           refunded: boolean
           session_id: string | null
           squad_id: string | null
+          updated_pending: boolean
         }
         Insert: {
+          apparatus?: string[]
+          apparatus_levels?: Json | null
           athlete_id: string
           camp_survey?: Json | null
           club_id?: string | null
           created_at?: string
           discipline: Database["public"]["Enums"]["discipline"]
-          apparatus_levels?: Json | null
-          apparatus?: string[]
+          event_id: string
           id: string
           keep_listed?: boolean
           level_id?: string | null
-          event_id: string
+          paid?: boolean
           partner_athlete_id?: string | null
           refund_requested?: boolean
           refunded?: boolean
           session_id?: string | null
           squad_id?: string | null
+          updated_pending?: boolean
         }
         Update: {
+          apparatus?: string[]
+          apparatus_levels?: Json | null
           athlete_id?: string
           camp_survey?: Json | null
           club_id?: string | null
           created_at?: string
           discipline?: Database["public"]["Enums"]["discipline"]
-          apparatus_levels?: Json | null
-          apparatus?: string[]
+          event_id?: string
           id?: string
           keep_listed?: boolean
           level_id?: string | null
-          event_id?: string
+          paid?: boolean
           partner_athlete_id?: string | null
           refund_requested?: boolean
           refunded?: boolean
           session_id?: string | null
           squad_id?: string | null
+          updated_pending?: boolean
         }
         Relationships: [
           {
@@ -892,7 +1292,7 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "registrations_event_id_fkey"
+            foreignKeyName: "registrations_meet_id_fkey"
             columns: ["event_id"]
             isOneToOne: false
             referencedRelation: "events"
@@ -970,7 +1370,7 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "sanction_requests_created_event_id_fkey"
+            foreignKeyName: "sanction_requests_created_meet_id_fkey"
             columns: ["created_event_id"]
             isOneToOne: false
             referencedRelation: "events"
@@ -1038,17 +1438,17 @@ export type Database = {
         Row: {
           adjust_note: string | null
           adjusted_at: string | null
+          apparatus: string
           calc: string | null
           calc_state: Json | null
           deductions: number | null
           e_score: number | null
           entered_at: string
           entered_by: string | null
-          apparatus: string
+          event_id: string
           final: number | null
           flashed: boolean
           id: string
-          event_id: string
           reg_id: string
           scratched: boolean
           session_id: string | null
@@ -1058,17 +1458,17 @@ export type Database = {
         Insert: {
           adjust_note?: string | null
           adjusted_at?: string | null
+          apparatus: string
           calc?: string | null
           calc_state?: Json | null
           deductions?: number | null
           e_score?: number | null
           entered_at?: string
           entered_by?: string | null
-          apparatus: string
+          event_id: string
           final?: number | null
           flashed?: boolean
           id: string
-          event_id: string
           reg_id: string
           scratched?: boolean
           session_id?: string | null
@@ -1078,17 +1478,17 @@ export type Database = {
         Update: {
           adjust_note?: string | null
           adjusted_at?: string | null
+          apparatus?: string
           calc?: string | null
           calc_state?: Json | null
           deductions?: number | null
           e_score?: number | null
           entered_at?: string
           entered_by?: string | null
-          apparatus?: string
+          event_id?: string
           final?: number | null
           flashed?: boolean
           id?: string
-          event_id?: string
           reg_id?: string
           scratched?: boolean
           session_id?: string | null
@@ -1097,7 +1497,7 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "scores_event_id_fkey"
+            foreignKeyName: "scores_meet_id_fkey"
             columns: ["event_id"]
             isOneToOne: false
             referencedRelation: "events"
@@ -1157,6 +1557,50 @@ export type Database = {
           starts_on?: string
         }
         Relationships: []
+      }
+      sms_messages: {
+        Row: {
+          body: string | null
+          comm_log_id: string | null
+          created_at: string
+          direction: string
+          error: string | null
+          id: string
+          phone: string
+          status: string | null
+          updated_at: string
+        }
+        Insert: {
+          body?: string | null
+          comm_log_id?: string | null
+          created_at?: string
+          direction: string
+          error?: string | null
+          id: string
+          phone: string
+          status?: string | null
+          updated_at?: string
+        }
+        Update: {
+          body?: string | null
+          comm_log_id?: string | null
+          created_at?: string
+          direction?: string
+          error?: string | null
+          id?: string
+          phone?: string
+          status?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sms_messages_comm_log_id_fkey"
+            columns: ["comm_log_id"]
+            isOneToOne: false
+            referencedRelation: "comm_log"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       squads: {
         Row: {
@@ -1436,6 +1880,19 @@ export type Database = {
         Args: { r: Database["public"]["Enums"]["app_role"] }
         Returns: boolean
       }
+      decide_manager_access: {
+        Args: { p_decider: string; p_decision: string; p_token: string }
+        Returns: string
+      }
+      email_has_account: { Args: { p_email: string }; Returns: boolean }
+      get_manager_access_request: {
+        Args: { p_token: string }
+        Returns: {
+          club_name: string
+          requester_name: string
+          status: string
+        }[]
+      }
       get_waiver_sign_request: {
         Args: { p_token: string }
         Returns: {
@@ -1457,6 +1914,14 @@ export type Database = {
       }
       manages_club: { Args: { cid: string }; Returns: boolean }
       my_person_id: { Args: never; Returns: string }
+      redeem_coupon: {
+        Args: { p_code: string; p_person_id?: string }
+        Returns: boolean
+      }
+      replace_club_managers: {
+        Args: { p_club_id: string; p_person_ids: string[] }
+        Returns: undefined
+      }
     }
     Enums: {
       app_role:
@@ -1467,7 +1932,16 @@ export type Database = {
         | "meet-host"
         | "spectator"
         | "sanctioning"
+        | "regional_rep"
+        | "finance_admin"
       discipline: "MAG" | "WAG" | "TNT"
+      event_status:
+        | "draft"
+        | "reg-open"
+        | "reg-closed"
+        | "in-progress"
+        | "complete"
+        | "live"
       gender_kind:
         | "Male"
         | "Female"
@@ -1482,13 +1956,8 @@ export type Database = {
         | "addon"
         | "donation"
         | "discount"
+        | "fee"
       meet_kind: "standard" | "nationals"
-      event_status:
-        | "draft"
-        | "reg-open"
-        | "reg-closed"
-        | "in-progress"
-        | "complete"
       membership_status:
         | "active"
         | "pending-club-payment"
@@ -1639,8 +2108,18 @@ export const Constants = {
         "meet-host",
         "spectator",
         "sanctioning",
+        "regional_rep",
+        "finance_admin",
       ],
       discipline: ["MAG", "WAG", "TNT"],
+      event_status: [
+        "draft",
+        "reg-open",
+        "reg-closed",
+        "in-progress",
+        "complete",
+        "live",
+      ],
       gender_kind: [
         "Male",
         "Female",
@@ -1656,15 +2135,9 @@ export const Constants = {
         "addon",
         "donation",
         "discount",
+        "fee",
       ],
       meet_kind: ["standard", "nationals"],
-      event_status: [
-        "draft",
-        "reg-open",
-        "reg-closed",
-        "in-progress",
-        "complete",
-      ],
       membership_status: [
         "active",
         "pending-club-payment",

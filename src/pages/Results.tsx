@@ -11,11 +11,13 @@ import { APPARATUS } from '../lib/types';
 import type { Registration, Score, DB } from '../lib/types';
 import type { AthleteResult } from '../lib/scoring';
 import { isSupabaseConfigured, subscribeEventScores, applyScorePatch } from '../lib/supabase';
+import { eventIsInPhase } from '../lib/events-core';
 
 export function ResultsIndex() {
   const db = useDB();
   const fmtDate = useFmtDate();
-  const events = db.events.filter((m) => m.status === 'in-progress' || m.status === 'complete' || m.status === 'reg-closed');
+  const events = db.events.filter((m) =>
+    eventIsInPhase(m, 'in-progress') || eventIsInPhase(m, 'complete') || eventIsInPhase(m, 'reg-closed'));
   return (
     <div>
       <h1 className="page-title display">Live results</h1>
@@ -24,8 +26,8 @@ export function ResultsIndex() {
         {events.map((m) => (
           <div className="card card-pad" key={m.id}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-              <h3 style={{ fontSize: 18 }}>{m.status === 'in-progress' && <span className="pulse" />}{m.name}</h3>
-              <EventStatusBadge status={m.status} />
+              <h3 style={{ fontSize: 18 }}>{eventIsInPhase(m, 'in-progress') && <span className="pulse" />}{m.name}</h3>
+              <EventStatusBadge event={m} />
             </div>
             <p style={{ color: 'var(--ink-soft)', margin: '6px 0 12px' }}>{m.city}, {m.state} · {fmtDate(m.startDate)}</p>
             <Link className="btn small primary" to={`/results/${m.slug}`}>Open results →</Link>
@@ -176,11 +178,11 @@ export function EventResults() {
         <div>
           <h1 className="page-title display">{event.name}</h1>
           <p className="page-sub">
-            {event.status === 'in-progress' && <><span className="pulse" /><strong>Live</strong> — updates as judges post. </>}
+            {eventIsInPhase(event, 'in-progress') && <><span className="pulse" /><strong>Live</strong> — updates as judges post. </>}
             Unique URL per event & session: <code>#/results/{event.slug}</code>
           </p>
         </div>
-        <EventStatusBadge status={event.status} />
+        <EventStatusBadge event={event} />
       </div>
 
       <div className="grid cols-2" style={{ marginBottom: 14 }}>

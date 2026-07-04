@@ -148,7 +148,17 @@ export interface Athlete {
   achievements: string[];
 }
 
-export type EventStatus = 'draft' | 'reg-open' | 'reg-closed' | 'in-progress' | 'complete';
+/** Admin-set PUBLICATION state — 'draft' (hidden, not registrable) or 'live'
+ *  (published). The finer-grained real-time phase (registration open/closed,
+ *  in-progress, complete) is DERIVED from timestamps, not stored — see
+ *  `deriveEventPhase` in `events-core.ts` (B4: was previously a 5-value
+ *  manually-flipped enum; simplified so an admin only ever toggles Draft/Live
+ *  and the phase always reflects the actual dates). */
+export type EventStatus = 'draft' | 'live';
+
+/** Real-time phase of a LIVE event, derived from `regOpens`/`regCloses`/
+ *  `startDate`/`endDate` — never stored. See `deriveEventPhase`. */
+export type EventPhase = 'reg-open' | 'reg-closed' | 'in-progress' | 'complete';
 
 export interface Squad {
   id: string;

@@ -11,6 +11,7 @@ import { calcForLevel, calcSource, scoreFromOutcome, scoreDetailPath } from '../
 import { computeScoring, initScoring, isCalcStateV2 } from '../scoring';
 import { ScoringPanel } from '../components/scoring/ScoringPanel';
 import { useCapabilities } from '../lib/capabilities';
+import { eventIsInPhase } from '../lib/events-core';
 
 /** Tablet-first judge pad. The level's scoring panel is built into the scoring
  *  view — judges build the routine natively and the score posts live.
@@ -21,7 +22,7 @@ export function Judge() {
   const toast = useToast();
   const [searchParams] = useSearchParams();
   const requestedEvent = searchParams.get('event');
-  const liveEvents = db.events.filter((m) => m.status === 'in-progress' || m.status === 'reg-closed');
+  const liveEvents = db.events.filter((m) => eventIsInPhase(m, 'in-progress') || eventIsInPhase(m, 'reg-closed'));
   const [eventId, setEventId] = useState(
     (requestedEvent && db.events.find((m) => m.id === requestedEvent || m.slug === requestedEvent)?.id)
     || liveEvents[0]?.id || db.events[0]?.id || '',

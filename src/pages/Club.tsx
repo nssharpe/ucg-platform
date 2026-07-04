@@ -3,6 +3,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { clubHasActiveMembership, seasonForDate, membershipHolds, paidRegistrationClub } from '../lib/capabilities-core';
+import { eventIsInPhase } from '../lib/events-core';
 import { Badge, Combo, Field, Modal } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 import { STATE_REGIONS } from '../lib/types';
@@ -680,8 +681,8 @@ function RosterTable({
 function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean }) {
   const db = useDB();
   const toast = useToast();
-  const openEvents = db.events.filter((m) => m.status === 'reg-open' || m.status === 'reg-closed');
-  const [eventId, setEventId] = useState(openEvents.find((m) => m.status === 'reg-open')?.id ?? openEvents[0]?.id);
+  const openEvents = db.events.filter((m) => eventIsInPhase(m, 'reg-open') || eventIsInPhase(m, 'reg-closed'));
+  const [eventId, setEventId] = useState(openEvents.find((m) => eventIsInPhase(m, 'reg-open'))?.id ?? openEvents[0]?.id);
   const event = db.events.find((m) => m.id === eventId);
   const season = db.seasons.find((s) => s.current)!;
 
@@ -714,7 +715,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
 
   if (!event) return <p>No events accepting registration.</p>;
 
-  const regClosed = event.status !== 'reg-open';
+  const regClosed = !eventIsInPhase(event, 'reg-open');
 
   // Gate: the club must hold an active membership for the event's season before
   // registering any athlete. Returns true (and toasts) when blocked.
@@ -1098,7 +1099,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
       <div className="grid cols-3" style={{ marginBottom: 14, alignItems: 'end' }}>
         <Field label="Event">
           <select className="input" value={eventId} onChange={(e) => setEventId(e.target.value)}>
-            {openEvents.map((m) => <option key={m.id} value={m.id}>{m.name}{m.status !== 'reg-open' ? ' (closed)' : ''}</option>)}
+            {openEvents.map((m) => <option key={m.id} value={m.id}>{m.name}{!eventIsInPhase(m, 'reg-open') ? ' (closed)' : ''}</option>)}
           </select>
         </Field>
         <Field label="Entry fees">

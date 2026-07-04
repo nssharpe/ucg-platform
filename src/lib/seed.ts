@@ -142,7 +142,7 @@ export function buildSeed(): DB {
     {
       id: 'meet-nat26', slug: 'ucg-nationals-2026', name: 'UCG Nationals 2026',
       hostClubId: 'club-1', city: 'Minneapolis', state: 'Minnesota', timezone: tz,
-      startDate: '2026-07-09', endDate: '2026-07-11', status: 'reg-open',
+      startDate: '2026-07-09', endDate: '2026-07-11', status: 'live',
       regOpens: '2026-04-15T12:00', regCloses: '2026-06-24T23:59',
       entryFee: 95, secondDisciplineFee: 45,
       disciplines: ['MAG', 'WAG', 'TNT'],
@@ -159,7 +159,7 @@ export function buildSeed(): DB {
     {
       id: 'meet-mw26', slug: 'midwest-regional-2026', name: 'Midwest Regional Championship',
       hostClubId: 'club-6', city: 'Columbus', state: 'Ohio', timezone: 'America/New_York',
-      startDate: '2026-04-10', endDate: '2026-04-11', status: 'in-progress',
+      startDate: '2026-04-10', endDate: '2026-04-11', status: 'live',
       regOpens: '2026-02-01T12:00', regCloses: '2026-03-27T23:59',
       entryFee: 60, secondDisciplineFee: 30,
       disciplines: ['MAG', 'WAG', 'TNT'],
@@ -168,7 +168,7 @@ export function buildSeed(): DB {
     {
       id: 'meet-ne25', slug: 'northeast-open-2025', name: 'Northeast Open 2025',
       hostClubId: 'club-4', city: 'Boston', state: 'Massachusetts', timezone: 'America/New_York',
-      startDate: '2025-11-15', endDate: '2025-11-15', status: 'complete',
+      startDate: '2025-11-15', endDate: '2025-11-15', status: 'live',
       regOpens: '2025-09-01T12:00', regCloses: '2025-11-01T23:59',
       entryFee: 55, secondDisciplineFee: 25,
       disciplines: ['MAG', 'WAG'],

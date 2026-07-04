@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { seasonForDate, clubHasActiveMembership, paidRegistrationClub } from '../lib/capabilities-core';
+import { eventIsInPhase } from '../lib/events-core';
 import { Badge, Field, Modal, Tabs } from '../components/ui';
 import { useToast, useFmtDate } from '../components/ui-hooks';
 import { EventWizard } from '../components/EventWizard';
@@ -10,7 +11,7 @@ import { RegistrationEditor } from '../components/RegistrationEditor';
 import { EventStatusBadge } from './Home';
 import { APPARATUS, SHIRT_SIZES } from '../lib/types';
 import type { Athlete, CartItem, Event, EventSession, Registration } from '../lib/types';
-import { deleteRegistration, pushCart, pushEvent, pushEventSessions, pushRegistration } from '../lib/supabase';
+import { deleteRegistration, pushCart, pushEventSessions, pushRegistration } from '../lib/supabase';
 import { stateCode } from '../lib/sanction';
 import { fmtMoney } from '../lib/scoring';
 import { newRegistrationEntryTotal, registrationChangeFee } from '../lib/pricing';
@@ -224,7 +225,7 @@ export function EventDetail() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <EventStatusBadge status={event.status} />
+          <EventStatusBadge event={event} />
           {canManage && (
             <button className="btn small ghost" onClick={() => setEditWizardOpen(true)}>Edit event</button>
           )}
@@ -246,7 +247,9 @@ export function EventDetail() {
               <><br /><span style={{ color: 'var(--warn)' }}>Change fee {fmtMoney(event.changeFee.amount)} after {new Date(event.changeFee.startsAt).toLocaleDateString()}</span></>
             )}
           </p>
-          {event.status === 'reg-open' ? (
+          {event.status === 'draft' ? (
+            <Badge tone="info">Draft — not yet published</Badge>
+          ) : eventIsInPhase(event, 'reg-open') ? (
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {caps.managedClubIds.length > 0 && (
                 <Link className="btn primary small" to={`/club/${caps.managedClubIds[0]}`}>Register your club →</Link>
@@ -259,11 +262,11 @@ export function EventDetail() {
               )}
             </div>
           ) : (
-            <Badge tone="warn">Registration closed{caps.isAdmin ? ' — admin can override below' : ''}</Badge>
+            <Badge tone="warn">Registration closed{canManage ? ' — edit the event to adjust dates' : ''}</Badge>
           )}
-          {caps.isAdmin && event.status !== 'reg-open' && (
+          {canManage && event.status === 'live' && !eventIsInPhase(event, 'reg-open') && (
             <div style={{ marginTop: 10, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              <button className="btn small ghost" onClick={() => { mutate((d) => { const m = d.events.find((m) => m.id === event.id)!; m.status = 'reg-open'; pushEvent(m); }); toast('Deadline overridden — registration re-opened.'); }}>Override: reopen reg</button>
+              <button className="btn small ghost" onClick={() => setEditWizardOpen(true)}>Edit event to adjust registration dates</button>
               <button className="btn small ghost" data-tip="Generates a private reg link + password for late adds" onClick={() => toast(`Private link: ucg.org/#/events/${event.slug}?code=LATE26 (demo)`)}>Private reg link</button>
             </div>
           )}
