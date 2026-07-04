@@ -90,6 +90,10 @@ Run the suite, `npx eslint` the touched files, and confirm the build before push
   Phase 1+2 applied; Phase 3 TODO (`docs/plans/2026-07-02-security-hardening.md`).
 - New migrations: `supabase migration new <name>` (timestamp filename format is required).
   Apply via `supabase db push` — network is sandbox-blocked, run with sandbox disabled.
+- **Staging project `xogpiksqtkayxwmczlbx`** (`ucg-staging`, since 2026-07-04): the CLI
+  stays linked to PROD — target staging explicitly via `--project-ref`/`--db-url`
+  (creds under `STAGING_*` in `.env.local`; full runbook in `supabase/README.md`).
+  Apply new migrations to staging FIRST, then prod.
 - **Enum gotcha:** `ALTER TYPE ... ADD VALUE` can't be referenced in the same
   transaction — put each enum addition in its OWN migration file.
 - Ids are app-generated **text**, not uuids (incl. FK cols like `payments.person_id`).
@@ -115,8 +119,9 @@ Run the suite, `npx eslint` the touched files, and confirm the build before push
 - Verify a build by grepping for "files generated" AND confirming `dist/index.html`'s
   script refs exist under `dist/assets` — never trust the piped exit code alone.
 - Launch configs (`.claude/launch.json`): `ucg-dev` (5173), `ucg-preview` (5176,
-  `--strictPort`). If you run `vite preview` (serves `dist/`): rebuild first and clear
-  the service worker or it serves the previous bundle.
+  `--strictPort`), `ucg-staging` (5177, `--mode staging` → the staging Supabase
+  project via `.env.staging.local`). If you run `vite preview` (serves `dist/`):
+  rebuild first and clear the service worker or it serves the previous bundle.
 - `npm run lint` is fully clean project-wide as of 2026-07-03 (the last 3 warnings were
   fixed then) — keep it that way; still lint touched files before pushing rather than
   relying on this staying true implicitly.
@@ -145,6 +150,13 @@ Run the suite, `npx eslint` the touched files, and confirm the build before push
   deps), `src/lib/pricing.ts`. Run: `npm test` / `npx vitest run`.
 - Scoring tests encode ground-truth values from the original NAIGC calculators — they
   lock in port correctness. No DOM/component tests yet (would need jsdom + @testing-library).
+- **E2E (Playwright, since 2026-07-04):** `npm run test:e2e` — smoke specs in `e2e/`
+  (kept OUT of `tests/` so vitest doesn't pick them up) run chromium against a vite
+  server in `--mode staging` on port 5178 (auto-started; reuses if running). Covers
+  real Gate sign-in (incl. the no-account message), the seeded athlete cart, live
+  `create-checkout-session` → Stripe Embedded render, and events pages. Tests
+  suppress dev auto-login via `sessionStorage['ucg-dev-signed-out']`. Staging seeded
+  state is documented in `supabase/README.md`; keep specs in sync with it.
 
 ## Docs
 - `README.md` overview; `docs/README.md` index + **the authoritative "What's next"

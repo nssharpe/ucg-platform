@@ -38,10 +38,10 @@ review/hardening cycle all shipped in between).
 
 🟢 ready · 🟡 partial · 🔴 not started. "Gold" = matches what a mature SaaS in this space ships.
 
-**The two cheapest, highest-leverage moves right now:** Supabase Pro (backups/PITR
-for a database that already holds real people + payment records) and an uptime
-check + error alerting (we currently find out about breakage only when a user
-tells us).
+**Status of the two cheapest, highest-leverage moves (2026-07-04):** the uptime
+check is DONE (UptimeRobot, email alerts); Supabase Pro (backups/PITR) is
+**deliberately deferred** to later in development — it's recorded as a hard
+pre-flight gate in the go-live checklist so real money never flows without backups.
 
 ---
 
@@ -100,8 +100,9 @@ analytics, and Edge Function logs are ad-hoc (Supabase has no remote function-lo
 CLI, so webhook failures are visible only via the Stripe dashboard).
 
 **Steps**
-- 👤 Create an **uptime monitor** account (UptimeRobot / Better Uptime free tier)
-  pointed at the live site + pick where alerts go (email/SMS). ~15 minutes.
+- 👤 ~~Uptime monitor~~ **done 2026-07-04**: UptimeRobot, 5-min HTTP checks on the
+  live site + Supabase auth health (`?apikey=<anon>` — the bare endpoint 401s),
+  email alerts to Nate. Monitor-specific read-only API keys are in `.env.local`.
 - 🤖 Add a daily **"anything wrong?" digest**: new `error_logs` rows + `payments`
   stuck `pending` > 1h + webhook `error_logs` entries → email via Resend
   (scheduled Edge Function).
@@ -246,9 +247,10 @@ Resolved since 6/21: Stripe account ✅ (built, test mode) · Resend ✅ (naigc.
 verified) · CI test gate ✅ · error boundary/write-queue ✅ · RLS audit ✅ (7/02
 review + hardening). Still open, in order of leverage:
 
-1. **Supabase Pro** upgrade ($25/mo) — backups/PITR for real user + payment data.
-2. **Uptime monitor + alert destination** (free tier; ~15 min of account setup).
-3. **Staging environment** — approve a second (free) Supabase project.
+1. **Supabase Pro** upgrade ($25/mo) — DEFERRED 2026-07-04; hard pre-flight gate in
+   the go-live checklist.
+2. ~~Uptime monitor~~ — done 2026-07-04 (UptimeRobot, email alerts).
+3. ~~Staging environment~~ — approved 2026-07-04.
 4. **Legal**: engage counsel (waiver, privacy/ToS, COPPA) — longest lead time.
 5. **Bug reports**: where they land (support inbox vs. GitHub) and who triages.
 6. **Offline stance** (recommend: read-only offline) and **admin MFA** (recommend: require).

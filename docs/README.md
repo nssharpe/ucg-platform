@@ -81,16 +81,20 @@ the feedback-item history, and [`../CLAUDE.md`](../CLAUDE.md) keeps only a point
 here — update THIS list when priorities change, not rival copies.
 
 ### Launch blockers (ordered by leverage; 👤 = only Nate can do it)
-1. 👤 **Supabase Pro + backups/PITR** — the DB already holds real people + payment
-   records with no backups; the single cheapest risk reducer ($25/mo).
-2. 👤 **Uptime monitor + alerting** (free tier, ~15 min) · 🤖 then a daily digest
+1. 👤 **Supabase Pro + backups/PITR** — **DEFERRED (decided 2026-07-04)** to later in
+   development; recorded as a hard pre-flight gate in the
+   [go-live checklist](stripe-go-live-checklist.md) so it can't be missed before real money.
+2. 👤 ~~Uptime monitor + alerting~~ **done 2026-07-04** (UptimeRobot, 5-min checks,
+   email alerts: live site + Supabase auth health) · 🤖 still open: a daily digest
    of new `error_logs` / stuck `pending` payments (scheduled function).
 3. 👤 **Stripe go-live** — [stripe-go-live-checklist.md](stripe-go-live-checklist.md)
    (live keys, $1 smoke + refund).
 4. 👤 **Legal** (longest lead time — start early): counsel review of waiver,
    privacy policy, ToS, minors/COPPA. 🤖 drafts the policy docs.
-5. 👤 approve → 🤖 **Staging Supabase project + Playwright smoke E2E** for the
-   money journeys (stop testing migrations on prod).
+5. ~~Staging Supabase project + Playwright smoke E2E~~ **done 2026-07-04**
+   (`ucg-staging` fully stood up + seeded, 5 smoke specs green incl. live
+   checkout-session → Stripe render; runbook in
+   [supabase/README](../supabase/README.md)). Still open: run E2E in CI.
 6. 🤖 **Security hardening Phase 3** ([plan](plans/2026-07-02-security-hardening.md))
    + **rate limiting/CAPTCHA** on sign-up and the public email-sending functions.
 
