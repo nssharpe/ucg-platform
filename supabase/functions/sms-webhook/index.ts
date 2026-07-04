@@ -20,6 +20,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendBatch, type EmailMessage } from '../_shared/resend.ts';
+import { renderEmail } from '../_shared/email-layout.ts';
 import { parseTelnyxWebhook, isStopKeyword, normalizePhone, classifyDeliveryStatus } from './parse.ts';
 
 const json = (body: unknown, status = 200) =>
@@ -134,11 +135,14 @@ Deno.serve(async (req) => {
       });
       if (recipients.length) {
         const subject = `Inbound text from ${ev.from}${consentRevoked ? ' (opted out)' : ''}`;
-        const html = `<p>An inbound SMS reply was received on the UCG number:</p>
+        const html = renderEmail({
+          heading: 'Inbound SMS reply',
+          bodyHtml: `<p>An inbound SMS reply was received on the UCG number:</p>
 <p><strong>From:</strong> ${esc(ev.from)}<br/>
 <strong>Message:</strong> ${esc(ev.text || '(no text)')}</p>
 ${consentRevoked ? '<p>This was a STOP keyword — their SMS consent has been turned off.</p>' : ''}
-<p>We do not reply over SMS. If a response is needed, follow up by email.</p>`;
+<p>We do not reply over SMS. If a response is needed, follow up by email.</p>`,
+        });
         const messages: EmailMessage[] = recipients.map((r) => ({
           to: `${r.first_name} ${r.last_name} <${(r.email as string).trim()}>`, subject, html,
         }));

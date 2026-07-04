@@ -5,6 +5,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendBatch, sendOne, type EmailMessage } from '../_shared/resend.ts';
+import { renderEmail } from '../_shared/email-layout.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -65,9 +66,12 @@ Deno.serve(async (req) => {
     });
     if (recipients.length === 0) return json({ ok: true, sentCount: 0, note: 'No team emails.' });
     const subject = `New sanction request: ${eventName ?? 'event'}`;
-    const html = `<p>Hello,</p>
-<p>A new event sanction request (<strong>${label}</strong>) has been submitted and is awaiting the Sanctioning Team's vote.</p>
-<p><a href="${reqLink}">Review &amp; vote &rarr;</a></p>`;
+    const html = renderEmail({
+      heading: 'New sanction request',
+      bodyHtml: `<p>Hello,</p>
+<p>A new event sanction request (<strong>${label}</strong>) has been submitted and is awaiting the Sanctioning Team's vote.</p>`,
+      cta: { text: 'Review & vote', href: reqLink },
+    });
     const messages: EmailMessage[] = recipients.map((r) => ({ to: `${r.first_name} ${r.last_name} <${(r.email as string).trim()}>`, subject, html }));
     const result = await sendBatch(messages);
     return json({ ok: result.ok, sentCount: result.sentCount, failedCount: result.failedCount, failed: result.failed });
@@ -88,15 +92,21 @@ Deno.serve(async (req) => {
       : { data: null };
     const eventLink = event?.slug ? `${appUrl}/#/events/${event.slug}/manage` : reqLink;
     subject = `Approved: ${eventName ?? 'your event'} sanction`;
-    html = `<p>Hi ${esc(requester?.first_name ?? '')},</p>
+    html = renderEmail({
+      heading: 'Sanction approved',
+      bodyHtml: `<p>Hi ${esc(requester?.first_name ?? '')},</p>
 <p>Your sanction request for <strong>${label}</strong> has been <strong>approved</strong>${sreq.sanction_id ? ` (Sanction ID: ${esc(String(sreq.sanction_id))})` : ''}.</p>
-<p>A draft event has been created.</p>
-<p><a href="${eventLink}">Open your event &rarr;</a></p>`;
+<p>A draft event has been created.</p>`,
+      cta: { text: 'Open your event', href: eventLink },
+    });
   } else {
     subject = `Update on your ${eventName ?? 'event'} sanction request`;
-    html = `<p>Hi ${esc(requester?.first_name ?? '')},</p>
+    html = renderEmail({
+      heading: 'Sanction not approved',
+      bodyHtml: `<p>Hi ${esc(requester?.first_name ?? '')},</p>
 <p>After review, your sanction request for <strong>${label}</strong> was <strong>not approved</strong>.</p>
-<p>Reply to this email or contact the Sanctioning Team if you have questions.</p>`;
+<p>Reply to this email or contact the Sanctioning Team if you have questions.</p>`,
+    });
   }
   try { await sendOne({ to: `${requester?.first_name ?? ''} ${requester?.last_name ?? ''} <${email}>`.trim(), subject, html }); }
   catch (e) { return json({ ok: false, error: `Email failed: ${e instanceof Error ? e.message : String(e)}` }, 500); }

@@ -10,6 +10,7 @@
 // --no-verify-jwt.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendOne } from '../_shared/resend.ts';
+import { renderEmail } from '../_shared/email-layout.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -65,10 +66,12 @@ Deno.serve(async (req) => {
   const name = `${person.first_name} ${person.last_name}`.trim();
   const clubName = club.name as string;
   const subject = `Your Club Admin request for ${clubName} was not approved`;
-  const html = `<p>Hello${name ? ` ${esc(name)}` : ''},</p>
+  const html = renderEmail({
+    heading: 'Request not approved',
+    bodyHtml: `<p>Hello${name ? ` ${esc(name)}` : ''},</p>
 <p>Your request for Club Admin access to <strong>${esc(clubName)}</strong> on the United Club Gymnastics platform was reviewed and <strong>not approved</strong>.</p>
-<p>If you have questions, please contact a UCG administrator or one of the club's existing managers.</p>
-<p style="color:#475569;font-size:13px;">&mdash; United Club Gymnastics</p>`;
+<p>If you have questions, please contact a UCG administrator or one of the club's existing managers.</p>`,
+  });
 
   try {
     await sendOne({ to: name ? `${name} <${email}>` : email, subject, html });

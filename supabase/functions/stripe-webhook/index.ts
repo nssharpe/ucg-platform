@@ -22,6 +22,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { getStripe, getCryptoProvider } from '../_shared/stripe.ts';
 import { sendOne } from '../_shared/resend.ts';
+import { renderEmail } from '../_shared/email-layout.ts';
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -456,17 +457,18 @@ async function emailReceipt(
     `<td style="padding:6px 0;text-align:right;white-space:nowrap;color:#5b6b7a;">${fmtMoney(fee)}</td></tr>`;
 
   const subject = 'Your United Club Gymnastics receipt';
-  const html = `<div style="color:#1d2a38;font-size:15px;line-height:1.55;">
-<p>Hi ${esc(forName)},</p>
+  const html = renderEmail({
+    heading: 'Your receipt',
+    bodyHtml: `<p>Hi ${esc(forName)},</p>
 <p>Thanks for your purchase. Here's your receipt for the items below.</p>
 <p style="color:#5b6b7a;font-size:13px;margin:0 0 12px;">Receipt ${esc(invoiceNumber)}</p>
-<table style="border-collapse:collapse;margin:8px 0;font-size:14px;">
+<table style="border-collapse:collapse;margin:8px 0;font-size:14px;width:100%;">
 ${rows}${feeRow}
 <tr><td style="padding:10px 16px 0 0;border-top:2px solid #1d2a38;font-weight:700;color:#1d2a38;">Total paid</td>
 <td style="padding:10px 0 0;border-top:2px solid #1d2a38;text-align:right;font-weight:700;color:#1d2a38;">${fmtMoney(total)}</td></tr>
-</table>
-<p style="color:#5b6b7a;font-size:12px;">Billed to ${esc(forName)} (${esc(toEmail)}). You can re-download a PDF receipt any time from your Purchase History on the platform.</p>
-</div>`;
+</table>`,
+    footnoteHtml: `Billed to ${esc(forName)} (${esc(toEmail)}). You can re-download a PDF receipt any time from your Purchase History on the platform.`,
+  });
 
   await sendOne({ to: `${forName} <${toEmail}>`, subject, html });
 }
