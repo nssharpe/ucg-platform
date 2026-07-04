@@ -182,6 +182,14 @@ Run the suite, `npx eslint` the touched files, and confirm the build before push
 - **`rolesLoaded` gate:** roles load async after the session; `RequireAdmin`/role screens
   must wait on `useRolesLoaded()` or they flash "access denied" on refresh. Reset on
   sign-out/new user (`auth.ts`).
+- **Initial-paint auth flash (App.tsx):** `!session && authLoading && (hasLikelySession()
+  || hasAuthCallbackInUrl())` gates the very first render behind `<PageFallback/>` so
+  the app never paints in guest mode right before a session resolves.
+  `hasLikelySession()` covers a RETURNING session (refresh); `hasAuthCallbackInUrl()`
+  (added 2026-07-03, B7) covers a BRAND NEW one being established from a
+  signup-confirmation/magic-link/recovery URL token — `hasLikelySession()` alone misses
+  that case (no prior localStorage entry yet), which is exactly what caused the
+  "confirm my account → flashes a page" report.
 - **App roles** (`user_roles.role`, enum `app_role`): `admin`, `sanctioning`,
   `regional_rep` (region via `regional_rep_regions`), `finance_admin`. Capabilities:
   `isSanctioning`/`isRegionalRep`/`isFinanceAdmin` — admins are NOT implicitly either.

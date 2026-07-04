@@ -220,6 +220,32 @@ payment form. Build/lint/197 tests pass (3 new coupon hard-expiry tests added). 
 
 **B7 — Verify-by-eye (no UI tests, hard to auto-verify):** Confirm-My-Account nav flash; hard-refresh flash; transactional-email styling polish. §2
 
+- **Confirm-My-Account nav flash** ✅ **FIXED** (2026-07-03). Clarified with Nate: the
+  original report was "click the signup-confirmation email's 'Confirm my account'
+  button → it flashes a page (too fast to read) before settling on the home page."
+  Root cause confirmed via screen-recording screenshots: the confirmation link lands
+  with `#access_token=...&type=signup` in the URL hash; `App.tsx`'s existing
+  "don't flash the gate while getSession() resolves" guard
+  (`!session && authLoading && hasLikelySession()`) only covers a RETURNING session
+  (checks for a prior `sb-*-auth-token` in localStorage) — a brand-new confirmation
+  has no such prior entry, so the guard didn't apply and the app rendered fully in
+  guest mode for a frame (matching the first screenshot: "Browsing as a guest"), then
+  flashed through several more incomplete states as the session/person/roles caught
+  up. Fixed by adding `hasAuthCallbackInUrl()` (`src/lib/auth.ts`) — a synchronous,
+  module-load-time check for `access_token=`/`error=` in the initial URL hash — as an
+  additional OR'd condition alongside `hasLikelySession()`, so the SAME PageFallback
+  gate now also covers "a brand-new session is being established from a URL token."
+  Could not fully live-verify with a real signup-confirmation round-trip (would need
+  a disposable email address in the dev sandbox), but the mechanism was traced
+  precisely against the reported repro and doesn't regress the existing gate's proven
+  behavior (build/lint/227 tests pass; normal dev-auth flows unaffected).
+- **Hard-refresh flash**: investigated a related but DIFFERENT candidate (sidebar
+  Sanctioning/League nav groups appearing a moment late on refresh while roles load
+  async) — Nate's call: leave as-is (the current behavior never shows wrong content,
+  just reveals extra items slightly late; not worth a universal loading-gate delay on
+  every page load to eliminate). No change made.
+- **Transactional-email styling polish**: still open, no specific direction given yet.
+
 ## Clarifications — RESOLVED (2026-06-28)
 - §8 FK item: now two concrete DB bugs (see B1).
 - Login: "No account exists for that email" wording confirmed; enumeration accepted (B8).

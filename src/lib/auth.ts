@@ -165,3 +165,22 @@ export function hasLikelySession(): boolean {
   } catch { /* localStorage unavailable */ }
   return false;
 }
+
+// Captured ONCE at module load, before Supabase JS parses and clears the URL
+// hash — a signup-confirmation/magic-link/recovery redirect lands with
+// `#access_token=...&type=signup` (or `#error=...` for an expired/invalid
+// link) in the hash. `hasLikelySession()` alone misses this case: a BRAND
+// NEW confirmation has no prior `sb-*-auth-token` localStorage entry for it
+// to find, so the app rendered fully in guest mode for a frame — sign-in
+// link, no nav — while getSession() was still resolving the token, then
+// flashed through several more states as the session/person/roles caught up
+// (reported live: "flashes a page ... before settling on the home page").
+const initialUrlHasAuthCallback = /(?:^|[#&])(access_token|error)=/.test(window.location.hash);
+
+/** True if the page loaded with a Supabase auth callback token/error in the
+ *  URL hash — used alongside `hasLikelySession()` to also gate the initial
+ *  render while a BRAND NEW session (not a returning one) is being
+ *  established, so the guest-mode app never paints before it. */
+export function hasAuthCallbackInUrl(): boolean {
+  return initialUrlHasAuthCallback;
+}

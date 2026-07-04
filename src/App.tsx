@@ -8,7 +8,7 @@ import { ToastProvider } from './components/ui';
 import { isUnlocked } from './lib/store';
 import { useCapabilities } from './lib/capabilities';
 import { isSupabaseConfigured } from './lib/supabase';
-import { useSession, useAuthLoading, hasLikelySession, useRolesLoaded } from './lib/auth';
+import { useSession, useAuthLoading, hasLikelySession, hasAuthCallbackInUrl, useRolesLoaded } from './lib/auth';
 import { Gate } from './pages/Gate';
 import { Home } from './pages/Home';
 
@@ -188,9 +188,13 @@ export default function App() {
 
   if (isSupabaseConfigured) {
     // Avoid flashing the gate for a signed-in user while getSession() resolves
-    // on refresh. Guests (no token) fall through to the app and browse public
+    // on refresh (hasLikelySession) OR while a BRAND NEW session is being
+    // established from a signup-confirmation/magic-link/recovery URL token
+    // (hasAuthCallbackInUrl — hasLikelySession alone misses this since a
+    // first-time confirmation has no prior localStorage session to find).
+    // Guests with neither signal fall through to the app and browse public
     // pages; account routes are gated by RequireAccount below.
-    if (!session && authLoading && hasLikelySession()) return <PageFallback />;
+    if (!session && authLoading && (hasLikelySession() || hasAuthCallbackInUrl())) return <PageFallback />;
   } else if (!unlockedLocally) {
     return <Gate onUnlock={() => setUnlockedLocally(true)} />;
   }
