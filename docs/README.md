@@ -99,6 +99,9 @@ here — update THIS list when priorities change, not rival copies.
    + **rate limiting/CAPTCHA** on sign-up and the public email-sending functions.
 
 ### Quality passes (pre- or just post-launch)
+- 🤖 **UI/UX review fixes** ([task briefs by model class](plans/2026-07-04-uiux-review-fixes.md),
+  from the 2026-07-04 live review) — coral-CTA contrast (AA fail), Profile save-bar
+  overlap, cart-vs-checkout price mismatch, payment-status badges, plus a polish batch.
 - 🤖 Accessibility audit to WCAG AA + loading/empty/error state consistency.
 - 🤖 In-app "Report a problem" widget + version stamp (`error_logs` is passive today).
 - 🤖 In-app admin refunds (Dashboard-only today; sketch in the go-live checklist).

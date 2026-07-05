@@ -1,0 +1,467 @@
+# UI/UX review fixes — task briefs by model class
+
+**Source:** Live UI/UX review on 2026-07-04 (dev server, athlete + club-manager roles,
+375px and 1280px, pages: Home, Events list/detail, RegistrationEditor modal, Cart →
+Stripe checkout, My Registrations, Profile, Membership, Purchase History, Live
+Results, Club Directory, Club Roster/Registrations). Every finding from that review
+is a task below — including the minor ones.
+
+**How to use this doc:** point a fresh session here and say which task(s) to run.
+Standing rules from `CLAUDE.md` apply to every task:
+
+- Subagent-driven execution; **one implementer at a time**, never parallel implementers.
+- Implementer verifies with `npm run build` (not `tsc --noEmit`) +
+  `npx eslint <touched files>` + `npx vitest run` before commit; add a vitest test for
+  any new PURE logic.
+- Any layout/CSS change: responsive sweep at **375 / 768 / 1280** via `preview_resize`
+  + `preview_screenshot` (no horizontal overflow, topbar ≤ 2 lines, drawer works < 860px).
+- Any color/text change: resolve tokens and check the actual fg/bg pair — WCAG AA
+  (≥ 4.5:1 body, ≥ 3:1 large text/UI).
+- Branch → implement → verify → merge to `main` → push (deploys). Don't stop to ask.
+- Append a row to `docs/model-routing-log.md` after each routed task.
+
+**Money gate (non-negotiable):** tasks marked ⚠️ touch money display/flows. Sonnet
+drafts; the **controller fable-reviews the diff before merge/push** (CLAUDE.md
+"Model routing" — the adversarial invariant read is not delegable).
+
+Suggested batching: run H-tasks as one haiku session each (or pair small ones);
+S1–S3 are independent; S4/S5 sequentially with the fable review at the end of each.
+
+---
+
+## Opus 4.8 (design / decomposition / review)
+
+### O1 — Design the "money story" reconciliation (spec only, no code)
+
+The review found three money surfaces that don't agree and have no connecting path:
+cart said **Total $45**, checkout (server-priced) said **Subtotal $55 / Total due
+$56.95**, and Purchase History shows an **UNPAID $65** invoice on a page subtitled
+"Receipts processed on your account" with no way to pay it.
+
+```
+Read docs/plans/2026-07-04-uiux-review-fixes.md (tasks O1, S4, and the Purchase
+History items in S6/H4) plus CLAUDE.md "Domain rules" and "Payments" sections, then
+write a short design spec at docs/specs/2026-07-04-money-story-ux.md answering:
+
+1. Cart display amounts are client-written and display-only; the server reprices at
+   create-checkout-session. When may they legitimately diverge (price changed after
+   the line was added, host-club $0, coupon, change-fee derivation)? Decide the UX:
+   silently re-render cart lines at server prices on checkout load, or show a
+   "prices were updated" notice, or both. Decide whether the cart page itself should
+   recompute display prices from src/lib/pricing.ts on render instead of trusting
+   stored cart_items.amount.
+2. Unpaid invoices: what is an UNPAID invoice in this system (when is one created
+   with no payment?), should it appear under "Purchase History", and what is the
+   user's path to paying it? Options: link it back to the cart, a "Pay now" that
+   rebuilds cart lines, or relabel the page "Invoices & receipts" and mark unpaid
+   rows "awaiting checkout" pointing at the cart. Pick one.
+3. Invoice numbering: two formats exist side by side (friendly "UCG-2026-0029" vs
+   raw "UCG-I-1782503368540"). Find where each is generated (grep src/ and
+   supabase/functions/ for 'UCG-I-' and 'UCG-'-prefixed id generation), decide the
+   single user-facing format, and whether legacy ids get a display-side prettifier
+   or a data migration.
+
+Constraints: server-side recompute in create-checkout-session stays authoritative
+(never trust client amounts); webhook fulfills from payments.lines_snapshot; no
+cross-entity mega-checkout. The spec should hand S4 (below) its exact behavior and
+define any Purchase History changes as a follow-up task list. Do NOT implement.
+```
+
+### O2 — Fable review gate for the ⚠️ money-display diffs
+
+Not a dispatched task. After S4 and S5 (and S6 if its paid/pending derivation
+touches `refRegIds` matching), the controller reads the full diff adversarially
+before merge: look for a path where a display change becomes an authority change
+(client amount trusted, `ref_line_type` trusted, paid flag flipped client-side),
+for `refRegIds` heuristics, and for host-club-$0 / coupon / change-fee edge cases
+rendering misleading totals. Log the review as its own row in
+`docs/model-routing-log.md`.
+
+---
+
+## Sonnet 5 (default implementer)
+
+### S1 — Fix the primary coral contrast token (systemic AA failure)
+
+Measured: white `#fcfcfc` text on `--coral-500: #f46949` = **2.94:1** at 12.5–14px.
+This token is every primary CTA (Register, Check out, Save, View membership, Open
+results) AND the active sidebar nav item. Fails WCAG AA everywhere it appears.
+
+```
+Fix the app-wide primary-button/active-nav contrast failure.
+
+Context: src/index.css defines the brand tokens (--coral-500 #f46949, --coral-600
+#e2553a, --coral-700 #b23a1e, --navy-900 #14202c, --white #fcfcfc). White-on-coral-500
+measures 2.94:1 — fails AA (4.5:1 small text; also misses the 3:1 large-text bar).
+Two candidate fixes, pick after checking both in the running app:
+  (a) keep coral-500 backgrounds, switch button/active-nav TEXT to --navy-900
+      (≈5.6:1, keeps the bright brand color), or
+  (b) darken primary-button backgrounds to --coral-700 with white text (≈5.6:1).
+Whichever you pick, apply it consistently: primary buttons, the active sidebar item
+(Layout.tsx / index.css), and hover/active states (hover must also pass — check the
+hover token, likely --coral-600 at 3.76:1 with white, which still fails).
+
+Also in scope (same token pass):
+1. Disabled primary buttons are coral at opacity 0.45 (seen on the RegistrationEditor
+   Save) — reads as nearly-enabled and drops effective contrast further. Restyle
+   disabled as a flat gray surface (e.g. --line background, --ink-soft text) with
+   opacity 1.
+2. The green "✓ ... Membership Active" topbar badge (--green-600 #2e7d52 on
+   --green-100 #ddefe4) measures 4.21:1 at 11.5px — nudge --green-600 darker until
+   the pair clears 4.5:1 (adjust anywhere else --green-600 is used only if it breaks).
+3. While touching button styles: primary CTA labels render at 12.5px in places —
+   raise the button font floor to 14px if it doesn't break topbar/card layouts.
+
+Do NOT restyle secondary/outline buttons, the navy sidebar, or status pills beyond
+the green badge above.
+
+Verify: compute the actual contrast ratios of every fg/bg pair you produce (resolve
+the CSS vars; show the math in your report). Run the app (dev auto-login) and
+screenshot: home, an event detail (Register CTA), cart (Check out), sidebar active
+state, a disabled Save in the registration modal — at 375px and 1280px. Then
+npm run build, npx eslint <touched>, npx vitest run. Responsive sweep per CLAUDE.md.
+```
+
+### S2 — Profile sticky save bar: opaque surface + reserved space
+
+```
+Fix the Profile page's floating Save/Discard bar (src/pages/Profile.tsx, styles in
+src/index.css or inline).
+
+Bug (reproduced at 375px and 1280px, dev auto-login as athlete → Profile → "Edit
+profile"): the sticky bottom bar — "Save changes" button, "Discard", "Unsaved
+changes" text, and the red "Required: Date of birth, …" line — has no opaque
+background and no reserved space, so it renders directly OVER form fields (at 375px
+it covers the Main club input and collides with the bottom-left dev-auth panel;
+form controls under it are unreadable and untappable).
+
+Fix: give the bar a solid --surface background, top border (--line) and --shadow;
+add bottom padding equal to the bar's height to the form/scroll container so no
+field can sit underneath; keep the required-fields message INSIDE the bar (it
+currently floats separately), wrapping to multiple lines rather than overlapping
+content; ensure the bar stacks above page content but does not cover the mobile nav
+drawer. Check the red required-text color against the new bar background for AA.
+
+Verify: at 375/768/1280 — scroll the whole edit form; no element is ever occluded;
+the bar never exceeds ~2 rows at 375px; screenshots of top, middle, and bottom of
+the form at 375px and 1280px. npm run build, npx eslint <touched>, npx vitest run.
+```
+
+### S3 — Profile edit mode is dirty on load ("Unsaved changes" with no edits)
+
+```
+Debug and fix: entering Profile edit mode (src/pages/Profile.tsx, form logic
+possibly in src/components/PersonForm.tsx) shows "Unsaved changes" immediately,
+before the user touches anything. Reproduced with the dev athlete (incomplete
+profile: no DOB, no phone, no t-shirt size).
+
+Find the actual cause before fixing (likely: the form initializes/normalizes values
+— default role checkbox, empty-string vs undefined, coerced numbers like gradYear 0
+— and the dirty check compares normalized state against the raw loaded person).
+Fix so dirty = user actually changed a field: snapshot the form state AFTER
+initialization/normalization and compare against that, or make normalization
+idempotent with the loaded row. "Discard" must return to the loaded values and
+clear the dirty flag. Do NOT change what Save writes (pushPerson semantics,
+selfAuthUserId stamping) — this is a dirty-tracking fix only.
+
+Verify: enter edit mode → no "Unsaved changes"; change one field → appears; discard
+→ gone and values restored; save still works (check the write-queue/WriteStatus).
+Repeat with the manager user (complete profile). If the dirty check is extractable
+as a pure function, add a vitest test. npm run build, npx eslint <touched>,
+npx vitest run.
+```
+
+### S4 — ⚠️ Cart total vs server-priced checkout total mismatch
+
+Blocked on O1's decision (run O1 first, or make the controller decide inline).
+
+```
+Implement the cart-reprice UX per docs/specs/2026-07-04-money-story-ux.md (from
+task O1).
+
+Observed bug: cart page (src/pages/Cart.tsx) showed "Total: $45" for one line
+("UCG membership 2026–27"); clicking checkout, the server-priced summary in
+src/components/CartCheckout.tsx showed Subtotal $55 + $1.95 fee = $56.95. The $45
+is a stale client-written cart_items.amount; create-checkout-session recomputed $55.
+The user sees two different prices for the same line with no explanation — reads as
+an overcharge.
+
+Baseline expectation (adjust to the spec): (1) the cart page derives display
+amounts from src/lib/pricing.ts + current data at render time instead of trusting
+stored cart_items.amount, so the cart matches what the server will charge in all
+known cases (host-club $0, change fees, membership price changes); (2) if the
+server-returned line set still differs from what the cart displayed, CartCheckout
+shows an explicit "Prices were updated" notice listing the changed lines, and the
+cart re-renders at server prices when the user goes back. UI never sums client
+amounts as authoritative (existing rule — keep it).
+
+HARD constraints: no changes to create-checkout-session's authority model; no
+client-side writes to payments; classifyCartRemoval/removeCartItemWithSync semantics
+unchanged; beware the in-place mutate() trap (read db.* directly each render, no
+useMemo keyed on nested db paths).
+
+Verify: exercise self cart AND a managed-club cart with the dev users; screenshot
+cart vs checkout summary showing agreement; vitest tests for any new pure pricing/
+diffing helpers. npm run build, npx eslint <touched>, npx vitest run.
+CONTROLLER: fable review of the diff before merge (task O2).
+```
+
+### S5 — ⚠️ Live price estimate in the registration editor
+
+```
+Add a running cost estimate to src/components/RegistrationEditor.tsx.
+
+Today the modal (event page → Register, or My Registrations → Edit) lets the user
+tick disciplines/levels/apparatus with no price feedback; the event card elsewhere
+says "$10 / discipline · $1 each additional"; costs only appear later in the cart.
+For a change to an already-paid registration the user can't predict the change fee
+at all.
+
+Add a single estimate line above the Save/Cancel row, derived ONLY from the
+existing pure helpers in src/lib/pricing.ts (registrationEntryFee,
+registrationChangeFee, changeIsEligible) — do not duplicate fee math in the
+component. Cases: new registration → "Estimated entry fee: $N — added to your cart
+on save"; host-club (competing club == event host) → "Free — host club" and no cart
+line (existing behavior, just surface it); edit of a paid registration where
+changeIsEligible → "Change fee: $N will be added to your cart"; edit that is NOT
+chargeable (apparatus tweaks within a discipline) → "No charge for this change";
+member self-edit path (MyRegistrations embeds this editor) must show the same
+numbers. Label everything "estimated" — the server reprices at checkout. Update the
+estimate live as checkboxes/levels change. Keep the existing explanatory footnote.
+
+Mind the mutate()/render trap (compute from current db reads each render). Check
+text contrast for any new muted/colored text (AA).
+
+Verify: manually exercise new-reg, paid-reg-edit (chargeable and non-chargeable),
+and host-club cases with dev users; numbers must match what the cart then shows
+(S4 world) for the same action; vitest test for any new pure helper (e.g. an
+estimate-label selector) in tests/. npm run build, npx eslint <touched>,
+npx vitest run. CONTROLLER: fable review of the diff before merge (task O2).
+```
+
+### S6 — Payment status surfaced on My Registrations
+
+```
+Surface paid/pending state on src/pages/MyRegistrations.tsx cards.
+
+Today a registration card shows event name/date/club badge and (expanded)
+disciplines — but NOT whether the entry is paid, pending purchase, or re-pended by
+an edit, even though Registration.paid and updatedPending are first-class domain
+state (CLAUDE.md "Registration paid-state"). Users can't tell if they're done or
+still owe payment.
+
+Add a status badge to each card header row: paid && !updatedPending → green "Paid";
+!paid → amber "Pending purchase — in your cart" (it IS linked to a cart line via
+refRegIds at creation); updatedPending → amber "Change pending purchase". Derive
+strictly from the registration's own paid/updatedPending fields — do NOT invent a
+refRegIds-scanning heuristic (the reg fields are the read model; refRegIds matching
+belongs to checkout/webhook only). Host-club $0 regs are created paid:true and will
+correctly show "Paid". Use the existing pill/badge styles (match the REG OPEN/DEV
+TEST pills); check AA contrast on the amber pair (--amber-600 on --amber-100).
+In the expanded details, replace the internal "Status: live" line with the same
+user-facing status wording (H2 handles the date formatting on that line).
+
+Verify: dev athlete has one paid and one pending-ish reg — screenshot both states
+(force variants via the dev data if needed); 375px + 1280px. npm run build,
+npx eslint <touched>, npx vitest run. If the badge derivation is written as a pure
+function, unit-test it. CONTROLLER: quick fable pass per O2 (cheap — display-only,
+but it renders money state).
+```
+
+---
+
+## Haiku 4.5 (mechanical, explicit checklists)
+
+### H1 — Live Results empty state
+
+```
+src/pages/Results.tsx (session results view, route #/results/<slug>): when a
+session has no posted scores the area below the search/filter row renders literally
+nothing — looks broken.
+
+1. Locate the score-list render for the All-Around / By apparatus / Team tabs.
+2. When the (filtered) list is empty AND a search/level filter is active, render
+   "No athletes match your search." When empty with no filter, render "No scores
+   posted yet — results appear here live as judges enter them."
+3. Use the existing muted empty-state styling used on Club.tsx "READY TO REGISTER
+   (0)" ("Active members not yet registered…") — same tone, same classes.
+4. All three tabs get the message.
+
+Checklist before commit: [ ] open #/results/test-meet — message visible on every
+tab; [ ] type a garbage search — the "no match" variant shows; [ ] text color vs
+background ≥ 4.5:1 (resolve the actual token values); [ ] npm run build;
+[ ] npx eslint src/pages/Results.tsx; [ ] npx vitest run.
+```
+
+### H2 — Human-readable dates, timezones, and status words
+
+```
+Three raw-internals leaks, all display-only formatting:
+
+1. src/pages/MyRegistrations.tsx expanded details: "Status: live · Registration
+   closes 2026-07-11T13:46:00+00:00". Replace the ISO string with the app's
+   standard formatted date+time in the event's timezone (find the existing
+   date-format helper — grep src/lib for toLocale/format usage on event dates —
+   and reuse it; e.g. "Jul 11, 2026, 9:46 AM EDT"). Map internal event statuses to
+   user words: live → "Open", plus whatever other event_status values exist
+   (grep the enum) — draft → "Draft", completed/past → "Completed". Note: if S6 has
+   already replaced the "Status:" line with a payment badge, only the date part of
+   this item remains there.
+2. src/pages/Events.tsx event detail header: "(America/New_York)" raw IANA zone in
+   the date line. Render the short zone name instead (Intl.DateTimeFormat with
+   timeZoneName: 'short' → "ET"/"EDT").
+3. Check for the same two patterns anywhere else user-visible:
+   grep -rn "America/New_York\|toISOString\|timezone" src/pages src/components —
+   fix user-facing instances only; do NOT touch data writes, comparisons, or the
+   nationals engine.
+
+Checklist: [ ] screenshots of both fixed spots; [ ] no raw ISO or IANA strings
+user-visible on Events/MyRegistrations; [ ] npm run build; [ ] npx eslint <touched>;
+[ ] npx vitest run (do not break scoring tests).
+```
+
+### H3 — Replace raw route text with a Copy-link button
+
+```
+Two pages print internal hash routes as text meant to be "the shareable link":
+- src/pages/Events.tsx detail header: "… hosted by X · #/events/<slug>"
+- src/pages/Results.tsx: "Unique URL per event & session: #/results/<slug>"
+
+1. Remove the raw route text from both.
+2. Add a small secondary/outline "Copy link" button (existing button styles) that
+   copies the FULL absolute URL (window.location.origin + pathname + '#/…' — build
+   from the app base so it works under the GitHub Pages subpath, then under any
+   future host) via navigator.clipboard.writeText.
+3. On success show the existing toast: useToast()('Link copied'). On clipboard
+   failure show the URL in a prompt() fallback so it's still copyable.
+4. On Results, the copied link should reflect the currently selected session if
+   the session is part of the route/query; otherwise copy the page URL as-is.
+
+Checklist: [ ] click both buttons, paste the result — full URL opens the right
+page; [ ] toast appears; [ ] no raw "#/…" text remains on either page;
+[ ] npm run build; [ ] npx eslint <touched>; [ ] npx vitest run.
+```
+
+### H4 — Microcopy and formatting sweep (7 small fixes)
+
+```
+All display-only string fixes; change nothing about behavior or data.
+
+1. src/pages/Membership.tsx: "Waiver signed by on 2026-06-25" — when the signer
+   name is empty, render "Waiver signed on <date>" (conditional, no dangling "by").
+2. src/pages/Profile.tsx view mode: "GRAD YEAR 0" — render "—" when gradYear is 0,
+   null, or undefined (display only; do not change stored values or the N/A logic).
+3. Checkout-verb consistency: grep -rn "Checkout\|Check out\|Click for details"
+   src/. Standardize buttons/links to "Check out" as the verb ("Check out
+   everything →", "Check out memberships →") and "View details →" instead of
+   "Click for details →" (src/pages/PurchaseHistory.tsx). Don't rename code
+   identifiers or routes — user-visible strings only.
+4. src/pages/PurchaseHistory.tsx: the $0 invoice renders bare description
+   "Purchase" — fall back to "Purchase — <date>" or the invoice's line summary if
+   one exists; pick whatever data is already loaded, no new queries.
+5. Breadcrumb on results detail shows the slug ("Results / Test-meet") — pass the
+   event's display title to the breadcrumb instead (find the breadcrumb source in
+   src/components/Layout.tsx; if it derives from the route, give the page a way to
+   set the label the way other detail pages do — copy the existing pattern).
+6. src/pages/MyRegistrations.tsx helper line "Use Edit above to change your
+   disciplines, levels, events." → "…disciplines, levels, and apparatus."
+   (post-rename vocabulary; CLAUDE.md "Naming").
+7. Club Directory (src/pages/Clubs.tsx): the REGION pill ("MID-ATLANTIC") clips at
+   the table's right edge around 800px viewport width. Reproduce (~800px wide),
+   then fix: allow the pill to shrink/wrap or give the column min-width — no
+   horizontal page overflow allowed.
+
+Checklist: [ ] screenshot each of the 7 fixes; [ ] grep confirms no remaining
+"Click for details" / "Checkout " (with trailing space, as a verb) user strings;
+[ ] Club Directory at 375/768/800/1280 — no clipped pills, scrollWidth ≤
+clientWidth; [ ] npm run build; [ ] npx eslint <touched>; [ ] npx vitest run.
+```
+
+### H5 — Cart: collapse the redundant CTAs when only one section exists
+
+```
+src/pages/Cart.tsx: with a single cart section the page shows SIX actions for one
+line — "Total / Print Invoice / Check out everything →" bars at BOTH top and
+bottom, plus the section's own "Check out <section> →" button and header link.
+
+1. Render the "everything" total bar ONLY when 2+ sections (own cart + ≥1 club
+   section, or multiple club sections) have items — with one section, its own
+   subtotal row + checkout button is the only CTA set.
+2. When the everything-bar does render, show it once: top position only.
+3. Leave per-section rows, the ✕ removal flow, Print Invoice per section, and the
+   "Billed to …" copy logic alone — except: the checkout view currently renders
+   "Billed to Dev Athlete." twice stacked (page subtitle + section header); drop
+   the duplicate in the checkout state.
+
+Checklist: [ ] one-section cart (dev athlete) shows exactly one checkout button +
+one Print Invoice; [ ] multi-section cart (switch to Club mgr with a club line, or
+temporarily seed one) shows the single top everything-bar plus per-section buttons;
+[ ] no duplicated "Billed to" line in checkout state; [ ] removal ✕ still works;
+[ ] npm run build; [ ] npx eslint src/pages/Cart.tsx; [ ] npx vitest run.
+```
+
+### H6 — Not-found route instead of silent Home fallback
+
+```
+Unknown hash routes (e.g. #/profile — the real route is #/me) silently render the
+Home page, so typos/stale links look like the app ignored the click.
+
+1. Find the router config (App.tsx) — there is likely a catch-all route to Home or
+   an index fallback.
+2. Add a NotFound view for unmatched paths: page-style heading "Page not found",
+   one line "That link doesn't exist — it may be old or mistyped.", and a "Go to
+   Home →" primary link. Match existing page layout (Layout children, card
+   styles).
+3. PRESERVE all intentional redirects: /meets* → /events* slug-preserving
+   <Navigate replace>, /club/:id/cart → /cart, and the ?setpw=1 → #/set-password
+   handling must keep working exactly (CLAUDE.md "Naming" + "Auth patterns").
+   List the existing redirect/fallback routes in your report to prove you checked.
+
+Checklist: [ ] #/profile and #/garbage show NotFound; [ ] #/meets and a
+#/meets/<slug> URL still land on the events pages; [ ] #/ still renders Home;
+[ ] auth ?setpw=1 flow untouched (code-inspect, don't run auth); [ ] npm run build;
+[ ] npx eslint <touched>; [ ] npx vitest run.
+```
+
+### H7 — "Details"/"Hide" toggles are plain spans (keyboard/SR inaccessible)
+
+```
+The expand/collapse toggles on registration cards are styled <span>s inside a
+clickable row, not buttons — invisible to keyboard and screen-reader users.
+Known instances: src/pages/MyRegistrations.tsx:331 and
+src/pages/admin/Communicate.tsx:653 ("{open ? 'Hide' : 'Details'}").
+
+1. Convert each toggle to a real <button type="button"> with the existing
+   text-link styling (keep the visual identical — reuse or add a minimal
+   .linklike-button class with background:none, border:0, same color/font).
+2. Add aria-expanded={open} to the button.
+3. If the whole card row is the actual click target, keep that behavior but make
+   the button the focusable control (row click AND button both toggle; no nested
+   interactive elements inside the button).
+4. Grep for other same-pattern toggles: grep -rn "'Hide' : 'Details'\|'Details' :
+   'Hide'" src/ and fix all hits the same way. (Waivers.tsx uses <summary> — fine,
+   leave it.)
+5. Tab-navigate: the toggle is reachable, Enter/Space toggles, focus outline
+   visible.
+
+Checklist: [ ] keyboard-only expand/collapse works on My Registrations and admin
+Communicate; [ ] visual unchanged (screenshot before/after); [ ] aria-expanded
+present; [ ] npm run build; [ ] npx eslint <touched>; [ ] npx vitest run.
+```
+
+---
+
+## Priority order (if running the lot)
+
+| Order | Task | Why first |
+|-------|------|-----------|
+| 1 | S1 | AA failure on every CTA; single-token leverage; Nate's hard contrast rule |
+| 2 | S2 | Most-broken screen, blocks members completing required profile fields |
+| 3 | O1 → S4 | Biggest trust risk (money numbers disagree) |
+| 4 | S3, S6 | Profile trust + payment-state visibility |
+| 5 | S5 | Price transparency at the decision point |
+| 6 | H1–H7 | Polish batch — cheap, high count |
+
+After each merged task: update this file's task with a ✅ + date, log the routing
+row, and let the post-commit doc sweep reconcile `docs/README.md` "What's next"
+(which points here).
