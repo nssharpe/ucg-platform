@@ -47,9 +47,12 @@ Julia asks for (gaps in **bold**):
   `privateRegCode` exists but no late window/fee concept.
 - Correction deadline — exists (`lastDateToEdit`).
 - **Age-calculation datetime for competitions** (today camp-only `ageCalcAt`).
-- **Per-event confirmation email**: rich-text + raw-HTML editor with preview,
-  **from address + from alias**; body is included in every cart-processed
-  confirmation. Today: only the generic webhook receipt email.
+- **Per-event confirmation email**: rich-text + raw-HTML editor with preview;
+  body is included in every cart-processed confirmation. Today: only the
+  generic webhook receipt email. **From-address resolved (Julia 2026-07-06):**
+  always send from a verified-domain address with a custom display name
+  (from-alias); the host/director address goes in **reply-to** — applies
+  everywhere Julia's doc says "from email" (§I, §J).
 - **Director name/email + "cc director on confirmation emails"** for
   competitions (today camp-only).
 - **Hotel block link** as a real field (today free-text overnight description
@@ -111,11 +114,11 @@ setup):
 
 - Unique registration page per event + easy link copy — exists (slug); add
   copy-link affordance.
-- **Late-reg password link**: after close, a *different* URL guarded by a
-  password set in event settings, so holders of the normal link can't discover
-  it; stops working entirely after `lastDateToEdit` (then league admins only).
-  Today's `privateRegCode` is close — verify the separate-URL + expiry
-  semantics.
+- **Late registration via private code** (resolved 2026-07-06): today's
+  `privateRegCode` approach — a code known only to people we tell, entered on
+  the normal event page — is acceptable; no separate hidden URL needed. Still
+  required: the code **stops working after `lastDateToEdit`** (then league
+  admins only) — verify/add that expiry.
 - **Login-return**: registration page requires login and returns you to it
   after auth. Verify with HashRouter redirect handling.
 - **Membership gating message**: non-member sees "you can't register until
@@ -155,9 +158,11 @@ editor. Deltas:
    change fee — shipped.
 2. **Per-athlete/per-item refund requests** from this card (see §H).
 3. **Add-ons card**: banquet tickets **assigned to an athlete/coach or
-   "EXTRA"**, max 1 per account, each its own refundable line; t-shirts/leos
-   unassigned, **quantity + size per unit**; club banner 1-per-club with
-   exact-name text box. Today: banquet/tshirt/banner config exists but
+   "EXTRA"**, max 1 *assigned* per account, each its own refundable line;
+   individuals may likewise buy multiple tickets so long as extras are
+   unassigned/EXTRA, at most one tied to themself (Julia 2026-07-06);
+   t-shirts/leos unassigned, **quantity + size per unit**; club banner
+   1-per-club with exact-name text box. Today: banquet/tshirt/banner config exists but
    assignment, quantities, per-unit sizes, and EXTRA don't.
 4. **Nationals session-request card**: 1 survey per registered level (see §L);
    cart checkout for the event **blocks until all required surveys are
@@ -169,13 +174,14 @@ editor. Deltas:
    (first/last/email) → account-invite email. Today: club invites +
    invite-account exist; the per-event framing, season-targeted link, and
    last-sent note are new.
-6. **Set Lineup** (per level; drag athlete order per apparatus) and **Set
-   Competition Order** (MAG/WAG only; drag names per apparatus column;
-   athletes appear only in columns they're registered for; auto-save;
-   **section dividers capping 12 WAG / 15 MAG per section**, club controls the
-   split). Event-settings checkbox to **lock competition orders** (clubs then
-   view-only). Net-new (squad builder exists admin-side, but this is
-   club-facing ordering).
+6. **Set Competition Order** — ONE feature (Julia 2026-07-06: her "Set
+   Lineup" and "Set Competition Order" descriptions were the same thing
+   written twice). MAG/WAG only (not T&T): pick a level → one column per
+   apparatus → drag athlete names into competing order; athletes appear only
+   in columns they're registered for; auto-save; **section dividers capping
+   12 WAG / 15 MAG per section**, club controls the split. Event-settings
+   checkbox to **lock competition orders** (clubs then view-only). Net-new
+   (squad builder exists admin-side, but this is club-facing ordering).
 7. **Finals roster** (nationals events): select up to 4 athletes; separate
    event-settings lock; after lock only admins edit. Net-new UI (see §L for
    the timing/reminder rules).
@@ -184,6 +190,23 @@ editor. Deltas:
 
 - Caps: max total participants; per-level or per-discipline caps (WAG/MAG),
   discipline cap (T&T). No cap enforcement exists today.
+  **Caps block registration in real time** (Julia 2026-07-06), in both modes.
+  **Proposed design for the partial-fit case** ("14 spots left, club wants to
+  register 15") — Julia is open to suggestions; confirm at P4 kickoff:
+  - **All-or-nothing per club per level** at checkout (keeps teams together,
+    mirrors her by-session waitlist rule): if the group doesn't fit, checkout
+    blocks with an error naming the level/apparatus and the overage ("Level 5
+    is 1 over capacity"), and offers (a) waitlist the whole level group,
+    (b) a different session where offered, or (c) the club explicitly splits —
+    register the 14 who fit, waitlist the rest — as a deliberate choice, never
+    silently.
+  - **Enforce server-side in `create-checkout-session`** (client checks are
+    advisory): capacity = paid regs + regs on *pending* payments younger than
+    ~30 min (a soft hold), so two simultaneous checkouts can't oversell and an
+    abandoned checkout releases its spots automatically.
+  - **Waitlist auto-notifies** (email) when refunds/withdrawals/cap raises
+    free enough space for the whole waitlisted group; league admins can
+    override caps case-by-case.
 - **By-session registration mode**: sessions created before reg opens (name,
   levels, times, max routines per apparatus); athletes/clubs pick a session at
   registration. **Checkout errors when a selected session lacks space**,
@@ -200,9 +223,8 @@ editor. Deltas:
 - Individual self-registration only (no club-manager reg) — shipped intent;
   **club membership is NOT required for camps** — today the club-membership
   gate applies at *every* entry point, so camps need an explicit carve-out.
-  ⚠ Open question for Julia: is *individual* season membership required for
-  camp registration? (Her generic registration section implies yes; the camp
-  section only waives the *club* requirement.)
+  **Individual membership IS required** (for the season the camp occurs in) —
+  answered by Julia 2026-07-06.
 - No discipline/level/apparatus in camp registration — simpler popup.
 - **Overnight-accommodations survey UI** (bedtime / noise level / cabin gender
   pref / roommate free-text) asked per athlete at checkout when enabled —
@@ -234,6 +256,9 @@ Only for **UCG-hosted events** (host club "UCG - Main"). Both self-serve
   EXTRA; other add-ons individually refundable.
 - **Orders must be structured so individual item refunds don't disturb the
   original receipt**; refund receipts generated on approval.
+
+**Club-paid registrations refund to the club** — the original payment method
+(Julia 2026-07-06; also Stripe's constraint).
 
 Current state: `refunded`/`refundRequested`/`keepListed` fields exist on
 registrations; **no request UI, no review flow, no Stripe refund call, no
@@ -369,25 +394,26 @@ Nothing exists today (B5 open).
    reads as **UCG** (she's not used to the new name yet) — so "NAIGC-hosted" =
    UCG-hosted, "NAIGC - Main" = the UCG league host club, etc. Operational
    email stays on the verified naigc.org Resend domain until that changes.
-7. **Open questions for Julia** (relayed via Nate 2026-07-06 — record answers
-   here as they come in; each blocks only its affected phase):
-   1. Camp *individual*-membership requirement (§G) — club membership is
-      waived for camps; is individual season membership still required?
-   2. Late-reg password link semantics (§D) — separate hidden URL + password,
-      vs today's private-code-on-the-same-page.
-   3. "Set Lineup" vs "Set Competition Order" (§E6) — distinct features or
-      one? Her doc describes both with overlapping behavior.
-   4. Refunds of *club-paid* registrations (§H) — who receives the money when
-      an individual's reg was paid from a club cart?
-   5. Do per-level/discipline caps apply in by-discipline mode at registration
-      time (§F), or only via session capacity in by-session mode?
-   6. Confirmation-email "from email" (§A/§I) — Resend requires verified
-      sending domains, so arbitrary host from-addresses won't work; propose
-      from-alias + reply-to instead.
-   7. Banquet-ticket quantity rules (§E3/§G) — clubs: one ticket per person
-      (athlete/coach/EXTRA); individuals: her doc shows a quantity dropdown
-      AND "you cannot buy more than one ticket for the same account" —
-      confirm individuals can buy multiple as long as extras are unassigned.
+7. **Open questions — ALL ANSWERED by Julia 2026-07-06** (sections updated in
+   place; kept here as the decision record):
+   1. Camp *individual*-membership (§G): **required** — individual membership
+      for the season the camp occurs in; only the *club* gate is waived.
+   2. Late-reg link (§D): **today's private-code approach is acceptable** — a
+      code known only to people we tell, on the normal page. (Code still stops
+      working after `lastDateToEdit`.)
+   3. "Set Lineup" / "Set Competition Order" (§E6): **one feature**, described
+      twice by accident. The 12-WAG/15-MAG section dividers ARE part of it.
+   4. Club-paid refunds (§H): **refund to the club** (original payment
+      method — matches Stripe's constraint).
+   5. Caps in by-discipline mode (§F): **block registration in real time**;
+      Julia is open to suggestions on the partial-fit case (14 spots left,
+      club of 15) — proposed design recorded in §F.
+   6. From-address (§A/§I): **approved** — always send from a verified-domain
+      address with a custom display name (alias); host's address goes in
+      reply-to.
+   7. Banquet quantities (§E3/§G): **confirmed** — individuals may buy
+      multiple tickets as long as extras are unassigned/EXTRA; at most one
+      tied to the buyer themself.
 
 ## O. Phasing (**approved by Nate 2026-07-06** — sequence in docs/README "What's next")
 

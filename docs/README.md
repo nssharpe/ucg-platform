@@ -44,7 +44,7 @@ Live build/tooling notes live in [`../CLAUDE.md`](../CLAUDE.md); open work is th
 | [dev-test-auth](specs/2026-06-25-dev-test-auth.md) | Dev-only real auto-login of a seeded Supabase test user (`.env.local`-gated) so authenticated UI is exercisable locally | ✅ shipped |
 | [stripe-integration](specs/2026-06-25-stripe-integration.md) | Stripe Embedded Checkout architecture (S1–S5) | ✅ shipped |
 | [security-review-findings (7/02)](specs/2026-07-02-security-review-findings.md) | Deep review of the money paths: RLS, edge functions, cart state machine — verified findings by severity | 🟡 findings logged; fixes planned |
-| [event-management-v2-requirements](specs/2026-07-06-event-management-v2-requirements.md) | Julia's full event-management requirements (7/06) digested + gap-mapped: host dashboard, refunds, capacity/waitlists, add-ons v2, nationals ops, finance dashboards — with proposed phasing V2-P0…P6 | 🟡 requirements folded; not scheduled |
+| [event-management-v2-requirements](specs/2026-07-06-event-management-v2-requirements.md) | Julia's full event-management requirements (7/06) digested + gap-mapped: host dashboard, refunds, capacity/waitlists, add-ons v2, nationals ops, finance dashboards — phasing V2-P0…P6 | 🟡 validated (phasing approved, §N7 answered); build not started |
 
 ## Plans (`plans/`) — step-by-step implementation records
 
@@ -121,8 +121,9 @@ here — update THIS list when priorities change, not rival copies.
   **Phasing approved by Nate 2026-07-06:** V2-P0 foundations/scheduler →
   P1 host experience → P2 add-ons & camps → P3 refunds → P4 capacity/waitlists &
   by-session reg → P5 nationals ops/check-in → P6 finance dashboards.
-  §N7 open questions relayed to Julia 2026-07-06 — record answers in the spec;
-  each blocks only its affected phase (P0 is unblocked). This absorbs several
+  §N7 open questions **all answered by Julia 2026-07-06** (recorded in the spec;
+  every phase is unblocked — only the §F partial-fit capacity design wants a
+  confirm at P4 kickoff). This absorbs several
   older roadmap items: **B5 finance dashboards** (now fully spec'd, §M), in-app
   refunds (§H), banquet tickets/add-ons v2 (§E3), finals rosters (§L),
   server-emailed PDF receipts (§I/§N4). Naming: every "NAIGC" in Julia's raw
