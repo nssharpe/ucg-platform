@@ -79,22 +79,55 @@ export type RegFeeEvent = {
   entryFee: number;
   secondDisciplineFee: number;
   changeFee?: { amount: number; startsAt: string };
+  /** Late-registration surcharge (emv2 P0 Task 3), added ON TOP of the normal
+   *  entry/second-discipline fee — NOT the change fee (rule 4). Fee in DOLLARS. */
+  lateReg?: { startsAt: string; fee: number };
 };
+
+/**
+ * Does the late-registration surcharge apply, given the EARLIEST `createdAt`
+ * among the athlete's referenced registrations for this event? (Rule 1/2: the
+ * anchor is registration-CREATION time, once per athlete per event — not
+ * per-discipline, not payment time.) `>=` at the boundary applies the fee
+ * (rule: "at or after"). No `lateReg` configured ⇒ never applies.
+ */
+export function lateFeeApplies(
+  event: Pick<RegFeeEvent, 'lateReg'>,
+  earliestCreatedAtISO: string,
+): boolean {
+  if (!event.lateReg) return false;
+  return Date.parse(earliestCreatedAtISO) >= Date.parse(event.lateReg.startsAt);
+}
 
 /**
  * Entry fee for one discipline of a registration. $0 when the athlete competes
  * FOR the event's host club; otherwise the second-discipline fee (if this is a
  * second discipline) or the base entry fee.
+ *
+ * Late-registration surcharge (emv2 P0 Task 3, optional so existing callers
+ * are unaffected): pass `late.earliestCreatedAtISO` (earliest `createdAt`
+ * among the athlete's regs at this event, per rule 2's once-per-athlete
+ * anchor) to add `event.lateReg.fee` on top when it lands at/after
+ * `lateReg.startsAt`. Only meaningful for the FIRST discipline of a brand-new
+ * registration in isolation — callers pricing a whole multi-discipline
+ * purchase at once should use `newRegistrationEntryTotal` instead, which
+ * applies the surcharge once regardless of `newDisciplineCount`.
  */
 export function registrationEntryFee(
   event: RegFeeEvent,
-  { competingClubId, isSecondDiscipline = false }: {
+  { competingClubId, isSecondDiscipline = false, late }: {
     competingClubId: string;
     isSecondDiscipline?: boolean;
+    /** Late-fee inputs (Task 3). Omit to preserve pre-Task-3 behavior. */
+    late?: { earliestCreatedAtISO: string };
   },
 ): number {
   if (competingClubId === event.hostClubId) return 0;
-  return isSecondDiscipline ? event.secondDisciplineFee : event.entryFee;
+  const base = isSecondDiscipline ? event.secondDisciplineFee : event.entryFee;
+  if (late && lateFeeApplies(event, late.earliestCreatedAtISO)) {
+    return base + (event.lateReg?.fee ?? 0);
+  }
+  return base;
 }
 
 /**
@@ -121,13 +154,26 @@ export function registrationChangeFee(
  * a second discipline). `newDisciplineCount` is how many are being added now.
  * Returns 0 for the host club (every fee waived) — the caller treats a 0 total
  * as "nothing to purchase ⇒ create the registration already paid".
+ *
+ * Late-registration surcharge (emv2 P0 Task 3, optional `late` param so
+ * existing callers are unaffected): added ONCE per athlete per event — not
+ * per-discipline (rule 2) — and never for the host club (rule 3, checked
+ * first above). Pass `earliestCreatedAtISO`: the earliest `createdAt` among
+ * ALL of the athlete's registrations at this event, INCLUDING the ones being
+ * created right now (so a brand-new athlete with no prior reg passes
+ * `nowISO`; an athlete adding a second discipline passes their ORIGINAL reg's
+ * `createdAt`, which is earlier than now and is what actually anchors the
+ * once-per-athlete rule — an original on-time registration is never
+ * surcharged just because a later discipline was added inside the window).
  */
 export function newRegistrationEntryTotal(
   event: RegFeeEvent,
-  { competingClubId, priorDisciplineCount, newDisciplineCount }: {
+  { competingClubId, priorDisciplineCount, newDisciplineCount, late }: {
     competingClubId: string;
     priorDisciplineCount: number;
     newDisciplineCount: number;
+    /** Late-fee inputs (Task 3). Omit to preserve pre-Task-3 behavior. */
+    late?: { earliestCreatedAtISO: string };
   },
 ): number {
   if (competingClubId === event.hostClubId) return 0;
@@ -135,6 +181,9 @@ export function newRegistrationEntryTotal(
   for (let i = 0; i < newDisciplineCount; i++) {
     const isSecond = priorDisciplineCount + i > 0;
     total += isSecond ? event.secondDisciplineFee : event.entryFee;
+  }
+  if (total > 0 && newDisciplineCount > 0 && late && lateFeeApplies(event, late.earliestCreatedAtISO)) {
+    total += event.lateReg!.fee;
   }
   return total;
 }

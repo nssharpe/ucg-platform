@@ -260,6 +260,8 @@ const rowToRegistration = (r: Row<'registrations'>): Registration => ({
   ...(r.refund_requested ? { refundRequested: true } : {}),
   ...(r.partner_athlete_id ? { partnerAthleteId: r.partner_athlete_id } : {}),
   ...(r.apparatus_levels ? { apparatusLevels: r.apparatus_levels as Registration['apparatusLevels'] } : {}),
+  // READ-ONLY: never included in registrationToRow's push mapping (see Registration.createdAt).
+  ...(r.created_at ? { createdAt: r.created_at } : {}),
 });
 
 const scoreToRow = (s: Score) => ({

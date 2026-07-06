@@ -4,6 +4,8 @@ import {
   registrationChangeFee,
   changeIsEligible,
   regChangeHasDiff,
+  newRegistrationEntryTotal,
+  lateFeeApplies,
   type RegFeeEvent,
   type RegChangeState,
   type RegDisciplineEntry,
@@ -76,6 +78,146 @@ describe('registrationChangeFee (3g)', () => {
   it('is $0 when the event has no change fee configured (non-host)', () => {
     const noFee: RegFeeEvent = { ...event, changeFee: undefined };
     expect(registrationChangeFee(noFee, { competingClubId: 'club-a' })).toBe(0);
+  });
+});
+
+// --- emv2 P0 Task 3: late-registration fee behavior --------------------------
+
+const lateEvent: RegFeeEvent = {
+  ...event,
+  lateReg: { startsAt: '2026-06-01T00:00:00Z', fee: 10 },
+};
+
+describe('lateFeeApplies', () => {
+  it('is false with no lateReg configured', () => {
+    expect(lateFeeApplies({ lateReg: undefined }, '2026-06-01T00:00:00Z')).toBe(false);
+  });
+
+  it('is false before the window', () => {
+    expect(lateFeeApplies(lateEvent, '2026-05-31T23:59:59Z')).toBe(false);
+  });
+
+  it('is true exactly at the startsAt boundary (>= applies)', () => {
+    expect(lateFeeApplies(lateEvent, '2026-06-01T00:00:00Z')).toBe(true);
+  });
+
+  it('is true after the window', () => {
+    expect(lateFeeApplies(lateEvent, '2026-07-01T00:00:00Z')).toBe(true);
+  });
+});
+
+describe('newRegistrationEntryTotal — late-registration surcharge (Task 3)', () => {
+  it('no late param ⇒ unaffected (pre-Task-3 behavior preserved)', () => {
+    expect(
+      newRegistrationEntryTotal(lateEvent, {
+        competingClubId: 'club-a', priorDisciplineCount: 0, newDisciplineCount: 1,
+      }),
+    ).toBe(40);
+  });
+
+  it('registered before the window ⇒ no surcharge', () => {
+    expect(
+      newRegistrationEntryTotal(lateEvent, {
+        competingClubId: 'club-a', priorDisciplineCount: 0, newDisciplineCount: 1,
+        late: { earliestCreatedAtISO: '2026-05-01T00:00:00Z' },
+      }),
+    ).toBe(40);
+  });
+
+  it('registered exactly at the startsAt boundary ⇒ surcharge applies (>=)', () => {
+    expect(
+      newRegistrationEntryTotal(lateEvent, {
+        competingClubId: 'club-a', priorDisciplineCount: 0, newDisciplineCount: 1,
+        late: { earliestCreatedAtISO: '2026-06-01T00:00:00Z' },
+      }),
+    ).toBe(50); // 40 entry + 10 late fee
+  });
+
+  it('registered after the window ⇒ surcharge applies', () => {
+    expect(
+      newRegistrationEntryTotal(lateEvent, {
+        competingClubId: 'club-a', priorDisciplineCount: 0, newDisciplineCount: 1,
+        late: { earliestCreatedAtISO: '2026-07-01T00:00:00Z' },
+      }),
+    ).toBe(50);
+  });
+
+  it('no lateReg configured on the event ⇒ never surcharged, even late', () => {
+    expect(
+      newRegistrationEntryTotal(event, {
+        competingClubId: 'club-a', priorDisciplineCount: 0, newDisciplineCount: 1,
+        late: { earliestCreatedAtISO: '2026-12-01T00:00:00Z' },
+      }),
+    ).toBe(40);
+  });
+
+  it('host club stays $0 even when registering late', () => {
+    expect(
+      newRegistrationEntryTotal(lateEvent, {
+        competingClubId: 'host-club', priorDisciplineCount: 0, newDisciplineCount: 1,
+        late: { earliestCreatedAtISO: '2026-07-01T00:00:00Z' },
+      }),
+    ).toBe(0);
+  });
+
+  it('second discipline added late, but ORIGINAL reg predates the window ⇒ NOT surcharged (once per athlete, anchored on earliest)', () => {
+    // The athlete's earliest reg for this event was created before the window —
+    // that's the anchor passed by the caller, even though this call is pricing
+    // a second discipline being added right now (isSecond via priorDisciplineCount=1).
+    expect(
+      newRegistrationEntryTotal(lateEvent, {
+        competingClubId: 'club-a', priorDisciplineCount: 1, newDisciplineCount: 1,
+        late: { earliestCreatedAtISO: '2026-05-01T00:00:00Z' },
+      }),
+    ).toBe(25); // second-discipline fee only, no late fee
+  });
+
+  it('all disciplines registered together inside the late window ⇒ surcharge applied ONCE, not per-discipline', () => {
+    const total = newRegistrationEntryTotal(lateEvent, {
+      competingClubId: 'club-a', priorDisciplineCount: 0, newDisciplineCount: 2,
+      late: { earliestCreatedAtISO: '2026-07-01T00:00:00Z' },
+    });
+    // 40 (first) + 25 (second) + 10 (late fee, once) = 75 — NOT 40+10 + 25+10.
+    expect(total).toBe(75);
+  });
+
+  it('fee of 0 is a no-op even when the window applies', () => {
+    const zeroFeeEvent: RegFeeEvent = { ...event, lateReg: { startsAt: '2026-06-01T00:00:00Z', fee: 0 } };
+    expect(
+      newRegistrationEntryTotal(zeroFeeEvent, {
+        competingClubId: 'club-a', priorDisciplineCount: 0, newDisciplineCount: 1,
+        late: { earliestCreatedAtISO: '2026-07-01T00:00:00Z' },
+      }),
+    ).toBe(40);
+  });
+});
+
+describe('registrationEntryFee — late-registration surcharge (Task 3)', () => {
+  it('adds the late fee to the base entry fee when registered inside the window', () => {
+    expect(
+      registrationEntryFee(lateEvent, {
+        competingClubId: 'club-a',
+        late: { earliestCreatedAtISO: '2026-07-01T00:00:00Z' },
+      }),
+    ).toBe(50);
+  });
+
+  it('adds the late fee to the second-discipline fee too', () => {
+    expect(
+      registrationEntryFee(lateEvent, {
+        competingClubId: 'club-a', isSecondDiscipline: true,
+        late: { earliestCreatedAtISO: '2026-07-01T00:00:00Z' },
+      }),
+    ).toBe(35); // 25 + 10
+  });
+
+  it('host club stays $0 even late', () => {
+    expect(
+      registrationEntryFee(lateEvent, {
+        competingClubId: 'host-club',
+        late: { earliestCreatedAtISO: '2026-07-01T00:00:00Z' },
+      }),
+    ).toBe(0);
   });
 });
 

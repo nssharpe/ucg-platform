@@ -346,6 +346,13 @@ export interface Registration {
    *  shape future-proofs per-apparatus levels for MAG/WAG. Absent ⇒ use
    *  `levelId` for all events. */
   apparatusLevels?: Record<string, string>;
+  /** DB `created_at` (timestamptz), READ-ONLY: never written by `pushRegistration`
+   *  (the app's whole-row upsert never maps this column back, so the DB default
+   *  `now()` — stamped once at first INSERT — is preserved across edits). This is
+   *  the late-registration-fee anchor (emv2 P0 Task 3): the fee applies iff the
+   *  EARLIEST `createdAt` among an athlete's regs at an event is at/after
+   *  `Event.lateReg.startsAt`. Absent on a client-constructed (not-yet-saved) reg. */
+  createdAt?: string;
 }
 
 export interface Score {

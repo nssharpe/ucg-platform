@@ -14,7 +14,7 @@ import type { Athlete, CartItem, Event, EventSession, Registration } from '../li
 import { deleteRegistration, pushCart, pushEventSessions, pushRegistration, syncSynchroPartnerLevelRemote } from '../lib/supabase';
 import { stateCode } from '../lib/sanction';
 import { fmtMoney } from '../lib/scoring';
-import { newRegistrationEntryTotal, registrationChangeFee, syncSynchroPartnerLevel, findIncomingSynchroPartner } from '../lib/pricing';
+import { newRegistrationEntryTotal, registrationChangeFee, syncSynchroPartnerLevel, findIncomingSynchroPartner, lateFeeApplies } from '../lib/pricing';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -417,11 +417,22 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
       // Brand-new disciplines (not previously registered).
       const addedRegs = regs.filter((r) => !existingForAthlete.some((e) => e.discipline === r.discipline));
 
+      // Late-registration fee anchor (emv2 P0 Task 3): EARLIEST createdAt among
+      // the athlete's existing regs for this event, or now if this is their
+      // first (rule 2: once per athlete+event, not per discipline).
+      const lateAnchor = (() => {
+        const createdAts = existingForAthlete.map((r) => r.createdAt).filter((c): c is string => !!c);
+        return createdAts.length === 0
+          ? new Date().toISOString()
+          : createdAts.reduce((min, c) => (Date.parse(c) < Date.parse(min) ? c : min));
+      })();
+
       // Entry total for the newly-added disciplines, host-club aware ($0 ⇒ free).
       const entryTotal = newRegistrationEntryTotal(event, {
         competingClubId,
         priorDisciplineCount,
         newDisciplineCount: addedRegs.length,
+        late: { earliestCreatedAtISO: lateAnchor },
       });
       const changeFee = changeFeeApplies && alreadyHadRegs
         ? registrationChangeFee(event, { competingClubId })
@@ -483,9 +494,10 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
       const cart = d.carts[athlete.id] ?? (d.carts[athlete.id] = []);
 
       if (!alreadyHadRegs && entryTotal > 0) {
+        const lateSuffix = lateFeeApplies(event, lateAnchor) ? ' (incl. late fee)' : '';
         cart.push({
           id: `ci-self-${Date.now()}-${athlete.id}`,
-          label: `${event.name} entry — ${athlete.firstName} ${athlete.lastName} (${addedRegs.map((r) => r.discipline).join('+')})`,
+          label: `${event.name} entry — ${athlete.firstName} ${athlete.lastName} (${addedRegs.map((r) => r.discipline).join('+')})${lateSuffix}`,
           amount: entryTotal,
           kind: 'meet-entry',
           refUserId: athlete.id,

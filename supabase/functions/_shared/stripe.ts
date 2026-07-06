@@ -90,7 +90,7 @@ export function priceForTypesDollars(
 // second-discipline, change). All helpers return DOLLARS (use toCents to Stripe).
 
 /** Minimal event slice the registration/addon pricing needs (snake_case DB cols).
- *  `change_fee` / `tshirt_addon` / `banner_addon` are nullable jsonb. */
+ *  `change_fee` / `tshirt_addon` / `banner_addon` / `late_reg` are nullable jsonb. */
 export interface RegFeeEvent {
   id: string;
   host_club_id: string | null;
@@ -99,6 +99,24 @@ export interface RegFeeEvent {
   change_fee: { amount: number; startsAt?: string } | null;
   tshirt_addon: { price: number } | null;
   banner_addon: { price: number } | null;
+  /** Late-registration surcharge (emv2 P0 Task 3), DOLLARS, added ON TOP of the
+   *  normal entry/second-discipline fee — NOT the change fee. MIRRORED IN
+   *  src/lib/pricing.ts (RegFeeEvent.lateReg / lateFeeApplies) — keep in sync. */
+  late_reg: { startsAt: string; fee: number } | null;
+}
+
+/**
+ * Does the late-registration surcharge apply, given the EARLIEST `created_at`
+ * among the athlete's referenced registrations for this event? `>=` at the
+ * boundary applies the fee. No `late_reg` configured ⇒ never applies.
+ * MIRRORED IN src/lib/pricing.ts (`lateFeeApplies`) — keep in sync.
+ */
+export function lateFeeAppliesDollars(
+  event: Pick<RegFeeEvent, 'late_reg'>,
+  earliestCreatedAtISO: string,
+): boolean {
+  if (!event.late_reg) return false;
+  return Date.parse(earliestCreatedAtISO) >= Date.parse(event.late_reg.startsAt);
 }
 
 /**
@@ -106,13 +124,19 @@ export interface RegFeeEvent {
  * First discipline = entry_fee; each additional = second_discipline_fee, where
  * "additional" means `priorDisciplineCount + i > 0`. Mirrors
  * `newRegistrationEntryTotal` in pricing.ts exactly.
+ *
+ * Late-registration surcharge (emv2 P0 Task 3, optional `late` param so
+ * existing callers are unaffected): added ONCE per athlete per event, never
+ * for the host club (checked first above). MIRRORED IN src/lib/pricing.ts
+ * (`newRegistrationEntryTotal`'s `late` param) — keep in sync.
  */
 export function newRegistrationEntryTotalDollars(
   event: RegFeeEvent,
-  { competingClubId, priorDisciplineCount, newDisciplineCount }: {
+  { competingClubId, priorDisciplineCount, newDisciplineCount, late }: {
     competingClubId: string;
     priorDisciplineCount: number;
     newDisciplineCount: number;
+    late?: { earliestCreatedAtISO: string };
   },
 ): number {
   if (competingClubId === event.host_club_id) return 0;
@@ -120,6 +144,9 @@ export function newRegistrationEntryTotalDollars(
   for (let i = 0; i < newDisciplineCount; i++) {
     const isSecond = priorDisciplineCount + i > 0;
     total += isSecond ? event.second_discipline_fee : event.entry_fee;
+  }
+  if (total > 0 && newDisciplineCount > 0 && late && lateFeeAppliesDollars(event, late.earliestCreatedAtISO)) {
+    total += event.late_reg!.fee;
   }
   return total;
 }

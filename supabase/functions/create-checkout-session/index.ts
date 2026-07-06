@@ -63,6 +63,7 @@ interface RegRow {
   refunded: boolean;
   paid: boolean | null;
   updated_pending: boolean | null;
+  created_at?: string;
 }
 
 Deno.serve(async (req) => {
@@ -138,7 +139,7 @@ Deno.serve(async (req) => {
   if (allRefRegIds.length) {
     const { data: rr, error: rrErr } = await db
       .from('registrations')
-      .select('id, event_id, athlete_id, club_id, refunded, paid, updated_pending')
+      .select('id, event_id, athlete_id, club_id, refunded, paid, updated_pending, created_at')
       .in('id', allRefRegIds);
     if (rrErr) return json({ ok: false, error: rrErr.message }, 500);
     regsByLine = (rr ?? []) as RegRow[];
@@ -176,13 +177,13 @@ Deno.serve(async (req) => {
   if (eventIds.length) {
     const { data: mr, error: mErr } = await db
       .from('events')
-      .select('id, host_club_id, entry_fee, second_discipline_fee, change_fee, tshirt_addon, banner_addon')
+      .select('id, host_club_id, entry_fee, second_discipline_fee, change_fee, tshirt_addon, banner_addon, late_reg')
       .in('id', eventIds);
     if (mErr) return json({ ok: false, error: mErr.message }, 500);
     events = new Map((mr ?? []).map((m) => [m.id as string, m as unknown as RegFeeEvent]));
     const { data: amr, error: amErr } = await db
       .from('registrations')
-      .select('id, event_id, athlete_id, club_id, refunded')
+      .select('id, event_id, athlete_id, club_id, refunded, created_at')
       .in('event_id', eventIds)
       .eq('refunded', false);
     if (amErr) return json({ ok: false, error: amErr.message }, 500);
@@ -360,8 +361,23 @@ Deno.serve(async (req) => {
           (r.club_id ?? '') === competingClubId &&
           !lineRegIds.has(r.id),
         ).length;
+        // Late-registration fee anchor (emv2 P0 Task 3): the EARLIEST created_at
+        // among ALL of this athlete's non-refunded regs for this event+club —
+        // prior ones AND the ones this line is purchasing — per rule 2's
+        // once-per-athlete-per-event anchor ("the moment the athlete first
+        // registered"). MIRRORS src/lib/pricing.ts's per-page `lateFeeAnchor`.
+        const athleteEventRegs = allEventRegs.filter((r) =>
+          r.event_id === reg.event_id &&
+          r.athlete_id === reg.athlete_id &&
+          (r.club_id ?? '') === competingClubId,
+        );
+        const createdAts = athleteEventRegs.map((r) => r.created_at).filter((c): c is string => !!c);
+        const earliestCreatedAtISO = createdAts.length
+          ? createdAts.reduce((min, c) => (Date.parse(c) < Date.parse(min) ? c : min))
+          : new Date().toISOString();
         pushLine(i.id, i.label, newRegistrationEntryTotalDollars(event, {
           competingClubId, priorDisciplineCount, newDisciplineCount,
+          late: { earliestCreatedAtISO },
         }), 'meet-entry', reg.event_id);
       }
       continue;
