@@ -127,6 +127,13 @@ here — update THIS list when priorities change, not rival copies.
   via `notification_log`. Runbook in `supabase/README.md` → "Scheduled dispatch (pg_cron)"
   (the two Vault secrets still need manual per-environment setup before the cron job can
   actually fire).
+  **P0 Task 2 shipped:** event entity field extensions (spec §A) — venue/street/country/
+  hotel-block link, age-calc date, late registration (fee on top of entry fee, not yet
+  charged at checkout), a general (not camp-only) director contact, capacity config
+  (stored, not enforced yet), and a confirmation-email override with an HTML preview in
+  EventWizard. Migration backfilled `camp_config`'s director/age-calc keys onto the new
+  event-level fields. Sanction.tsx's approval mapping carries venue/street/country/
+  late-reg into the created event.
   §N7 open questions **all answered by Julia 2026-07-06** (recorded in the spec;
   every phase is unblocked — only the §F partial-fit capacity design wants a
   confirm at P4 kickoff). This absorbs several
