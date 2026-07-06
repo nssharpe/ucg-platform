@@ -116,16 +116,17 @@ here — update THIS list when priorities change, not rival copies.
   update prompt if needed).
 
 ### Feature roadmap (as prioritized)
-- **Event management v2** — Julia's 2026-07-06 requirements, digested + gap-mapped
-  with a proposed phasing (V2-P0 foundations/scheduler → P1 host experience →
-  P2 add-ons & camps → P3 refunds → P4 capacity/waitlists & by-session reg →
-  P5 nationals ops/check-in → P6 finance dashboards) in
+- **Event management v2** — Julia's 2026-07-06 requirements, digested + gap-mapped in
   [specs/2026-07-06-event-management-v2-requirements.md](specs/2026-07-06-event-management-v2-requirements.md).
-  **Not yet scheduled — needs a prioritization pass with Nate** (and the §N7 open
-  questions answered by Julia before the affected phases). This absorbs several
+  **Phasing approved by Nate 2026-07-06:** V2-P0 foundations/scheduler →
+  P1 host experience → P2 add-ons & camps → P3 refunds → P4 capacity/waitlists &
+  by-session reg → P5 nationals ops/check-in → P6 finance dashboards.
+  §N7 open questions relayed to Julia 2026-07-06 — record answers in the spec;
+  each blocks only its affected phase (P0 is unblocked). This absorbs several
   older roadmap items: **B5 finance dashboards** (now fully spec'd, §M), in-app
   refunds (§H), banquet tickets/add-ons v2 (§E3), finals rosters (§L),
-  server-emailed PDF receipts (§I/§N4).
+  server-emailed PDF receipts (§I/§N4). Naming: every "NAIGC" in Julia's raw
+  doc reads as UCG (confirmed by Nate).
 - B typed memberships + per-season waiver → C multi-club registration picker →
   D codeless judge access (URL / 6-digit / QR) → E scoring config (1-vs-2 panels,
   calculator vs. simple entry).

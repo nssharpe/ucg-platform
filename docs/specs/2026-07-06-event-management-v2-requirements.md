@@ -216,7 +216,7 @@ editor. Deltas:
 
 ## H. Refunds (NET-NEW system; policy is specific)
 
-Only for **NAIGC-hosted events** (host club "NAIGC - Main"). Both self-serve
+Only for **UCG-hosted events** (host club "UCG - Main"). Both self-serve
 (individual popup) and club-manager (per line-item) request paths:
 - Request = confirm dialog (removal warning) + reason dropdown (Injury /
   Illness / Bereavement / Other+explain) → "request received" email to
@@ -294,7 +294,7 @@ Replaces the sheet + Apps Script + WordPress pipeline (see
    combined, T&T combined): club, level, other disciplines, location
    (auto from level), per-apparatus athlete counts, survey answers, available
    sessions (defaulted from arrival answer — Tue/Wed=all, Thu-before-noon=Thu
-   eve+Fri, Thu-before-8=Fri, Fri=last Fri session), NAIGC-volunteer flag,
+   eve+Fri, Thu-before-8=Fri, Fri=last Fri session), UCG-volunteer flag,
    assigned-session dropdown; manual overrides highlighted yellow.
    ⚠ Inside the section Julia marked *incomplete — skip for now*; capture,
    don't build.
@@ -365,20 +365,31 @@ Nothing exists today (B5 open).
 5. **Quantity/multi-unit add-ons** change the cart line model (one line per
    unit for banquet; qty+size per unit for shirts/leos) — touches
    `create-checkout-session` server pricing; money-path review rules apply.
-6. **Branding**: Julia's doc mixes NAIGC (emails, "NAIGC - Main" host club,
-   info@naigc.org) with UCG receipt branding — platform already renders UCG;
-   keep NAIGC addresses for ops email.
-7. **Open questions for Julia** (collect answers before building the affected
-   phase): camp *individual*-membership requirement (§G); late-reg password
-   link vs existing private-code semantics (§D); whether "Set Lineup" (§E6)
-   and "Set Competition Order" are distinct features or one (her doc describes
-   both with overlapping behavior); refund of *club-paid* registrations —
-   who receives the money; do per-level caps apply to by-discipline mode
-   before session building; confirmation-email from-address constraints
-   (Resend requires verified domains — arbitrary "from email" won't work;
-   probably from-alias + reply-to only).
+6. **Branding — RESOLVED (Nate, 2026-07-06)**: every "NAIGC" in Julia's doc
+   reads as **UCG** (she's not used to the new name yet) — so "NAIGC-hosted" =
+   UCG-hosted, "NAIGC - Main" = the UCG league host club, etc. Operational
+   email stays on the verified naigc.org Resend domain until that changes.
+7. **Open questions for Julia** (relayed via Nate 2026-07-06 — record answers
+   here as they come in; each blocks only its affected phase):
+   1. Camp *individual*-membership requirement (§G) — club membership is
+      waived for camps; is individual season membership still required?
+   2. Late-reg password link semantics (§D) — separate hidden URL + password,
+      vs today's private-code-on-the-same-page.
+   3. "Set Lineup" vs "Set Competition Order" (§E6) — distinct features or
+      one? Her doc describes both with overlapping behavior.
+   4. Refunds of *club-paid* registrations (§H) — who receives the money when
+      an individual's reg was paid from a club cart?
+   5. Do per-level/discipline caps apply in by-discipline mode at registration
+      time (§F), or only via session capacity in by-session mode?
+   6. Confirmation-email "from email" (§A/§I) — Resend requires verified
+      sending domains, so arbitrary host from-addresses won't work; propose
+      from-alias + reply-to instead.
+   7. Banquet-ticket quantity rules (§E3/§G) — clubs: one ticket per person
+      (athlete/coach/EXTRA); individuals: her doc shows a quantity dropdown
+      AND "you cannot buy more than one ticket for the same account" —
+      confirm individuals can buy multiple as long as extras are unassigned.
 
-## O. Proposed phasing (draft — reorder in docs/README "What's next")
+## O. Phasing (**approved by Nate 2026-07-06** — sequence in docs/README "What's next")
 
 - **V2-P0 Foundations**: scheduler infra; Event field extensions (§A);
   per-event confirmation email + director cc (§I minus attached receipt);
