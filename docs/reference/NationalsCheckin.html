@@ -1,0 +1,1052 @@
+<script>
+  // ==========================================
+  // CONFIGURATION
+  // ==========================================
+  const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbxNqADiMLwMIpCaCJ4U3VN7n-O00f3whK2TPKN4j4Mw4tKM9oRvUxzXkC0d8qiYCSEU/exec'; 
+  // Set the release time (ET)
+  const FORM_RELEASE_TIME = new Date('2026-04-08T19:00:00-05:00');
+
+  // --- API HELPER ---
+  async function callApi(action, params = {}) {
+    const url = new URL(GAS_API_URL);
+    url.searchParams.append('action', action);
+    for (const [key, value] of Object.entries(params)) {
+      url.searchParams.append(key, value);
+    }
+    
+    try {
+      const response = await fetch(url.toString(), {
+        method: 'GET',
+        redirect: 'follow',
+      });
+      if (!response.ok) throw new Error('Network response was not ok');
+      const data = await response.json();
+      if (data && data.error) throw new Error(data.error);
+      return data;
+    } catch (error) {
+      console.error("API Error:", error);
+      throw error;
+    }
+  }
+</script>
+
+<style>
+  /* Scoped styles for the App */
+  .naigc-app-root {
+    --green-bg: #e6f4ea;
+    --green-text: #0b6b2f;
+    --red-bg: #fde8e8;
+    --red-text: #b42318;
+    --blue-bg: #e8f1fd;
+    --blue-text: #1a56db;
+    --purple-bg: #efe8fd;
+    --purple-text: #6b21a8;
+    --muted: #5f6b7a;
+    --card: #ffffff;
+    --border: #e5e7eb;
+    --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.1);
+    --orange-text: #eb5d2a;
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    color: #101828;
+    max-width: 980px;
+    margin: 0 auto;
+    box-sizing: border-box;
+  }
+  
+  .naigc-app-root .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    padding: 20px;
+    margin-bottom: 18px;
+  }
+  
+  .naigc-app-root h1 {
+    font-size: 1.5rem; margin: 0 0 6px 0;
+  }
+  .naigc-app-root .subtle { color: var(--muted); font-size: 0.95rem; }
+  .naigc-app-root .updated { font-size: 0.9rem; color: #475467; margin-top: 8px; }
+  
+  .naigc-app-root .controls { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 10px; }
+  .naigc-app-root label { font-weight: 600; font-size: 0.95rem; display:block; margin-bottom:4px; }
+  
+  .naigc-app-root select, 
+  .naigc-app-root input[type="text"], 
+  .naigc-app-root input[type="email"] { 
+    width: 100%; box-sizing: border-box; border: 1px solid var(--border); 
+    border-radius: 10px; padding: 10px 12px; font-size: 1rem; background: white; max-width: 100%;
+  }
+  
+  .naigc-app-root button { 
+    border: 1px solid #002954; background: #002954; color: white; 
+    padding: 10px 14px; border-radius: 12px; font-weight: 600; cursor: pointer; 
+    width: 100%; box-sizing: border-box; 
+  }
+  .naigc-app-root button.secondary { background: var(--muted); border-color: var(--muted); }
+  .naigc-app-root button:disabled { opacity: 0.6; cursor: not-allowed; }
+  
+  .naigc-app-root .button-grid { display: grid; grid-template-columns: 1fr; gap: 16px; margin-top: 20px; }
+  @media (min-width: 600px) {
+    .naigc-app-root .button-grid { grid-template-columns: 1fr 1fr; }
+  }
+  
+  .naigc-app-root .section-title { 
+    font-size: 1.35rem; font-weight: 800; letter-spacing: .01em; 
+    margin: 8px 0 14px; padding-left: 12px; border-left: 6px solid #eb5d2a; color: #0f172a; 
+  }
+  .naigc-app-root .subheading { 
+    font-size: 0.95rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; 
+    color: #475467; margin-top: 18px; padding-bottom: 4px; border-bottom: 1px solid var(--border); 
+  }
+  
+  /* --- TABLE STYLES --- */
+  .naigc-table-wrapper {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch; 
+    margin: 0 0 2px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+
+  .naigc-app-root table { width: 100%; border-collapse: collapse; }
+  .naigc-app-root th, .naigc-app-root td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; }
+  .naigc-app-root th { background: #f2f4f7; white-space: nowrap; } 
+  .naigc-app-root tfoot tr { font-weight: bold; background: #f9fafb; }
+  
+  .naigc-app-root .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-weight: 600; white-space: nowrap; }
+  .naigc-app-root .yes { background: var(--green-bg); color: var(--green-text); }
+  .naigc-app-root .no { background: var(--red-bg); color: var(--red-text); }
+  .naigc-app-root .tnt-nf { background: var(--green-bg); color: var(--green-text); }
+  .naigc-app-root .tnt-if { background: var(--blue-bg); color: var(--blue-text); }
+  .naigc-app-root .tnt-hf { background: var(--purple-bg); color: var(--purple-text); }
+  .naigc-app-root .tnt-blank { background: var(--red-bg); color: var(--red-text); }
+  
+  .naigc-app-root .note { font-size: 0.95rem; color: #344054; }
+  .naigc-app-root .message { margin-top: 10px; font-size: 0.95rem; display: block;}
+  .naigc-app-root .success { color: #05603a; font-weight: bold; font-size: 1.1rem; }
+  .naigc-app-root .error { color: #b42318; }
+  .naigc-app-root .hidden { display: none !important; }
+  
+  .naigc-app-root .stack { display: grid; gap: 10px; }
+  .naigc-app-root .warning-text {
+    color: var(--orange-text); font-weight: 600; font-size: 1.05rem; 
+    margin-bottom: 16px; margin-top: 8px; line-height: 1.4;
+  }
+  .naigc-alert-box { 
+  background: #fff1f0; /* Light red background */
+  border: 2px solid #ffa39e; /* Red border */
+  border-radius: 8px; 
+  padding: 15px; 
+  margin: 12px 0; 
+  color: #cf1322; /* Bold red text */
+  font-weight: 700; 
+  display: flex; 
+  align-items: center; 
+  gap: 10px; 
+}
+
+/* Optional: This makes the SVG icon red as well */
+.naigc-alert-box svg {
+  stroke: #cf1322;
+}
+
+  /* --- MOBILE OPTIMIZATIONS --- */
+  .naigc-scroll-hint { display: none; } /* Hidden on desktop */
+
+  @media (max-width: 600px) {
+    /* 1. Shrink Fonts */
+    .naigc-app-root table { font-size: 11px; } 
+    .naigc-app-root th, .naigc-app-root td { padding: 4px 5px; } 
+    .naigc-app-root .pill { padding: 1px 5px; font-size: 10px; }
+    
+    /* 2. Visual Cue for Scrolling */
+    .naigc-scroll-hint {
+        display: block;
+        font-size: 0.75rem;
+        color: var(--muted);
+        margin-bottom: 4px;
+        text-align: right;
+        font-style: italic;
+    }
+    .naigc-scroll-hint span {
+        background: #f2f4f7;
+        padding: 2px 6px;
+        border-radius: 4px;
+        border: 1px solid var(--border);
+    }
+
+    .naigc-app-root .card { padding: 15px; }
+  }
+</style>
+
+<div class="naigc-app-root">
+
+  <div id="view-chooser">
+    <div class="card">
+      <h1>Nationals Check-In Summary</h1>
+      <p class="subtle">Please select your check-in type to begin.</p>
+      <p class="updated"><strong>Updated:</strong> <span id="main-updated-text">Loading...</span></p>
+      <div class="button-grid">
+        <button id="btn-show-club" style="font-size: 1.1rem; padding: 16px;">Club Check-In</button>
+        <button id="btn-show-ind" style="font-size: 1.1rem; padding: 16px;">Independent Athlete Check-In</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="hidden" id="view-club">
+    <div class="card">
+      <h1>Club Check-In Summary</h1>
+      <p class="subtle">Please select your club to view your registration summary. After reviewing, enter your name and email at the bottom and click submit to confirm.</p>
+      <p class="updated"><strong>Updated:</strong> <span id="club-updated-text"></span></p>
+      <button id="btn-back-to-chooser-1" class="secondary" style="margin-top: 10px; width: auto; padding: 8px 14px; font-size: 0.9rem;">&larr; Back to Check-In Type</button>
+    </div>
+
+    <div class="card">
+      <div class="controls">
+        <div class="stack">
+          <label for="club_clubSel">Club</label>
+          <select id="club_clubSel" disabled>
+            <option value="">Loading clubs…</option>
+          </select>
+        </div>
+      </div>
+      <div id="club_loadHint" class="message subtle">Fetching clubs…</div>
+      <div id="club_dataLoading" class="card hidden">
+        <div class="message subtle">Please wait while we retrieve your club’s registration data...</div>
+      </div>
+    </div>
+
+    <div id="club_content" class="hidden">
+      <div class="card" id="club_regCard">
+        <div class="section-title">Registration Summary</div>
+
+        <div class="subheading">WAG</div>
+        <div id="club_wag"></div>
+
+        <div class="subheading">WAG Team Summary</div>
+        <div id="club_wagTeams"></div>
+
+        <div class="subheading">MAG</div>
+        <div id="club_mag"></div>
+
+        <div class="subheading">MAG Team Summary</div>
+        <div id="club_magTeams"></div>
+
+        <div class="subheading">T&amp;T</div>
+        <div id="club_tnt"></div>
+
+        <div class="subheading">Decathlon/Omnithon</div>
+        <div id="club_multi"></div>
+
+        <div class="subheading">Session Assignment Summary</div>
+        <div id="club_sessionAssignment"></div>
+
+        <div class="subheading">Registered Coaches</div>
+        <div id="club_coaches"></div>
+      </div>
+
+<div class="card" id="club_checkInTotalsCard">
+  <div class="section-title">Check-In Totals</div>
+  <div class="subheading">T-Shirt Summary</div>
+  <div id="club_tShirtSummary"></div>
+  <div id="club_banquet_alert"></div>
+  <div class="subheading">Banquet Tickets</div>
+  <div id="club_banquetTotals"></div>
+  <div id="club-total-count" style="margin: 10px 0; font-size: 0.9rem; font-style: italic; color: #475467;"></div>
+
+  <div class="subheading">Other Items</div>
+  <div id="club_checkInTotals"></div>
+</div>
+
+      <div class="card" id="club_confirmCard">
+        <p id="club_confirmNote" class="note">
+          Please confirm that you have read the information above by entering your name and email below and clicking the confirm button.
+        </p>
+        
+        <div id="club_alreadyConfirmed" class="message error hidden">
+          You have already confirmed that you have reviewed this registration. If you believe this was in error, please go to the extra help table.
+        </div>
+        
+        <div class="controls" id="club_confirmControls">
+          <div class="stack">
+            <label for="club_confName">Name</label>
+            <input id="club_confName" type="text" placeholder="Your name" />
+          </div>
+          <div class="stack">
+            <label for="club_confEmail">Email</label>
+            <input id="club_confEmail" type="email" placeholder="you@example.com" />
+          </div>
+          
+          <p class="warning-text">
+            <strong>Important:</strong> By clicking submit, you agree the information is correct AND you have received and counted all items in the "Check-In Totals" table. You will not be able to claim missing items later.
+          </p>
+
+          <div>
+            <button id="club_submitBtn" disabled>Submit confirmation</button>
+          </div>
+        </div>
+        
+        <div id="club_submitMsg" class="message"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="hidden" id="view-independent">
+    <div class="card">
+      <h1>Independent Athlete Check-In</h1>
+      <p class="subtle">Please select your name to view your registration summary. After reviewing, enter your email at the bottom and click submit to confirm.</p>
+      <p class="updated"><strong>Updated:</strong> <span id="ind-updated-text"></span></p>
+      <button id="btn-back-to-chooser-2" class="secondary" style="margin-top: 10px; width: auto; padding: 8px 14px; font-size: 0.9rem;">&larr; Back to Check-In Type</button>
+    </div>
+
+<div style="margin-top:15px;">
+  <button id="btn-toggle-ind-coaches" class="secondary" style="width:auto; padding: 8px 14px;">Show Independent Coaches</button>
+  
+  <div id="i-coaches-wrap" class="hidden" style="margin-top:10px;">
+     <div id="i-coaches"></div>
+  </div>
+</div>
+
+
+    <div class="card">
+      <div class="controls">
+        <div class="stack">
+          <label for="ind_nameSel">Name</label>
+          <select id="ind_nameSel" disabled>
+            <option value="">Loading names…</option>
+          </select>
+        </div>
+      </div>
+      <div id="ind_loadHint" class="message subtle">Fetching data…</div>
+      <div id="ind_dataLoading" class="card hidden">
+        <div class="message subtle">Please wait while we retrieve your registration data...</div>
+      </div>
+    </div>
+
+    <div id="ind_content" class="hidden">
+      <div class="card" id="ind_personalCard">
+        <div class="section-title">Personal Details</div>
+        <div id="ind_personal"></div>
+      </div>
+
+      <div class="card" id="ind_regCard">
+        <div class="section-title">Registration Summary</div>
+        <div class="subheading">WAG</div>
+        <div id="ind_wag"></div>
+        <div class="subheading">MAG</div>
+        <div id="ind_mag"></div>
+        <div class="subheading">T&amp;T</div>
+        <div id="ind_tnt"></div>
+        <div class="subheading">Decathlon/Omnithon</div>
+        <div id="ind_multi"></div>
+        <div class="subheading">Session Assignment Summary</div>
+        <div id="ind_sessionAssignment"></div>
+      </div>
+
+      <div class="card" id="ind_checkInTotalsCard">
+        <div class="section-title">Check-In Totals</div>
+        <div id="ind_banquet_alert"></div>
+        <div id="ind_checkInTotals"></div>
+      </div>
+
+      <div class="card" id="ind_confirmCard">
+        <p id="ind_confirmNote" class="note">Please confirm that you have read the information above by entering your email below and clicking the confirm button.</p>
+        
+        <div id="ind_alreadyConfirmed" class="message error hidden">
+          You have already confirmed that you have reviewed this registration. If you believe this was in error, please go to the extra help table.
+        </div>
+        
+        <div class="controls" id="ind_confirmControls">
+          <div class="stack">
+            <label for="ind_email">Email</label>
+            <input id="ind_email" type="email" placeholder="you@example.com" />
+          </div>
+          <p class="warning-text">
+            <strong>Important:</strong> By clicking submit, you agree the information is correct AND you have received and counted all items in the "Check-In Totals" table. You will not be able to claim missing items later.
+          </p>
+          <div>
+            <button id="ind_submitBtn" disabled>Submit confirmation</button>
+          </div>
+        </div>
+
+        <div id="ind_submitMsg" class="message"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function() {
+document.getElementById('btn-toggle-ind-coaches').onclick = function() {
+  const wrap = document.getElementById('i-coaches-wrap');
+  const isHidden = wrap.classList.toggle('hidden'); // Toggle the hidden class
+  
+  // Update button text based on state
+  this.innerText = isHidden ? "Show Independent Coaches" : "Hide Independent Coaches";
+  
+  // Fetch and render data only when opening
+  if (!isHidden) {
+    callApi('getMetadata').then(res => {
+      if (res.indCoaches) {
+        const coachCols = ['Coach Name'];
+        // Use your existing utility to format the data
+        const [cc, cr] = toColsRows(res.indCoaches, coachCols);
+        renderTable('i-coaches', cc, cr, null);
+      } else {
+        document.getElementById('i-coaches').textContent = "No independent coaches found.";
+      }
+    }).catch(err => {
+      console.error("Error loading coaches:", err);
+      document.getElementById('i-coaches').textContent = "Error loading coach list.";
+    });
+  }
+};
+    // --- COMMON UTILITIES ---
+    
+    // Updated renderTable to conditionally show hint
+    function renderTable(containerId, columns, rows, cellFormatter) {
+      const el = document.getElementById(containerId);
+      el.innerHTML = '';
+      if (!rows || rows.length === 0) { el.textContent = ''; return; }
+      
+      // *** CONDITION: ONLY SHOW HINT IF COLUMNS > 3 ***
+      if (columns.length > 3) {
+        const hint = document.createElement('div');
+        hint.className = 'naigc-scroll-hint';
+        hint.innerHTML = '<span>&#8596; Scroll to view full table</span>';
+        el.appendChild(hint);
+      }
+
+      // Create Scroll Wrapper
+      const wrapper = document.createElement('div');
+      wrapper.className = 'naigc-table-wrapper'; 
+
+      const table = document.createElement('table');
+      const thead = document.createElement('thead');
+      const thr = document.createElement('tr');
+      columns.forEach(h => {
+        const th = document.createElement('th');
+        th.textContent = h;
+        thr.appendChild(th);
+      });
+      thead.appendChild(thr);
+      table.appendChild(thead);
+      
+      const tbody = document.createElement('tbody');
+      rows.forEach(row => {
+        const tr = document.createElement('tr');
+        row.forEach((val, idx) => {
+          const td = document.createElement('td');
+          if (cellFormatter) {
+            const { node, classes, text } = cellFormatter(columns[idx], val);
+            if (node) td.appendChild(node);
+            else {
+              if (classes) td.className = classes.join(' ');
+              td.textContent = text ?? String(val ?? '');
+            }
+          } else {
+            td.textContent = String(val ?? '');
+          }
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      
+      wrapper.appendChild(table); 
+      el.appendChild(wrapper);    
+    }
+
+    function toColsRows(objs, columns) {
+      return [columns, (objs || []).map(o => columns.map(c => o[c] ?? ''))];
+    }
+
+    // --- COMMON FORMATTERS ---
+    function ynPillFormatter(col, val) {
+      const c = String(col || '').trim().toUpperCase();
+      const v = String(val ?? '').trim().toUpperCase();
+      const ynCols = ['VT','UB','BB','FX','AA','PH','SR','PB','HB','TEAM?','OMNITHON'];
+      if (ynCols.includes(c)) {
+        const span = document.createElement('span');
+        const isYes = (v === 'Y' || v === 'YES' || v === 'TRUE');
+        span.className = 'pill ' + (isYes ? 'yes' : 'no');
+        span.textContent = isYes ? (c === 'OMNITHON' ? 'Yes' : 'Y') : (c === 'OMNITHON' ? 'No' : 'N');
+        return { node: span };
+      }
+      return { text: String(val ?? '') };
+    }
+
+    function tntFormatter(col, val) {
+      const code = String(val ?? '').trim().toUpperCase();
+      if (['INDV TRAMP','DOUBLE MINI','PWR TUMB','SYNC TRAMP'].includes(String(col).toUpperCase())) {
+        const span = document.createElement('span');
+        let cls = 'pill ';
+        if (code === 'NF') cls += 'tnt-nf';
+        else if (code === 'IF') cls += 'tnt-if';
+        else if (code === 'HF') cls += 'tnt-hf';
+        else cls += 'tnt-blank';
+        span.className = cls;
+        span.textContent = code || ' ';
+        return { node: span };
+      }
+      return { text: String(val ?? '') };
+    }
+
+    function yesNoFormatter(col, val) {
+      if (String(col).toLowerCase() === 'omnithon') {
+        const v = String(val ?? '').trim().toLowerCase();
+        const span = document.createElement('span');
+        span.className = 'pill ' + (v === 'yes' ? 'yes' : 'no');
+        span.textContent = v === 'yes' ? 'Yes' : 'No';
+        return { node: span };
+      }
+      return { text: String(val ?? '') };
+    }
+
+    const SESSION_COLOR_MAP = {
+      'red':    '#ef4444',
+      'blue':   '#3b82f6',
+      'green':  '#22c55e',
+      'yellow': '#eab308',
+      'orange': '#f97316',
+      'purple': '#a855f7',
+      'pink':   '#ec4899',
+      'teal':   '#14b8a6',
+      'gold':   '#ca8a04',
+      'white':  '#e5e7eb',
+      'black':  '#374151',
+      'navy':   '#1e3a5f',
+      'maroon': '#7f1d1d',
+      'gray':   '#6b7280',
+      'grey':   '#6b7280',
+      'lime':   '#84cc16',
+      'cyan':   '#06b6d4',
+      'silver': '#9ca3af',
+    };
+
+    function sessionFormatter(col, val) {
+      if (String(col).trim() === 'Assigned Session') {
+        const text = String(val ?? '').trim();
+        const wrapper = document.createElement('span');
+        wrapper.style.cssText = 'display:inline-flex; align-items:center; gap:6px;';
+
+        // Extract color name: last word after a hyphen, e.g. "Session 1 - Blue"
+        const colorMatch = text.match(/-\s*([A-Za-z]+)\s*$/);
+        if (colorMatch) {
+          const colorName = colorMatch[1].toLowerCase();
+          const cssColor = SESSION_COLOR_MAP[colorName] || colorName;
+          const bubble = document.createElement('span');
+          const isDark = ['black','navy','maroon'].includes(colorName);
+          bubble.style.cssText = `display:inline-block; width:14px; height:14px; border-radius:50%; background:${cssColor}; border:1px solid rgba(0,0,0,0.15); flex-shrink:0;`;
+          wrapper.appendChild(bubble);
+        }
+
+        const label = document.createElement('span');
+        label.textContent = text;
+        wrapper.appendChild(label);
+        return { node: wrapper };
+      }
+      return { text: String(val ?? '') };
+    }
+
+
+    // Fetch Updated At Text
+    callApi('getMetadata').then(res => {
+      const txt = res.updatedAt || '';
+      document.getElementById('main-updated-text').textContent = txt;
+      document.getElementById('club-updated-text').textContent = txt;
+      document.getElementById('ind-updated-text').textContent = txt;
+    }).catch(err => {
+      document.getElementById('main-updated-text').textContent = 'Error loading date';
+    });
+
+    // --- VIEW SWITCHING ---
+    const viewChooser = document.getElementById('view-chooser');
+    const viewClub = document.getElementById('view-club');
+    const viewInd = document.getElementById('view-independent');
+
+    function showView(viewId) {
+      viewChooser.classList.add('hidden');
+      viewClub.classList.add('hidden');
+      viewInd.classList.add('hidden');
+      document.getElementById(viewId).classList.remove('hidden');
+    }
+
+    document.getElementById('btn-show-club').addEventListener('click', () => {
+      showView('view-club');
+      initClubView();
+    });
+    document.getElementById('btn-show-ind').addEventListener('click', () => {
+      showView('view-independent');
+      initIndependentView();
+    });
+    
+    function goBack() { showView('view-chooser'); }
+    document.getElementById('btn-back-to-chooser-1').addEventListener('click', goBack);
+    document.getElementById('btn-back-to-chooser-2').addEventListener('click', goBack);
+
+
+    // ===================================
+    //      CLUB VIEW LOGIC
+    // ===================================
+    let CLUB_CURRENT_CLUB = '';
+    let clubViewInitialized = false;
+
+    function initClubView() {
+      if (clubViewInitialized) return;
+      clubViewInitialized = true;
+      
+      const clubSel = document.getElementById('club_clubSel');
+      callApi('getClubs').then(clubs => {
+        clubSel.innerHTML = '<option value="">Select a club…</option>';
+        (clubs || []).forEach(c => {
+          const opt = document.createElement('option');
+          opt.value = c; opt.textContent = c;
+          clubSel.appendChild(opt);
+        });
+        clubSel.disabled = false;
+        document.getElementById('club_loadHint').classList.add('hidden');
+      }).catch(err => {
+        document.getElementById('club_loadHint').textContent = 'Error loading clubs: ' + err.message;
+      });
+    }
+
+    document.getElementById('club_clubSel').addEventListener('change', e => {
+      const club = e.target.value;
+      const dataLoading = document.getElementById('club_dataLoading');
+      const content = document.getElementById('club_content');
+      const submitBtn = document.getElementById('club_submitBtn');
+      const clubSel = document.getElementById('club_clubSel');
+      const msg = document.getElementById('club_submitMsg');
+
+      CLUB_CURRENT_CLUB = club;
+      submitBtn.disabled = !club;
+
+      // Reset UI state for new selection
+      msg.textContent = ''; 
+      msg.className = 'message';
+      document.getElementById('club_confirmControls').classList.remove('hidden');
+      document.getElementById('club_alreadyConfirmed').classList.add('hidden');
+      document.getElementById('club_confirmNote').classList.remove('hidden');
+
+      if (!club) {
+        content.classList.add('hidden');
+        dataLoading.classList.add('hidden');
+        return;
+      }
+
+      dataLoading.classList.remove('hidden');
+      content.classList.add('hidden');
+      clubSel.disabled = true;
+      submitBtn.disabled = true;
+
+      // Clear previous data tables
+      ['club_wag','club_wagTeams','club_mag','club_magTeams','club_tnt','club_multi','club_sessionAssignment','club_coaches','club_checkInTotals', 'club_tShirtSummary'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = '';
+      });
+
+      // Fetch summary
+      callApi('getClubSummary', { club: club }).then(data => {
+        // ... (Table rendering - kept same as before) ...
+        const wagCols = ['Name','T-Shirt','Placement Category','Level','VT','UB','BB','FX','AA'];
+        const [wc, wr] = toColsRows(data.wagAthletes, wagCols);
+        if (!wr.length) document.getElementById('club_wag').textContent = `${club} does not have any registered WAG athletes.`;
+        else renderTable('club_wag', wc, wr, ynPillFormatter);
+
+        const wtCols = ['Level','Placement Category','Team?'];
+        const [wtc, wtr] = toColsRows(data.wagTeams, wtCols);
+        if (!wtr.length) document.getElementById('club_wagTeams').textContent = `${club} has no WAG team entries.`;
+        else renderTable('club_wagTeams', wtc, wtr, ynPillFormatter);
+
+        const magCols = ['Name','T-Shirt','Placement Category','Level','FX','PH','SR','VT','PB','HB','AA'];
+        const [mc, mr] = toColsRows(data.magAthletes, magCols);
+        if (!mr.length) document.getElementById('club_mag').textContent = `${club} does not have any registered MAG athletes.`;
+        else renderTable('club_mag', mc, mr, ynPillFormatter);
+
+        const mtCols = ['Level','Placement Category','Team?'];
+        const [mtc, mtr] = toColsRows(data.magTeams, mtCols);
+        if (!mtr.length) document.getElementById('club_magTeams').textContent = `${club} has no MAG team entries.`;
+        else renderTable('club_magTeams', mtc, mtr, ynPillFormatter);
+
+        const tntCols = ['Name','T-Shirt','Student','Indv Tramp','Double Mini','Pwr Tumb','Sync Tramp'];
+        const [tc, tr] = toColsRows(data.tntAthletes, tntCols);
+        if (!tr.length) document.getElementById('club_tnt').textContent = `${club} does not have any registered T&T athletes.`;
+        else renderTable('club_tnt', tc, tr, tntFormatter);
+
+        const muCols = ['Name','Decathlon Level','Omnithon'];
+        const [muc, mur] = toColsRows(data.multiDisc, muCols);
+        if (!mur.length) document.getElementById('club_multi').textContent = `${club} does not have any registered decathlon/omnithon athletes.`;
+        else renderTable('club_multi', muc, mur, ynPillFormatter);
+
+        const sessCols = ['Discipline', 'Level', 'Assigned Session'];
+        const [sc, sr] = toColsRows(data.sessionAssignment, sessCols);
+        sr.sort((a, b) => String(a[2] ?? '').localeCompare(String(b[2] ?? '')));
+        if (!sr.length) document.getElementById('club_sessionAssignment').textContent = `${club} does not have any session assignments.`;
+        else renderTable('club_sessionAssignment', sc, sr, sessionFormatter);
+
+        const cCols = ['Coach Name']; 
+const [cc, cr] = toColsRows(data.coaches, cCols);
+if (!cr.length) {
+    document.getElementById('club_coaches').textContent = `${club} does not have any registered coaches this season.`;
+} else {
+    // This will now render a single-column table 
+    renderTable('club_coaches', cc, cr, null);
+}
+
+        // T-Shirts (Custom Render updated for scroll wrapper + mobile font)
+        const tsEl = document.getElementById('club_tShirtSummary');
+        const tsRows = data.tShirtSummary || [];
+        if (!tsRows.length) {
+          tsEl.textContent = `${club} has no t-shirt items.`;
+        } else {
+            // NOTE: T-Shirt Table has only 2 cols, so NO HINT added here
+            const wrapper = document.createElement('div');
+            wrapper.className = 'naigc-table-wrapper'; 
+
+            const tbl = document.createElement('table');
+            const thd = document.createElement('thead');
+            thd.innerHTML = '<tr><th>Size</th><th>Quantity</th></tr>';
+            tbl.appendChild(thd);
+            const tbd = document.createElement('tbody');
+            let totalQty = 0;
+            tsRows.forEach(row => {
+                const tr = document.createElement('tr');
+                const qtyVal = parseInt(row['Quantity'], 10) || 0;
+                if (row['isTicket'] !== true) totalQty += qtyVal;
+                
+                const tdSz = document.createElement('td');
+                tdSz.textContent = row['Size'] ?? '';
+                tr.appendChild(tdSz);
+                
+                const tdQt = document.createElement('td');
+                tdQt.textContent = qtyVal;
+                tr.appendChild(tdQt);
+                tbd.appendChild(tr);
+            });
+            tbl.appendChild(tbd);
+            const tft = document.createElement('tfoot');
+            const tfr = document.createElement('tr');
+            const tfd1 = document.createElement('td');
+            tfd1.textContent = 'Total T-shirt Count (excluding tickets)';
+            tfr.appendChild(tfd1);
+            const tfd2 = document.createElement('td');
+            tfd2.textContent = totalQty;
+            tfr.appendChild(tfd2);
+            tft.appendChild(tfr);
+            tbl.appendChild(tft);
+          
+            wrapper.appendChild(tbl); 
+            tsEl.appendChild(wrapper); 
+        }
+// Calculate unique participants across all disciplines and coaches 
+const uniqueNames = new Set();
+
+// Add names from all athlete disciplines
+[data.wagAthletes, data.magAthletes, data.tntAthletes, data.multiDisc].forEach(list => {
+  if (list) {
+    list.forEach(athlete => {
+      if (athlete.Name) uniqueNames.add(athlete.Name.trim());
+    });
+  }
+});
+
+// Add names from the coach list
+if (data.coaches) {
+  data.coaches.forEach(coach => {
+    if (coach['Coach Name']) uniqueNames.add(coach['Coach Name'].trim());
+  });
+}
+
+// Update the counter text in the new div
+const countDiv = document.getElementById('club-total-count');
+if (uniqueNames.size > 0) {
+  countDiv.textContent = `Note: You have ${uniqueNames.size} total unique athletes and coaches.`;
+} else {
+  countDiv.textContent = '';
+}
+// Check if the banquetTotals array is empty or has zero final tickets
+const totalBanquetTickets = (data.banquetTotals || []).reduce((sum, item) => sum + (parseInt(item['Final QTY']) || 0), 0);
+const alertDiv = document.getElementById('club_banquet_alert');
+
+if (totalBanquetTickets === 0) {
+  // Display the warning banner if no tickets are found
+  alertDiv.innerHTML = `
+    <div class="naigc-alert-box" style="margin-bottom: 20px;">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"></circle>
+        <line x1="12" y1="8" x2="12" y2="12"></line>
+        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+      </svg>
+      <span>MISSING BANQUET TICKETS: We don't see any banquet tickets for your club.</span>
+    </div>`;
+} else {
+  // Clear the alert if tickets exist
+  alertDiv.innerHTML = '';
+}
+
+// Render the Banquet table with 4 columns [cite: 146]
+const bCols = ['Item Name', 'Original QTY', 'QTY Refunded', 'Final QTY'];
+const [bc, br] = toColsRows(data.banquetTotals, bCols);
+if (!br.length) {
+    document.getElementById('club_banquetTotals').textContent = "No banquet tickets found.";
+} else {
+    renderTable('club_banquetTotals', bc, br, null);
+}
+
+
+
+// Render the Other Items table with 3 columns [cite: 43]
+const citCols = ['Item Name', 'Details', 'Quantity'];
+const [citc, citr] = toColsRows(data.checkInTotals, citCols);
+if (!citr.length) {
+    document.getElementById('club_checkInTotals').textContent = "No other check-in items.";
+} else {
+    renderTable('club_checkInTotals', citc, citr, null);
+}
+
+        document.getElementById('club_confName').value = '';
+        document.getElementById('club_confEmail').value = '';
+
+        // Check Confirmation Status
+        return callApi('hasClubConfirmed', { club: club });
+      }).then(confirmed => {
+        const isFormLive = new Date() >= FORM_RELEASE_TIME;
+
+        if (!isFormLive) {
+            // Hide the entire confirmation section if it's before the release time
+            document.getElementById('club_confirmCard').classList.add('hidden');
+        } else {
+            document.getElementById('club_confirmCard').classList.remove('hidden');
+            
+            if (confirmed) {
+                document.getElementById('club_confirmControls').classList.add('hidden');
+                document.getElementById('club_alreadyConfirmed').classList.remove('hidden');
+                document.getElementById('club_confirmNote').classList.add('hidden');
+                document.getElementById('club_submitBtn').disabled = true;
+            } else {
+                document.getElementById('club_confirmControls').classList.remove('hidden');
+                document.getElementById('club_alreadyConfirmed').classList.add('hidden');
+                document.getElementById('club_confirmNote').classList.remove('hidden');
+                document.getElementById('club_submitBtn').disabled = false;
+            }
+        }
+
+        document.getElementById('club_dataLoading').classList.add('hidden');
+        document.getElementById('club_content').classList.remove('hidden');
+        document.getElementById('club_clubSel').disabled = false;
+      }).catch(err => {
+        document.getElementById('club_dataLoading').classList.add('hidden');
+        document.getElementById('club_content').classList.add('hidden');
+        document.getElementById('club_clubSel').disabled = false;
+        alert('Error loading summary: ' + err.message);
+      });
+    });
+
+    document.getElementById('club_submitBtn').addEventListener('click', () => {
+      const name = document.getElementById('club_confName').value.trim();
+      const email = document.getElementById('club_confEmail').value.trim();
+      const msg = document.getElementById('club_submitMsg');
+      msg.textContent = ''; msg.className = 'message';
+
+      if (!CLUB_CURRENT_CLUB) { msg.textContent = 'Please select your club first.'; msg.classList.add('error'); return; }
+      if (!name || !email) { msg.textContent = 'Please enter both name and email.'; msg.classList.add('error'); return; }
+      
+      if (!confirm("CONFIRMATION:\n\nI agree the information is correct AND I have received and counted all items in the 'Check-In Totals' table. I understand I cannot claim missing items later.")) return;
+
+      document.getElementById('club_submitBtn').disabled = true;
+
+      callApi('submitClubConfirmation', { club: CLUB_CURRENT_CLUB, name: name, email: email })
+        .then(() => {
+          // STATE: JUST SUBMITTED SUCCESSFULLY
+          msg.textContent = 'Check in is complete.';
+          msg.classList.add('success');
+          
+          // Hide controls, but DO NOT show "Already Confirmed" red error
+          document.getElementById('club_confirmControls').classList.add('hidden');
+          document.getElementById('club_confirmNote').classList.add('hidden');
+          document.getElementById('club_alreadyConfirmed').classList.add('hidden');
+        })
+        .catch(err => {
+          msg.textContent = 'Error saving confirmation: ' + err.message;
+          msg.classList.add('error');
+          document.getElementById('club_submitBtn').disabled = false;
+        });
+    });
+
+
+    // ===================================
+    //  INDEPENDENT VIEW LOGIC
+    // ===================================
+    let IND_CURRENT_NAME = '';
+    let indViewInitialized = false;
+
+    function initIndependentView() {
+      if (indViewInitialized) return;
+      indViewInitialized = true;
+      
+      callApi('getIndependentNames').then(names => {
+        const sel = document.getElementById('ind_nameSel');
+        sel.innerHTML = '<option value="">Select your name…</option>';
+        names.forEach(n => {
+          const opt = document.createElement('option');
+          opt.value = n; opt.textContent = n;
+          sel.appendChild(opt);
+        });
+        sel.disabled = false;
+        document.getElementById('ind_loadHint').classList.add('hidden');
+      }).catch(err => {
+        document.getElementById('ind_loadHint').textContent = 'Error loading names: ' + err.message;
+      });
+    }
+
+    document.getElementById('ind_nameSel').addEventListener('change', e => {
+      const name = e.target.value;
+      const dataLoading = document.getElementById('ind_dataLoading');
+      const content = document.getElementById('ind_content');
+      const submitBtn = document.getElementById('ind_submitBtn');
+      const nameSel = document.getElementById('ind_nameSel');
+      const msg = document.getElementById('ind_submitMsg');
+
+      IND_CURRENT_NAME = name;
+      submitBtn.disabled = !name;
+
+      // Reset UI state
+      msg.textContent = ''; 
+      msg.className = 'message';
+      document.getElementById('ind_confirmControls').classList.remove('hidden');
+      document.getElementById('ind_alreadyConfirmed').classList.add('hidden');
+      document.getElementById('ind_confirmNote').classList.remove('hidden');
+
+      if (!name) {
+        content.classList.add('hidden');
+        dataLoading.classList.add('hidden');
+        return;
+      }
+
+      dataLoading.classList.remove('hidden');
+      content.classList.add('hidden');
+      nameSel.disabled = true;
+      submitBtn.disabled = true;
+
+      ['ind_personal','ind_wag','ind_mag','ind_tnt','ind_multi','ind_sessionAssignment','ind_checkInTotals'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = '';
+      });
+
+      callApi('getIndependentSummary', { name: name }).then(data => {
+
+// Scan the Independent add-on rows for a banquet ticket
+// data.checkInTotals.rows is an array of arrays, and the item name is at index 0 
+const indAddOns = data.checkInTotals.rows || [];
+const hasIndBanquet = indAddOns.some(row => String(row[0]).toLowerCase().includes('banquet'));
+const indAlertDiv = document.getElementById('ind_banquet_alert');
+
+if (!hasIndBanquet) {
+  // Show the red warning banner if missing
+  indAlertDiv.innerHTML = `
+    <div class="naigc-alert-box" style="margin-bottom: 20px;">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"></circle>
+        <line x1="12" y1="8" x2="12" y2="12"></line>
+        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+      </svg>
+      <span>MISSING BANQUET TICKET: You have not purchased a banquet ticket yet!</span>
+    </div>`;
+} else {
+  // Clear the alert if they have a ticket
+  indAlertDiv.innerHTML = '';
+}
+        renderTable('ind_personal', data.personalDetails.columns, data.personalDetails.rows);
+
+        if (data.wag.empty) document.getElementById('ind_wag').textContent = `${data.name} is not registered for WAG.`;
+        else renderTable('ind_wag', data.wag.columns, data.wag.rows, ynPillFormatter);
+
+        if (data.mag.empty) document.getElementById('ind_mag').textContent = `${data.name} is not registered for MAG.`;
+        else renderTable('ind_mag', data.mag.columns, data.mag.rows, ynPillFormatter);
+
+        if (data.tnt.empty) document.getElementById('ind_tnt').textContent = `${data.name} is not registered for T&T.`;
+        else renderTable('ind_tnt', data.tnt.columns, data.tnt.rows, tntFormatter);
+
+        if (data.multi.empty) document.getElementById('ind_multi').textContent = `${data.name} is not registered for decathlon/omnithon.`;
+        else renderTable('ind_multi', data.multi.columns, data.multi.rows, yesNoFormatter);
+
+        if (data.sessionAssignment.empty) document.getElementById('ind_sessionAssignment').textContent = `${data.name} has no session assignments.`;
+        else {
+          data.sessionAssignment.rows.sort((a, b) => String(a[2] ?? '').localeCompare(String(b[2] ?? '')));
+          renderTable('ind_sessionAssignment', data.sessionAssignment.columns, data.sessionAssignment.rows, sessionFormatter);
+        }
+        
+        if (data.checkInTotals.empty) document.getElementById('ind_checkInTotals').textContent = `${data.name} has no check-in totals.`;
+        else renderTable('ind_checkInTotals', data.checkInTotals.columns, data.checkInTotals.rows);
+
+        document.getElementById('ind_email').value = '';
+
+        return callApi('hasIndependentConfirmed', { name: name });
+      }).then(confirmed => {
+        const isFormLive = new Date() >= FORM_RELEASE_TIME;
+
+        if (!isFormLive) {
+            // Hide the entire confirmation section if it's before the release time
+            document.getElementById('ind_confirmCard').classList.add('hidden');
+        } else {
+            document.getElementById('ind_confirmCard').classList.remove('hidden');
+
+            if (confirmed) {
+                document.getElementById('ind_confirmControls').classList.add('hidden');
+                document.getElementById('ind_alreadyConfirmed').classList.remove('hidden');
+                document.getElementById('ind_confirmNote').classList.add('hidden');
+                document.getElementById('ind_submitBtn').disabled = true;
+            } else {
+                document.getElementById('ind_confirmControls').classList.remove('hidden');
+                document.getElementById('ind_alreadyConfirmed').classList.add('hidden');
+                document.getElementById('ind_confirmNote').classList.remove('hidden');
+                document.getElementById('ind_submitBtn').disabled = false;
+            }
+        }
+        
+        dataLoading.classList.add('hidden');
+        content.classList.remove('hidden');
+        nameSel.disabled = false;
+      }).catch(err => {
+        dataLoading.classList.add('hidden');
+        content.classList.add('hidden');
+        nameSel.disabled = false;
+        alert('Error loading summary: ' + err.message);
+      });
+    });
+
+    document.getElementById('ind_submitBtn').addEventListener('click', () => {
+      const email = document.getElementById('ind_email').value.trim();
+      const msg = document.getElementById('ind_submitMsg');
+      msg.textContent = ''; msg.className = 'message';
+
+      if (!IND_CURRENT_NAME) { msg.textContent = 'Please select your name first.'; msg.classList.add('error'); return; }
+      if (!email) { msg.textContent = 'Please enter your email.'; msg.classList.add('error'); return; }
+
+      if (!confirm("CONFIRMATION:\n\nI agree the information is correct AND I have received and counted all items in the 'Check-In Totals' table. I understand I cannot claim missing items later.")) return;
+
+      document.getElementById('ind_submitBtn').disabled = true;
+
+      callApi('submitIndependentConfirmation', { name: IND_CURRENT_NAME, email: email })
+        .then(() => {
+          // STATE: JUST SUBMITTED SUCCESSFULLY
+          msg.textContent = 'Check in is complete.';
+          msg.classList.add('success');
+          
+          // Hide controls, but DO NOT show "Already Confirmed" red error
+          document.getElementById('ind_confirmControls').classList.add('hidden');
+          document.getElementById('ind_confirmNote').classList.add('hidden');
+          document.getElementById('ind_alreadyConfirmed').classList.add('hidden');
+        })
+        .catch(err => {
+          msg.textContent = 'Error saving confirmation: ' + err.message;
+          msg.classList.add('error');
+          document.getElementById('ind_submitBtn').disabled = false;
+        });
+    });
+
+  })();
+</script>

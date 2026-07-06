@@ -1,0 +1,1261 @@
+<style>
+
+  :root {
+
+    --green-bg: #e6f4ea; --green-text: #0b6b2f;
+
+    --red-bg: #fde8e8; --red-text: #b42318;
+
+    --blue-bg: #e8f1fd; --blue-text: #1a56db;
+
+    --purple-bg: #efe8fd; --purple-text: #6b21a8;
+
+    --muted: #5f6b7a; --card: #ffffff;
+
+    --border: #e5e7eb; --shadow: 0 1px 2px rgba(16,24,40,.06);
+
+    --naigc-orange: #eb5d2a; --naigc-blue: #002954;
+
+  }
+
+  
+
+  .naigc-widget * { box-sizing: border-box; }
+
+  .naigc-widget { font-family: system-ui, -apple-system, sans-serif; color: #101828; max-width: 980px; margin: 0 auto; }
+
+  
+
+  .naigc-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); padding: 20px; margin-bottom: 18px; }
+
+  
+
+  .naigc-tabs { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid var(--border); }
+
+  .naigc-tab { padding: 12px 20px; cursor: pointer; font-weight: 700; color: var(--muted); background: none; border: none; font-size: 1rem; border-bottom: 3px solid transparent; transition: all 0.2s; }
+
+  .naigc-tab:hover { color: var(--naigc-blue); background: #f9fafb; }
+
+  .naigc-tab.active { color: var(--naigc-blue); border-bottom-color: var(--naigc-orange); }
+
+  
+
+  .naigc-view { display: none; }
+
+  .naigc-view.active { display: block; }
+
+
+
+  .naigc-h1 { font-size: 1.5rem; margin: 0 0 8px 0; color: #111; font-weight: 800; }
+
+  .naigc-subtle { color: var(--muted); font-size: 0.95rem; margin: 0 0 10px; line-height: 1.5; white-space: pre-line; }
+
+  .naigc-updated { font-size: 0.9rem; color: #475467; margin-top: 8px; font-weight: 600; }
+
+  
+
+  .naigc-stack { display: grid; gap: 8px; margin-bottom: 12px; }
+
+  .naigc-label { font-weight: 600; font-size: 0.95rem; display: block; }
+
+  .naigc-select, .naigc-input { width: 100%; border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-size: 1rem; background: white; }
+
+  .naigc-btn { background: var(--naigc-blue); color: white; padding: 10px 16px; border-radius: 8px; font-weight: 600; border: none; cursor: pointer; transition: opacity 0.2s; width: 100%; }
+
+  .naigc-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  
+
+  .secondary-btn { background: #f0f2f5; color: #475467; border: 1px solid var(--border); padding: 10px 16px; border-radius: 8px; font-size: 0.95rem; font-weight: 600; cursor: pointer; margin-bottom: 15px; }
+
+
+
+  .naigc-section-title { font-size: 1.35rem; font-weight: 800; letter-spacing: .01em; margin: 8px 0 14px; padding-left: 12px; border-left: 6px solid #eb5d2a; color: #0f172a; }
+
+  .naigc-subheading { font-size: 0.95rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #475467; margin-top: 18px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+
+  
+
+  .naigc-table-wrap { overflow-x: auto; }
+
+  table.naigc-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.95rem; }
+
+  table.naigc-table th, table.naigc-table td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+
+  table.naigc-table th { background: #f9fafb; font-weight: 600; }
+
+  
+
+  .naigc-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-weight: 600; font-size: 0.85rem; }
+
+  .p-yes { background: var(--green-bg); color: var(--green-text); }
+
+  .p-no { background: var(--red-bg); color: var(--red-text); }
+
+  .p-nf { background: var(--green-bg); color: var(--green-text); }
+
+  .p-if { background: var(--blue-bg); color: var(--blue-text); }
+
+  .p-hf { background: var(--purple-bg); color: var(--purple-text); }
+
+  .p-blank { background: var(--red-bg); color: var(--red-text); }
+
+
+
+  .naigc-msg { margin-top: 10px; font-size: 0.95rem; padding: 10px; border-radius: 6px; }
+
+  .naigc-msg.error { color: var(--red-text); }
+
+  .naigc-msg.success { color: #05603a; }
+
+  .naigc-msg.bg-error { background: var(--red-bg); color: var(--red-text); }
+
+
+
+  .naigc-alert-box { background: #fff1f0; border: 2px solid #ffa39e; border-radius: 8px; padding: 15px; margin: 12px 0; color: #cf1322; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+
+  .naigc-info-box { margin: 10px 0; padding: 12px; border-left: 4px solid var(--naigc-orange); background: #fff9f6; font-size: 0.95rem; line-height: 1.4; color: #111; }
+
+  .naigc-info-box a { color: var(--naigc-blue); text-decoration: underline; font-weight: 600; }
+
+
+
+  .hidden { display: none !important; }
+
+  .naigc-loading { color: var(--muted); font-style: italic; font-size: 0.9rem; text-align: center; padding: 20px; }
+
+  .note { font-size: 0.95rem; color: #344054; margin-bottom: 10px; }
+
+</style>
+
+
+
+<div class="naigc-widget">
+
+  <div class="naigc-tabs">
+
+    <button class="naigc-tab active" onclick="switchTab('club')">Club Summary</button>
+
+    <button class="naigc-tab" onclick="switchTab('ind')">Independent Athlete Summary</button>
+
+  </div>
+
+
+
+  <div id="view-club" class="naigc-view active">
+
+    <div class="naigc-card">
+
+      <h1 class="naigc-h1">Please select your club to view your Nationals registration summary.</h1>
+
+      <p class="naigc-subtle">After reviewing, enter your name and email at the bottom and click submit to confirm that you have viewed this summary.</p>
+
+      <p class="naigc-updated" id="globalUpdated"></p>
+
+    </div>
+
+
+
+    <div class="naigc-card">
+
+      <div class="naigc-stack">
+
+        <label class="naigc-label">Club</label>
+
+        <select id="clubSel" class="naigc-select" onchange="loadClubData()">
+
+          <option value="">Loading clubs...</option>
+
+        </select>
+
+      </div>
+
+    </div>
+
+
+
+    <div id="clubLoader" class="naigc-card hidden">
+
+      <div class="naigc-loading">Please wait while we retrieve your club’s registration data...</div>
+
+    </div>
+
+
+
+    <div id="clubContent" class="hidden">
+
+      <div class="naigc-card">
+
+        <div class="naigc-section-title">Registration Summary</div>
+
+        <div class="naigc-subheading">WAG</div>
+
+        <div id="c-wag"></div>
+
+        <div class="naigc-subheading">WAG Team Summary</div>
+
+        <div id="c-wagTeams"></div>
+
+        <div class="naigc-subheading">MAG</div>
+
+        <div id="c-mag"></div>
+
+        <div class="naigc-subheading">MAG Team Summary</div>
+
+        <div id="c-magTeams"></div>
+
+        <div class="naigc-subheading">T&T</div>
+
+        <div id="c-tnt"></div>
+
+        <div class="naigc-subheading">Decathlon/Omnithon</div>
+
+        <div id="c-multi"></div>
+
+        <div class="naigc-subheading">Session Request Summary</div>
+
+        <div id="c-session-alert"></div>
+
+        <div id="c-session"></div>
+
+        <div class="naigc-subheading">Registered Coaches</div>
+
+        <div id="c-coaches"></div>
+
+      </div>
+
+      
+
+      <div class="naigc-card">
+
+        <div class="naigc-section-title">Add-On Items</div>
+
+        <div id="c-addon-alert"></div>
+
+        <div id="c-addons"></div>
+        <div id="club-total-count" class="naigc-subtle" style="margin-top: 10px; font-weight: 600;"></div>
+
+      </div>
+
+
+
+      <div class="naigc-card">
+
+        <div id="clubAlreadyConf" class="naigc-msg bg-error hidden">
+
+          Your club has already confirmed that you have reviewed this registration. If you believe this was in error, please email <a href="mailto:events@naigc.org">events@naigc.org</a>.
+
+        </div>
+
+        
+
+        <div id="clubConfForm" class="hidden">
+
+          <p class="note">Please confirm that you have read the information above by entering your name and email below and clicking the confirm button.</p>
+
+          <div class="naigc-stack">
+
+            <label class="naigc-label">Name</label>
+
+            <input type="text" id="c-confName" class="naigc-input" placeholder="Your name">
+
+          </div>
+
+          <div class="naigc-stack">
+
+            <label class="naigc-label">Email</label>
+
+            <input type="email" id="c-confEmail" class="naigc-input" placeholder="you@example.com">
+
+          </div>
+
+          <div class="naigc-stack">
+
+            <label class="naigc-label">Status</label>
+
+            <select id="c-agreement" class="naigc-select" onchange="toggleCorrection('club')">
+
+              <option value="">Select an option...</option>
+
+              <option value="Correct">I agree this registration summary is correct.</option>
+
+              <option value="Incorrect">This registration is not correct. I will make all necessary corrections by the 3/18 change deadline.</option>
+
+            </select>
+
+          </div>
+
+          <div id="c-correction-msg" class="naigc-info-box hidden">
+
+            Level changes ($10) and event additions/scratches can be updated on your <a href="https://www.scoreflippers.com/MeetGenie/MG_MyRegistrations.aspx" target="_blank">My Registrations</a> page. For all other allowable changes, use this form: <a href="https://forms.gle/Ptm8nYLbVp4TZ3Ji7" target="_blank">Change Request Form</a>. One form submission per athlete.
+
+          </div>
+
+          <div style="margin-top: 10px;">
+
+            <button id="c-submitBtn" class="naigc-btn" onclick="submitClub()">Submit confirmation</button>
+
+          </div>
+
+          <div id="c-msg" class="naigc-msg"></div>
+
+        </div>
+
+      </div>
+
+    </div>
+
+  </div>
+
+
+
+  <div id="view-ind" class="naigc-view">
+
+    <div class="naigc-card">
+
+      <h1 class="naigc-h1">Please select your name to view your Nationals registration summary.</h1>
+
+      <p class="naigc-subtle">Note, it may take a moment to load after selecting your name. After reviewing, enter your email at the bottom and click submit to confirm that you have viewed this summary.</p>
+
+      <p class="naigc-updated" id="indUpdated"></p>
+
+    </div>
+
+
+
+    <div style="margin-bottom: 20px;">
+
+      <button class="secondary-btn" id="toggleIndCoaches" onclick="toggleCoaches()">Show Independent Coaches</button>
+
+      <div id="i-coaches-wrap" class="hidden" style="margin-top:10px;">
+
+         <div id="i-coaches"></div>
+
+      </div>
+
+    </div>
+
+
+
+    <div class="naigc-card">
+
+      <div class="naigc-stack">
+
+        <label class="naigc-label">Name</label>
+
+        <select id="indSel" class="naigc-select" onchange="loadIndData()">
+
+          <option value="">Loading names...</option>
+
+        </select>
+
+      </div>
+
+    </div>
+
+
+
+    <div id="indLoader" class="naigc-card hidden">
+
+      <div class="naigc-loading">Please wait while we retrieve your registration data...</div>
+
+    </div>
+
+
+
+    <div id="indContent" class="hidden">
+
+      <div class="naigc-card">
+
+        <div class="naigc-section-title">Personal Details</div>
+
+        <div id="i-personal"></div>
+
+      </div>
+
+
+
+      <div class="naigc-card">
+
+        <div class="naigc-section-title">Registration Summary</div>
+
+        <div class="naigc-subheading">WAG</div>
+
+        <div id="i-wag"></div>
+
+        <div class="naigc-subheading">MAG</div>
+
+        <div id="i-mag"></div>
+
+        <div class="naigc-subheading">T&T</div>
+
+        <div id="i-tnt"></div>
+
+        <div class="naigc-subheading">Decathlon/Omnithon</div>
+
+        <div id="i-multi"></div>
+
+      </div>
+
+
+
+<div class="naigc-card">
+
+    <div class="naigc-section-title">Session Request</div>
+
+    <div id="i-session-view" class="hidden">
+
+      <div id="i-session-table"></div>
+
+      <button class="secondary-btn" style="margin-top:10px;" onclick="editIndSession()">Edit Session Request</button>
+
+    </div>
+
+    <div id="i-session-form" class="hidden">
+
+      <div class="naigc-stack">
+
+        <label class="naigc-label">Which day do you prefer to compete on?</label>
+
+        <select id="i-sessDay" class="naigc-select">
+
+          <option value="No Preference">No Preference</option>
+
+          <option value="Thursday">Thursday</option>
+
+          <option value="Friday">Friday</option>
+
+        </select>
+
+      </div>
+
+      <div class="naigc-stack">
+
+        <label class="naigc-label">Which is the earliest session you are available to compete?</label>
+
+        <select id="i-sessStart" class="naigc-select">
+
+          <option value="Thursday Session 1 (7:30a)">Thursday Session 1 (7:30a)</option>
+
+          <option value="Thursday Session 2 (12:30p)">Thursday Session 2 (12:30p)</option>
+
+          <option value="Thursday Session 3 (5:30p)">Thursday Session 3 (5:30p)</option>
+
+          <option value="Friday Session 4 (7:30a)">Friday Session 4 (7:30a)</option>
+
+          <option value="Friday Session 5 (12:30p)">Friday Session 5 (12:30p)</option>
+
+          <option value="Friday Session 6 (5:30p)">Friday Session 6 (5:30p)</option>
+
+        </select>
+
+      </div>
+
+      <div class="naigc-stack">
+
+        <label class="naigc-label">Please add any additional notes about your session request here.</label>
+
+        <input type="text" id="i-sessNotes" class="naigc-input" placeholder="Additional notes...">
+
+      </div>
+
+      <button id="i-sessBtn" class="naigc-btn" style="margin-top:10px;" onclick="submitIndSession()">Save Session Request</button>
+
+      <div id="i-sess-msg" class="naigc-msg"></div>
+
+    </div>
+
+  </div>
+
+
+
+      <div class="naigc-card">
+
+        <div class="naigc-section-title">Add-On Items</div>
+
+        <div id="i-addon-alert"></div>
+
+        <div id="i-addons"></div>
+
+      </div>
+
+
+
+      <div class="naigc-card">
+
+        <div id="indAlreadyConf" class="naigc-msg bg-error hidden">
+
+          You have already confirmed that you have reviewed this registration. If you believe this was in error, please email <a href="mailto:events@naigc.org">events@naigc.org</a>.
+
+        </div>
+
+
+
+        <div id="indConfForm" class="hidden">
+
+          <p class="note">Please confirm that you have read the information above by entering your email below and clicking the confirm button.</p>
+
+          <div class="naigc-stack">
+
+            <label class="naigc-label">Email</label>
+
+            <input type="email" id="i-confEmail" class="naigc-input" placeholder="you@example.com">
+
+          </div>
+
+          <div class="naigc-stack">
+
+            <label class="naigc-label">Status</label>
+
+            <select id="i-agreement" class="naigc-select" onchange="toggleCorrection('ind')">
+
+              <option value="">Select an option...</option>
+
+              <option value="Correct">I agree this registration summary is correct.</option>
+
+              <option value="Incorrect">This registration is not correct. I will make all necessary corrections by the 3/18 change deadline.</option>
+
+            </select>
+
+          </div>
+
+          <div id="i-correction-msg" class="naigc-info-box hidden">
+
+            Level changes ($10) and event additions/scratches can be updated on your <a href="https://www.scoreflippers.com/MeetGenie/MG_MyRegistrations.aspx" target="_blank">My Registrations</a> page. For all other allowable changes, use this form: <a href="https://forms.gle/Ptm8nYLbVp4TZ3Ji7" target="_blank">Change Request Form</a>. One form submission per athlete.
+
+          </div>
+
+          <div style="margin-top: 10px;">
+
+            <button id="i-submitBtn" class="naigc-btn" onclick="submitInd()">Submit confirmation</button>
+
+          </div>
+
+          <div id="i-msg" class="naigc-msg"></div>
+
+        </div>
+
+      </div>
+
+    </div>
+
+  </div>
+
+</div>
+
+
+
+<script>
+
+  // *** CONFIGURATION ***
+
+  const API_URL = "https://script.google.com/macros/s/AKfycbxXVa2BKKDMe7jXv-WvSx0ccCK1hc-IbaxaN7SPIQA7NseOZDgDgvWnqxdGZSQ9Ml-M-Q/exec"; 
+
+  const FORM_OPEN_DATE = new Date("2026-02-17T08:00:00-05:00");
+
+
+
+  let currentClub = null;
+
+  let currentInd = null;
+
+  let coachVisible = false;
+
+
+
+  function isFormAvailable() {
+
+    return new Date() >= FORM_OPEN_DATE;
+
+  }
+
+
+
+  function toggleCorrection(type) {
+
+    const val = document.getElementById(type === 'club' ? 'c-agreement' : 'i-agreement').value;
+
+    const box = document.getElementById(type === 'club' ? 'c-correction-msg' : 'i-correction-msg');
+
+    if (val === "Incorrect") box.classList.remove('hidden');
+
+    else box.classList.add('hidden');
+
+  }
+
+
+
+  async function api(action, params = {}) {
+
+    const qs = new URLSearchParams({ action, ...params }).toString();
+
+    const response = await fetch(API_URL + "?" + qs, { method: "GET", redirect: "follow" });
+
+    return response.json();
+
+  }
+
+
+
+  function createAlert(msg) {
+
+    return `<div class="naigc-alert-box">
+
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+
+      <span>${msg}</span>
+
+    </div>`;
+
+  }
+
+
+
+function checkBanquet(rows) {
+  if (!rows || rows.length === 0) return false;
+  return rows.some(r => {
+    // Check for "Item Name" in objects (Clubs) or index 0 in arrays (Independents)
+    const val = Array.isArray(r) ? r[0] : (r['Item Name'] || '');
+    return String(val).toLowerCase().includes('banquet');
+  });
+}
+
+
+
+  function toggleCoaches() {
+
+    coachVisible = !coachVisible;
+
+    const wrap = document.getElementById('i-coaches-wrap');
+
+    const btn = document.getElementById('toggleIndCoaches');
+
+    wrap.classList.toggle('hidden', !coachVisible);
+
+    btn.innerText = coachVisible ? "Hide Independent Coaches" : "Show Independent Coaches";
+
+  }
+
+
+
+  document.addEventListener('DOMContentLoaded', async () => {
+
+    try {
+
+      const data = await api('getInitData');
+
+      const updatedTxt = data.updatedText ? `Updated: ${data.updatedText}` : '';
+
+      document.getElementById('globalUpdated').textContent = updatedTxt;
+
+      document.getElementById('indUpdated').textContent = updatedTxt;
+
+      
+
+      const cSel = document.getElementById('clubSel');
+
+      cSel.innerHTML = '<option value="">Select a club...</option>';
+
+      data.clubs.forEach(c => {
+
+        const opt = document.createElement('option');
+
+        opt.value = c; opt.innerText = c;
+
+        cSel.appendChild(opt);
+
+      });
+
+
+
+      const iSel = document.getElementById('indSel');
+
+      iSel.innerHTML = '<option value="">Select your name...</option>';
+
+      data.names.forEach(n => {
+
+        const opt = document.createElement('option');
+
+        opt.value = n; opt.innerText = n;
+
+        iSel.appendChild(opt);
+
+      });
+
+
+
+      if (data.indCoaches) {
+
+         renderTable('i-coaches', ['Coach Name'], toRows(data.indCoaches, ['Coach Name']), null, "No independent coaches registered.");
+
+      }
+
+    } catch (e) {
+
+      console.error(e);
+
+      document.getElementById('clubSel').innerHTML = '<option>Error loading data</option>';
+
+    }
+
+  });
+
+
+
+  function switchTab(tab) {
+
+    document.querySelectorAll('.naigc-tab').forEach(t => t.classList.remove('active'));
+
+    document.querySelectorAll('.naigc-view').forEach(v => v.classList.remove('active'));
+
+    const btns = document.querySelectorAll('.naigc-tab');
+
+    if(tab === 'club') { btns[0].classList.add('active'); document.getElementById('view-club').classList.add('active'); }
+
+    else { btns[1].classList.add('active'); document.getElementById('view-ind').classList.add('active'); }
+
+  }
+
+
+
+  function renderTable(id, columns, rows, formatter = null, emptyMsg = "No data.") {
+
+    const container = document.getElementById(id);
+
+    container.innerHTML = '';
+
+    if (!rows || rows.length === 0) {
+
+      container.innerHTML = `<div style="color:#111; padding:8px 0;">${emptyMsg}</div>`;
+
+      return;
+
+    }
+
+    const table = document.createElement('table');
+
+    table.className = 'naigc-table';
+
+    const thead = document.createElement('thead');
+
+    const trH = document.createElement('tr');
+
+    columns.forEach(c => { const th = document.createElement('th'); th.textContent = c; trH.appendChild(th); });
+
+    thead.appendChild(trH);
+
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+
+    rows.forEach(row => {
+
+      const tr = document.createElement('tr');
+
+      const rowArr = Array.isArray(row) ? row : columns.map(c => row[c] || '');
+
+      rowArr.forEach((cellData, idx) => {
+
+        const td = document.createElement('td');
+
+        const colName = columns[idx];
+
+        if (formatter) {
+
+          const formatted = formatter(colName, cellData);
+
+          if (formatted.html) td.innerHTML = formatted.html;
+
+          else td.textContent = formatted.text;
+
+        } else {
+
+          td.textContent = cellData;
+
+        }
+
+        tr.appendChild(td);
+
+      });
+
+      tbody.appendChild(tr);
+
+    });
+
+    table.appendChild(tbody);
+
+    const wrapper = document.createElement('div');
+
+    wrapper.className = 'naigc-table-wrap';
+
+    wrapper.appendChild(table);
+
+    container.appendChild(wrapper);
+
+  }
+
+
+
+  function toRows(arrOfObjs, cols) {
+
+    if (!arrOfObjs) return [];
+
+    return arrOfObjs.map(obj => cols.map(c => obj[c] || ''));
+
+  }
+
+
+
+  function ynFormatter(col, val) {
+
+    const v = String(val).toUpperCase().trim();
+
+    if(['VT','UB','BB','FX','AA','PH','SR','PB','HB','TEAM?','OMNITHON'].includes(col.toUpperCase())) {
+
+      const isYes = (v === 'Y' || v === 'YES' || v === 'TRUE');
+
+      const isNo = (v === 'N' || v === 'NO' || v === 'FALSE');
+
+      const txt = (col.toUpperCase() === 'OMNITHON') ? (isYes ? 'Yes' : 'No') : (isYes ? 'Y' : 'N');
+
+      const cls = isYes ? 'p-yes' : 'p-no';
+
+      if(!isYes && !isNo) return { text: val };
+
+      return { html: `<span class="naigc-pill ${cls}">${txt}</span>` };
+
+    }
+
+    return { text: val };
+
+  }
+
+
+
+  function tntFormatter(col, val) {
+
+    const c = String(val).toUpperCase().trim();
+
+    if(['INDV TRAMP','DOUBLE MINI','PWR TUMB','SYNC TRAMP'].includes(col.toUpperCase())) {
+
+      let cls = 'p-blank'; 
+
+      if(c === 'NF') cls = 'p-nf';
+
+      else if(c === 'IF') cls = 'p-if';
+
+      else if(c === 'HF') cls = 'p-hf';
+
+      return { html: `<span class="naigc-pill ${cls}">${c || '&nbsp;'}</span>` };
+
+    }
+
+    return { text: val };
+
+  }
+
+
+
+  async function loadClubData() {
+
+    const club = document.getElementById('clubSel').value;
+
+    currentClub = club;
+
+    const loader = document.getElementById('clubLoader');
+
+    const content = document.getElementById('clubContent');
+
+    const alreadyMsg = document.getElementById('clubAlreadyConf');
+
+    const form = document.getElementById('clubConfForm');
+
+    const msgDiv = document.getElementById('c-msg');
+
+    const btn = document.getElementById('c-submitBtn');
+
+
+
+    content.classList.add('hidden');
+document.getElementById('club-total-count').textContent = '';
+
+    loader.classList.add('hidden');
+
+    msgDiv.textContent = '';
+
+    msgDiv.className = 'naigc-msg';
+
+    btn.disabled = false;
+
+
+
+    if (!club) return;
+
+    loader.classList.remove('hidden');
+
+
+
+    try {
+
+      const data = await api('getClubSummary', { club });
+
+// Add this after: const data = await api('getClubSummary', { club });
+
+const uniqueNames = new Set();
+
+// Add names from all athlete disciplines
+data.wagAthletes.forEach(a => { if(a.Name) uniqueNames.add(a.Name.trim()); });
+data.magAthletes.forEach(a => { if(a.Name) uniqueNames.add(a.Name.trim()); });
+data.tntAthletes.forEach(a => { if(a.Name) uniqueNames.add(a.Name.trim()); });
+data.multiDisc.forEach(a => { if(a.Name) uniqueNames.add(a.Name.trim()); });
+
+// Add names from the coach list
+data.coaches.forEach(c => { if(c['Coach Name']) uniqueNames.add(c['Coach Name'].trim()); });
+
+// Update the text in the new div
+const countDiv = document.getElementById('club-total-count');
+countDiv.textContent = `Note: You have ${uniqueNames.size} total athletes and coaches.`;
+      
+
+      renderTable('c-wag', ['Name','T-Shirt','Placement Category','Level','VT','UB','BB','FX','AA'], toRows(data.wagAthletes, ['Name','T-Shirt','Placement Category','Level','VT','UB','BB','FX','AA']), ynFormatter);
+
+      renderTable('c-wagTeams', ['Level','Placement Category','Team?'], toRows(data.wagTeams, ['Level','Placement Category','Team?']), ynFormatter);
+
+      renderTable('c-mag', ['Name','T-Shirt','Placement Category','Level','FX','PH','SR','VT','PB','HB','AA'], toRows(data.magAthletes, ['Name','T-Shirt','Placement Category','Level','FX','PH','SR','VT','PB','HB','AA']), ynFormatter);
+
+      renderTable('c-magTeams', ['Level','Placement Category','Team?'], toRows(data.magTeams, ['Level','Placement Category','Team?']), ynFormatter);
+
+      renderTable('c-tnt', ['Name','T-Shirt','Student','Indv Tramp','Double Mini','Pwr Tumb','Sync Tramp'], toRows(data.tntAthletes, ['Name','T-Shirt','Student','Indv Tramp','Double Mini','Pwr Tumb','Sync Tramp']), tntFormatter);
+
+      renderTable('c-multi', ['Name','Decathlon Level','Omnithon'], toRows(data.multiDisc, ['Name','Decathlon Level','Omnithon']), ynFormatter);
+
+      
+
+      const sessCols = ['Level','Preferred Date','1st Available Session','Notes','Grouping preference'];
+
+      renderTable('c-session', sessCols, toRows(data.sessionReq, sessCols));
+
+      renderTable('c-coaches', ['Coach Name'], toRows(data.coaches, ['Coach Name']));
+
+      renderTable('c-addons', ['Item Name','Details','Original QTY', 'QTY Refunded', 'Final QTY'], toRows(data.addOns, ['Item Name','Details','Original QTY', 'QTY Refunded', 'Final QTY']));
+
+
+
+      const sAlert = document.getElementById('c-session-alert');
+
+      sAlert.innerHTML = (!data.sessionReq || data.sessionReq.length === 0) ? createAlert("ATTENTION: No session requests found. We cannot accommodate session requests that are not inputted in ScoreFlippers by March 18!") : "";
+
+
+
+      const aAlert = document.getElementById('c-addon-alert');
+
+      aAlert.innerHTML = !checkBanquet(data.addOns) ? createAlert("MISSING BANQUET TICKETS: We don't see any banquet tickets for your club.") : "";
+
+
+
+      if(data.confirmed) {
+
+        alreadyMsg.classList.remove('hidden');
+
+        form.classList.add('hidden');
+
+      } else {
+
+        alreadyMsg.classList.add('hidden');
+
+        // Check global date variable before showing form
+
+        if(isFormAvailable()) form.classList.remove('hidden');
+
+        else form.classList.add('hidden');
+
+      }
+
+
+
+      loader.classList.add('hidden');
+
+      content.classList.remove('hidden');
+
+    } catch (e) {
+
+      alert('Error loading club data: ' + e.message);
+
+      loader.classList.add('hidden');
+
+    }
+
+  }
+
+
+
+  async function submitClub() {
+
+    const name = document.getElementById('c-confName').value.trim();
+
+    const email = document.getElementById('c-confEmail').value.trim();
+
+    const agreement = document.getElementById('c-agreement').value;
+
+    const msg = document.getElementById('c-msg');
+
+    const btn = document.getElementById('c-submitBtn');
+
+    msg.textContent = ''; msg.className = 'naigc-msg';
+
+    if(!name || !email || !agreement) { msg.textContent = 'Please complete all fields.'; msg.classList.add('error'); return; }
+
+    btn.disabled = true;
+
+    try {
+
+      const res = await api('submitClubConfirmation', { club: currentClub, name, email, agreement });
+
+      if(res.success) { msg.textContent = 'Confirmation recorded. Thank you.'; msg.classList.add('success'); }
+
+    } catch(e) {
+
+      msg.textContent = 'Error: ' + e.message; msg.classList.add('error'); btn.disabled = false;
+
+    }
+
+  }
+
+
+
+  async function loadIndData() {
+
+    const name = document.getElementById('indSel').value;
+
+    currentInd = name;
+
+    const loader = document.getElementById('indLoader');
+
+    const content = document.getElementById('indContent');
+
+    const alreadyMsg = document.getElementById('indAlreadyConf');
+
+    const form = document.getElementById('indConfForm');
+
+    const msg = document.getElementById('i-msg');
+
+    const btn = document.getElementById('i-submitBtn');
+
+// --- ADD THESE RESET LINES ---
+  document.getElementById('i-sessDay').value = "No Preference"; // Resets day dropdown
+  document.getElementById('i-sessStart').value = "Thursday Session 1 (7:30a)"; // Resets session dropdown
+  document.getElementById('i-sessNotes').value = ""; // Clears the notes field
+  document.getElementById('i-sess-msg').textContent = ""; // Clears any previous save messages
+  // ------------------------------
+
+    content.classList.add('hidden');
+
+    loader.classList.add('hidden');
+
+    msg.textContent = ''; msg.className = 'naigc-msg';
+
+    btn.disabled = false;
+
+
+
+    if (!name) return;
+
+    loader.classList.remove('hidden');
+
+
+
+    try {
+
+      const data = await api('getIndSummary', { name });
+
+      renderTable('i-personal', data.personalDetails.columns, data.personalDetails.rows);
+
+      renderTable('i-wag', data.wag.columns, data.wag.rows, ynFormatter);
+
+      renderTable('i-mag', data.mag.columns, data.mag.rows, ynFormatter);
+
+      renderTable('i-tnt', data.tnt.columns, data.tnt.rows, tntFormatter);
+
+      renderTable('i-multi', data.multi.columns, data.multi.rows, (c,v) => (c.toLowerCase() === 'omnithon' ? ynFormatter('omnithon', v) : {text:v}));
+
+      renderTable('i-addons', data.addOn.columns, data.addOn.rows);
+
+
+
+// Handle Session Request Display
+
+  const sessView = document.getElementById('i-session-view');
+
+  const sessForm = document.getElementById('i-session-form');
+
+  
+
+  if (data.sessionRequest && data.sessionRequest.hasRequest) {
+
+    displaySessionTable(data.sessionRequest.data);
+
+  } else {
+
+    sessView.classList.add('hidden');
+
+    sessForm.classList.remove('hidden');
+
+  }
+
+
+
+      const iAlert = document.getElementById('i-addon-alert');
+
+      iAlert.innerHTML = !checkBanquet(data.addOn.rows) ? createAlert("MISSING BANQUET TICKET: You have not purchased a banquet ticket yet!") : "";
+
+
+
+      if(data.confirmed) {
+
+        alreadyMsg.classList.remove('hidden'); form.classList.add('hidden');
+
+      } else {
+
+        alreadyMsg.classList.add('hidden');
+
+        // Check global date variable before showing form
+
+        if(isFormAvailable()) form.classList.remove('hidden');
+
+        else form.classList.add('hidden');
+
+      }
+
+
+
+      loader.classList.add('hidden');
+
+      content.classList.remove('hidden');
+
+    } catch (e) {
+
+      alert("Error loading athlete: " + e.message);
+
+      loader.classList.add('hidden');
+
+    }
+
+  }
+
+
+
+  async function submitInd() {
+
+    const email = document.getElementById('i-confEmail').value.trim();
+
+    const agreement = document.getElementById('i-agreement').value;
+
+    const msg = document.getElementById('i-msg');
+
+    const btn = document.getElementById('i-submitBtn');
+
+    msg.textContent = ''; msg.className = 'naigc-msg';
+
+    if(!email || !agreement) { msg.textContent = 'Please complete all fields.'; msg.classList.add('error'); return; }
+
+    btn.disabled = true;
+
+    try {
+
+      const res = await api('submitIndConfirmation', { name: currentInd, email, agreement });
+
+      if(res.success) { msg.textContent = 'Confirmation recorded. Thank you.'; msg.classList.add('success'); }
+
+    } catch(e) {
+
+      msg.textContent = 'Error: ' + e.message; msg.classList.add('error'); btn.disabled = false;
+
+    }
+
+  }
+
+
+
+function displaySessionTable(data) {
+
+  const sessView = document.getElementById('i-session-view');
+
+  const sessForm = document.getElementById('i-session-form');
+
+  renderTable('i-session-table', 
+
+    ['Preferred Day', '1st Session Available', 'Notes'], 
+
+    [[data.day, data.session, data.notes]]
+
+  );
+
+  sessForm.classList.add('hidden');
+
+  sessView.classList.remove('hidden');
+
+}
+
+
+
+function editIndSession() {
+
+  document.getElementById('i-session-view').classList.add('hidden');
+
+  document.getElementById('i-session-form').classList.remove('hidden');
+
+}
+
+
+
+async function submitIndSession() {
+
+  const btn = document.getElementById('i-sessBtn');
+
+  const msg = document.getElementById('i-sess-msg');
+
+  const day = document.getElementById('i-sessDay').value;
+
+  const session = document.getElementById('i-sessStart').value;
+
+  const notes = document.getElementById('i-sessNotes').value;
+
+
+
+  btn.disabled = true;
+
+  msg.textContent = 'Saving...';
+
+  
+
+  try {
+
+    const res = await api('submitIndSessionRequest', { 
+
+      name: currentInd, day, session, notes 
+
+    });
+
+    if (res.success) {
+
+      displaySessionTable({ day, session, notes });
+
+      msg.textContent = '';
+
+    }
+
+  } catch (e) {
+
+    msg.textContent = 'Error: ' + e.message;
+
+    msg.className = 'naigc-msg error';
+
+  } finally {
+
+    btn.disabled = false;
+
+  }
+
+}
+
+</script>

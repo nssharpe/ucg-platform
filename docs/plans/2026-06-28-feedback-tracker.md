@@ -215,6 +215,11 @@ payment form. Build/lint/197 tests pass (3 new coupon hard-expiry tests added). 
   is the intended behavior.
 
 **B5 — Finance dashboards (whole epic):** event + org tiers, date defaults, Summary/Invoices tabs, account codes. Likely defer given budget. §7
+> **2026-07-06:** Julia delivered full finance-dashboard requirements (accounting
+> codes, gross/net/refunds/merchant-fee columns, host-payout tracking,
+> transactions tab, exports). B5 is now absorbed by
+> [`../specs/2026-07-06-event-management-v2-requirements.md`](../specs/2026-07-06-event-management-v2-requirements.md)
+> §M (phase V2-P6) — track it there, not here.
 
 **B6 — Email/state regressions (server logic):** ✅ **ALL DONE** (2026-07-03/04). waiver-checkout "email sent" but none sent; in-cart membership labeled paid but bubble conflicts (state); admin-access requests routing to League instead of Club Managers; denial-email not firing (notify-manager-access-denied exists — likely a wiring regression); under-18 welcome email AND receipt suppressed until waiver signed + membership active (even when club pays); memberships-checkout completion should email owner confirmation + PDF receipt. §2/§3/§8 / orig L6,72,77
 

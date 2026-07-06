@@ -347,6 +347,10 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
 **The single authoritative open-work list is `docs/README.md` → "What's next"** —
 update it there; don't grow a rival list here. Operative notes only:
 - Feedback tracker (`docs/plans/2026-06-28-feedback-tracker.md`): Cohort A + B1–B4, B6,
-  B7, B8 all shipped; only **B5** (finance dashboards — likely defer) remains open.
+  B7, B8 all shipped; **B5** (finance dashboards) is absorbed by event-management v2.
+- **Event management v2** (Julia's 2026-07-06 requirements): digest + gap analysis +
+  proposed phasing (V2-P0…P6) in `docs/specs/2026-07-06-event-management-v2-requirements.md`;
+  raw materials in `docs/reference/`. NOT scheduled yet — needs a prioritization pass
+  with Nate, and spec §N7 lists open questions for Julia before the affected phases.
 - Refunds are Stripe-Dashboard-only today; a Dashboard refund does NOT reflect back
-  into `payments.status` (in-app refund path is on the what's-next list).
+  into `payments.status` (full in-app refund requirements: v2 spec §H).

@@ -23,6 +23,10 @@ Live build/tooling notes live in [`../CLAUDE.md`](../CLAUDE.md); open work is th
   [`archive/CLAUDE-md-as-of-2026-07-02.md`](archive/CLAUDE-md-as-of-2026-07-02.md)).
 - [`model-routing-log.md`](model-routing-log.md) — observational log of which model
   tier handled which task (feeds the CLAUDE.md "Model routing" rules).
+- [`reference/`](reference/README.md) — **source materials from Julia** (received
+  2026-07-06): her event-management requirements spec + the legacy Apps-Script
+  Nationals reg/check-in tools and their xlsx sheet backends. Digested into
+  [`specs/2026-07-06-event-management-v2-requirements.md`](specs/2026-07-06-event-management-v2-requirements.md).
 
 ## Specs (`specs/`) — validated designs, written before implementation
 
@@ -40,6 +44,7 @@ Live build/tooling notes live in [`../CLAUDE.md`](../CLAUDE.md); open work is th
 | [dev-test-auth](specs/2026-06-25-dev-test-auth.md) | Dev-only real auto-login of a seeded Supabase test user (`.env.local`-gated) so authenticated UI is exercisable locally | ✅ shipped |
 | [stripe-integration](specs/2026-06-25-stripe-integration.md) | Stripe Embedded Checkout architecture (S1–S5) | ✅ shipped |
 | [security-review-findings (7/02)](specs/2026-07-02-security-review-findings.md) | Deep review of the money paths: RLS, edge functions, cart state machine — verified findings by severity | 🟡 findings logged; fixes planned |
+| [event-management-v2-requirements](specs/2026-07-06-event-management-v2-requirements.md) | Julia's full event-management requirements (7/06) digested + gap-mapped: host dashboard, refunds, capacity/waitlists, add-ons v2, nationals ops, finance dashboards — with proposed phasing V2-P0…P6 | 🟡 requirements folded; not scheduled |
 
 ## Plans (`plans/`) — step-by-step implementation records
 
@@ -104,18 +109,27 @@ here — update THIS list when priorities change, not rival copies.
   overlap, cart-vs-checkout price mismatch, payment-status badges, plus a polish batch.
 - 🤖 Accessibility audit to WCAG AA + loading/empty/error state consistency.
 - 🤖 In-app "Report a problem" widget + version stamp (`error_logs` is passive today).
-- 🤖 In-app admin refunds (Dashboard-only today; sketch in the go-live checklist).
+- 🤖 In-app admin refunds (Dashboard-only today; sketch in the go-live checklist —
+  full requirements now in the [event-management v2 spec §H](specs/2026-07-06-event-management-v2-requirements.md)).
 - 🤖 New-club-request email to `newclubinquiries@naigc.org` (transport exists, not wired).
 - 🤖 Verify the PWA production update path (stale service-worker bundle → add an
   update prompt if needed).
 
 ### Feature roadmap (as prioritized)
-- Feedback tracker leftovers: **B5** finance dashboards (whole epic — likely defer).
+- **Event management v2** — Julia's 2026-07-06 requirements, digested + gap-mapped
+  with a proposed phasing (V2-P0 foundations/scheduler → P1 host experience →
+  P2 add-ons & camps → P3 refunds → P4 capacity/waitlists & by-session reg →
+  P5 nationals ops/check-in → P6 finance dashboards) in
+  [specs/2026-07-06-event-management-v2-requirements.md](specs/2026-07-06-event-management-v2-requirements.md).
+  **Not yet scheduled — needs a prioritization pass with Nate** (and the §N7 open
+  questions answered by Julia before the affected phases). This absorbs several
+  older roadmap items: **B5 finance dashboards** (now fully spec'd, §M), in-app
+  refunds (§H), banquet tickets/add-ons v2 (§E3), finals rosters (§L),
+  server-emailed PDF receipts (§I/§N4).
 - B typed memberships + per-season waiver → C multi-club registration picker →
   D codeless judge access (URL / 6-digit / QR) → E scoring config (1-vs-2 panels,
   calculator vs. simple entry).
-- Further out: MFA/passkeys, PDF certs, banquet tickets, finals rosters,
-  server-emailed PDF receipts, external API.
+- Further out: MFA/passkeys, PDF certs, external API.
 
 ### Architecture watch-list
 Not gaps yet — trigger conditions and known warts are written down in
