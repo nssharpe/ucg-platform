@@ -38,3 +38,10 @@ where camp_config is not null;
 -- If stripping those four keys left camp_config as an empty object, null it
 -- out rather than keep a meaningless '{}'.
 update events set camp_config = null where camp_config = '{}'::jsonb;
+
+-- A camp_config with no director info backfills to the degenerate
+-- '{"ccOnConfirmation": false}' (jsonb_strip_nulls keeps the false) — null
+-- those out so "no director" stays NULL rather than a meaningless object.
+update events set director = null
+where director - 'ccOnConfirmation' = '{}'::jsonb
+  and coalesce((director->>'ccOnConfirmation')::boolean, false) = false;
