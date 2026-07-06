@@ -122,6 +122,7 @@ Deno.serve(async (req) => {
       if (!result.ok) {
         console.error(`scheduled-dispatch: send failed for ${kind}:${requestId}`, result.failed);
         failures.push(`${kind}:${requestId}`);
+        await releaseClaims(db, kind, requestId, claimed);
       }
       if (stage === '3d') reminders3d += result.sentCount;
       else reminders1d += result.sentCount;
@@ -151,6 +152,7 @@ Deno.serve(async (req) => {
       if (!result.ok) {
         console.error(`scheduled-dispatch: send failed for ${kind}:${requestId}`, result.failed);
         failures.push(`${kind}:${requestId}`);
+        await releaseClaims(db, kind, requestId, claimed);
       }
       closures += result.sentCount;
     }
@@ -217,4 +219,14 @@ async function claimNotifications(
     return [];
   }
   return (data ?? []).map((r: { recipient: string }) => r.recipient);
+}
+
+/** Releases claims after a failed send so the next run retries them. Safe
+ *  because sendBatch is all-or-nothing at submit time: a non-2xx means Resend
+ *  delivered nothing, so deleting the claims cannot cause duplicate emails. */
+async function releaseClaims(db: SupabaseClient, kind: string, refId: string, recipients: string[]): Promise<void> {
+  if (recipients.length === 0) return;
+  const ids = recipients.map((r) => notificationLogId(kind, refId, r));
+  const { error } = await db.from('notification_log').delete().in('id', ids);
+  if (error) console.error(`scheduled-dispatch: failed to release claims for ${kind}:${refId}`, error);
 }
