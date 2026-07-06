@@ -128,12 +128,18 @@ here — update THIS list when priorities change, not rival copies.
   (the two Vault secrets still need manual per-environment setup before the cron job can
   actually fire).
   **P0 Task 2 shipped:** event entity field extensions (spec §A) — venue/street/country/
-  hotel-block link, age-calc date, late registration (fee on top of entry fee, not yet
-  charged at checkout), a general (not camp-only) director contact, capacity config
-  (stored, not enforced yet), and a confirmation-email override with an HTML preview in
-  EventWizard. Migration backfilled `camp_config`'s director/age-calc keys onto the new
-  event-level fields. Sanction.tsx's approval mapping carries venue/street/country/
-  late-reg into the created event.
+  hotel-block link, age-calc date, late registration config (`Event.lateReg`), a general
+  (not camp-only) director contact, capacity config (stored, not enforced yet), and a
+  confirmation-email override with an HTML preview in EventWizard. Migration backfilled
+  `camp_config`'s director/age-calc keys onto the new event-level fields. Sanction.tsx's
+  approval mapping carries venue/street/country/late-reg into the created event.
+  **P0 Task 3 shipped:** late-registration fee pricing — the surcharge applies once per
+  athlete per event (not per-discipline), anchored on the athlete's EARLIEST registration
+  `created_at` for that event (never payment time), waived for host-club regs, and never
+  affecting change fees. `registrationEntryFee`/`newRegistrationEntryTotal`
+  (`src/lib/pricing.ts`) take an optional `late` param; `create-checkout-session`
+  recomputes it server-side from `late_reg` + `created_at` (mirrored in
+  `_shared/stripe.ts`, same pattern as the service fee).
   §N7 open questions **all answered by Julia 2026-07-06** (recorded in the spec;
   every phase is unblocked — only the §F partial-fit capacity design wants a
   confirm at P4 kickoff). This absorbs several
