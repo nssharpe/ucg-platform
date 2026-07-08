@@ -219,6 +219,10 @@ const eventToRow = (m: Event) => ({
   event_type: m.eventType ?? 'competition', sanction_id: m.sanctionId ?? null,
   camp_config: m.campConfig ?? null,
   kind: m.kind ?? 'standard', nationals_config: m.nationalsConfig ?? null,
+  venue: m.venue ?? null, street_address: m.streetAddress ?? null, country: m.country ?? null,
+  hotel_link: m.hotelLink ?? null, age_calc_at: m.ageCalcAt || null,
+  late_reg: m.lateReg ?? null, director: m.director ?? null, capacity: m.capacity ?? null,
+  confirmation_email: m.confirmationEmail ?? null,
 });
 
 const sessionToRow = (eventId: string, s: Event['sessions'][number]) => ({
@@ -256,6 +260,8 @@ const rowToRegistration = (r: Row<'registrations'>): Registration => ({
   ...(r.refund_requested ? { refundRequested: true } : {}),
   ...(r.partner_athlete_id ? { partnerAthleteId: r.partner_athlete_id } : {}),
   ...(r.apparatus_levels ? { apparatusLevels: r.apparatus_levels as Registration['apparatusLevels'] } : {}),
+  // READ-ONLY: never included in registrationToRow's push mapping (see Registration.createdAt).
+  ...(r.created_at ? { createdAt: r.created_at } : {}),
 });
 
 const scoreToRow = (s: Score) => ({
@@ -1153,6 +1159,15 @@ export async function loadAll(): Promise<DB | null> {
       ...(r.camp_config ? { campConfig: r.camp_config as Event['campConfig'] } : {}),
       ...(r.kind && r.kind !== 'standard' ? { kind: r.kind as Event['kind'] } : {}),
       ...(r.nationals_config ? { nationalsConfig: r.nationals_config as unknown as Event['nationalsConfig'] } : {}),
+      ...(r.venue ? { venue: r.venue } : {}),
+      ...(r.street_address ? { streetAddress: r.street_address } : {}),
+      ...(r.country ? { country: r.country } : {}),
+      ...(r.hotel_link ? { hotelLink: r.hotel_link } : {}),
+      ...(r.age_calc_at ? { ageCalcAt: r.age_calc_at } : {}),
+      ...(r.late_reg ? { lateReg: r.late_reg as Event['lateReg'] } : {}),
+      ...(r.director ? { director: r.director as Event['director'] } : {}),
+      ...(r.capacity ? { capacity: r.capacity as Event['capacity'] } : {}),
+      ...(r.confirmation_email ? { confirmationEmail: r.confirmation_email as Event['confirmationEmail'] } : {}),
     }));
 
     const registrations: Registration[] = (registrationsR.data ?? []).map(rowToRegistration);

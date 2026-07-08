@@ -110,6 +110,11 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
   const [city, setCity] = useState(editEvent?.city ?? '');
   const [state, setState] = useState(editEvent?.state ?? '');
   const [timezone, setTimezone] = useState(editEvent?.timezone ?? 'America/New_York');
+  // Location detail (event-mgmt v2 §A)
+  const [venue, setVenue] = useState(editEvent?.venue ?? '');
+  const [streetAddress, setStreetAddress] = useState(editEvent?.streetAddress ?? '');
+  const [country, setCountry] = useState(editEvent?.country ?? 'United States');
+  const [hotelLink, setHotelLink] = useState(editEvent?.hotelLink ?? '');
   // Dates
   const defaultStart = addDays(new Date().toISOString().slice(0, 10), 60);
   const [startDate, setStartDate] = useState(editEvent?.startDate ?? defaultStart);
@@ -121,6 +126,9 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
   // or the event's host club may still edit a registration.
   const [hasEditLockout, setHasEditLockout] = useState(!!editEvent?.lastDateToEdit);
   const [lastDateToEdit, setLastDateToEdit] = useState(editEvent?.lastDateToEdit ?? `${addDays(defaultStart, -7)}T23:59`);
+  // Age-calculation date (event-mgmt v2 §A): applies to all events, not just camps.
+  const [hasAgeCalcAt, setHasAgeCalcAt] = useState(!!editEvent?.ageCalcAt);
+  const [ageCalcAt, setAgeCalcAt] = useState(editEvent?.ageCalcAt ?? `${defaultStart}T00:00`);
   // Fees
   const [entryFee, setEntryFee] = useState(String(editEvent?.entryFee ?? 60));
   const [secondFee, setSecondFee] = useState(String(editEvent?.secondDisciplineFee ?? 30));
@@ -141,6 +149,34 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
   const [changeFeeStartsAt, setChangeFeeStartsAt] = useState(
     editEvent?.changeFee?.startsAt ?? `${addDays(defaultStart, -21)}T00:00`,
   );
+  // Late registration (event-mgmt v2 §A): fee is added ON TOP of the entry fee.
+  const [hasLateReg, setHasLateReg] = useState(!!editEvent?.lateReg);
+  const [lateRegStartsAt, setLateRegStartsAt] = useState(
+    editEvent?.lateReg?.startsAt ?? `${addDays(defaultStart, -14)}T00:00`,
+  );
+  const [lateRegFee, setLateRegFee] = useState(String(editEvent?.lateReg?.fee ?? 20));
+  // Director contact (event-mgmt v2 §A): general to competitions + camps.
+  const [directorName, setDirectorName] = useState(editEvent?.director?.name ?? '');
+  const [directorEmail, setDirectorEmail] = useState(editEvent?.director?.email ?? '');
+  const [directorCc, setDirectorCc] = useState(editEvent?.director?.ccOnConfirmation ?? false);
+  // Capacity (event-mgmt v2 §A): stored only, NOT enforced yet.
+  const [capacityTotal, setCapacityTotal] = useState(String(editEvent?.capacity?.total ?? ''));
+  const [capacityPerDiscipline, setCapacityPerDiscipline] = useState<Partial<Record<Discipline, string>>>(
+    () => Object.fromEntries(
+      DISCIPLINES.map((d) => [d, editEvent?.capacity?.perDiscipline?.[d] != null ? String(editEvent.capacity.perDiscipline[d]) : '']),
+    ) as Partial<Record<Discipline, string>>,
+  );
+  const [capacityPerLevel, setCapacityPerLevel] = useState<Record<string, string>>(
+    () => Object.fromEntries(
+      Object.entries(editEvent?.capacity?.perLevel ?? {}).map(([id, n]) => [id, String(n)]),
+    ),
+  );
+  // Confirmation email override (event-mgmt v2 §A)
+  const [hasConfirmationEmail, setHasConfirmationEmail] = useState(!!editEvent?.confirmationEmail);
+  const [confirmationBodyHtml, setConfirmationBodyHtml] = useState(editEvent?.confirmationEmail?.bodyHtml ?? '');
+  const [confirmationFromAlias, setConfirmationFromAlias] = useState(editEvent?.confirmationEmail?.fromAlias ?? '');
+  const [confirmationReplyTo, setConfirmationReplyTo] = useState(editEvent?.confirmationEmail?.replyTo ?? '');
+  const [confirmationPreview, setConfirmationPreview] = useState(false);
   // Disciplines & sessions
   const [disciplines, setDisciplines] = useState<Discipline[]>(editEvent?.disciplines ?? []);
   const [sessions, setSessions] = useState<SessionDraft[]>(initialSessions);
@@ -221,6 +257,32 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
       if (!changeFeeStartsAt) return setError('Change fee needs a start date/time.');
     }
     if (hasEditLockout && !lastDateToEdit) return setError('Last date to edit needs a date/time, or turn the toggle off.');
+    if (hasAgeCalcAt && !ageCalcAt) return setError('Age-calculation date needs a date/time, or turn the toggle off.');
+    if (hasLateReg) {
+      const f = Number(lateRegFee);
+      if (!Number.isFinite(f) || f < 0) return setError('Late registration fee must be a valid dollar amount.');
+      if (!lateRegStartsAt) return setError('Late registration needs a start date/time.');
+    }
+    if (directorEmail.trim() && !directorName.trim()) return setError('Director name is required if a director email is set.');
+    if (capacityTotal.trim()) {
+      const t = Number(capacityTotal);
+      if (!Number.isFinite(t) || t < 0) return setError('Max total participants must be a valid number.');
+    }
+    for (const d of disciplines) {
+      const v = capacityPerDiscipline[d];
+      if (v && v.trim()) {
+        const n = Number(v);
+        if (!Number.isFinite(n) || n < 0) return setError(`${discLabel(d)} capacity must be a valid number.`);
+      }
+    }
+    for (const levelId of allCompetingLevelIds) {
+      const v = capacityPerLevel[levelId];
+      if (v && v.trim()) {
+        const n = Number(v);
+        if (!Number.isFinite(n) || n < 0) return setError('Per-level capacity must be a valid number.');
+      }
+    }
+    if (hasConfirmationEmail && !confirmationBodyHtml.trim()) return setError('Confirmation email needs a body, or turn the toggle off.');
 
     const nationals = kind === 'nationals';
     if (nationals && !sessions.some((s) => s.phase === 'prelim')) return setError('A Nationals event needs at least one prelim session.');
@@ -250,6 +312,45 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
       ...(hasBanner ? { bannerAddon: { price: Number(bannerPrice) } } : { bannerAddon: undefined }),
       ...(hasChangeFee ? { changeFee: { amount: Number(changeFeeAmount), startsAt: changeFeeStartsAt } } : { changeFee: undefined }),
       lastDateToEdit: hasEditLockout ? lastDateToEdit : null,
+      venue: venue.trim() || undefined,
+      streetAddress: streetAddress.trim() || undefined,
+      country: country.trim() || undefined,
+      hotelLink: hotelLink.trim() || undefined,
+      ageCalcAt: hasAgeCalcAt ? ageCalcAt : undefined,
+      ...(hasLateReg ? { lateReg: { startsAt: lateRegStartsAt, fee: Number(lateRegFee) } } : { lateReg: undefined }),
+      ...(directorName.trim()
+        ? { director: { name: directorName.trim(), email: directorEmail.trim(), ccOnConfirmation: directorCc } }
+        : { director: undefined }),
+      ...((capacityTotal.trim() || disciplines.some((d) => capacityPerDiscipline[d]?.trim()) || allCompetingLevelIds.some((id) => capacityPerLevel[id]?.trim()))
+        ? {
+            capacity: {
+              ...(capacityTotal.trim() ? { total: Number(capacityTotal) } : {}),
+              ...(disciplines.some((d) => capacityPerDiscipline[d]?.trim())
+                ? {
+                    perDiscipline: Object.fromEntries(
+                      disciplines.filter((d) => capacityPerDiscipline[d]?.trim()).map((d) => [d, Number(capacityPerDiscipline[d])]),
+                    ) as Partial<Record<Discipline, number>>,
+                  }
+                : {}),
+              ...(allCompetingLevelIds.some((id) => capacityPerLevel[id]?.trim())
+                ? {
+                    perLevel: Object.fromEntries(
+                      allCompetingLevelIds.filter((id) => capacityPerLevel[id]?.trim()).map((id) => [id, Number(capacityPerLevel[id])]),
+                    ),
+                  }
+                : {}),
+            },
+          }
+        : { capacity: undefined }),
+      ...(hasConfirmationEmail
+        ? {
+            confirmationEmail: {
+              bodyHtml: confirmationBodyHtml,
+              ...(confirmationFromAlias.trim() ? { fromAlias: confirmationFromAlias.trim() } : {}),
+              ...(confirmationReplyTo.trim() ? { replyTo: confirmationReplyTo.trim() } : {}),
+            },
+          }
+        : { confirmationEmail: undefined }),
       ...(nationals
         ? {
             kind: 'nationals' as const,
@@ -309,6 +410,14 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
           </select>
         </Field>
       </div>
+      <Field label="Venue name"><input className="input" value={venue} onChange={(e) => setVenue(e.target.value)} placeholder="e.g. University Arena" /></Field>
+      <div className="grid cols-3">
+        <Field label="Street address"><input className="input" value={streetAddress} onChange={(e) => setStreetAddress(e.target.value)} /></Field>
+        <Field label="Country"><input className="input" value={country} onChange={(e) => setCountry(e.target.value)} placeholder="United States" /></Field>
+        <Field label="Hotel block link" hint="URL to the room-block booking page.">
+          <input className="input" type="url" value={hotelLink} onChange={(e) => setHotelLink(e.target.value)} placeholder="https://…" />
+        </Field>
+      </div>
 
       {sectionTitle('Dates')}
       <div className="grid cols-3">
@@ -322,11 +431,36 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
         </Field>
       </div>
 
+      {/* Age-calculation date (event-mgmt v2 §A) */}
+      <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, marginTop: 8, marginBottom: hasAgeCalcAt ? 8 : 0 }}>
+        <input type="checkbox" checked={hasAgeCalcAt} onChange={(e) => setHasAgeCalcAt(e.target.checked)} /> Set an age-calculation date
+      </label>
+      {hasAgeCalcAt && (
+        <div className="grid cols-3" style={{ marginBottom: 8 }}>
+          <Field label={`Age calculated as of (${timezone})`} hint="Used for age-based level eligibility.">
+            <input className="input" type="datetime-local" value={ageCalcAt} onChange={(e) => setAgeCalcAt(e.target.value)} />
+          </Field>
+        </div>
+      )}
+
       {sectionTitle('Fees')}
       <div className="grid cols-3">
         <Field label="Entry fee ($)"><input className="input" type="number" min={0} step={5} value={entryFee} onChange={(e) => setEntryFee(e.target.value)} /></Field>
         <Field label="2nd discipline ($)"><input className="input" type="number" min={0} step={5} value={secondFee} onChange={(e) => setSecondFee(e.target.value)} /></Field>
       </div>
+
+      {/* Late registration (event-mgmt v2 §A) */}
+      <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, marginBottom: hasLateReg ? 8 : 0 }}>
+        <input type="checkbox" checked={hasLateReg} onChange={(e) => setHasLateReg(e.target.checked)} /> Charge a late registration fee
+      </label>
+      {hasLateReg && (
+        <div className="grid cols-3" style={{ marginBottom: 8 }}>
+          <Field label={`Late reg starts (${timezone})`}><input className="input" type="datetime-local" value={lateRegStartsAt} onChange={(e) => setLateRegStartsAt(e.target.value)} /></Field>
+          <Field label="Late fee ($)" hint="Added on top of the entry fee.">
+            <input className="input" type="number" min={0} step={5} value={lateRegFee} onChange={(e) => setLateRegFee(e.target.value)} />
+          </Field>
+        </div>
+      )}
 
       {/* Banquet */}
       <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, marginBottom: hasBanquet ? 8 : 0 }}>
@@ -396,6 +530,18 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
         </div>
       )}
 
+      {sectionTitle('Event director')}
+      <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '0 0 8px' }}>
+        Applies to both competitions and camps.
+      </p>
+      <div className="grid cols-3">
+        <Field label="Director name"><input className="input" value={directorName} onChange={(e) => setDirectorName(e.target.value)} /></Field>
+        <Field label="Director email"><input className="input" type="email" value={directorEmail} onChange={(e) => setDirectorEmail(e.target.value)} /></Field>
+      </div>
+      <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, marginTop: 4 }}>
+        <input type="checkbox" checked={directorCc} onChange={(e) => setDirectorCc(e.target.checked)} /> CC director on confirmation emails
+      </label>
+
       {sectionTitle('Disciplines & sessions')}
       <div style={{ display: 'flex', gap: 16, marginBottom: 10 }}>
         {DISCIPLINES.map((d) => (
@@ -457,6 +603,48 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
         </div>
       )}
 
+      {sectionTitle('Capacity (caps are not enforced yet)')}
+      <div className="grid cols-3">
+        <Field label="Max total participants">
+          <input className="input" type="number" min={0} step={1} value={capacityTotal} onChange={(e) => setCapacityTotal(e.target.value)} />
+        </Field>
+      </div>
+      {disciplines.length > 0 && (
+        <>
+          <div style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '4px 0 6px' }}>Per-discipline caps (optional)</div>
+          <div className="grid cols-3" style={{ marginBottom: 8 }}>
+            {disciplines.map((d) => (
+              <Field key={d} label={`${discLabel(d)} cap`}>
+                <input
+                  className="input" type="number" min={0} step={1}
+                  value={capacityPerDiscipline[d] ?? ''}
+                  onChange={(e) => setCapacityPerDiscipline((prev) => ({ ...prev, [d]: e.target.value }))}
+                />
+              </Field>
+            ))}
+          </div>
+        </>
+      )}
+      {allCompetingLevelIds.length > 0 && (
+        <>
+          <div style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '4px 0 6px' }}>Per-level caps (optional)</div>
+          <div className="grid cols-3" style={{ marginBottom: 8 }}>
+            {db.levels
+              .filter((l) => allCompetingLevelIds.includes(l.id))
+              .sort((a, b) => a.discipline.localeCompare(b.discipline) || a.order - b.order)
+              .map((l) => (
+                <Field key={l.id} label={`${discLabel(l.discipline)} ${l.name}`}>
+                  <input
+                    className="input" type="number" min={0} step={1}
+                    value={capacityPerLevel[l.id] ?? ''}
+                    onChange={(e) => setCapacityPerLevel((prev) => ({ ...prev, [l.id]: e.target.value }))}
+                  />
+                </Field>
+              ))}
+          </div>
+        </>
+      )}
+
       {kind === 'nationals' && (
         <>
           {sectionTitle('Finals & qualification')}
@@ -478,6 +666,55 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
             ))}
           </div>
         </>
+      )}
+
+      {sectionTitle('Confirmation email')}
+      <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, marginBottom: hasConfirmationEmail ? 8 : 0 }}>
+        <input type="checkbox" checked={hasConfirmationEmail} onChange={(e) => setHasConfirmationEmail(e.target.checked)} /> Customize the registration confirmation email
+      </label>
+      {hasConfirmationEmail && (
+        <div className="card card-pad" style={{ marginBottom: 8 }}>
+          <div className="grid cols-3" style={{ marginBottom: 10 }}>
+            <Field label="From alias" hint="Display name shown to recipients.">
+              <input className="input" value={confirmationFromAlias} onChange={(e) => setConfirmationFromAlias(e.target.value)} placeholder="e.g. Southeast Open 2027" />
+            </Field>
+            <Field label="Reply-to email"><input className="input" type="email" value={confirmationReplyTo} onChange={(e) => setConfirmationReplyTo(e.target.value)} /></Field>
+          </div>
+          <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '0 0 8px' }}>
+            Sent from the UCG address; the alias is the display name and replies go to the reply-to address.
+          </p>
+
+          <div style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'center' }}>
+            <span style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>Body HTML:</span>
+            <button
+              className={`btn small ${confirmationPreview ? 'primary' : 'ghost'}`}
+              style={{ marginLeft: 'auto' }}
+              onClick={() => setConfirmationPreview((v) => !v)}
+              type="button"
+            >{confirmationPreview ? 'Edit HTML' : 'Preview'}</button>
+          </div>
+          {confirmationPreview ? (
+            <div
+              style={{
+                minHeight: 160, maxHeight: 340, overflowY: 'auto',
+                border: '1px solid var(--line)', borderRadius: 6,
+                padding: '10px 14px', background: '#fff', color: '#111',
+                fontSize: 14, lineHeight: 1.6,
+              }}
+              // Admin-authored HTML, mirrors Communicate.tsx's preview pane.
+              dangerouslySetInnerHTML={{ __html: confirmationBodyHtml }}
+            />
+          ) : (
+            <textarea
+              className="input"
+              rows={8}
+              style={{ fontFamily: 'monospace', fontSize: 12.5, resize: 'vertical' }}
+              placeholder={'<h1>You\'re registered!</h1>\n<p>…</p>'}
+              value={confirmationBodyHtml}
+              onChange={(e) => setConfirmationBodyHtml(e.target.value)}
+            />
+          )}
+        </div>
       )}
 
       {sectionTitle('Status')}

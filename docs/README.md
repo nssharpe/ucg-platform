@@ -44,7 +44,7 @@ Live build/tooling notes live in [`../CLAUDE.md`](../CLAUDE.md); open work is th
 | [dev-test-auth](specs/2026-06-25-dev-test-auth.md) | Dev-only real auto-login of a seeded Supabase test user (`.env.local`-gated) so authenticated UI is exercisable locally | ✅ shipped |
 | [stripe-integration](specs/2026-06-25-stripe-integration.md) | Stripe Embedded Checkout architecture (S1–S5) | ✅ shipped |
 | [security-review-findings (7/02)](specs/2026-07-02-security-review-findings.md) | Deep review of the money paths: RLS, edge functions, cart state machine — verified findings by severity | 🟡 findings logged; fixes planned |
-| [event-management-v2-requirements](specs/2026-07-06-event-management-v2-requirements.md) | Julia's full event-management requirements (7/06) digested + gap-mapped: host dashboard, refunds, capacity/waitlists, add-ons v2, nationals ops, finance dashboards — phasing V2-P0…P6 | 🟡 validated (phasing approved, §N7 answered); build not started |
+| [event-management-v2-requirements](specs/2026-07-06-event-management-v2-requirements.md) | Julia's full event-management requirements (7/06) digested + gap-mapped: host dashboard, refunds, capacity/waitlists, add-ons v2, nationals ops, finance dashboards — phasing V2-P0…P6 | 🟡 validated (phasing approved, §N7 answered); **P0 build started** — scheduler infra (Task 1) shipped |
 
 ## Plans (`plans/`) — step-by-step implementation records
 
@@ -121,6 +121,35 @@ here — update THIS list when priorities change, not rival copies.
   **Phasing approved by Nate 2026-07-06:** V2-P0 foundations/scheduler →
   P1 host experience → P2 add-ons & camps → P3 refunds → P4 capacity/waitlists &
   by-session reg → P5 nationals ops/check-in → P6 finance dashboards.
+  **P0 Task 1 shipped:** pg_cron/pg_net scheduler infra (`notification_log` +
+  `scheduled-dispatch-15min` job + `scheduled-dispatch` Edge Function, service-role-only
+  auth) with its first consumer — 3d/1d/closed sanction-vote reminder emails, idempotent
+  via `notification_log`. Runbook in `supabase/README.md` → "Scheduled dispatch (pg_cron)"
+  (the two Vault secrets still need manual per-environment setup before the cron job can
+  actually fire).
+  **P0 Task 2 shipped:** event entity field extensions (spec §A) — venue/street/country/
+  hotel-block link, age-calc date, late registration config (`Event.lateReg`), a general
+  (not camp-only) director contact, capacity config (stored, not enforced yet), and a
+  confirmation-email override with an HTML preview in EventWizard. Migration backfilled
+  `camp_config`'s director/age-calc keys onto the new event-level fields. Sanction.tsx's
+  approval mapping carries venue/street/country/late-reg into the created event.
+  **P0 Task 3 shipped:** late-registration fee pricing — the surcharge applies once per
+  athlete per event (not per-discipline), waived for host-club regs, never affecting
+  change fees, and attaching ONLY to the purchase line that contains the athlete's
+  EARLIEST-created registration for that event (`lateFeeAnchor`, id tie-break — the
+  controller-review fix that stops repeat purchases / second saves from re-adding the
+  fee). `registrationEntryFee`/`newRegistrationEntryTotal` (`src/lib/pricing.ts`) take
+  an optional `late` param; `create-checkout-session` recomputes server-side from
+  `late_reg` + `created_at` (mirrored in `_shared/stripe.ts`, same pattern as the
+  service fee).
+  **P0 Task 4 shipped:** per-event confirmation email — `stripe-webhook`'s receipt now
+  renders each purchased event's `confirmation_email.bodyHtml` above the receipt table,
+  cc's the event director when `ccOnConfirmation`, and applies reply-to / from-alias
+  when exactly one distinct value exists across the cart's events (`_shared/resend.ts`
+  gained `reply_to` + display-name-only `fromName`).
+  **P0 deploy state (2026-07-07):** staging fully deployed + E2E green (5/5).
+  Prod is PENDING Nate: vault secrets (both envs), prod `supabase db push`, the three
+  prod function deploys (`stripe-webhook` with `--no-verify-jwt`!), then merge to main.
   §N7 open questions **all answered by Julia 2026-07-06** (recorded in the spec;
   every phase is unblocked — only the §F partial-fit capacity design wants a
   confirm at P4 kickoff). This absorbs several

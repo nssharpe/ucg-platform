@@ -20,6 +20,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
   addonPriceDollars,
   getStripe,
+  lateFeeAnchor,
   membershipFeeDollars,
   newRegistrationEntryTotalDollars,
   priceForTypesDollars,
@@ -63,6 +64,7 @@ interface RegRow {
   refunded: boolean;
   paid: boolean | null;
   updated_pending: boolean | null;
+  created_at?: string;
 }
 
 Deno.serve(async (req) => {
@@ -138,7 +140,7 @@ Deno.serve(async (req) => {
   if (allRefRegIds.length) {
     const { data: rr, error: rrErr } = await db
       .from('registrations')
-      .select('id, event_id, athlete_id, club_id, refunded, paid, updated_pending')
+      .select('id, event_id, athlete_id, club_id, refunded, paid, updated_pending, created_at')
       .in('id', allRefRegIds);
     if (rrErr) return json({ ok: false, error: rrErr.message }, 500);
     regsByLine = (rr ?? []) as RegRow[];
@@ -176,13 +178,13 @@ Deno.serve(async (req) => {
   if (eventIds.length) {
     const { data: mr, error: mErr } = await db
       .from('events')
-      .select('id, host_club_id, entry_fee, second_discipline_fee, change_fee, tshirt_addon, banner_addon')
+      .select('id, host_club_id, entry_fee, second_discipline_fee, change_fee, tshirt_addon, banner_addon, late_reg')
       .in('id', eventIds);
     if (mErr) return json({ ok: false, error: mErr.message }, 500);
     events = new Map((mr ?? []).map((m) => [m.id as string, m as unknown as RegFeeEvent]));
     const { data: amr, error: amErr } = await db
       .from('registrations')
-      .select('id, event_id, athlete_id, club_id, refunded')
+      .select('id, event_id, athlete_id, club_id, refunded, created_at')
       .in('event_id', eventIds)
       .eq('refunded', false);
     if (amErr) return json({ ok: false, error: amErr.message }, 500);
@@ -360,8 +362,23 @@ Deno.serve(async (req) => {
           (r.club_id ?? '') === competingClubId &&
           !lineRegIds.has(r.id),
         ).length;
+        // Late-registration fee attachment (emv2 P0 Task 3, corrected): the
+        // surcharge attaches ONLY to the line CONTAINING the athlete's
+        // earliest-created reg for this event+club (`lateFeeAnchor` returns
+        // that line's anchor or null) — otherwise every later entry purchase
+        // would re-add a fee already charged with the athlete's first line.
+        // MIRRORS src/lib/pricing.ts's `lateFeeAnchor` — keep in sync.
+        const athleteEventRegs = allEventRegs.filter((r) =>
+          r.event_id === reg.event_id &&
+          r.athlete_id === reg.athlete_id &&
+          (r.club_id ?? '') === competingClubId,
+        );
+        const lineRegs = athleteEventRegs.filter((r) => lineRegIds.has(r.id));
+        const outsideRegs = athleteEventRegs.filter((r) => !lineRegIds.has(r.id));
+        const anchor = lateFeeAnchor(lineRegs, outsideRegs, new Date().toISOString());
         pushLine(i.id, i.label, newRegistrationEntryTotalDollars(event, {
           competingClubId, priorDisciplineCount, newDisciplineCount,
+          late: anchor ? { earliestCreatedAtISO: anchor } : undefined,
         }), 'meet-entry', reg.event_id);
       }
       continue;

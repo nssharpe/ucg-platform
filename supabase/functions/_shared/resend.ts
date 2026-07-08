@@ -27,9 +27,25 @@ function apiKey(): string {
 export interface EmailMessage {
   to: string | string[];
   cc?: string | string[];
+  /** Replies go here instead of the from address (Resend `reply_to`). */
+  reply_to?: string | string[];
+  /** Overrides the DISPLAY NAME of the sender only — the address part always
+   *  stays RESEND_FROM's verified address (arbitrary from-addresses won't
+   *  deliver; per-event "from" is alias + reply_to by design, emv2 §N7-6). */
+  fromName?: string;
   subject: string;
   html?: string;
   text?: string;
+}
+
+/** RESEND_FROM with its display name swapped to `name` (address unchanged).
+ *  Falls back to RESEND_FROM verbatim when no name is given. */
+function fromWithName(name?: string): string {
+  const base = resendFrom();
+  if (!name) return base;
+  const addr = base.match(/<([^>]+)>/)?.[1] ?? base;
+  // Quote the display name; strip quote/angle chars that could break the header.
+  return `"${name.replace(/["<>]/g, '')}" <${addr}>`;
 }
 
 export interface BatchResult {
@@ -47,7 +63,7 @@ export async function sendOne(msg: EmailMessage): Promise<{ id: string }> {
   const res = await fetch(EMAILS_URL, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey()}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: resendFrom(), to: msg.to, cc: msg.cc, subject: msg.subject, html: msg.html, text: msg.text }),
+    body: JSON.stringify({ from: fromWithName(msg.fromName), to: msg.to, cc: msg.cc, reply_to: msg.reply_to, subject: msg.subject, html: msg.html, text: msg.text }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body?.message ?? `Resend error (${res.status})`);
@@ -62,7 +78,7 @@ export async function sendOne(msg: EmailMessage): Promise<{ id: string }> {
  *  bounces are not reflected here (they'd need Resend webhooks). */
 export async function sendBatch(messages: EmailMessage[]): Promise<BatchResult> {
   if (messages.length === 0) return { ok: true, sentCount: 0, failedCount: 0, sent: [], failed: [] };
-  const payload = messages.map((m) => ({ from: resendFrom(), to: m.to, cc: m.cc, subject: m.subject, html: m.html, text: m.text }));
+  const payload = messages.map((m) => ({ from: fromWithName(m.fromName), to: m.to, cc: m.cc, reply_to: m.reply_to, subject: m.subject, html: m.html, text: m.text }));
   const res = await fetch(BATCH_URL, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey()}`, 'Content-Type': 'application/json' },

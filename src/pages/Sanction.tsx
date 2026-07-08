@@ -861,6 +861,12 @@ export function SanctionVotePage() {
         sanctionId: sid,
         ...(p.tshirtAddon ? { tshirtAddon: p.tshirtAddon as Event['tshirtAddon'] } : {}),
         ...(p.wantBanner ? { bannerAddon: { price: 0 } } : {}),
+        ...(p.venue ? { venue: String(p.venue) } : {}),
+        ...(p.street ? { streetAddress: String(p.street) } : {}),
+        ...(p.country ? { country: String(p.country) } : {}),
+        // Sanction form only collects a yes/no "hotel block wanted" — no URL yet,
+        // so hotelLink is left for the host to fill in after the event is created.
+        ...(p.lateRegStart ? { lateReg: { startsAt: String(p.lateRegStart), fee: Number(p.lateFee) || 0 } } : {}),
       };
 
       mutate((d) => {

@@ -573,20 +573,27 @@ export type Database = {
       }
       events: {
         Row: {
+          age_calc_at: string | null
           banner_addon: Json | null
           banquet: Json | null
           camp_config: Json | null
+          capacity: Json | null
           change_fee: Json | null
           city: string | null
+          confirmation_email: Json | null
+          country: string | null
           created_at: string
+          director: Json | null
           disciplines: Database["public"]["Enums"]["discipline"][]
           end_date: string | null
           entry_fee: number
           event_type: string
           host_club_id: string | null
+          hotel_link: string | null
           id: string
           kind: Database["public"]["Enums"]["meet_kind"]
           last_date_to_edit: string | null
+          late_reg: Json | null
           name: string
           nationals_config: Json | null
           private_reg_code: string | null
@@ -598,24 +605,33 @@ export type Database = {
           start_date: string | null
           state: string | null
           status: Database["public"]["Enums"]["event_status"]
+          street_address: string | null
           timezone: string
           tshirt_addon: Json | null
+          venue: string | null
         }
         Insert: {
+          age_calc_at?: string | null
           banner_addon?: Json | null
           banquet?: Json | null
           camp_config?: Json | null
+          capacity?: Json | null
           change_fee?: Json | null
           city?: string | null
+          confirmation_email?: Json | null
+          country?: string | null
           created_at?: string
+          director?: Json | null
           disciplines?: Database["public"]["Enums"]["discipline"][]
           end_date?: string | null
           entry_fee?: number
           event_type?: string
           host_club_id?: string | null
+          hotel_link?: string | null
           id: string
           kind?: Database["public"]["Enums"]["meet_kind"]
           last_date_to_edit?: string | null
+          late_reg?: Json | null
           name: string
           nationals_config?: Json | null
           private_reg_code?: string | null
@@ -627,24 +643,33 @@ export type Database = {
           start_date?: string | null
           state?: string | null
           status?: Database["public"]["Enums"]["event_status"]
+          street_address?: string | null
           timezone?: string
           tshirt_addon?: Json | null
+          venue?: string | null
         }
         Update: {
+          age_calc_at?: string | null
           banner_addon?: Json | null
           banquet?: Json | null
           camp_config?: Json | null
+          capacity?: Json | null
           change_fee?: Json | null
           city?: string | null
+          confirmation_email?: Json | null
+          country?: string | null
           created_at?: string
+          director?: Json | null
           disciplines?: Database["public"]["Enums"]["discipline"][]
           end_date?: string | null
           entry_fee?: number
           event_type?: string
           host_club_id?: string | null
+          hotel_link?: string | null
           id?: string
           kind?: Database["public"]["Enums"]["meet_kind"]
           last_date_to_edit?: string | null
+          late_reg?: Json | null
           name?: string
           nationals_config?: Json | null
           private_reg_code?: string | null
@@ -656,8 +681,10 @@ export type Database = {
           start_date?: string | null
           state?: string | null
           status?: Database["public"]["Enums"]["event_status"]
+          street_address?: string | null
           timezone?: string
           tshirt_addon?: Json | null
+          venue?: string | null
         }
         Relationships: [
           {

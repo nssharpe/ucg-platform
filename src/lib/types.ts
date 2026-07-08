@@ -251,15 +251,36 @@ export interface Event {
   eventType?: 'competition' | 'camp';
   /** Auto-assigned on sanction approval: `YYYY_ST_###`. */
   sanctionId?: string;
-  /** Camp-only configuration (overnight survey, director cc, leo add-on, etc.). */
+  /** Camp-only configuration (overnight survey, leo add-on, etc.). Director
+   *  info and age-calc date moved to the general event-level fields below
+   *  (event-mgmt v2 Phase 0 §A) since they apply to competitions too. */
   campConfig?: {
     overnightSurvey?: boolean;
-    directorName?: string;
-    directorEmail?: string;
-    directorCcOnConfirmation?: boolean;
     leoAddon?: { price: number; sizes: string[] };
-    ageCalcAt?: string; // ISO datetime
   };
+  /** Venue name (distinct from city/state — e.g. "University Arena"). */
+  venue?: string;
+  streetAddress?: string;
+  /** Defaults to "United States" when set via the wizard/sanction form. */
+  country?: string;
+  /** Hotel room-block booking URL. */
+  hotelLink?: string;
+  /** When ages are calculated as-of, for age-based level eligibility. Applies
+   *  to all events (not just camps). */
+  ageCalcAt?: string; // ISO datetime
+  /** Late-registration window: fee is in dollars, added ON TOP of the entry
+   *  fee, effective from `startsAt`. */
+  lateReg?: { startsAt: string; fee: number };
+  /** Event director contact, general to competitions and camps. */
+  director?: { name: string; email: string; ccOnConfirmation: boolean };
+  /** Participant caps. Stored only — NOT enforced yet (a later phase). */
+  capacity?: {
+    total?: number;
+    perDiscipline?: Partial<Record<Discipline, number>>;
+    perLevel?: Record<string, number>;
+  };
+  /** Registration-confirmation email override. */
+  confirmationEmail?: { bodyHtml: string; fromAlias?: string; replyTo?: string };
 }
 
 export type SanctionStatus =
@@ -325,6 +346,13 @@ export interface Registration {
    *  shape future-proofs per-apparatus levels for MAG/WAG. Absent ⇒ use
    *  `levelId` for all events. */
   apparatusLevels?: Record<string, string>;
+  /** DB `created_at` (timestamptz), READ-ONLY: never written by `pushRegistration`
+   *  (the app's whole-row upsert never maps this column back, so the DB default
+   *  `now()` — stamped once at first INSERT — is preserved across edits). This is
+   *  the late-registration-fee anchor (emv2 P0 Task 3): the fee applies iff the
+   *  EARLIEST `createdAt` among an athlete's regs at an event is at/after
+   *  `Event.lateReg.startsAt`. Absent on a client-constructed (not-yet-saved) reg. */
+  createdAt?: string;
 }
 
 export interface Score {

@@ -5,7 +5,7 @@ import { Badge, Combo, Field, Modal, Tabs } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 import { pushRegistration, pushCart, syncSynchroPartnerLevelRemote } from '../lib/supabase';
 import { RegistrationEditor } from '../components/RegistrationEditor';
-import { newRegistrationEntryTotal, registrationChangeFee, changeIsEligible, syncSynchroPartnerLevel } from '../lib/pricing';
+import { newRegistrationEntryTotal, registrationChangeFee, changeIsEligible, syncSynchroPartnerLevel, lateFeeApplies, lateFeeAnchor } from '../lib/pricing';
 import type { RegChangeState } from '../lib/pricing';
 import { fmtMoney } from '../lib/scoring';
 import type { Athlete, Club, Level, Event, Registration, Season } from '../lib/types';
@@ -156,11 +156,20 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
 
       // Brand-new entry total for disciplines with no prior reg (host = $0).
       const priorDisciplineCount = existingForAthlete.filter((r) => r.apparatus.length > 0).length;
+      // Late-registration fee attachment (emv2 P0 Task 3, corrected): the
+      // surcharge attaches ONLY to the line containing the athlete's
+      // earliest-created reg for this event — `lateFeeAnchor` returns that
+      // line's anchor or null (⇒ no surcharge on this line). This branch only
+      // runs when `!editingExisting` (existingForAthlete is empty), so the
+      // anchor here is effectively "now" — computed generally for consistency
+      // with the other call sites.
+      const lateAnchor = lateFeeAnchor(newRegs, existingForAthlete, new Date().toISOString());
       const entryTotal = !editingExisting
         ? newRegistrationEntryTotal(event, {
             competingClubId: selectedClubId,
             priorDisciplineCount,
             newDisciplineCount: newRegs.length,
+            late: lateAnchor ? { earliestCreatedAtISO: lateAnchor } : undefined,
           })
         : 0;
 
@@ -251,9 +260,10 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
         pushCart(personId, cart, false);
       } else if (entryTotal > 0) {
         const cart = d.carts[personId] ?? (d.carts[personId] = []);
+        const lateSuffix = lateAnchor !== null && lateFeeApplies(event, lateAnchor) ? ' (incl. late fee)' : '';
         cart.push({
           id: `ci-${Date.now()}`,
-          label: `${event.name} entry — ${newRegs.map((r) => r.discipline).join('+')}`,
+          label: `${event.name} entry — ${newRegs.map((r) => r.discipline).join('+')}${lateSuffix}`,
           amount: entryTotal,
           kind: 'meet-entry',
           refUserId: personId,

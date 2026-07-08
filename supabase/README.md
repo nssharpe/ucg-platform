@@ -85,6 +85,9 @@ sequence numbers used in conversation. In order:
 | `20260704041049_event_last_date_to_edit.sql` | **Feedback tracker B4 (2 of 4).** Adds optional `events.last_date_to_edit` (nullable timestamptz, default NULL = no lockout). Past this date, only an admin or the event's HOST club's managers may still edit a registration — enforced server-side by a new `guard_registration_edit_lockout()` trigger (BEFORE INSERT/UPDATE/DELETE on `registrations`), mirroring `guard_registration_paid`'s established pattern exactly: privileged bypass FIRST (`auth.role() is null or 'service_role' or is_admin()`, so `stripe-webhook`'s post-payment writes are never blocked even if they land after the deadline), then re-`SELECT`s the pre-write row by `id` explicitly (not `tg_op`/`OLD`) to correctly detect a real edit vs. a genuinely new registration under the app's whole-row-upsert write pattern — the exact same upsert-trigger-phase trap `guard_registration_paid` hit once already (see `20260703034325`). DELETE is included (Club.tsx's saveRegs deletes rows for deselected disciplines, which is as much an edit as an UPDATE). Client-side UX mirror: `canStillEditRegistration()` (`src/lib/events-core.ts`, unit tested) hides the Edit button and shows "Edit locked"/"Edit deadline passed" in Club.tsx/MyRegistrations.tsx — NOT the authoritative gate, just avoids a confusing failed-save. Adversarially reviewed (no findings) and verified live: set a past deadline, confirmed a non-host club manager sees "Edit locked" while an admin still sees "Edit". **(applied 2026-07-04)** |
 | `20260704044529_sync_synchro_partner_level.sql` + `20260704133502_fix_sync_synchro_auth_null_bypass.sql` + `20260704133734_sync_synchro_revoke_public_grant.sql` | **Feedback tracker B4 (4 of 4, final sub-item).** T&T synchro ("SY") same-level auto-sync: whoever actively selects a partner sets the SY level for BOTH (Nate: "if A is HF and selects B (previously NF), the pair gets registered ... as a High Flyer synchro pair" — not a validation, an active push). A new `sync_synchro_partner_level(p_my_reg_id, p_sy_level)` SECURITY DEFINER RPC exists because the caller (an athlete saving their own registration, or their club manager) generally lacks RLS write access to the PARTNER's own registration row (a different athlete, often a different club) — the RPC re-derives the partner from the caller's OWN just-saved registration and re-authorizes server-side before updating only that row's `apparatus_levels->>'SY'` key. **CRITICAL bug caught by adversarial review in the first draft**: the auth check `if not (is_admin() or athlete_id = my_person_id() or manages_club(club_id))` copied the `regs_write` RLS policy's EXPRESSION but not its fail-CLOSED semantics — for an anonymous caller `my_person_id()` is null, so the OR-chain evaluates to Postgres's three-valued NULL (not false), and `if not NULL` does not raise, silently ALLOWING the write; since the function is SECURITY DEFINER this bypassed RLS entirely. Fixed by wrapping the predicate in `coalesce(..., false)` (verified live: the same anon-equivalent call now correctly raises "not authorized"); a follow-up migration also revoked the default Postgres `PUBLIC` execute grant and the unneeded `anon` grant (defense-in-depth; the real fix is the coalesce, this alone would not have closed the hole). `registrations_edit_lockout`/`guard_registration_paid` still apply to this RPC's UPDATE (SECURITY DEFINER changes the executing role for permission checks, not what `auth.uid()`/`is_admin()`/`manages_club()` read). Deliberately leaves `paid`/`updated_pending` untouched (a free administrative sync, matching the B8 apparatus-tweak-is-free precedent) — flagged for Nate as a minor economic asymmetry (a level change that would be chargeable through the front-door editor is free via this sync onto an already-paid partner), not a security issue. **(applied 2026-07-04)** |
 | `20260703132252_add_fee_invoice_item_kind.sql` | **Bug fix: missing cents in Purchase History/receipts.** Adds `'fee'` to the `invoice_item_kind` enum (shared by `invoice_items.kind` and `cart_items.kind`). Entry/membership/change fees are always whole-dollar configured amounts — the Stripe service fee (3%+$0.30) was the only source of cents in what a customer actually paid, but it was shown at checkout and in the receipt EMAIL only, never persisted as its own `invoice_items` row, so Purchase History / the receipt PDF / the invoice detail modal always summed to a whole-dollar total. `stripe-webhook`'s `fulfill()` now also writes a `kind:'fee'` line (`ii-<payment.id>-fee`, deterministic/idempotent) whenever `payments.service_fee > 0`. No charge/fee calculation changed — this only adds a previously-missing line for money already collected. **(applied 2026-07-03)** |
+| `20260706192423_notification_log.sql` | **Event-management v2 Phase 0.** `notification_log` — dedupe/idempotency ledger for scheduled/automated notifications (`id` = deterministic `'<kind>:<ref_id>:<recipient>'`, unique `(kind, ref_id, recipient)`). Service-role only: RLS enabled with NO policies, and default `public`/`anon`/`authenticated` grants revoked. First consumer: `scheduled-dispatch`'s sanction-vote reminder emails. |
+| `20260706192445_scheduled_dispatch_cron.sql` | **Event-management v2 Phase 0.** The platform's first scheduled job: `pg_cron`/`pg_net` extensions + a `scheduled-dispatch-15min` cron job (`*/15 * * * *`) that POSTs to the `scheduled-dispatch` Edge Function with a service-role bearer token, both read from Supabase Vault (`project_url`/`service_role_key` — NOT hardcoded, NOT created by this migration). Idempotent: unschedules any existing same-named job first. See "Scheduled dispatch (pg_cron)" below for the manual per-environment secret setup + verification queries. |
+| `20260706193421_event_v2_fields.sql` | **Event-management v2 Phase 0, Task 2 (spec §A).** Adds scalar `events.venue`/`street_address`/`country`/`hotel_link`/`age_calc_at`, plus jsonb `late_reg` (`{startsAt, fee}` — fee in dollars, matching the `entry_fee`/`change_fee` convention), `director` (`{name, email, ccOnConfirmation}` — now general to all events, not camp-only), `capacity` (`{total?, perDiscipline?, perLevel?}` — stored only, NOT enforced yet), and `confirmation_email` (`{bodyHtml, fromAlias?, replyTo?}`). Backfills `director`/`age_calc_at` from `camp_config`'s `directorName`/`directorEmail`/`directorCcOnConfirmation`/`ageCalcAt` for existing rows, then strips those four keys from `camp_config` (nulling it out if that leaves it empty). Fields and config only in this migration — no cap enforcement (still stored-only). Late-fee **pricing** behavior (once-per-athlete surcharge, server-recomputed in `create-checkout-session`) shipped in Task 3 with no additional migration — see `docs/README.md`'s emv2 P0 Task 3 note. |
 
 > **Naming note (rename applied 2026-06-27):** the schema descriptions above that
 > predate these two migrations still say `meets`/`meet_id`/`ref_meet_id`/
@@ -123,6 +126,7 @@ is the only admin-gated sender.
 | `notify-manager-access-denied` | Emails the requester that their Club Admin request was not approved. Token-gated (deploy `--no-verify-jwt`); resolves recipient server-side; fails closed unless the request is `denied`. | no-login (secret token) |
 | `notify-sanction` | Sanction lifecycle emails (submitted → team+admins; approved/rejected → requester). | any signed-in member |
 | `create-checkout-session` | Stripe Embedded Checkout. As of **S4** generalized to **every** cart-line kind (membership / club-membership / member-targeted membership / meet entry / change fee / addon) for **both** self carts and manager-paid club carts. **Recomputes** all amounts server-side (cart `amount` never trusted) — season fees + existing memberships for memberships; meet config (honoring host-club $0) keyed on the new `ref_meet_id`/`ref_line_type` tags for entries/changes/addons — adds the service fee (`processingFee`), creates the session (`ui_mode:'embedded'`, no redirect), inserts a `pending` `payments` row. Returns `{ clientSecret, sessionId, paymentId }`. | any signed-in member (own cart) / club manager (club cart) |
+| `scheduled-dispatch` | Invoked every 15 min by the `scheduled-dispatch-15min` pg_cron job. Sanction-vote reminder emails (3-day / 1-day / voting-closed nudge) to Sanctioning Team + admins who haven't voted; idempotent via `notification_log`. Gateway keeps `verify_jwt = true`, AND the function itself requires the bearer token to equal `SUPABASE_SERVICE_ROLE_KEY` exactly — no user-JWT path. | pg_cron only (service-role bearer) |
 | `stripe-webhook` | The sole completer. Verifies the Stripe signature with `constructEventAsync` against `STRIPE_WEBHOOK_SECRET` (**fail-closed** if unset). On `session.completed`/`async_payment_succeeded` runs **idempotent** fulfillment (event-id + `fulfilled_at` guarded) for all line kinds (S4): flip the exact `registrations.paid` via `ref_reg_ids`, activate membership(s) + club memberships, write the paid invoice with the **real** `stripe_fee` (billed to the **club** via `invoices.club_id` for club carts, to the payer for self carts), clear cart lines, email the **payer** a receipt (the paying manager for a club cart). On `expired`/`async_payment_failed` → mark `failed`. | Stripe (no JWT; deploy `--no-verify-jwt`; signature-verified) |
 
 Stripe functions share `functions/_shared/stripe.ts` (Stripe client via `npm:stripe`,
@@ -297,6 +301,43 @@ routes to the cart — it does NOT create an active row. The `club_memberships` 
 (status `active`) only when that cart line is **paid** in `ClubCart` (so the gate stays false
 until payment). League admins still grant/revoke any season directly. The gate is ON.
 
+## Scheduled dispatch (pg_cron)
+
+`supabase/migrations/20260706192445_scheduled_dispatch_cron.sql` schedules a
+`pg_cron` job named **`scheduled-dispatch-15min`** that runs every 15 minutes
+(`*/15 * * * *`) and, via `pg_net.http_post`, POSTs an empty JSON body to
+`<project_url>/functions/v1/scheduled-dispatch` with an
+`Authorization: Bearer <service_role_key>` header. The Edge Function fans out
+to whatever scheduled work exists — today that's sanction-request voting
+reminders (3 days / 1 day before `sanction_requests.deadline_at`, plus a
+"voting closed" nudge at the deadline) to Sanctioning Team + admins who
+haven't yet voted, deduped idempotently via `notification_log`.
+
+**Two secrets, created manually per environment** (NOT via migration — the
+migration only reads them):
+
+```sql
+select vault.create_secret('https://<project-ref>.supabase.co', 'project_url');
+select vault.create_secret('<service-role-key>', 'service_role_key');
+```
+
+Run once against prod (`wkyerxlgricfphopocoz`) and once against staging
+(`xogpiksqtkayxwmczlbx`) with each project's own URL/key.
+
+**Verify the job is scheduled and running:**
+
+```sql
+select * from cron.job;
+select * from cron.job_run_details order by start_time desc limit 5;
+```
+
+**Critical:** `scheduled-dispatch` must stay `verify_jwt = true` at the
+gateway — unlike `stripe-webhook`/`sms-webhook`/`notify-manager-access-denied`,
+it does NOT get `--no-verify-jwt`. The gateway's JWT check alone isn't the
+real authorization boundary though — the function additionally requires the
+bearer token to equal `SUPABASE_SERVICE_ROLE_KEY` exactly (fail-closed, no
+user-JWT path), which is what actually restricts calls to the pg_cron job.
+
 ## Observability
 
 - `comm_log` — every Communicate send; surfaced in Communicate → "Communication history".
@@ -310,8 +351,10 @@ Payments are **built and deployed in test mode** (Stripe Embedded Checkout, Phas
 `payments`/`invoices`/`cart_items` tables + the `create-checkout-session`/`stripe-webhook`
 functions above; finance fee/payment-intent wiring done; security hardening Phases 1–2
 applied). Remaining before real money flows: Nate runs the go-live checklist (live keys).
-Still future: the membership-expiry notification cron, scheduled database backups, and the
-public API surface for other leagues. (Waiver e-signature **is** built — migrations 0010–0030 +
+Still future: a membership-expiry notification consumer on the new `scheduled-dispatch`
+job (see "Scheduled dispatch (pg_cron)" above — the scheduler infra now exists; sanction-
+vote reminders are its first consumer), scheduled database backups, and the public API
+surface for other leagues. (Waiver e-signature **is** built — migrations 0010–0030 +
 `record-waiver-signature` / `request-guardian-waiver`; it stores a structured signature
 evidence record. PDF proof and receipts are generated **client-side** (jsPDF) on demand;
 server-emailed PDF attachments will come with the payments work.)

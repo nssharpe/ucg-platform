@@ -9,7 +9,7 @@ import { useToast } from '../components/ui-hooks';
 import { STATE_REGIONS } from '../lib/types';
 import type { Athlete, Club, Registration, Season } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
-import { newRegistrationEntryTotal, reassignPartners, registrationChangeFee, changeIsEligible, syncSynchroPartnerLevel, findIncomingSynchroPartner } from '../lib/pricing';
+import { newRegistrationEntryTotal, reassignPartners, registrationChangeFee, changeIsEligible, syncSynchroPartnerLevel, findIncomingSynchroPartner, lateFeeApplies, lateFeeAnchor } from '../lib/pricing';
 import type { RegChangeState } from '../lib/pricing';
 import {
   deleteRegistration, pushCart, pushClub, pushClubManager,
@@ -755,6 +755,18 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
     new Date() >= new Date(event.changeFee.startsAt)
   );
 
+  // Late-registration fee attachment (emv2 P0 Task 3, corrected): the
+  // surcharge attaches ONLY to the line containing the athlete's
+  // earliest-created reg for this event+club — `lateFeeAnchor` (pricing.ts)
+  // returns that line's anchor timestamp or null (⇒ no surcharge on this
+  // line; it was, or will be, carried by the first line). This is what makes
+  // the fee once-per-athlete across repeat purchases and multi-save carts.
+  const lateAnchorFor = (lineRegs: Registration[], outsideRegs: Registration[]) =>
+    lateFeeAnchor(lineRegs, outsideRegs, new Date().toISOString());
+  /** " (incl. late fee)" suffix for an entry-line label when the surcharge applied. */
+  const lateFeeSuffix = (anchor: string | null) =>
+    anchor !== null && lateFeeApplies(event, anchor) ? ' (incl. late fee)' : '';
+
   // All non-refunded regs for this event + club
   const allRegs = db.registrations.filter(
     (r) => r.eventId === event.id && r.clubId === clubId && !r.refunded,
@@ -857,11 +869,13 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
       const priorById = new Map(existingForAthlete.map((r) => [r.id, r]));
       const newOnlyRegs = newRegs.filter((r) => !priorById.has(r.id));
       const priorDisciplineCount = existingForAthlete.filter((r) => r.apparatus.length > 0).length;
+      const editLateAnchor = lateAnchorFor(newOnlyRegs, existingForAthlete);
       const entryTotal = !opts?.skipEntryFeeLine && newOnlyRegs.length > 0
         ? newRegistrationEntryTotal(event, {
             competingClubId: clubId,
             priorDisciplineCount,
             newDisciplineCount: newOnlyRegs.length,
+            late: editLateAnchor ? { earliestCreatedAtISO: editLateAnchor } : undefined,
           })
         : 0;
 
@@ -968,7 +982,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
         addedEntryFee = entryTotal;
         cart.push({
           id: `ci-${Date.now()}-${athleteId}`,
-          label: `${event.name} entry — ${athlete.firstName} ${athlete.lastName} (${newOnlyRegs.map((r) => r.discipline).join('+')})`,
+          label: `${event.name} entry — ${athlete.firstName} ${athlete.lastName} (${newOnlyRegs.map((r) => r.discipline).join('+')})${lateFeeSuffix(editLateAnchor)}`,
           amount: entryTotal,
           kind: 'meet-entry',
           refUserId: athleteId,
@@ -1004,10 +1018,12 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
         (r) => r.eventId === event.id && r.athleteId === athleteId && r.clubId === clubId && !r.refunded,
       );
       const priorDisciplineCount = existingForAthlete.length;
+      const addAnchor = lateAnchorFor(regs, existingForAthlete);
       const entryTotal = newRegistrationEntryTotal(event, {
         competingClubId: clubId,
         priorDisciplineCount,
         newDisciplineCount: regs.length,
+        late: addAnchor ? { earliestCreatedAtISO: addAnchor } : undefined,
       });
       hostFree = entryTotal === 0;
       // Stamp paid status on the new regs (saveRegs upserts them below).
@@ -1037,16 +1053,19 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
       );
       const athlete = d.people.find((p) => p.id === athleteId)!;
       if (!already.has(athleteId)) {
+        const priorRegsForLine = d.registrations.filter(
+          (r) => r.eventId === event.id && r.athleteId === athleteId && r.clubId === clubId && !r.refunded
+            && !regs.some((nr) => nr.id === r.id),
+        );
+        const lineAnchor = lateAnchorFor(regs, priorRegsForLine);
         cart.push({
           id: `ci-${Date.now()}-${athleteId}`,
-          label: `${event.name} entry — ${athlete.firstName} ${athlete.lastName} (${regs.map((r) => r.discipline).join('+')})`,
+          label: `${event.name} entry — ${athlete.firstName} ${athlete.lastName} (${regs.map((r) => r.discipline).join('+')})${lateFeeSuffix(lineAnchor)}`,
           amount: newRegistrationEntryTotal(event, {
             competingClubId: clubId,
-            priorDisciplineCount: d.registrations.filter(
-              (r) => r.eventId === event.id && r.athleteId === athleteId && r.clubId === clubId && !r.refunded
-                && !regs.some((nr) => nr.id === r.id),
-            ).length,
+            priorDisciplineCount: priorRegsForLine.length,
             newDisciplineCount: regs.length,
+            late: lineAnchor ? { earliestCreatedAtISO: lineAnchor } : undefined,
           }),
           kind: 'meet-entry',
           refUserId: athleteId,
