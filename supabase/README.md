@@ -88,6 +88,7 @@ sequence numbers used in conversation. In order:
 | `20260706192423_notification_log.sql` | **Event-management v2 Phase 0.** `notification_log` — dedupe/idempotency ledger for scheduled/automated notifications (`id` = deterministic `'<kind>:<ref_id>:<recipient>'`, unique `(kind, ref_id, recipient)`). Service-role only: RLS enabled with NO policies, and default `public`/`anon`/`authenticated` grants revoked. First consumer: `scheduled-dispatch`'s sanction-vote reminder emails. |
 | `20260706192445_scheduled_dispatch_cron.sql` | **Event-management v2 Phase 0.** The platform's first scheduled job: `pg_cron`/`pg_net` extensions + a `scheduled-dispatch-15min` cron job (`*/15 * * * *`) that POSTs to the `scheduled-dispatch` Edge Function with a service-role bearer token, both read from Supabase Vault (`project_url`/`service_role_key` — NOT hardcoded, NOT created by this migration). Idempotent: unschedules any existing same-named job first. See "Scheduled dispatch (pg_cron)" below for the manual per-environment secret setup + verification queries. |
 | `20260706193421_event_v2_fields.sql` | **Event-management v2 Phase 0, Task 2 (spec §A).** Adds scalar `events.venue`/`street_address`/`country`/`hotel_link`/`age_calc_at`, plus jsonb `late_reg` (`{startsAt, fee}` — fee in dollars, matching the `entry_fee`/`change_fee` convention), `director` (`{name, email, ccOnConfirmation}` — now general to all events, not camp-only), `capacity` (`{total?, perDiscipline?, perLevel?}` — stored only, NOT enforced yet), and `confirmation_email` (`{bodyHtml, fromAlias?, replyTo?}`). Backfills `director`/`age_calc_at` from `camp_config`'s `directorName`/`directorEmail`/`directorCcOnConfirmation`/`ageCalcAt` for existing rows, then strips those four keys from `camp_config` (nulling it out if that leaves it empty). Fields and config only in this migration — no cap enforcement (still stored-only). Late-fee **pricing** behavior (once-per-athlete surcharge, server-recomputed in `create-checkout-session`) shipped in Task 3 with no additional migration — see `docs/README.md`'s emv2 P0 Task 3 note. |
+| `20260708191920_scheduled_dispatch_cron_secret.sql` | **Scheduler auth fix.** Re-schedules `scheduled-dispatch-15min` to ALSO send an `x-cron-secret` header (Vault secret `cron_secret`, matching the function's `CRON_SECRET` secret) — the bearer-equals-`SUPABASE_SERVICE_ROLE_KEY` check 403'd every run on both envs because the Edge runtime's env key ≠ the legacy service-role JWT on new-API-key projects. See "Scheduled dispatch (pg_cron)" below. **Applied staging + prod 2026-07-08.** |
 
 > **Naming note (rename applied 2026-06-27):** the schema descriptions above that
 > predate these two migrations still say `meets`/`meet_id`/`ref_meet_id`/
@@ -313,30 +314,44 @@ reminders (3 days / 1 day before `sanction_requests.deadline_at`, plus a
 "voting closed" nudge at the deadline) to Sanctioning Team + admins who
 haven't yet voted, deduped idempotently via `notification_log`.
 
-**Two secrets, created manually per environment** (NOT via migration — the
-migration only reads them):
+**Three secrets, created manually per environment** (NOT via migration — the
+migrations only read them). **All set up in both envs 2026-07-08.**
 
 ```sql
 select vault.create_secret('https://<project-ref>.supabase.co', 'project_url');
 select vault.create_secret('<service-role-key>', 'service_role_key');
+select vault.create_secret('<random 64-hex>', 'cron_secret');
+```
+
+plus the matching function secret (SAME value as `cron_secret`):
+
+```
+supabase secrets set CRON_SECRET=<same value> --project-ref <ref>
 ```
 
 Run once against prod (`wkyerxlgricfphopocoz`) and once against staging
-(`xogpiksqtkayxwmczlbx`) with each project's own URL/key.
+(`xogpiksqtkayxwmczlbx`) with each project's own URL/key/secret.
 
 **Verify the job is scheduled and running:**
 
 ```sql
 select * from cron.job;
 select * from cron.job_run_details order by start_time desc limit 5;
+-- and the function's actual HTTP responses (200 = healthy; 403 = auth broken):
+select status_code, left(content, 120) from net._http_response order by id desc limit 3;
 ```
 
 **Critical:** `scheduled-dispatch` must stay `verify_jwt = true` at the
 gateway — unlike `stripe-webhook`/`sms-webhook`/`notify-manager-access-denied`,
 it does NOT get `--no-verify-jwt`. The gateway's JWT check alone isn't the
-real authorization boundary though — the function additionally requires the
-bearer token to equal `SUPABASE_SERVICE_ROLE_KEY` exactly (fail-closed, no
-user-JWT path), which is what actually restricts calls to the pg_cron job.
+real authorization boundary though — the function itself requires EITHER the
+bearer token to equal its `SUPABASE_SERVICE_ROLE_KEY` env OR the
+`x-cron-secret` header to equal its `CRON_SECRET` secret (fail-closed, no
+user-JWT path). The `x-cron-secret` path is the one that actually works in
+practice: on projects with new-style API keys the Edge runtime's
+`SUPABASE_SERVICE_ROLE_KEY` does NOT equal the legacy service-role JWT the
+cron sends as its bearer — every run 403'd in both envs until migration
+`20260708191920` added the header (observed live 2026-07-08).
 
 ## Observability
 

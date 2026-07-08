@@ -41,11 +41,22 @@ Deno.serve(async (req) => {
 
   const authHeader = req.headers.get('Authorization') ?? '';
   const token = authHeader.replace(/^Bearer\s+/i, '');
-  // Fail-closed: only the exact service-role key is accepted. The gateway's
-  // verify_jwt=true just confirms the token is *some* valid JWT (including a
-  // signed-in user's own JWT) — this equality check is what actually
-  // restricts the caller to the pg_cron job.
-  if (!token || token !== serviceKey) {
+  // Fail-closed caller restriction. The gateway's verify_jwt=true only
+  // confirms the token is *some* valid JWT (including a signed-in user's own
+  // JWT), so the function must pin the caller itself. Two accepted proofs:
+  //  1. bearer token === the runtime's SUPABASE_SERVICE_ROLE_KEY, OR
+  //  2. `x-cron-secret` header === the CRON_SECRET function secret.
+  // (2) exists because on projects with new-style API keys the Edge runtime's
+  // SUPABASE_SERVICE_ROLE_KEY does NOT equal the legacy service-role JWT the
+  // vault/cron sends as the bearer — observed live 2026-07-08 (403s in both
+  // envs). The cron job supplies BOTH headers (bearer for the gateway,
+  // x-cron-secret for this check). Missing CRON_SECRET env ⇒ that path is
+  // rejected, never open.
+  const cronSecret = Deno.env.get('CRON_SECRET') ?? '';
+  const cronHeader = req.headers.get('x-cron-secret') ?? '';
+  const viaServiceKey = !!token && token === serviceKey;
+  const viaCronSecret = !!cronSecret && !!cronHeader && cronHeader === cronSecret;
+  if (!viaServiceKey && !viaCronSecret) {
     return json({ ok: false, error: 'Forbidden' }, 403);
   }
 
