@@ -20,6 +20,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
   addonPriceDollars,
   getStripe,
+  lateFeeAnchor,
   membershipFeeDollars,
   newRegistrationEntryTotalDollars,
   priceForTypesDollars,
@@ -361,23 +362,23 @@ Deno.serve(async (req) => {
           (r.club_id ?? '') === competingClubId &&
           !lineRegIds.has(r.id),
         ).length;
-        // Late-registration fee anchor (emv2 P0 Task 3): the EARLIEST created_at
-        // among ALL of this athlete's non-refunded regs for this event+club —
-        // prior ones AND the ones this line is purchasing — per rule 2's
-        // once-per-athlete-per-event anchor ("the moment the athlete first
-        // registered"). MIRRORS src/lib/pricing.ts's per-page `lateFeeAnchor`.
+        // Late-registration fee attachment (emv2 P0 Task 3, corrected): the
+        // surcharge attaches ONLY to the line CONTAINING the athlete's
+        // earliest-created reg for this event+club (`lateFeeAnchor` returns
+        // that line's anchor or null) — otherwise every later entry purchase
+        // would re-add a fee already charged with the athlete's first line.
+        // MIRRORS src/lib/pricing.ts's `lateFeeAnchor` — keep in sync.
         const athleteEventRegs = allEventRegs.filter((r) =>
           r.event_id === reg.event_id &&
           r.athlete_id === reg.athlete_id &&
           (r.club_id ?? '') === competingClubId,
         );
-        const createdAts = athleteEventRegs.map((r) => r.created_at).filter((c): c is string => !!c);
-        const earliestCreatedAtISO = createdAts.length
-          ? createdAts.reduce((min, c) => (Date.parse(c) < Date.parse(min) ? c : min))
-          : new Date().toISOString();
+        const lineRegs = athleteEventRegs.filter((r) => lineRegIds.has(r.id));
+        const outsideRegs = athleteEventRegs.filter((r) => !lineRegIds.has(r.id));
+        const anchor = lateFeeAnchor(lineRegs, outsideRegs, new Date().toISOString());
         pushLine(i.id, i.label, newRegistrationEntryTotalDollars(event, {
           competingClubId, priorDisciplineCount, newDisciplineCount,
-          late: { earliestCreatedAtISO },
+          late: anchor ? { earliestCreatedAtISO: anchor } : undefined,
         }), 'meet-entry', reg.event_id);
       }
       continue;

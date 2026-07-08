@@ -85,11 +85,13 @@ export type RegFeeEvent = {
 };
 
 /**
- * Does the late-registration surcharge apply, given the EARLIEST `createdAt`
- * among the athlete's referenced registrations for this event? (Rule 1/2: the
- * anchor is registration-CREATION time, once per athlete per event — not
- * per-discipline, not payment time.) `>=` at the boundary applies the fee
- * (rule: "at or after"). No `lateReg` configured ⇒ never applies.
+ * Does the late-registration surcharge apply, given the anchor timestamp for
+ * an athlete+event+club — the EARLIEST `createdAt` across ALL of the athlete's
+ * regs there (the moment they first registered; creation time, never payment
+ * time)? `>=` at the boundary applies the fee ("at or after"). No `lateReg`
+ * configured ⇒ never applies. WHICH purchase line the surcharge attaches to is
+ * decided by `lateFeeAnchor` below (only the line CONTAINING the earliest reg)
+ * — this predicate only answers the in-window question for a given anchor.
  */
 export function lateFeeApplies(
   event: Pick<RegFeeEvent, 'lateReg'>,
@@ -97,6 +99,61 @@ export function lateFeeApplies(
 ): boolean {
   if (!event.lateReg) return false;
   return Date.parse(earliestCreatedAtISO) >= Date.parse(event.lateReg.startsAt);
+}
+
+/** Minimal registration slice `lateFeeAnchor` needs. */
+export type LateAnchorReg = { id: string; createdAt?: string };
+
+/**
+ * Late-fee ATTACHMENT rule (emv2 P0 Task 3, corrected 2026-07-06): the
+ * surcharge attaches ONLY to the purchase line that CONTAINS the athlete's
+ * earliest-created registration for that event+club. Without this, any entry
+ * line priced after the athlete's first in-window reg would re-add a fee
+ * already charged with the first line (repeat purchase months later, or a
+ * second save into the same cart).
+ *
+ * Given the regs referenced by THIS line (`lineRegs`) and the athlete's OTHER
+ * non-refunded regs at that event+club (`outsideRegs`, disjoint from the
+ * line), returns the anchor ISO — the overall-earliest `createdAt` across
+ * both sets — when the overall-earliest reg is IN the line, else null (⇒ the
+ * caller omits the `late` pricing input entirely, so no surcharge). Equal
+ * timestamps tie-break by reg id (lexicographic), so exactly ONE line can
+ * ever qualify. PURE: `nowISO` is a parameter, no Date.now() inside.
+ *
+ * Missing `createdAt` handling (client-constructed rows the store hasn't
+ * reloaded from the DB yet):
+ *  - a LINE reg with no `createdAt` is being created right now ⇒ sorts as
+ *    `nowISO` (latest);
+ *  - an OUTSIDE reg with no `createdAt` pre-exists this purchase by
+ *    construction (saved earlier this session, not yet re-synced) ⇒ the line
+ *    cannot contain the earliest reg ⇒ null. Fails toward NOT surcharging —
+ *    the server recomputes authoritatively from real DB timestamps at
+ *    checkout.
+ *
+ * MIRRORED IN supabase/functions/_shared/stripe.ts (`lateFeeAnchor`) — keep
+ * in sync.
+ */
+export function lateFeeAnchor(
+  lineRegs: LateAnchorReg[],
+  outsideRegs: LateAnchorReg[],
+  nowISO: string,
+): string | null {
+  if (lineRegs.length === 0) return null;
+  if (outsideRegs.some((r) => !r.createdAt)) return null;
+  type Entry = { t: number; id: string; iso: string; inLine: boolean };
+  const entries: Entry[] = [
+    ...lineRegs.map((r) => {
+      const iso = r.createdAt ?? nowISO;
+      return { t: Date.parse(iso), id: r.id, iso, inLine: true };
+    }),
+    ...outsideRegs.map((r) => ({ t: Date.parse(r.createdAt!), id: r.id, iso: r.createdAt!, inLine: false })),
+  ];
+  let earliest = entries[0];
+  for (let i = 1; i < entries.length; i++) {
+    const e = entries[i];
+    if (e.t < earliest.t || (e.t === earliest.t && e.id < earliest.id)) earliest = e;
+  }
+  return earliest.inLine ? earliest.iso : null;
 }
 
 /**

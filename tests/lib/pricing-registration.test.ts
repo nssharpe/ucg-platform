@@ -6,6 +6,7 @@ import {
   regChangeHasDiff,
   newRegistrationEntryTotal,
   lateFeeApplies,
+  lateFeeAnchor,
   type RegFeeEvent,
   type RegChangeState,
   type RegDisciplineEntry,
@@ -103,6 +104,65 @@ describe('lateFeeApplies', () => {
 
   it('is true after the window', () => {
     expect(lateFeeApplies(lateEvent, '2026-07-01T00:00:00Z')).toBe(true);
+  });
+});
+
+describe('lateFeeAnchor — surcharge attaches only to the line containing the earliest reg', () => {
+  const NOW = '2026-06-15T12:00:00Z'; // inside lateEvent's window
+
+  it('empty line ⇒ null', () => {
+    expect(lateFeeAnchor([], [{ id: 'a', createdAt: '2026-06-02T00:00:00Z' }], NOW)).toBe(null);
+  });
+
+  it('no outside regs ⇒ anchor is the line earliest (missing createdAt sorts as now)', () => {
+    expect(lateFeeAnchor([{ id: 'a' }], [], NOW)).toBe(NOW);
+    expect(lateFeeAnchor([{ id: 'a', createdAt: '2026-06-02T00:00:00Z' }, { id: 'b' }], [], NOW))
+      .toBe('2026-06-02T00:00:00Z');
+  });
+
+  it('repeat purchase: earliest reg already purchased outside the line ⇒ null (no re-surcharge)', () => {
+    // Athlete registered discipline A late (paid entry + late fee), later adds B.
+    const anchor = lateFeeAnchor(
+      [{ id: 'b', createdAt: '2026-06-20T00:00:00Z' }],
+      [{ id: 'a', createdAt: '2026-06-02T00:00:00Z' }],
+      NOW,
+    );
+    expect(anchor).toBe(null);
+  });
+
+  it('two saves into one cart: surcharge exactly once (line 1 yes, line 2 no)', () => {
+    const line1 = lateFeeAnchor([{ id: 'a', createdAt: '2026-06-10T00:00:00Z' }], [], NOW);
+    expect(line1).toBe('2026-06-10T00:00:00Z');
+    expect(lateFeeApplies(lateEvent, line1!)).toBe(true);
+    const line2 = lateFeeAnchor(
+      [{ id: 'b', createdAt: '2026-06-10T00:05:00Z' }],
+      [{ id: 'a', createdAt: '2026-06-10T00:00:00Z' }],
+      NOW,
+    );
+    expect(line2).toBe(null);
+  });
+
+  it('on-time original + late addition ⇒ line 2 gets null; line 1 anchor is pre-window (no fee either way)', () => {
+    const line2 = lateFeeAnchor(
+      [{ id: 'b', createdAt: '2026-06-20T00:00:00Z' }],
+      [{ id: 'a', createdAt: '2026-05-01T00:00:00Z' }],
+      NOW,
+    );
+    expect(line2).toBe(null);
+    // And had the first line been priced, its anchor is pre-window ⇒ no fee.
+    expect(lateFeeApplies(lateEvent, '2026-05-01T00:00:00Z')).toBe(false);
+  });
+
+  it('equal timestamps tie-break by reg id — exactly one line qualifies', () => {
+    const t = '2026-06-10T00:00:00Z';
+    const aLine = lateFeeAnchor([{ id: 'a', createdAt: t }], [{ id: 'b', createdAt: t }], NOW);
+    const bLine = lateFeeAnchor([{ id: 'b', createdAt: t }], [{ id: 'a', createdAt: t }], NOW);
+    expect(aLine).toBe(t);   // 'a' < 'b' ⇒ the line holding 'a' wins
+    expect(bLine).toBe(null);
+  });
+
+  it('outside reg missing createdAt (unsynced local row) ⇒ null (fail toward not surcharging)', () => {
+    expect(lateFeeAnchor([{ id: 'b', createdAt: '2026-06-20T00:00:00Z' }], [{ id: 'a' }], NOW)).toBe(null);
   });
 });
 

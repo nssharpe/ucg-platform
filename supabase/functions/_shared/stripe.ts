@@ -119,6 +119,51 @@ export function lateFeeAppliesDollars(
   return Date.parse(earliestCreatedAtISO) >= Date.parse(event.late_reg.startsAt);
 }
 
+/** Minimal registration slice `lateFeeAnchor` needs (snake_case DB cols). */
+export type LateAnchorRegRow = { id: string; created_at?: string | null };
+
+/**
+ * Late-fee ATTACHMENT rule (emv2 P0 Task 3, corrected): the surcharge
+ * attaches ONLY to the purchase line that CONTAINS the athlete's
+ * earliest-created registration for that event+club — otherwise any entry
+ * line priced after the athlete's first in-window reg would re-add a fee
+ * already charged with the first line (repeat purchase, or a second save
+ * into the same cart).
+ *
+ * Given the regs referenced by THIS line and the athlete's OTHER
+ * non-refunded regs at that event+club (disjoint from the line), returns the
+ * anchor ISO — the overall-earliest `created_at` across both sets — when the
+ * overall-earliest reg is IN the line, else null (⇒ no surcharge on this
+ * line). Equal timestamps tie-break by reg id (lexicographic), so exactly
+ * ONE line can ever qualify. A missing `created_at` on a line reg sorts as
+ * `nowISO` (latest); a missing one on an outside reg ⇒ null (fail toward not
+ * surcharging).
+ *
+ * MIRRORED IN src/lib/pricing.ts (`lateFeeAnchor`) — keep in sync.
+ */
+export function lateFeeAnchor(
+  lineRegs: LateAnchorRegRow[],
+  outsideRegs: LateAnchorRegRow[],
+  nowISO: string,
+): string | null {
+  if (lineRegs.length === 0) return null;
+  if (outsideRegs.some((r) => !r.created_at)) return null;
+  type Entry = { t: number; id: string; iso: string; inLine: boolean };
+  const entries: Entry[] = [
+    ...lineRegs.map((r) => {
+      const iso = r.created_at ?? nowISO;
+      return { t: Date.parse(iso), id: r.id, iso, inLine: true };
+    }),
+    ...outsideRegs.map((r) => ({ t: Date.parse(r.created_at!), id: r.id, iso: r.created_at!, inLine: false })),
+  ];
+  let earliest = entries[0];
+  for (let i = 1; i < entries.length; i++) {
+    const e = entries[i];
+    if (e.t < earliest.t || (e.t === earliest.t && e.id < earliest.id)) earliest = e;
+  }
+  return earliest.inLine ? earliest.iso : null;
+}
+
 /**
  * Total entry fee (DOLLARS) for a new registration purchase. Host club ⇒ 0.
  * First discipline = entry_fee; each additional = second_discipline_fee, where
