@@ -335,8 +335,9 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   `invite-account` (admin-create auth user + set-password link), `request-manager-access`
   / `notify-manager-access-denied` (no-login manager-access review),
   `notify-sanction`, `scheduled-dispatch` (pg_cron every 15 min; sanction-vote
-  reminders; verify_jwt STAYS true + requires the exact service-role bearer — runbook
-  in `supabase/README.md`). Notify-style functions allow any signed-in caller and resolve
+  reminders; verify_jwt STAYS true + requires the `x-cron-secret` header matching its
+  `CRON_SECRET` secret — the runtime's env service key ≠ the legacy JWT, bit us
+  2026-07-08; runbook in `supabase/README.md`). Notify-style functions allow any signed-in caller and resolve
   recipients server-side; only `send-email`/`send-sms` are admin-gated. (`send-receipt`
   was removed 2026-07-04 — dead code, never called from `src/`; `stripe-webhook`'s own
   `emailReceipt()` is the actual live receipt path — since emv2 P0 it also renders each
