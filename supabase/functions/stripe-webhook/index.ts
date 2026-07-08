@@ -446,6 +446,52 @@ async function emailReceipt(
   const fee = payment.service_fee ?? 0;
   const total = subtotal + fee;
 
+  // Per-event confirmation config (emv2 P0 Task 4): events referenced by the
+  // purchased lines can carry a host-configured confirmation message
+  // (rendered above the receipt), a director to cc, a reply-to, and a from
+  // display name (alias + reply-to stand in for a custom from address, which
+  // Resend's verified-domain rule forbids — emv2 spec §N7-6). Alias/reply-to
+  // are applied only when UNAMBIGUOUS (exactly one distinct value across the
+  // cart's events). Failures here must never block the receipt.
+  let eventSectionsHtml = '';
+  const ccSet = new Set<string>();
+  const replyTos = new Set<string>();
+  const fromAliases = new Set<string>();
+  try {
+    const eventIds = [...new Set(items.map((i) => i.ref_event_id).filter((id): id is string => !!id))];
+    if (eventIds.length) {
+      const { data: evs } = await db
+        .from('events')
+        .select('id, name, confirmation_email, director')
+        .in('id', eventIds);
+      for (const evRow of evs ?? []) {
+        const ev = evRow as unknown as {
+          id: string; name: string | null;
+          confirmation_email: { bodyHtml?: string; fromAlias?: string; replyTo?: string } | null;
+          director: { name?: string; email?: string; ccOnConfirmation?: boolean } | null;
+        };
+        const conf = ev.confirmation_email;
+        if (conf?.bodyHtml?.trim()) {
+          // Host-authored HTML: editable only by sanctioning team / league
+          // admins today (EventWizard) — rendered as-is inside the card.
+          eventSectionsHtml += `<div style="margin:16px 0;padding:12px 14px;border-left:3px solid #f28c28;background:#f7f9fb;">` +
+            `<p style="margin:0 0 6px;font-weight:700;color:#1d2a38;">A message from ${esc(ev.name ?? 'the event')}</p>` +
+            `<div style="color:#1d2a38;">${conf.bodyHtml}</div></div>`;
+        }
+        const replyTo = (conf?.replyTo ?? '').trim().toLowerCase();
+        if (EMAIL_RE.test(replyTo)) replyTos.add(replyTo);
+        if (conf?.fromAlias?.trim()) fromAliases.add(conf.fromAlias.trim());
+        const dirEmail = (ev.director?.email ?? '').trim().toLowerCase();
+        if (ev.director?.ccOnConfirmation && EMAIL_RE.test(dirEmail) && dirEmail !== toEmail.toLowerCase()) {
+          ccSet.add(dirEmail);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('emailReceipt: per-event confirmation config failed (sending plain receipt)', e);
+    eventSectionsHtml = ''; ccSet.clear(); replyTos.clear(); fromAliases.clear();
+  }
+
   // Only list lines that carry a charge (grouped-membership "included" lines and
   // $0 host-club lines are server-priced to 0 and would just clutter the receipt).
   const rows = items
@@ -461,7 +507,7 @@ async function emailReceipt(
     heading: 'Your receipt',
     bodyHtml: `<p>Hi ${esc(forName)},</p>
 <p>Thanks for your purchase. Here's your receipt for the items below.</p>
-<p style="color:#5b6b7a;font-size:13px;margin:0 0 12px;">Receipt ${esc(invoiceNumber)}</p>
+${eventSectionsHtml}<p style="color:#5b6b7a;font-size:13px;margin:0 0 12px;">Receipt ${esc(invoiceNumber)}</p>
 <table style="border-collapse:collapse;margin:8px 0;font-size:14px;width:100%;">
 ${rows}${feeRow}
 <tr><td style="padding:10px 16px 0 0;border-top:2px solid #1d2a38;font-weight:700;color:#1d2a38;">Total paid</td>
@@ -470,5 +516,12 @@ ${rows}${feeRow}
     footnoteHtml: `Billed to ${esc(forName)} (${esc(toEmail)}). You can re-download a PDF receipt any time from your Purchase History on the platform.`,
   });
 
-  await sendOne({ to: `${forName} <${toEmail}>`, subject, html });
+  await sendOne({
+    to: `${forName} <${toEmail}>`,
+    subject,
+    html,
+    ...(ccSet.size ? { cc: [...ccSet] } : {}),
+    ...(replyTos.size === 1 ? { reply_to: [...replyTos][0] } : {}),
+    ...(fromAliases.size === 1 ? { fromName: [...fromAliases][0] } : {}),
+  });
 }
