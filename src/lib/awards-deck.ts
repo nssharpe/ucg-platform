@@ -52,19 +52,19 @@ export function buildAwardsDeckHtml(db: DB, event: Event, bundle: NationalsBundl
   <style>
     @page { size: landscape; margin: 0; }
     * { box-sizing: border-box; }
-    body { margin: 0; font-family: 'Instrument Sans', system-ui, sans-serif; color: #1d2a38; }
+    body { margin: 0; font-family: 'Instrument Sans', system-ui, sans-serif; color: #1e2b38; }
     .slide { width: 100vw; height: 100vh; padding: 6vh 8vw; page-break-after: always; display: flex; flex-direction: column; }
-    .slide.title { justify-content: center; align-items: center; text-align: center; background: #1d2a38; color: #dbebed; }
+    .slide.title { justify-content: center; align-items: center; text-align: center; background: #1e2b38; color: #dbebee; }
     .slide.title h1 { font-size: 48px; margin: 0; }
-    .slide.title h2 { font-size: 28px; font-weight: 400; color: #f46949; margin: 8px 0 0; }
+    .slide.title h2 { font-size: 28px; font-weight: 400; color: #f4694a; margin: 8px 0 0; }
     h1 { font-size: 30px; margin: 0 0 2px; }
-    h2 { font-size: 18px; font-weight: 600; color: #f46949; margin: 0 0 16px; }
+    h2 { font-size: 18px; font-weight: 600; color: #f4694a; margin: 0 0 16px; }
     table { width: 100%; border-collapse: collapse; font-size: 18px; }
-    td { padding: 5px 10px; border-bottom: 1px solid #dbebed; }
+    td { padding: 5px 10px; border-bottom: 1px solid #dbebee; }
     td.pl { width: 48px; font-weight: 700; }
     td.club { color: #5b6b7a; }
     td.sc { text-align: right; font-variant-numeric: tabular-nums; width: 90px; }
-    @media screen { body { background: #e9eef1; } .slide { margin: 16px auto; box-shadow: 0 2px 12px rgba(0,0,0,.15); width: 960px; height: 540px; } .print-bar { position: sticky; top: 0; padding: 10px; background: #1d2a38; text-align: center; } .print-bar button { font-size: 15px; padding: 8px 18px; cursor: pointer; } }
+    @media screen { body { background: #e9eef1; } .slide { margin: 16px auto; box-shadow: 0 2px 12px rgba(0,0,0,.15); width: 960px; height: 540px; } .print-bar { position: sticky; top: 0; padding: 10px; background: #1e2b38; text-align: center; } .print-bar button { font-size: 15px; padding: 8px 18px; cursor: pointer; } }
     @media print { .print-bar { display: none; } }
   </style></head>
   <body>

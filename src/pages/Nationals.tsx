@@ -63,7 +63,7 @@ function QualificationView({ event, db }: { event: Event; db: ReturnType<typeof 
   return (
     <div>
       <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginTop: 0 }}>
-        Finals roster per finals level. <span style={{ background: 'var(--coral-100, #fde3dd)', padding: '0 4px', borderRadius: 3 }}>Highlighted</span> rows
+        Finals roster per finals level. <span style={{ background: 'var(--coral-100, #fde4dd)', padding: '0 4px', borderRadius: 3 }}>Highlighted</span> rows
         were pulled in by the 50% cross-club rule (placed below the cutoff).
       </p>
       {disciplines.map((d) => {
@@ -96,7 +96,7 @@ function DisciplineRoster({ discipline, res, cfg, db }: { discipline: string; re
                   const aaCut = cfg.cutoffs.aa[r.category as PlacementCategory]?.[levelId] ?? 0;
                   const pullIn = r.aa?.qual === 'Y' && (r.aa?.place ?? 0) > aaCut;
                   return (
-                    <tr key={r.entry.id} style={pullIn ? { background: 'var(--coral-100, #fde3dd)' } : undefined}>
+                    <tr key={r.entry.id} style={pullIn ? { background: 'var(--coral-100, #fde4dd)' } : undefined}>
                       <td style={{ textAlign: 'left' }}>{r.aa?.place ?? '—'}</td>
                       <td style={{ textAlign: 'left' }}>{r.entry.first} {r.entry.last}</td>
                       <td style={{ textAlign: 'left' }}>{r.entry.club}</td>
