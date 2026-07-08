@@ -134,12 +134,22 @@ here — update THIS list when priorities change, not rival copies.
   `camp_config`'s director/age-calc keys onto the new event-level fields. Sanction.tsx's
   approval mapping carries venue/street/country/late-reg into the created event.
   **P0 Task 3 shipped:** late-registration fee pricing — the surcharge applies once per
-  athlete per event (not per-discipline), anchored on the athlete's EARLIEST registration
-  `created_at` for that event (never payment time), waived for host-club regs, and never
-  affecting change fees. `registrationEntryFee`/`newRegistrationEntryTotal`
-  (`src/lib/pricing.ts`) take an optional `late` param; `create-checkout-session`
-  recomputes it server-side from `late_reg` + `created_at` (mirrored in
-  `_shared/stripe.ts`, same pattern as the service fee).
+  athlete per event (not per-discipline), waived for host-club regs, never affecting
+  change fees, and attaching ONLY to the purchase line that contains the athlete's
+  EARLIEST-created registration for that event (`lateFeeAnchor`, id tie-break — the
+  controller-review fix that stops repeat purchases / second saves from re-adding the
+  fee). `registrationEntryFee`/`newRegistrationEntryTotal` (`src/lib/pricing.ts`) take
+  an optional `late` param; `create-checkout-session` recomputes server-side from
+  `late_reg` + `created_at` (mirrored in `_shared/stripe.ts`, same pattern as the
+  service fee).
+  **P0 Task 4 shipped:** per-event confirmation email — `stripe-webhook`'s receipt now
+  renders each purchased event's `confirmation_email.bodyHtml` above the receipt table,
+  cc's the event director when `ccOnConfirmation`, and applies reply-to / from-alias
+  when exactly one distinct value exists across the cart's events (`_shared/resend.ts`
+  gained `reply_to` + display-name-only `fromName`).
+  **P0 deploy state (2026-07-07):** staging fully deployed + E2E green (5/5).
+  Prod is PENDING Nate: vault secrets (both envs), prod `supabase db push`, the three
+  prod function deploys (`stripe-webhook` with `--no-verify-jwt`!), then merge to main.
   §N7 open questions **all answered by Julia 2026-07-06** (recorded in the spec;
   every phase is unblocked — only the §F partial-fit capacity design wants a
   confirm at P4 kickoff). This absorbs several

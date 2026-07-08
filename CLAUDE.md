@@ -303,8 +303,11 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   (always `-N` + a format flag) instead of guessing.
 
 ## Email / Edge Functions (Resend)
-- Shared helper `supabase/functions/_shared/resend.ts` (`sendOne`/`sendBatch`, optional
-  `cc`). Secrets: `RESEND_API_KEY`, `RESEND_FROM` (naigc.org is verified), `APP_PUBLIC_URL`.
+- Shared helper `supabase/functions/_shared/resend.ts` (`sendOne`/`sendBatch`; optional
+  `cc`, `reply_to`, and `fromName` — the last swaps ONLY the sender display name, the
+  address always stays `RESEND_FROM`'s verified one; per-event "from" = alias+reply-to
+  by design). Secrets: `RESEND_API_KEY`, `RESEND_FROM` (naigc.org is verified),
+  `APP_PUBLIC_URL`.
 - All transactional emails render through `_shared/email-layout.ts` (`renderEmail({
   heading, bodyHtml, cta?, footnoteHtml? })`) — the branded navy-header/white-card/
   orange-CTA wrapper matching Supabase's magic-link email. New email-sending functions
@@ -331,10 +334,14 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   once-only guard is CLIENT-side in `Membership.tsx`), `send-club-invite`,
   `invite-account` (admin-create auth user + set-password link), `request-manager-access`
   / `notify-manager-access-denied` (no-login manager-access review),
-  `notify-sanction`. Notify-style functions allow any signed-in caller and resolve
+  `notify-sanction`, `scheduled-dispatch` (pg_cron every 15 min; sanction-vote
+  reminders; verify_jwt STAYS true + requires the exact service-role bearer — runbook
+  in `supabase/README.md`). Notify-style functions allow any signed-in caller and resolve
   recipients server-side; only `send-email`/`send-sms` are admin-gated. (`send-receipt`
   was removed 2026-07-04 — dead code, never called from `src/`; `stripe-webhook`'s own
-  `emailReceipt()` is the actual live receipt path.)
+  `emailReceipt()` is the actual live receipt path — since emv2 P0 it also renders each
+  purchased event's `confirmation_email.bodyHtml` above the receipt, cc's the event
+  director when `ccOnConfirmation`, and applies reply-to/from-alias when unambiguous.)
 - **SMS consent is opt-OUT, not opt-in** (changed 2026-07-04): `people.sms_consent`
   defaults to `true` — SMS is covered by the liability waiver signed at registration
   (confirmed with Julia), so there's no Profile.tsx checkbox anymore. A STOP-family
