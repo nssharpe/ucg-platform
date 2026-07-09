@@ -44,7 +44,7 @@ Live build/tooling notes live in [`../CLAUDE.md`](../CLAUDE.md); open work is th
 | [dev-test-auth](specs/2026-06-25-dev-test-auth.md) | Dev-only real auto-login of a seeded Supabase test user (`.env.local`-gated) so authenticated UI is exercisable locally | ✅ shipped |
 | [stripe-integration](specs/2026-06-25-stripe-integration.md) | Stripe Embedded Checkout architecture (S1–S5) | ✅ shipped |
 | [security-review-findings (7/02)](specs/2026-07-02-security-review-findings.md) | Deep review of the money paths: RLS, edge functions, cart state machine — verified findings by severity | 🟡 findings logged; fixes planned |
-| [event-management-v2-requirements](specs/2026-07-06-event-management-v2-requirements.md) | Julia's full event-management requirements (7/06) digested + gap-mapped: host dashboard, refunds, capacity/waitlists, add-ons v2, nationals ops, finance dashboards — phasing V2-P0…P6 | 🟡 validated (phasing approved, §N7 answered); **P0 shipped (staging; prod pending Nate)**; **P1 build started** — event-owner assignment + checklist (Task 1) shipped |
+| [event-management-v2-requirements](specs/2026-07-06-event-management-v2-requirements.md) | Julia's full event-management requirements (7/06) digested + gap-mapped: host dashboard, refunds, capacity/waitlists, add-ons v2, nationals ops, finance dashboards — phasing V2-P0…P6 | 🟡 validated (phasing approved, §N7 answered); **P0 shipped (staging; prod pending Nate)**; **P1 build in progress** — Tasks 1, 3, 4, 5 shipped (owner assignment + checklist, per-event admin grants, insurance-cert upload, host viewing page); Excel exports next |
 
 ## Plans (`plans/`) — step-by-step implementation records
 
@@ -168,6 +168,22 @@ here — update THIS list when priorities change, not rival copies.
   auth-uid-scoped grants (new `eventAdminEventIds` param on `deriveCapabilities`);
   "Event admins" card on the event page (add by account email / remove) for anyone
   with host-level access.
+  **P1 Task 4 shipped:** private `event-files` Storage bucket (first RLS'd bucket in the
+  project) for owner-checklist file uploads — currently insurance certificates
+  (`insurance/<event_id>/<filename>`); the owner checklist's insurance task now uploads
+  + resolves a signed view link (`uploadInsuranceCertificate`/`insuranceCertificateUrl`,
+  `InsuranceCertificateLink`) instead of a free-text path.
+  **P1 Task 5 shipped:** event host viewing page (§C) at `/events/:slug/host` —
+  status card (owner contact, hotel block, insurance link, medal order/tracking with a
+  host "Mark received" action, onsite rep, payment status incl. collected-so-far and a
+  post-event unpaid-host warning) plus a per-level registration summary (participating
+  clubs + athletes per apparatus, `summarizeRoster` in `src/lib/host-page.ts`, unit-
+  tested). Three new SECURITY DEFINER RPCs (`event_host_roster`,
+  `event_collected_total`, `mark_medals_received`) give hosts/event-admins/sanctioning
+  the event-scoped read (and one scoped write) their own RLS wouldn't otherwise allow.
+  "Host dashboard →" link on the event page for anyone with host-level access or
+  sanctioning. **Excel exports (the natural P1 Task 6) are not built yet** — left a
+  marked spot on the page.
   §N7 open questions **all answered by Julia 2026-07-06** (recorded in the spec;
   every phase is unblocked — only the §F partial-fit capacity design wants a
   confirm at P4 kickoff). This absorbs several
