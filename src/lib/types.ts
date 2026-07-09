@@ -281,7 +281,46 @@ export interface Event {
   };
   /** Registration-confirmation email override. */
   confirmationEmail?: { bodyHtml: string; fromAlias?: string; replyTo?: string };
+  /** When the event row was created — needed for owner-checklist due dates
+   *  (event-mgmt v2 §B4). Server-set (`default now()`); never written by the
+   *  client. */
+  createdAt?: string;
+  /** Sanctioning-team member assigned to shepherd this event (event-mgmt v2
+   *  §B3). Absent ⇒ unassigned. */
+  owner?: { userId?: string; name: string; email: string };
+  /** The event owner's 7-item task checklist (§B4). Keyed by task id. */
+  ownerChecklist?: OwnerChecklist;
 }
+
+/** Event-owner checklist task ids, in the order they're worked (§B4). */
+export type OwnerTaskId =
+  | 'contact' | 'hotel' | 'medalsOrdered' | 'medalsTracking'
+  | 'insurance' | 'onsiteRep' | 'payHost';
+
+/** One checklist entry: `done`/`doneAt`/`note` are common to every task; the
+ *  remaining fields are task-specific payloads (mirrors
+ *  supabase/functions/_shared/owner-checklist.ts, which can't import this
+ *  file since it must stay Deno/Node-import-free). */
+export interface OwnerChecklistEntry {
+  done?: boolean;
+  doneAt?: string;
+  note?: string;
+  /** medalsOrdered payload. */
+  orderedOn?: string;
+  /** medalsTracking payload. */
+  trackingLink?: string;
+  hostReceived?: boolean;
+  /** insurance payload (free-text path/link for now; upload wired later). */
+  filePath?: string;
+  /** onsiteRep payload. */
+  name?: string;
+  email?: string;
+  /** payHost payload. */
+  method?: 'check' | 'paypal';
+  paidOn?: string;
+}
+
+export type OwnerChecklist = Partial<Record<OwnerTaskId, OwnerChecklistEntry>>;
 
 export type SanctionStatus =
   | 'draft' | 'submitted' | 'voting' | 'approved' | 'rejected' | 'withdrawn';

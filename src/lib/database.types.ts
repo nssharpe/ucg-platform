@@ -596,6 +596,8 @@ export type Database = {
           late_reg: Json | null
           name: string
           nationals_config: Json | null
+          owner: Json | null
+          owner_checklist: Json | null
           private_reg_code: string | null
           reg_closes: string | null
           reg_opens: string | null
@@ -634,6 +636,8 @@ export type Database = {
           late_reg?: Json | null
           name: string
           nationals_config?: Json | null
+          owner?: Json | null
+          owner_checklist?: Json | null
           private_reg_code?: string | null
           reg_closes?: string | null
           reg_opens?: string | null
@@ -672,6 +676,8 @@ export type Database = {
           late_reg?: Json | null
           name?: string
           nationals_config?: Json | null
+          owner?: Json | null
+          owner_checklist?: Json | null
           private_reg_code?: string | null
           reg_closes?: string | null
           reg_opens?: string | null
@@ -1941,6 +1947,10 @@ export type Database = {
       link_or_create_person: {
         Args: { p_first: string; p_last: string }
         Returns: string
+      }
+      list_sanctioning_team: {
+        Args: never
+        Returns: { email: string; name: string; user_id: string }[]
       }
       manages_club: { Args: { cid: string }; Returns: boolean }
       my_person_id: { Args: never; Returns: string }

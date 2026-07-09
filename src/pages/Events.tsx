@@ -12,10 +12,13 @@ import { EventStatusBadge } from './Home';
 import { APPARATUS, SHIRT_SIZES } from '../lib/types';
 import type { Athlete, CartItem, Discipline, Event, EventSession, Registration } from '../lib/types';
 import { DisciplineIcon } from '../components/DisciplineIcon';
-import { deleteRegistration, pushCart, pushEventSessions, pushRegistration, syncSynchroPartnerLevelRemote } from '../lib/supabase';
+import { deleteRegistration, listSanctioningTeam, pushCart, pushEvent, pushEventSessions, pushRegistration, syncSynchroPartnerLevelRemote } from '../lib/supabase';
+import type { SanctioningTeamMember } from '../lib/supabase';
 import { stateCode } from '../lib/sanction';
 import { fmtMoney } from '../lib/scoring';
 import { newRegistrationEntryTotal, registrationChangeFee, syncSynchroPartnerLevel, findIncomingSynchroPartner, lateFeeApplies, lateFeeAnchor } from '../lib/pricing';
+import { OWNER_TASKS, ownerTaskDueDate } from '../../supabase/functions/_shared/owner-checklist';
+import type { OwnerChecklist, OwnerChecklistEntry, OwnerTaskId } from '../../supabase/functions/_shared/owner-checklist';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -253,6 +256,16 @@ export function EventDetail() {
 
       {editWizardOpen && <EventWizard editEvent={event} onClose={() => setEditWizardOpen(false)} />}
 
+      {/* Event-owner assignment + task checklist (event-mgmt v2 §B3-4) — visible to
+          the Sanctioning Team (not just the event's host manager) for competitions,
+          which is what actually goes through the sanctioning workflow. */}
+      {caps.isSanctioning && event.eventType !== 'camp' && (
+        <>
+          <OwnerAssignBlock event={event} toast={toast} />
+          <OwnerChecklistCard event={event} fmtDate={fmtDate} />
+        </>
+      )}
+
       <div className="grid cols-3" style={{ marginBottom: 18 }}>
         <div className="card card-pad">
           <h3 className="card-title">Registration</h3>
@@ -340,6 +353,169 @@ export function EventDetail() {
           />
         );
       })()}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// OwnerAssignBlock — event-owner assignment (event-mgmt v2 §B3)
+// ---------------------------------------------------------------------------
+
+function saveEventOwner(event: Event, owner: Event['owner']) {
+  const updated: Event = { ...event, owner };
+  mutate((d) => {
+    const idx = d.events.findIndex((e) => e.id === event.id);
+    if (idx >= 0) d.events[idx] = updated;
+  });
+  pushEvent(updated);
+}
+
+function OwnerAssignBlock({ event, toast }: { event: Event; toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [team, setTeam] = useState<SanctioningTeamMember[] | null>(null);
+  const [selectedId, setSelectedId] = useState('');
+
+  const openEditor = async () => {
+    setEditing(true);
+    setSelectedId(event.owner?.userId ?? '');
+    if (team !== null) return;
+    setLoading(true);
+    const list = await listSanctioningTeam();
+    setLoading(false);
+    setTeam(list);
+    if (list.length === 0) toast('Could not load the sanctioning team — try again.', { variant: 'error' });
+  };
+
+  const save = () => {
+    const member = (team ?? []).find((m) => m.userId === selectedId);
+    if (!member) return;
+    saveEventOwner(event, { userId: member.userId, name: member.name, email: member.email });
+    setEditing(false);
+  };
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 18, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+      <strong>Event owner:</strong>
+      {event.owner ? (
+        <span>{event.owner.name} <span style={{ color: 'var(--ink-soft)' }}>({event.owner.email})</span></span>
+      ) : (
+        <Badge tone="err">Unassigned</Badge>
+      )}
+      {!editing ? (
+        <button className="btn small ghost" onClick={openEditor}>{event.owner ? 'Reassign' : 'Assign owner'}</button>
+      ) : (
+        <>
+          <select className="input" style={{ maxWidth: 280 }} value={selectedId} onChange={(e) => setSelectedId(e.target.value)} disabled={loading}>
+            <option value="">{loading ? 'Loading team…' : 'Select a team member'}</option>
+            {(team ?? []).map((m) => (
+              <option key={m.userId} value={m.userId}>{m.name} ({m.email})</option>
+            ))}
+          </select>
+          <button className="btn small primary" disabled={!selectedId} onClick={save}>Save</button>
+          <button className="btn small ghost" onClick={() => setEditing(false)}>Cancel</button>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// OwnerChecklistCard — event-owner task checklist (event-mgmt v2 §B4)
+// ---------------------------------------------------------------------------
+
+function OwnerChecklistCard({ event, fmtDate }: { event: Event; fmtDate: (iso: string) => string }) {
+  const checklist: OwnerChecklist = event.ownerChecklist ?? {};
+
+  const patchTask = (taskId: OwnerTaskId, patch: Partial<OwnerChecklistEntry>) => {
+    const entry = { ...checklist[taskId], ...patch };
+    const updated: Event = { ...event, ownerChecklist: { ...checklist, [taskId]: entry } };
+    mutate((d) => {
+      const idx = d.events.findIndex((e) => e.id === event.id);
+      if (idx >= 0) d.events[idx] = updated;
+    });
+    pushEvent(updated);
+  };
+
+  const toggleDone = (taskId: OwnerTaskId) => {
+    const entry = checklist[taskId];
+    const done = !entry?.done;
+    patchTask(taskId, { done, doneAt: done ? new Date().toISOString() : undefined });
+  };
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 18 }}>
+      <h3 className="card-title">Owner task checklist</h3>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {OWNER_TASKS.map(({ id, label }) => {
+          const entry = checklist[id];
+          const due = ownerTaskDueDate(id, event, checklist);
+          const overdue = !entry?.done && !!due && new Date(due).getTime() < new Date().getTime();
+          return (
+            <div key={id} style={{ paddingBottom: 12, borderBottom: '1px solid var(--line)' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', cursor: 'pointer' }}>
+                <input type="checkbox" checked={!!entry?.done} onChange={() => toggleDone(id)} />
+                <strong>{label}</strong>
+                <span style={{ fontSize: 13, fontWeight: overdue ? 700 : 400, color: overdue ? 'var(--coral-700)' : 'var(--ink-soft)' }}>
+                  {due ? `Due ${fmtDate(due.slice(0, 10))}` : 'No due date yet'}
+                </span>
+              </label>
+
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 8, marginLeft: 24 }}>
+                {id === 'medalsOrdered' && (
+                  <Field label="Ordered on">
+                    <input type="date" className="input" value={entry?.orderedOn ?? ''} onChange={(e) => patchTask(id, { orderedOn: e.target.value })} />
+                  </Field>
+                )}
+                {id === 'medalsTracking' && (
+                  <>
+                    <Field label="Tracking link">
+                      <input type="text" className="input" value={entry?.trackingLink ?? ''} onChange={(e) => patchTask(id, { trackingLink: e.target.value })} placeholder="https://…" />
+                    </Field>
+                    <Field label="Host received?">
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <input type="checkbox" checked={!!entry?.hostReceived} onChange={(e) => patchTask(id, { hostReceived: e.target.checked })} /> Yes
+                      </label>
+                    </Field>
+                  </>
+                )}
+                {id === 'insurance' && (
+                  <Field label="Certificate file / link" hint="Upload wired in a later task — a free-text path or link for now.">
+                    <input type="text" className="input" value={entry?.filePath ?? ''} onChange={(e) => patchTask(id, { filePath: e.target.value })} placeholder="Link or file path" />
+                  </Field>
+                )}
+                {id === 'onsiteRep' && (
+                  <>
+                    <Field label="Rep name">
+                      <input type="text" className="input" value={entry?.name ?? ''} onChange={(e) => patchTask(id, { name: e.target.value })} />
+                    </Field>
+                    <Field label="Rep email">
+                      <input type="email" className="input" value={entry?.email ?? ''} onChange={(e) => patchTask(id, { email: e.target.value })} />
+                    </Field>
+                  </>
+                )}
+                {id === 'payHost' && (
+                  <>
+                    <Field label="Method">
+                      <select className="input" value={entry?.method ?? ''} onChange={(e) => patchTask(id, { method: (e.target.value || undefined) as OwnerChecklistEntry['method'] })}>
+                        <option value="">Select…</option>
+                        <option value="check">Check</option>
+                        <option value="paypal">PayPal</option>
+                      </select>
+                    </Field>
+                    <Field label="Paid on">
+                      <input type="date" className="input" value={entry?.paidOn ?? ''} onChange={(e) => patchTask(id, { paidOn: e.target.value })} />
+                    </Field>
+                  </>
+                )}
+                <Field label="Note">
+                  <input type="text" className="input" value={entry?.note ?? ''} onChange={(e) => patchTask(id, { note: e.target.value })} placeholder="Optional note" />
+                </Field>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

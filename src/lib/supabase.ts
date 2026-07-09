@@ -223,6 +223,7 @@ const eventToRow = (m: Event) => ({
   hotel_link: m.hotelLink ?? null, age_calc_at: m.ageCalcAt || null,
   late_reg: m.lateReg ?? null, director: m.director ?? null, capacity: m.capacity ?? null,
   confirmation_email: m.confirmationEmail ?? null,
+  owner: m.owner ?? null, owner_checklist: m.ownerChecklist ?? null,
 });
 
 const sessionToRow = (eventId: string, s: Event['sessions'][number]) => ({
@@ -596,6 +597,19 @@ export async function linkOrCreatePerson(first: string, last: string): Promise<s
   const { data, error } = await supabase.rpc('link_or_create_person', { p_first: first, p_last: last });
   if (error) { console.error('[supabase] link_or_create_person failed:', error); return null; }
   return (data as string) ?? null;
+}
+
+/** The sanctioning-team roster (sanctioning + admin app_role holders), for the
+ *  event-owner assignment dropdown (event-mgmt v2 §B3). Returns [] on error
+ *  or when unconfigured. */
+export interface SanctioningTeamMember { userId: string; name: string; email: string }
+export async function listSanctioningTeam(): Promise<SanctioningTeamMember[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.rpc('list_sanctioning_team');
+  if (error) { console.error('[supabase] list_sanctioning_team failed:', error); return []; }
+  return ((data ?? []) as { user_id: string; name: string; email: string }[]).map((r) => ({
+    userId: r.user_id, name: r.name, email: r.email,
+  }));
 }
 
 /** Atomically record one redemption of a coupon (enforces max_uses server-side).
@@ -1168,6 +1182,9 @@ export async function loadAll(): Promise<DB | null> {
       ...(r.director ? { director: r.director as Event['director'] } : {}),
       ...(r.capacity ? { capacity: r.capacity as Event['capacity'] } : {}),
       ...(r.confirmation_email ? { confirmationEmail: r.confirmation_email as Event['confirmationEmail'] } : {}),
+      ...(r.created_at ? { createdAt: r.created_at } : {}),
+      ...(r.owner ? { owner: r.owner as Event['owner'] } : {}),
+      ...(r.owner_checklist ? { ownerChecklist: r.owner_checklist as Event['ownerChecklist'] } : {}),
     }));
 
     const registrations: Registration[] = (registrationsR.data ?? []).map(rowToRegistration);
