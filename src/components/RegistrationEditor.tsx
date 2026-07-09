@@ -26,6 +26,7 @@
 import { useState, useMemo } from 'react';
 import { Combo, Field } from './ui';
 import { useToast } from './ui-hooks';
+import { DisciplineIcon } from './DisciplineIcon';
 import { APPARATUS } from '../lib/types';
 import type { Athlete, Discipline, Level, Event, Registration, Season } from '../lib/types';
 import { changeIsEligible, regChangeHasDiff } from '../lib/pricing';
@@ -142,6 +143,7 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
             checked={draft.enabled}
             onChange={(e) => onChange({ ...draft, enabled: e.target.checked })}
           />
+          <DisciplineIcon discipline={disc} size={18} />
           {disc === 'TNT' ? 'T&T' : disc}
         </label>
       </div>
