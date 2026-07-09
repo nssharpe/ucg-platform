@@ -160,6 +160,14 @@ here — update THIS list when priorities change, not rival copies.
   event page (owner field + 7-item checklist with payload inputs) gated on
   `isSanctioning`, and a red "No owner assigned" badge on the Sanctioning Queue's
   decided list linking to the event.
+  **P1 Task 3 shipped:** per-event admin grants (§C) — `event_admins` table (per-event
+  ACL, unique `(event_id, user_id)`), read-only RLS with all writes through
+  `grant_event_admin` (exact-account-email lookup — deliberately no name search, PII
+  decision) / `revoke_event_admin` SECURITY DEFINER RPCs (authorized: admins, host-club
+  managers, existing event admins of that event); `isEventHost()` now honors
+  auth-uid-scoped grants (new `eventAdminEventIds` param on `deriveCapabilities`);
+  "Event admins" card on the event page (add by account email / remove) for anyone
+  with host-level access.
   §N7 open questions **all answered by Julia 2026-07-06** (recorded in the spec;
   every phase is unblocked — only the §F partial-fit capacity design wants a
   confirm at P4 kickoff). This absorbs several
