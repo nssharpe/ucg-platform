@@ -12,7 +12,7 @@ import { EventStatusBadge } from './Home';
 import { APPARATUS, SHIRT_SIZES } from '../lib/types';
 import type { Athlete, CartItem, Discipline, Event, EventAdmin, EventSession, Registration } from '../lib/types';
 import { DisciplineIcon } from '../components/DisciplineIcon';
-import { deleteRegistration, grantEventAdmin, listSanctioningTeam, pushCart, pushEvent, pushEventSessions, pushRegistration, revokeEventAdmin, syncSynchroPartnerLevelRemote } from '../lib/supabase';
+import { deleteRegistration, grantEventAdmin, insuranceCertificateUrl, listSanctioningTeam, pushCart, pushEvent, pushEventSessions, pushRegistration, revokeEventAdmin, syncSynchroPartnerLevelRemote, uploadInsuranceCertificate } from '../lib/supabase';
 import type { SanctioningTeamMember } from '../lib/supabase';
 import { stateCode } from '../lib/sanction';
 import { fmtMoney } from '../lib/scoring';
@@ -262,7 +262,7 @@ export function EventDetail() {
       {caps.isSanctioning && event.eventType !== 'camp' && (
         <>
           <OwnerAssignBlock event={event} toast={toast} />
-          <OwnerChecklistCard event={event} fmtDate={fmtDate} />
+          <OwnerChecklistCard event={event} fmtDate={fmtDate} toast={toast} />
         </>
       )}
 
@@ -502,8 +502,9 @@ function EventAdminsCard({ event, toast }: { event: Event; toast: (msg: string, 
 // OwnerChecklistCard — event-owner task checklist (event-mgmt v2 §B4)
 // ---------------------------------------------------------------------------
 
-function OwnerChecklistCard({ event, fmtDate }: { event: Event; fmtDate: (iso: string) => string }) {
+function OwnerChecklistCard({ event, fmtDate, toast }: { event: Event; fmtDate: (iso: string) => string; toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void }) {
   const checklist: OwnerChecklist = event.ownerChecklist ?? {};
+  const [uploading, setUploading] = useState(false);
 
   const patchTask = (taskId: OwnerTaskId, patch: Partial<OwnerChecklistEntry>) => {
     const entry = { ...checklist[taskId], ...patch };
@@ -558,8 +559,25 @@ function OwnerChecklistCard({ event, fmtDate }: { event: Event; fmtDate: (iso: s
                   </>
                 )}
                 {id === 'insurance' && (
-                  <Field label="Certificate file / link" hint="Upload wired in a later task — a free-text path or link for now.">
-                    <input type="text" className="input" value={entry?.filePath ?? ''} onChange={(e) => patchTask(id, { filePath: e.target.value })} placeholder="Link or file path" />
+                  <Field label="Certificate file" hint="PDF, JPG, or PNG — up to 10MB.">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <input
+                        type="file" accept=".pdf,.jpg,.jpeg,.png" disabled={uploading}
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          e.target.value = '';
+                          if (!file) return;
+                          setUploading(true);
+                          const result = await uploadInsuranceCertificate(event.id, file);
+                          setUploading(false);
+                          if (!result.ok) { toast(result.error, { variant: 'error' }); return; }
+                          patchTask(id, { filePath: result.path });
+                          toast('Certificate uploaded.');
+                        }}
+                      />
+                      {uploading && <span style={{ fontSize: 13, color: 'var(--ink-soft)' }}>Uploading…</span>}
+                      {entry?.filePath && !uploading && <InsuranceCertificateLink filePath={entry.filePath} />}
+                    </div>
                   </Field>
                 )}
                 {id === 'onsiteRep' && (
@@ -595,6 +613,28 @@ function OwnerChecklistCard({ event, fmtDate }: { event: Event; fmtDate: (iso: s
         })}
       </div>
     </div>
+  );
+}
+
+/** Link that resolves a signed URL for a stored insurance certificate ON
+ *  CLICK (not on render) — signed URLs expire (~10 min), so resolving eagerly
+ *  would churn them for no reason. Reusable by the host-facing page (event-mgmt
+ *  v2 §C status card) as well as this owner checklist. */
+function InsuranceCertificateLink({ filePath }: { filePath: string }) {
+  const [loading, setLoading] = useState(false);
+  return (
+    <button
+      type="button" className="btn small ghost" disabled={loading}
+      onClick={async () => {
+        setLoading(true);
+        const result = await insuranceCertificateUrl(filePath);
+        setLoading(false);
+        if (!result.ok) { window.alert(result.error); return; }
+        window.open(result.url, '_blank', 'noopener,noreferrer');
+      }}
+    >
+      {loading ? 'Opening…' : 'View certificate'}
+    </button>
   );
 }
 

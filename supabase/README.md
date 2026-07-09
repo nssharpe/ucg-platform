@@ -92,6 +92,7 @@ sequence numbers used in conversation. In order:
 | `20260708201845_create_brand_storage_bucket.sql` | **2026 rebrand.** Creates the public `brand` storage bucket (upsert, `public=true`) for static brand assets — currently the licensed Greed/Suisse woff2 webfonts served via `/storage/v1/object/public/brand/fonts/…` (see `docs/specs/2026-07-08-ucg-rebrand.md`; font files must never be committed to the repo per EULA). Public read only; no `storage.objects` write policies, so uploads are service-role/CLI only (`supabase storage cp … ss:///brand/… --experimental`). **Applied staging + prod 2026-07-08** (fonts uploaded to prod only — the app hardcodes prod URLs). |
 | `20260709131708_event_owner_checklist.sql` | **Event-management v2 Phase 1, Task 1 (spec §B3-4).** Adds `events.owner` (`{userId?, name, email}` or null) and `events.owner_checklist` (jsonb, keyed by task id — see `supabase/functions/_shared/owner-checklist.ts`). Extends write reach to sanctioning-team members alongside the existing admin/host policies (predicate everywhere: `is_admin() or coalesce(auth_has_role('sanctioning'), false)`): `sanctioning_update` + `sanctioning_insert` on `events` (INSERT is required because `pushEvent` saves via whole-row upsert — the RLS upsert trap: the conflict-update path must still pass an INSERT policy's WITH CHECK; no DELETE granted on events), and per-command `sanctioning_sessions_{insert,update,delete}` / `sanctioning_squads_{insert,update,delete}` on `event_sessions`/`squads` (pushEvent rewrites them via delete+insert `remoteReplace`, which the host/admin-only `host_sessions`/`host_squads` policies would otherwise reject for a pure-sanctioning caller; per-command rather than `for all` so each grant is explicit). Adds `list_sanctioning_team()` — SECURITY DEFINER, fail-closed, revokes the PUBLIC execute grant — returning the sanctioning+admin roster (`user_roles` joined to `people` on `auth_user_id`) for the owner-assign dropdown. `events.created_at` already existed (from the original `meets` table); no backfill needed. |
 | `20260709133846_event_admins.sql` | **Event-management v2 Phase 1, Task 3 (spec §C): per-event admin grants.** New `event_admins` table (`id` text PK app-style, `event_id` → `events` cascade, `user_id` uuid, `email`, `name`, `granted_by`, unique `(event_id, user_id)`) — a net-new per-event ACL giving another ACCOUNT the same host-level access to ONE event (surfaced through `isEventHost()` in `capabilities-core.ts`). RLS is **read-only** (select for admins, sanctioning, the granted user themselves, or `manages_club(host club)`; whole predicate fail-closed via `coalesce`); there are NO insert/update/delete policies — all writes go through two SECURITY DEFINER RPCs mirroring `replace_club_managers` (authorize ONCE up front, fail-closed, `set search_path`, PUBLIC execute revoked): `grant_event_admin(p_event_id, p_email)` (authorized for admins / host-club managers / existing event admins of that event; exact case-insensitive email match on `people` with `auth_user_id is not null`, raises `No account found for that email.` otherwise; upserts on the unique pair and returns the matched identity — deliberately NO name-substring search, PII decision) and `revoke_event_admin(p_event_id, p_user_id)` (same authorization; deletes the row). |
+| `20260709210935_event_files_bucket.sql` | **Event-management v2 Phase 1, Task 4 (spec §C status card + §B4 "insurance certificate upload"): first private/RLS'd Storage bucket.** Creates PRIVATE bucket `event-files` (path convention `insurance/<event_id>/<filename>`; the earlier `brand` bucket, `20260708201845`, is public with no `storage.objects` policies at all). Write (insert/update/delete) restricted to admins + sanctioning (`is_admin() or coalesce(auth_has_role('sanctioning'), false)`) — the event owner uploads, host-club managers/event admins do not. Read (select) additionally reaches host-club managers (`manages_club((select host_club_id from events where id = (storage.foldername(name))[2]))`) and that event's `event_admins` grantees, every branch `coalesce`-wrapped fail-closed. See "Storage buckets" above. |
 
 > **Naming note (rename applied 2026-06-27):** the schema descriptions above that
 > predate these two migrations still say `meets`/`meet_id`/`ref_meet_id`/
@@ -103,6 +104,23 @@ sequence numbers used in conversation. In order:
 All migrations are applied to the live project and tracked by the linked CLI
 (`supabase db push`). Migrations are append-only — add new ones rather than editing
 applied files. See `../CLAUDE.md` for the enum-add transaction gotcha.
+
+### Storage buckets
+
+| Bucket | Public? | Purpose | Write access | Read access |
+|--------|---------|---------|---------------|-------------|
+| `brand` | Public | Static brand assets (licensed webfonts, logos) served at `/storage/v1/object/public/brand/…`. | No `storage.objects` write policies — service-role/CLI only. | Public (bucket-level). |
+| `event-files` | **Private** | Event-owner-checklist files — currently insurance certificates, path convention `insurance/<event_id>/<filename>` (`event_id = (storage.foldername(name))[2]`). First private/RLS'd bucket in the project. | INSERT/UPDATE/DELETE: admins + sanctioning-team only (`event_files_{insert,update,delete}`, `20260709210935_event_files_bucket.sql`). | SELECT: admins, sanctioning, the event's host-club managers (`manages_club`), or that event's `event_admins` grantees (`event_files_select`) — all fail-closed via `coalesce`. |
+
+`event-files` is accessed exclusively via signed URLs (`insuranceCertificateUrl()`,
+~10 min expiry) — there is no public path. Uploads go through
+`uploadInsuranceCertificate(eventId, file)` (`src/lib/supabase.ts`), which client-side
+validates extension (`pdf`/`jpg`/`jpeg`/`png`) and a 10MB cap before calling
+`supabase.storage.from('event-files').upload(...)`; the storage RLS policy is the real
+enforcement boundary. `OwnerChecklistCard`'s `insurance` task (`src/pages/Events.tsx`)
+is the current writer; `InsuranceCertificateLink` (module-scope, same file) is a
+reusable "View certificate" link that resolves the signed URL on click, meant to be
+reused by the upcoming host-facing status page (spec §C).
 
 ## Edge Functions (`functions/`)
 

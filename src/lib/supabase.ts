@@ -640,6 +640,43 @@ export async function revokeEventAdmin(eventId: string, userId: string): Promise
   return null;
 }
 
+const INSURANCE_CERT_ALLOWED_EXT = ['pdf', 'jpg', 'jpeg', 'png'];
+const INSURANCE_CERT_MAX_BYTES = 10 * 1024 * 1024; // 10MB
+
+/** Upload an insurance certificate to the private `event-files` bucket
+ *  (event-mgmt v2 §C / §B4) under `insurance/<eventId>/<filename>` and
+ *  return the stored path (saved onto the owner checklist's `filePath`).
+ *  Only sanctioning/admin callers pass the storage RLS insert policy
+ *  (20260709210935_event_files_bucket.sql) — a host/member caller gets a
+ *  storage error, unwrapped here into a readable message. Validates
+ *  extension + a ~10MB size cap client-side (the source of truth is still
+ *  the storage policy, this is just a friendlier error before the round trip). */
+export async function uploadInsuranceCertificate(eventId: string, file: File): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
+  if (!supabase) return { ok: false, error: 'Not configured.' };
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+  if (!INSURANCE_CERT_ALLOWED_EXT.includes(ext)) {
+    return { ok: false, error: 'Only PDF, JPG, or PNG files are allowed.' };
+  }
+  if (file.size > INSURANCE_CERT_MAX_BYTES) {
+    return { ok: false, error: 'File is too large — the limit is 10MB.' };
+  }
+  const sanitized = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `insurance/${eventId}/${sanitized}`;
+  const { error } = await supabase.storage.from('event-files').upload(path, file, { upsert: true });
+  if (error) { console.error('[supabase] uploadInsuranceCertificate failed:', error); return { ok: false, error: error.message }; }
+  return { ok: true, path };
+}
+
+/** Resolve a signed, time-limited URL for a stored insurance certificate
+ *  (bucket is private — there is no public URL). ~10 minute expiry, so
+ *  callers should resolve on click/open, not cache it on render. */
+export async function insuranceCertificateUrl(path: string): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  if (!supabase) return { ok: false, error: 'Not configured.' };
+  const { data, error } = await supabase.storage.from('event-files').createSignedUrl(path, 600);
+  if (error || !data?.signedUrl) { console.error('[supabase] insuranceCertificateUrl failed:', error); return { ok: false, error: error?.message ?? 'Could not open the certificate.' }; }
+  return { ok: true, url: data.signedUrl };
+}
+
 /** Atomically record one redemption of a coupon (enforces max_uses server-side).
  *  Returns true when a redemption was counted. Best-effort: never throws. */
 export async function redeemCoupon(code: string): Promise<boolean> {
