@@ -193,6 +193,15 @@ here — update THIS list when priorities change, not rival copies.
   (Phase 2), when purchased-line quantity/size/assignment data exists to query. Sheet
   shaping is pure + unit-tested (`src/lib/host-export.ts`); `exceljs` is dynamically
   imported so it ships as its own chunk, not the entry bundle.
+  **P1 Task 7 shipped:** event-scoped communication (§J) — `/events/:slug/communicate`
+  lets hosts, event admins, sanctioning, and admins email one event's registrants,
+  filtered by role (athletes/managers/club emails) + session/level/discipline, via the
+  new `send-event-email` Edge Function (recipients resolved server-side, never
+  client-supplied; test sends go only to the caller's own account email). **Deviation
+  from spec (controller/Nate decision 2026-07-09):** hosts get EMAIL ONLY — SMS stays
+  league-admin-only, exposed as an admin-only channel toggle on the same page reusing
+  the existing `send-sms` path. `comm_log.event_id` (new column) scopes the page's
+  per-event sent log.
   §N7 open questions **all answered by Julia 2026-07-06** (recorded in the spec;
   every phase is unblocked — only the §F partial-fit capacity design wants a
   confirm at P4 kickoff). This absorbs several
