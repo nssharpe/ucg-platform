@@ -158,8 +158,12 @@ grant execute on function event_collected_total(text) to authenticated;
 -- can't UPDATE events directly (owner_checklist is sanctioning/admin-writable
 -- only, per 20260709131708_event_owner_checklist.sql), so flipping
 -- owner_checklist.medalsTracking.hostReceived to true needs a narrow RPC.
--- jsonb_set with create_missing=true so this still works even if the
--- checklist or the medalsTracking entry hasn't been touched by the owner yet.
+-- NOTE: jsonb_set's create_missing only creates the FINAL path key -- with a
+-- deep path like '{medalsTracking,hostReceived}' it silently no-ops when the
+-- medalsTracking entry doesn't exist yet (the common case: the owner hasn't
+-- touched that task). So the intermediate object is built explicitly: set
+-- '{medalsTracking}' to (the existing entry, or '{}') merged with
+-- {hostReceived: true}, preserving any trackingLink/done/doneAt keys.
 -- ---------------------------------------------------------------------------
 create or replace function mark_medals_received(p_event_id text)
 returns void
@@ -184,8 +188,8 @@ begin
   update events
     set owner_checklist = jsonb_set(
       coalesce(owner_checklist, '{}'::jsonb),
-      '{medalsTracking,hostReceived}',
-      'true'::jsonb,
+      '{medalsTracking}',
+      coalesce(owner_checklist->'medalsTracking', '{}'::jsonb) || jsonb_build_object('hostReceived', true),
       true
     )
     where id = p_event_id;
