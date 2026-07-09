@@ -92,4 +92,8 @@ Secondary:
 - `_shared/email-layout.ts`: colors updated to exact palette (navy header, red-orange
   CTA), system fonts stay.
 - jsPDF (receipt.ts etc.): brand colors, Helvetica stays.
-- Supabase Auth email templates (Dashboard-managed) — Nate action if colors drift.
+- Supabase Auth email templates: initially left as a Nate/Dashboard action, then
+  brought into the repo the same day — `scripts/render-auth-email-templates.mts`
+  renders them from `_shared/email-layout.ts` and `supabase config push` applies
+  (prod only; staging free-tier rejects template pushes). Runbook + traps:
+  `supabase/README.md` "Auth email templates".
