@@ -64,6 +64,17 @@ Run the suite, `npx eslint` the touched files, and confirm the build before push
   token use by model from local transcripts. Remaining plan quota is NOT visible locally —
   only `/usage` in the app shows it.
 
+## Brand (2026 toolkit, applied 2026-07-08)
+Authoritative rules + palette + approved fg/bg pairings: `docs/specs/2026-07-08-ucg-rebrand.md`.
+Operative bits: exact hexes live as tokens in `src/index.css` (pale accents `--bluegreen`/
+`--purple`/`--gold` are FILLS ONLY, never text on light); display type = Greed Condensed
+Bold ALL CAPS, body = Suisse Intl. **Licensed woff2 files are served from the public
+`brand` Supabase Storage bucket (prod) and must NEVER be committed to this public repo**
+(EULA — web serving OK, repo redistribution not); @fontsource Archivo Black/Instrument
+Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
+(`DisciplineIcon.tsx` maps MAG/WAG/TNT). Toolkit source:
+`C:\Users\nssha\Steinsharpe Dropbox\...\2026 UCG Brand Toolkit` (fonts, PDFs, photography).
+
 ## Naming: the Meet→Event rename (2026-06-27)
 "Meet" → **Event** everywhere, and gymnastics apparatus (previously also "events") →
 **apparatus**. When grepping or writing code:
