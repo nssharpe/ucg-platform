@@ -15,10 +15,10 @@ export interface EmailLayoutOptions {
   footnoteHtml?: string;
 }
 
-const NAVY = '#1a2634';
-const NAVY_SUB = '#8fa1b3';
-const ORANGE = '#ef6a45';
-const TEXT = '#1d2a38';
+const NAVY = '#1E2B38';
+const NAVY_SUB = '#DBEBEE';
+const ORANGE = '#F4694A';
+const TEXT = '#1E2B38';
 const MUTED = '#5b6b7a';
 // Must stay >=4.5:1 against BG for AA — #9aa7b4 (the original pick) only hit ~2.2:1.
 const FOOTER_MUTED = '#5b6b7a';

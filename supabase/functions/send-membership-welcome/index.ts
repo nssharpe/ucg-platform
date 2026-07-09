@@ -184,7 +184,7 @@ Deno.serve(async (req) => {
     `Local events are hosted by various clubs and usually announced through regional communication channels.`;
 
   const link = (href: string, text: string) =>
-    `<a href="${href}" style="color:#1d4ed8;text-decoration:underline;">${text}</a>`;
+    `<a href="${href}" style="color:#184B56;text-decoration:underline;">${text}</a>`;
 
   const subject = 'Welcome to United Club Gymnastics';
   const html = renderEmail({

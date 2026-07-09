@@ -199,15 +199,16 @@ export function downloadWaiverProof(
   let y = margin;
 
   const ensure = (h: number) => { if (y + h > bottom) { doc.addPage(); y = margin; } };
-  const para = (text: string, size = 10, gap = 4, color = 30) => {
-    doc.setFontSize(size); doc.setTextColor(color);
+  const para = (text: string, size = 10, gap = 4, color: number | [number, number, number] = 30) => {
+    doc.setFontSize(size);
+    if (Array.isArray(color)) doc.setTextColor(color[0], color[1], color[2]); else doc.setTextColor(color);
     for (const line of doc.splitTextToSize(text, width)) {
       ensure(size + gap); doc.text(line, margin, y); y += size + gap;
     }
   };
 
   doc.setFont('helvetica', 'bold');
-  para('United Club Gymnastics / NAIGC — Proof of Electronic Signature', 15, 6, 20);
+  para('United Club Gymnastics / NAIGC — Proof of Electronic Signature', 15, 6, [30, 43, 56]);
   doc.setFont('helvetica', 'normal');
   para(`Generated ${formatSignedAt(new Date().toISOString())}`, 9, 8, 120);
   y += 6;
@@ -229,7 +230,7 @@ export function downloadWaiverProof(
   for (const [k, v] of rows) {
     doc.setFontSize(9); doc.setTextColor(110);
     ensure(13); doc.text(k, margin, y);
-    doc.setFontSize(10); doc.setTextColor(20);
+    doc.setFontSize(10); doc.setTextColor(30, 43, 56);
     for (const line of doc.splitTextToSize(v, width - 150)) { doc.text(line, margin + 150, y); y += 13; }
   }
   y += 8;
@@ -237,7 +238,7 @@ export function downloadWaiverProof(
 
   if (waiverBodyHtml) {
     y += 10; ensure(20);
-    doc.setFont('helvetica', 'bold'); para('Waiver text as signed', 12, 6, 20);
+    doc.setFont('helvetica', 'bold'); para('Waiver text as signed', 12, 6, [30, 43, 56]);
     doc.setFont('helvetica', 'normal');
     renderWaiverHtml(doc, waiverBodyHtml, { margin, width, bottom, ensure, getY: () => y, setY: (v) => { y = v; } });
   }
