@@ -1,6 +1,7 @@
 import { Component } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { reportError } from '../lib/report-error';
+import primaryLogo from '../assets/brand/primary-logo.svg';
 
 interface Props {
   children: ReactNode;
@@ -65,7 +66,7 @@ export class ErrorBoundary extends Component<Props, State> {
       return (
         <div className="errboundary-page">
           <div className="errboundary-card">
-            <div className="errboundary-logo">UCG<span className="spark">.</span></div>
+            <img src={primaryLogo} alt="United Club Gymnastics" className="errboundary-logo" />
             <h1 className="errboundary-title">Something broke</h1>
             <p className="errboundary-msg">
               The app hit an unexpected error and couldn't continue. Your data is safe —

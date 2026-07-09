@@ -133,23 +133,14 @@ option { color: var(--ink); background: #fff; }
   border-bottom: 1px solid rgba(219, 235, 237, 0.12);
 }
 .brand-mark {
-  font-family: var(--font-display);
-  font-size: 38px;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-  color: var(--white);
-  line-height: 1;
-  text-decoration: none;
   display: block;
+  text-decoration: none;
 }
-.brand-mark .spark { color: var(--coral-500); }
-.brand-sub {
-  font-size: 10px;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--ice-300);
-  margin-top: 6px;
-  opacity: 0.8;
+.brand-mark-logo {
+  display: block;
+  width: 100%;
+  max-width: 168px;
+  height: auto;
 }
 .nav-group { padding: 14px 10px 6px; }
 .nav-group-label {
@@ -606,8 +597,7 @@ option { color: var(--ink); background: #fff; }
   box-shadow: var(--shadow-lg);
   padding: 36px 28px;
 }
-.errboundary-logo { font-family: var(--font-display); font-size: 56px; color: var(--navy-800); line-height: 1; text-transform: uppercase; letter-spacing: 0.02em; }
-.errboundary-logo .spark { color: var(--coral-500); }
+.errboundary-logo { display: block; width: 100%; max-width: 200px; height: auto; margin: 0 auto 12px; }
 .errboundary-route {
   text-align: center;
   max-width: 480px;
@@ -649,8 +639,7 @@ option { color: var(--ink); background: #fff; }
   padding: 24px;
 }
 .gate-card { text-align: center; max-width: 420px; width: 100%; }
-.gate-logo { font-family: var(--font-display); font-size: 88px; color: var(--white); line-height: 1; text-transform: uppercase; letter-spacing: 0.02em; }
-.gate-logo .spark { color: var(--coral-500); }
+.gate-logo { display: block; width: 100%; max-width: 260px; height: auto; margin: 0 auto; }
 .gate-tag {
   color: var(--ice-200);
   font-family: var(--font-display);
