@@ -1,6 +1,7 @@
 import { NavLink, Link, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
+import primaryLogoWhite from '../assets/brand/primary-logo-white.svg';
 import { useDB, useViewPersonId, setViewPersonId } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
@@ -114,8 +115,9 @@ export function Layout({ children }: { children: ReactNode }) {
     <div className="shell">
       <aside id="app-sidebar" className={`sidebar${navOpen ? ' open' : ''}`}>
         <div className="brand-block">
-          <Link to="/" className="brand-mark">UCG<span className="spark">.</span></Link>
-          <div className="brand-sub">United Club Gymnastics</div>
+          <Link to="/" className="brand-mark">
+            <img src={primaryLogoWhite} alt="United Club Gymnastics" className="brand-mark-logo" />
+          </Link>
         </div>
         {navFor(caps).map((g) => (
           <nav className="nav-group" key={g.group}>

@@ -1,23 +1,68 @@
-/* Fonts are self-hosted via @fontsource (imported in main.tsx) — no third-party
-   font requests, woff2 preloaded at build time, cached by the service worker. */
+/* Licensed brand webfonts (UCG 2026 Brand Toolkit), self-hosted on Supabase Storage's
+   public `brand` bucket — never commit the woff2 files to this repo (EULA). Preload
+   links for the bold cuts live in index.html; @fontsource imports in main.tsx remain
+   as offline/dev fallbacks (see --font-display / --font-body stacks below). */
+@font-face {
+  font-family: 'Greed Condensed';
+  src: url('https://wkyerxlgricfphopocoz.supabase.co/storage/v1/object/public/brand/fonts/GreedCondensed-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Suisse Intl';
+  src: url('https://wkyerxlgricfphopocoz.supabase.co/storage/v1/object/public/brand/fonts/SuisseIntl-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Suisse Intl';
+  src: url('https://wkyerxlgricfphopocoz.supabase.co/storage/v1/object/public/brand/fonts/SuisseIntl-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Suisse Intl';
+  src: url('https://wkyerxlgricfphopocoz.supabase.co/storage/v1/object/public/brand/fonts/SuisseIntl-RegularIt.woff2') format('woff2');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Suisse Intl';
+  src: url('https://wkyerxlgricfphopocoz.supabase.co/storage/v1/object/public/brand/fonts/SuisseIntl-BoldIt.woff2') format('woff2');
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
 :root {
-  /* UCG brand */
-  --navy-900: #14202c;
-  --navy-800: #1d2a38;
-  --navy-700: #303c48;
-  --navy-600: #45525f;
-  --ice-100: #eef5f6;
-  --ice-200: #dbebed;
-  --ice-300: #c3dade;
-  --coral-500: #f46949;
-  --coral-600: #e2553a;
-  --coral-700: #b23a1e; /* AA-compliant text (4.9:1) on --coral-100 */
-  --coral-100: #fde4dc;
+  /* UCG brand (2026 Brand Toolkit — exact hexes) */
+  --navy-900: #15212c;
+  --navy-800: #1e2b38; /* Navy Blue (brand primary) */
+  --navy-700: #313d48;
+  --navy-600: #46535f;
+  --ice-100: #eef5f7;
+  --ice-200: #dbebee; /* Light Blue (brand primary) */
+  --ice-300: #c3dadf;
+  --coral-500: #f4694a; /* Red Orange (brand secondary) */
+  --coral-600: #e2553b;
+  --coral-700: #b23a1f; /* AA-compliant text (~4.9:1) on --coral-100 */
+  --coral-100: #fde4dd;
   --white: #fcfcfc;
   --green-600: #2e7d52;
   --green-100: #ddefe4;
   --amber-600: #b97324;
   --amber-100: #f8ecd9;
+
+  /* New brand accents — FILLS ONLY unless noted; see docs/specs/2026-07-08-ucg-rebrand.md
+     §"Approved color pairings" before using any of these as text on a light surface. */
+  --bluegreen: #a5c8cf; /* Blue Green (brand primary) — muted accent fill, never text */
+  --purple: #adbae9; /* Purple (brand secondary) — pale accent fill, never text */
+  --teal-900: #184b56; /* Dark Blue Green (brand secondary) — OK as text on white/light-blue */
+  --gold: #f6c328; /* Golden Yellow (brand secondary) — accent fill, never text on light bg */
 
   --bg: var(--ice-200);
   --surface: var(--white);
@@ -30,8 +75,8 @@
   --shadow: 0 1px 2px rgba(20, 32, 44, 0.06), 0 8px 24px -12px rgba(20, 32, 44, 0.18);
   --shadow-lg: 0 2px 4px rgba(20, 32, 44, 0.08), 0 24px 48px -16px rgba(20, 32, 44, 0.3);
 
-  --font-display: 'Archivo Black', 'Arial Black', sans-serif;
-  --font-body: 'Instrument Sans Variable', 'Instrument Sans', 'Helvetica Neue', sans-serif;
+  --font-display: 'Greed Condensed', 'Anton', 'Archivo Black', 'Arial Black', sans-serif;
+  --font-body: 'Suisse Intl', 'Instrument Sans Variable', 'Instrument Sans', 'Helvetica Neue', sans-serif;
 }
 
 * { box-sizing: border-box; }
@@ -63,7 +108,7 @@ option { color: var(--ink); background: #fff; }
 .display {
   font-family: var(--font-display);
   text-transform: uppercase;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.02em;
   line-height: 0.95;
   font-weight: 400;
 }
@@ -88,22 +133,14 @@ option { color: var(--ink); background: #fff; }
   border-bottom: 1px solid rgba(219, 235, 237, 0.12);
 }
 .brand-mark {
-  font-family: var(--font-display);
-  font-size: 38px;
-  letter-spacing: -0.01em;
-  color: var(--white);
-  line-height: 1;
-  text-decoration: none;
   display: block;
+  text-decoration: none;
 }
-.brand-mark .spark { color: var(--coral-500); }
-.brand-sub {
-  font-size: 10px;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--ice-300);
-  margin-top: 6px;
-  opacity: 0.8;
+.brand-mark-logo {
+  display: block;
+  width: 100%;
+  max-width: 168px;
+  height: auto;
 }
 .nav-group { padding: 14px 10px 6px; }
 .nav-group-label {
@@ -299,9 +336,9 @@ option { color: var(--ink); background: #fff; }
 @media (max-width: 1000px) { .cols-3, .cols-4 { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 640px) { .cols-2, .cols-3, .cols-4 { grid-template-columns: 1fr; } }
 
-.stat-big { font-family: var(--font-display); font-size: 34px; line-height: 1; }
+.stat-big { font-family: var(--font-display); font-size: 34px; line-height: 1; text-transform: uppercase; letter-spacing: 0.02em; }
 .stat-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--ink-soft); margin-top: 6px; }
-.stat-accent { color: var(--coral-500); }
+.stat-accent { color: var(--coral-600); } /* ≥3:1 on --surface at display size */
 
 .btn {
   display: inline-flex;
@@ -342,7 +379,7 @@ option { color: var(--ink); background: #fff; }
 }
 .badge.ok { background: var(--green-100); color: var(--green-600); }
 .badge.warn { background: var(--amber-100); color: var(--amber-600); }
-.badge.err { background: var(--coral-100); color: var(--coral-600); }
+.badge.err { background: var(--coral-100); color: var(--coral-700); }
 .badge.info { background: var(--ice-200); color: var(--navy-700); }
 .badge.navy { background: var(--navy-800); color: var(--ice-200); }
 
@@ -560,8 +597,7 @@ option { color: var(--ink); background: #fff; }
   box-shadow: var(--shadow-lg);
   padding: 36px 28px;
 }
-.errboundary-logo { font-family: var(--font-display); font-size: 56px; color: var(--navy-800); line-height: 1; }
-.errboundary-logo .spark { color: var(--coral-500); }
+.errboundary-logo { display: block; width: 100%; max-width: 200px; height: auto; margin: 0 auto 12px; }
 .errboundary-route {
   text-align: center;
   max-width: 480px;
@@ -603,12 +639,12 @@ option { color: var(--ink); background: #fff; }
   padding: 24px;
 }
 .gate-card { text-align: center; max-width: 420px; width: 100%; }
-.gate-logo { font-family: var(--font-display); font-size: 88px; color: var(--white); line-height: 1; letter-spacing: -0.01em; }
-.gate-logo .spark { color: var(--coral-500); }
+.gate-logo { display: block; width: 100%; max-width: 260px; height: auto; margin: 0 auto; }
 .gate-tag {
   color: var(--ice-200);
   font-family: var(--font-display);
   text-transform: uppercase;
+  letter-spacing: 0.02em;
   font-size: 21px;
   margin: 10px 0 34px;
   line-height: 1.1;
@@ -645,6 +681,8 @@ option { color: var(--ink); background: #fff; }
   font-size: clamp(72px, 18vw, 150px);
   color: var(--coral-500);
   line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
   font-variant-numeric: tabular-nums;
 }
 
@@ -715,7 +753,7 @@ option { color: var(--ink); background: #fff; }
 }
 .sp-strip-item { text-align: center; min-width: 70px; }
 .sp-strip-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--ice-300); font-weight: 700; }
-.sp-strip-value { font-family: var(--font-display); font-size: 34px; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.sp-strip-value { font-family: var(--font-display); font-size: 34px; font-variant-numeric: tabular-nums; line-height: 1.1; text-transform: uppercase; letter-spacing: 0.02em; }
 .sp-strip-value.accent { color: var(--coral-500); }
 
 .sp-warn {

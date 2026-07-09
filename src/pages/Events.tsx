@@ -10,7 +10,8 @@ import { EventWizard } from '../components/EventWizard';
 import { RegistrationEditor } from '../components/RegistrationEditor';
 import { EventStatusBadge } from './Home';
 import { APPARATUS, SHIRT_SIZES } from '../lib/types';
-import type { Athlete, CartItem, Event, EventSession, Registration } from '../lib/types';
+import type { Athlete, CartItem, Discipline, Event, EventSession, Registration } from '../lib/types';
+import { DisciplineIcon } from '../components/DisciplineIcon';
 import { deleteRegistration, pushCart, pushEventSessions, pushRegistration, syncSynchroPartnerLevelRemote } from '../lib/supabase';
 import { stateCode } from '../lib/sanction';
 import { fmtMoney } from '../lib/scoring';
@@ -158,7 +159,17 @@ export function Events() {
                       </td>
                       <td data-label="Location" style={{ whiteSpace: 'nowrap' }}>{ev.city}, {stateCode(ev.state)}</td>
                       <td data-label="Date(s)" style={{ whiteSpace: 'nowrap' }}>{dates}</td>
-                      <td data-label="Disciplines" style={{ color: 'var(--ink-soft)' }}>{ev.disciplines.join(' · ')}</td>
+                      <td data-label="Disciplines" style={{ color: 'var(--ink-soft)' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                          {(ev.disciplines as Discipline[]).map((d, i) => (
+                            <span key={d} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                              {i > 0 && <span style={{ color: 'var(--line)' }}>·</span>}
+                              <DisciplineIcon discipline={d} size={14} />
+                              {d}
+                            </span>
+                          ))}
+                        </span>
+                      </td>
                       <td data-label="Reg Opens" style={{ whiteSpace: 'nowrap' }}>
                         {regOpen
                           ? <span className="badge ok">{fmtDate(ev.regOpens.slice(0, 10))}</span>
@@ -223,6 +234,14 @@ export function EventDetail() {
             {event.city}, {event.state} · {fmtDate(event.startDate)}–{fmtDate(event.endDate)} ({event.timezone}) ·
             hosted by {host?.name} · <code>#/events/{event.slug}</code>
           </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 6 }}>
+            {(event.disciplines as Discipline[]).map((d) => (
+              <span key={d} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 13, fontWeight: 700, color: 'var(--ink-soft)' }}>
+                <DisciplineIcon discipline={d} size={20} />
+                {d === 'TNT' ? 'T&T' : d}
+              </span>
+            ))}
+          </div>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <EventStatusBadge event={event} />

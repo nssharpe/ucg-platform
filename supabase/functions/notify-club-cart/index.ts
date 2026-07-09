@@ -122,8 +122,8 @@ Deno.serve(async (req) => {
     bodyHtml: `<p>Hello,</p>
 <p><strong>${esc(addedBy)}</strong> added the following to <strong>${esc(club.name)}</strong>'s club cart:</p>
 <table style="border-collapse:collapse;margin:8px 0;font-size:14px;width:100%;">${rows}
-<tr><td style="padding:8px 12px 0 0;border-top:2px solid #1d2a38;font-weight:700;">Total</td>
-<td style="padding:8px 0 0;border-top:2px solid #1d2a38;text-align:right;font-weight:700;">${fmtMoney(total)}</td></tr>
+<tr><td style="padding:8px 12px 0 0;border-top:2px solid #1E2B38;font-weight:700;">Total</td>
+<td style="padding:8px 0 0;border-top:2px solid #1E2B38;text-align:right;font-weight:700;">${fmtMoney(total)}</td></tr>
 </table>
 <p>These memberships stay pending until a club manager pays the cart.</p>`,
     cta: { text: 'View & pay the club cart', href: cartLink },

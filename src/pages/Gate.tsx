@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { checkPassword } from '../lib/store';
 import { isSupabaseConfigured, supabase, emailHasAccount } from '../lib/supabase';
+import primaryLogoWhite from '../assets/brand/primary-logo-white.svg';
 
 // Keep in step with the Supabase password policy (Auth → Policies). See
 // docs/research/2026-06-22-password-policy.md.
@@ -28,7 +29,7 @@ function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
   return (
     <div className="gate">
       <form className="gate-card" onSubmit={submit}>
-        <div className="gate-logo">UCG<span className="spark">.</span></div>
+        <img src={primaryLogoWhite} alt="United Club Gymnastics" className="gate-logo" />
         <div className="gate-tag">For the love<br />of the sport.</div>
         <input
           type="password"
@@ -131,7 +132,7 @@ function AuthGate() {
   return (
     <div className="gate">
       <form className="gate-card" onSubmit={submit}>
-        <div className="gate-logo">UCG<span className="spark">.</span></div>
+        <img src={primaryLogoWhite} alt="United Club Gymnastics" className="gate-logo" />
         <div className="gate-tag">For the love<br />of the sport.</div>
         {mode === 'sign-up' && (
           <>

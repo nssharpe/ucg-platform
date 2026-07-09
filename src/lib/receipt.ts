@@ -29,7 +29,7 @@ export function downloadReceipt(inv: Invoice, forName: string): void {
   let y = margin;
   const ensure = (h: number) => { if (y + h > bottom) { doc.addPage(); y = margin; } };
 
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(17); doc.setTextColor(20);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(17); doc.setTextColor(30, 43, 56);
   doc.text('United Club Gymnastics', margin, y);
   doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(120);
   doc.text('Payment receipt', margin, y + 16);
@@ -40,7 +40,7 @@ export function downloadReceipt(inv: Invoice, forName: string): void {
   doc.text(dateStr, pageW - margin, y + 16, { align: 'right' });
   doc.text(inv.paidAt ? 'Paid' : 'Unpaid', pageW - margin, y + 30, { align: 'right' });
   y += 44;
-  doc.setDrawColor(20); doc.line(margin, y, pageW - margin, y); y += 18;
+  doc.setDrawColor(30, 43, 56); doc.line(margin, y, pageW - margin, y); y += 18;
 
   doc.setTextColor(90); doc.setFontSize(10);
   doc.text(`Billed to: ${forName}`, margin, y); y += 20;
@@ -49,7 +49,7 @@ export function downloadReceipt(inv: Invoice, forName: string): void {
   doc.setFontSize(10.5);
   for (const i of inv.items.filter((it) => it.kind !== 'discount')) {
     ensure(16);
-    doc.setTextColor(30);
+    doc.setTextColor(30, 43, 56);
     const label = `${i.label}${i.refunded ? ' (refunded)' : ''}`;
     const lines = doc.splitTextToSize(label, width - 90);
     doc.text(lines, margin, y);
@@ -72,8 +72,8 @@ export function downloadReceipt(inv: Invoice, forName: string): void {
     doc.text(inv.couponCode, pageW - margin, y, { align: 'right' }); y += 16;
   }
   y += 6; ensure(24);
-  doc.setDrawColor(20); doc.line(margin, y, pageW - margin, y); y += 18;
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(20);
+  doc.setDrawColor(30, 43, 56); doc.line(margin, y, pageW - margin, y); y += 18;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(30, 43, 56);
   doc.text('Total', margin, y);
   doc.text(fmtMoney(invoiceTotal(inv)), pageW - margin, y, { align: 'right' });
 
@@ -93,7 +93,7 @@ export function downloadCartInvoice(items: CartItem[], forName: string, title: s
   let y = margin;
   const ensure = (h: number) => { if (y + h > bottom) { doc.addPage(); y = margin; } };
 
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(17); doc.setTextColor(20);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(17); doc.setTextColor(30, 43, 56);
   doc.text('United Club Gymnastics', margin, y);
   doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(120);
   doc.text(`Cart estimate — ${title}`, margin, y + 16);
@@ -102,7 +102,7 @@ export function downloadCartInvoice(items: CartItem[], forName: string, title: s
   doc.text(dateStr, pageW - margin, y, { align: 'right' });
   doc.text('Not paid', pageW - margin, y + 16, { align: 'right' });
   y += 44;
-  doc.setDrawColor(20); doc.line(margin, y, pageW - margin, y); y += 18;
+  doc.setDrawColor(30, 43, 56); doc.line(margin, y, pageW - margin, y); y += 18;
 
   doc.setTextColor(90); doc.setFontSize(10);
   doc.text(`Prepared for: ${forName}`, margin, y); y += 20;
@@ -120,7 +120,7 @@ export function downloadCartInvoice(items: CartItem[], forName: string, title: s
   const subtotal = items.reduce((sum, i) => sum + i.amount, 0);
   for (const i of items) {
     ensure(16);
-    doc.setTextColor(30);
+    doc.setTextColor(30, 43, 56);
     const lines = doc.splitTextToSize(i.label, width - 90);
     doc.text(lines, margin, y);
     doc.text(fmtMoney(i.amount), pageW - margin, y, { align: 'right' });
@@ -144,8 +144,8 @@ export function downloadCartInvoice(items: CartItem[], forName: string, title: s
   doc.text(fmtMoney(fee), pageW - margin, y, { align: 'right' }); y += 16;
 
   y += 6; ensure(24);
-  doc.setDrawColor(20); doc.line(margin, y, pageW - margin, y); y += 18;
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(20);
+  doc.setDrawColor(30, 43, 56); doc.line(margin, y, pageW - margin, y); y += 18;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(30, 43, 56);
   doc.text('Estimated total', margin, y);
   doc.text(fmtMoney(total), pageW - margin, y, { align: 'right' });
   y += 28;

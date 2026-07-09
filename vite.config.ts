@@ -61,8 +61,8 @@ export default defineConfig({
         name: 'UCG Registration & Scoring',
         short_name: 'UCG',
         description: 'United Club Gymnastics — registration, scoring, live results.',
-        theme_color: '#1d2a38',
-        background_color: '#dbebed',
+        theme_color: '#1e2b38',
+        background_color: '#dbebee',
         display: 'standalone',
         start_url: '/ucg-platform/',
         icons: [
