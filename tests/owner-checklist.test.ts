@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ownerTaskDueDate, ownerReminderStage, OWNER_TASKS } from '../supabase/functions/_shared/owner-checklist';
+import { ownerTaskDueDate, ownerReminderStage, ownerTaskStageWording, OWNER_TASKS } from '../supabase/functions/_shared/owner-checklist';
 import type { OwnerChecklist } from '../supabase/functions/_shared/owner-checklist';
 
 describe('OWNER_TASKS', () => {
@@ -118,5 +118,23 @@ describe('ownerReminderStage', () => {
 
   it('returns null when now is invalid', () => {
     expect(ownerReminderStage(new Date('not-a-date'), due)).toBeNull();
+  });
+});
+
+describe('ownerTaskStageWording', () => {
+  it('renders 1w as "due in 1 week"', () => {
+    expect(ownerTaskStageWording('1w')).toBe('due in 1 week');
+  });
+
+  it('renders 1d as "due tomorrow"', () => {
+    expect(ownerTaskStageWording('1d')).toBe('due tomorrow');
+  });
+
+  it('renders any overdue-YYYY-MM-DD stage as "OVERDUE"', () => {
+    expect(ownerTaskStageWording('overdue-2026-08-01')).toBe('OVERDUE');
+  });
+
+  it('renders null as empty string', () => {
+    expect(ownerTaskStageWording(null)).toBe('');
   });
 });

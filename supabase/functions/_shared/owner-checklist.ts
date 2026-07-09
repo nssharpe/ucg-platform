@@ -128,3 +128,15 @@ export function ownerReminderStage(now: Date, due: Date, lastDailyKeyDate?: stri
   if (nowMs >= oneWeekMark) return '1w';
   return null;
 }
+
+/** Plain-English wording for a reminder stage, used in both the email subject
+ *  and body (scheduled-dispatch's owner-task consumer). Kept here (pure, unit-
+ *  tested) rather than inline in the Edge Function per CLAUDE.md's rule that
+ *  decision logic — even wording keyed off a computed stage — belongs in the
+ *  shared pure module. */
+export function ownerTaskStageWording(stage: OwnerReminderStage): string {
+  if (stage === '1w') return 'due in 1 week';
+  if (stage === '1d') return 'due tomorrow';
+  if (stage && stage.startsWith('overdue-')) return 'OVERDUE';
+  return '';
+}

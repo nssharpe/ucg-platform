@@ -129,7 +129,7 @@ is the only admin-gated sender.
 | `notify-manager-access-denied` | Emails the requester that their Club Admin request was not approved. Token-gated (deploy `--no-verify-jwt`); resolves recipient server-side; fails closed unless the request is `denied`. | no-login (secret token) |
 | `notify-sanction` | Sanction lifecycle emails (submitted → team+admins; approved/rejected → requester). | any signed-in member |
 | `create-checkout-session` | Stripe Embedded Checkout. As of **S4** generalized to **every** cart-line kind (membership / club-membership / member-targeted membership / meet entry / change fee / addon) for **both** self carts and manager-paid club carts. **Recomputes** all amounts server-side (cart `amount` never trusted) — season fees + existing memberships for memberships; meet config (honoring host-club $0) keyed on the new `ref_meet_id`/`ref_line_type` tags for entries/changes/addons — adds the service fee (`processingFee`), creates the session (`ui_mode:'embedded'`, no redirect), inserts a `pending` `payments` row. Returns `{ clientSecret, sessionId, paymentId }`. | any signed-in member (own cart) / club manager (club cart) |
-| `scheduled-dispatch` | Invoked every 15 min by the `scheduled-dispatch-15min` pg_cron job. Sanction-vote reminder emails (3-day / 1-day / voting-closed nudge) to Sanctioning Team + admins who haven't voted; idempotent via `notification_log`. Gateway keeps `verify_jwt = true`, AND the function itself requires the bearer token to equal `SUPABASE_SERVICE_ROLE_KEY` exactly — no user-JWT path. | pg_cron only (service-role bearer) |
+| `scheduled-dispatch` | Invoked every 15 min by the `scheduled-dispatch-15min` pg_cron job. Two consumers: (1) sanction-vote reminder emails (3-day / 1-day / voting-closed nudge) to Sanctioning Team + admins who haven't voted; (2) event-owner task escalation emails (`owner-task` kind, event-mgmt v2 §B4) — for every non-camp event with an assigned `owner`, walks the 7 `owner_checklist` tasks (skips `done` ones), computes each task's due date via `_shared/owner-checklist.ts`, and emails the owner at the 1-week/1-day/daily-overdue stages. Both idempotent via `notification_log`. Gateway keeps `verify_jwt = true`, AND the function itself requires the bearer token to equal `SUPABASE_SERVICE_ROLE_KEY` exactly (or the `x-cron-secret` header) — no user-JWT path. | pg_cron only (service-role bearer) |
 | `stripe-webhook` | The sole completer. Verifies the Stripe signature with `constructEventAsync` against `STRIPE_WEBHOOK_SECRET` (**fail-closed** if unset). On `session.completed`/`async_payment_succeeded` runs **idempotent** fulfillment (event-id + `fulfilled_at` guarded) for all line kinds (S4): flip the exact `registrations.paid` via `ref_reg_ids`, activate membership(s) + club memberships, write the paid invoice with the **real** `stripe_fee` (billed to the **club** via `invoices.club_id` for club carts, to the payer for self carts), clear cart lines, email the **payer** a receipt (the paying manager for a club cart). On `expired`/`async_payment_failed` → mark `failed`. | Stripe (no JWT; deploy `--no-verify-jwt`; signature-verified) |
 
 Stripe functions share `functions/_shared/stripe.ts` (Stripe client via `npm:stripe`,
@@ -346,10 +346,25 @@ until payment). League admins still grant/revoke any season directly. The gate i
 (`*/15 * * * *`) and, via `pg_net.http_post`, POSTs an empty JSON body to
 `<project_url>/functions/v1/scheduled-dispatch` with an
 `Authorization: Bearer <service_role_key>` header. The Edge Function fans out
-to whatever scheduled work exists — today that's sanction-request voting
-reminders (3 days / 1 day before `sanction_requests.deadline_at`, plus a
-"voting closed" nudge at the deadline) to Sanctioning Team + admins who
-haven't yet voted, deduped idempotently via `notification_log`.
+to whatever scheduled work exists:
+
+- **Sanction-request voting reminders** (3 days / 1 day before
+  `sanction_requests.deadline_at`, plus a "voting closed" nudge at the
+  deadline) to Sanctioning Team + admins who haven't yet voted.
+- **Event-owner task escalation** (`owner-task` kind, event-mgmt v2 §B4): for
+  every competition/sanctioned event (camps are skipped — no host to
+  shepherd) with an `events.owner` assigned, walks the 7
+  `events.owner_checklist` tasks, skipping any already marked `done`. Each
+  task's due date comes from the pure `_shared/owner-checklist.ts`
+  (`ownerTaskDueDate`); `ownerReminderStage` maps (now, due) to `'1w'` / `'1d'`
+  / a daily `'overdue-YYYY-MM-DD'` stage. The owner gets one email per
+  (event, task, stage) — the date-keyed overdue stage makes "once per day
+  while overdue" naturally idempotent via `notification_log`
+  (`ref_id = '<eventId>:<taskId>:<stage>'`), same pattern as the sanction
+  consumer.
+
+Both consumers dedupe idempotently via `notification_log` and are isolated in
+their own try/catch so one consumer's failure can't take down the other.
 
 **Three secrets, created manually per environment** (NOT via migration — the
 migrations only read them). **All set up in both envs 2026-07-08.**
@@ -404,9 +419,9 @@ Payments are **built and deployed in test mode** (Stripe Embedded Checkout, Phas
 functions above; finance fee/payment-intent wiring done; security hardening Phases 1–2
 applied). Remaining before real money flows: Nate runs the go-live checklist (live keys).
 Still future: a membership-expiry notification consumer on the new `scheduled-dispatch`
-job (see "Scheduled dispatch (pg_cron)" above — the scheduler infra now exists; sanction-
-vote reminders are its first consumer), scheduled database backups, and the public API
-surface for other leagues. (Waiver e-signature **is** built — migrations 0010–0030 +
+job (see "Scheduled dispatch (pg_cron)" above — the scheduler infra now has two
+consumers: sanction-vote reminders and event-owner task escalation), scheduled database
+backups, and the public API surface for other leagues. (Waiver e-signature **is** built — migrations 0010–0030 +
 `record-waiver-signature` / `request-guardian-waiver`; it stores a structured signature
 evidence record. PDF proof and receipts are generated **client-side** (jsPDF) on demand;
 server-emailed PDF attachments will come with the payments work.)

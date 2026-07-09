@@ -14,6 +14,7 @@ import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supa
 import { sendBatch, type EmailMessage } from '../_shared/resend.ts';
 import { renderEmail } from '../_shared/email-layout.ts';
 import { sanctionReminderStage, notificationLogId } from '../_shared/reminder-logic.ts';
+import { OWNER_TASKS, ownerTaskDueDate, ownerReminderStage, ownerTaskStageWording, type OwnerChecklist } from '../_shared/owner-checklist.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -169,7 +170,85 @@ Deno.serve(async (req) => {
     }
   }
 
-  return json({ ok: failures.length === 0, reminders3d, reminders1d, closures, failures });
+  // b. Event-owner task escalation emails (spec §B4). Isolated in its own
+  // try/catch so a failure here (e.g. a query error) cannot take down the
+  // sanction-vote consumer above, mirroring the per-request isolation that
+  // consumer already has via `failures`/`continue`.
+  let ownerTaskReminders = 0;
+  try {
+    const { data: ownerEvents, error: ownerEvErr } = await db
+      .from('events')
+      .select('id, slug, name, event_type, created_at, reg_opens, start_date, end_date, owner, owner_checklist');
+    if (ownerEvErr) throw ownerEvErr;
+
+    for (const ev of ownerEvents ?? []) {
+      const eventId = ev.id as string;
+      try {
+        const owner = ev.owner as { userId?: string; name?: string; email?: string } | null;
+        if (!owner) continue; // unassigned — nothing to remind
+        // Camps are individual-only registration events with no host to
+        // shepherd via this checklist; only competitions get owner tasks.
+        const eventType = (ev.event_type as string | null) ?? 'competition';
+        if (eventType === 'camp') continue;
+
+        const ownerEmail = (owner.email ?? '').trim().toLowerCase();
+        if (!EMAIL_RE.test(ownerEmail)) continue;
+
+        const checklist = (ev.owner_checklist as OwnerChecklist | null) ?? undefined;
+        const eventForDue = {
+          createdAt: (ev.created_at as string | null) ?? undefined,
+          regOpens: (ev.reg_opens as string | null) ?? '',
+          startDate: (ev.start_date as string | null) ?? '',
+          endDate: (ev.end_date as string | null) ?? '',
+        };
+        const eventName = (ev.name as string) ?? 'event';
+        const eventLink = `${appUrl}/#/events/${ev.slug as string}`;
+
+        for (const task of OWNER_TASKS) {
+          if (checklist?.[task.id]?.done) continue;
+
+          const dueISO = ownerTaskDueDate(task.id, eventForDue, checklist);
+          if (!dueISO) continue;
+
+          const stage = ownerReminderStage(new Date(nowISO), new Date(dueISO));
+          if (!stage) continue;
+
+          const kind = 'owner-task';
+          const refId = `${eventId}:${task.id}:${stage}`;
+          const claimed = await claimNotifications(db, kind, refId, [ownerEmail]);
+          if (claimed.length === 0) continue;
+
+          const wording = ownerTaskStageWording(stage);
+          const dueLabel = new Date(dueISO).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+          const subject = `[UCG] Event task ${wording}: ${task.label} — ${eventName}`;
+          const html = renderEmail({
+            heading: `Event task ${esc(wording)}`,
+            bodyHtml: `<p>Hello${owner.name ? ` ${esc(owner.name)}` : ''},</p>
+<p>The task <strong>${esc(task.label)}</strong> for <strong>${esc(eventName)}</strong> is <strong>${esc(wording)}</strong>.</p>
+<p>Due date: ${esc(dueLabel)}</p>`,
+            cta: { text: 'Open event', href: eventLink },
+          });
+          const messages: EmailMessage[] = [{ to: owner.name ? `${owner.name} <${ownerEmail}>` : ownerEmail, subject, html }];
+          const result = await sendBatch(messages);
+          if (!result.ok) {
+            console.error(`scheduled-dispatch: send failed for ${kind}:${refId}`, result.failed);
+            failures.push(`${kind}:${refId}`);
+            await releaseClaims(db, kind, refId, claimed);
+            continue;
+          }
+          ownerTaskReminders += result.sentCount;
+        }
+      } catch (err) {
+        console.error(`scheduled-dispatch: owner-task consumer failed for event ${eventId}`, err);
+        failures.push(`owner-task:event:${eventId}`);
+      }
+    }
+  } catch (err) {
+    console.error('scheduled-dispatch: owner-task consumer failed to load events', err);
+    failures.push('owner-task:query');
+  }
+
+  return json({ ok: failures.length === 0, reminders3d, reminders1d, closures, ownerTaskReminders, failures });
 });
 
 /** Sanctioning Team + admin people, deduped by lowercased email (mirrors
