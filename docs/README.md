@@ -44,7 +44,7 @@ Live build/tooling notes live in [`../CLAUDE.md`](../CLAUDE.md); open work is th
 | [dev-test-auth](specs/2026-06-25-dev-test-auth.md) | Dev-only real auto-login of a seeded Supabase test user (`.env.local`-gated) so authenticated UI is exercisable locally | ✅ shipped |
 | [stripe-integration](specs/2026-06-25-stripe-integration.md) | Stripe Embedded Checkout architecture (S1–S5) | ✅ shipped |
 | [security-review-findings (7/02)](specs/2026-07-02-security-review-findings.md) | Deep review of the money paths: RLS, edge functions, cart state machine — verified findings by severity | 🟡 findings logged; fixes planned |
-| [event-management-v2-requirements](specs/2026-07-06-event-management-v2-requirements.md) | Julia's full event-management requirements (7/06) digested + gap-mapped: host dashboard, refunds, capacity/waitlists, add-ons v2, nationals ops, finance dashboards — phasing V2-P0…P6 | 🟡 validated (phasing approved, §N7 answered); **P0 shipped (staging; prod pending Nate)**; **P1 build in progress** — Tasks 1, 3, 4, 5 shipped (owner assignment + checklist, per-event admin grants, insurance-cert upload, host viewing page); Excel exports next |
+| [event-management-v2-requirements](specs/2026-07-06-event-management-v2-requirements.md) | Julia's full event-management requirements (7/06) digested + gap-mapped: host dashboard, refunds, capacity/waitlists, add-ons v2, nationals ops, finance dashboards — phasing V2-P0…P6 | 🟡 validated (phasing approved, §N7 answered); **P0 shipped (staging; prod pending Nate)**; **P1 build in progress** — Tasks 1, 3, 4, 5, 6 shipped (owner assignment + checklist, per-event admin grants, insurance-cert upload, host viewing page, Excel exports); P1 nearly done |
 
 ## Plans (`plans/`) — step-by-step implementation records
 
@@ -182,8 +182,17 @@ here — update THIS list when priorities change, not rival copies.
   `event_collected_total`, `mark_medals_received`) give hosts/event-admins/sanctioning
   the event-scoped read (and one scoped write) their own RLS wouldn't otherwise allow.
   "Host dashboard →" link on the event page for anyone with host-level access or
-  sanctioning. **Excel exports (the natural P1 Task 6) are not built yet** — left a
-  marked spot on the page.
+  sanctioning.
+  **P1 Task 6 shipped:** Excel registration workbook (§C/§K) — "Download registration
+  workbook (.xlsx)" card on the host page, one workbook / three sheets built from the
+  same shared host roster: Athletes (one row per registration — apparatus codes
+  overlap MAG/WAG so a multi-discipline athlete gets one row per discipline rather
+  than a clashing merged row), Counts (level × club × apparatus with a totals row),
+  Shirt sizes (profile-size tally, explicitly labeled as not purchased-shirt
+  quantities). Leo sizes and banquet quantities are deferred to the add-ons v2 rework
+  (Phase 2), when purchased-line quantity/size/assignment data exists to query. Sheet
+  shaping is pure + unit-tested (`src/lib/host-export.ts`); `exceljs` is dynamically
+  imported so it ships as its own chunk, not the entry bundle.
   §N7 open questions **all answered by Julia 2026-07-06** (recorded in the spec;
   every phase is unblocked — only the §F partial-fit capacity design wants a
   confirm at P4 kickoff). This absorbs several
