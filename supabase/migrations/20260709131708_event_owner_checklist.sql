@@ -28,6 +28,38 @@ create policy sanctioning_update on public.events for update
   using (is_admin() or coalesce(auth_has_role('sanctioning'), false))
   with check (is_admin() or coalesce(auth_has_role('sanctioning'), false));
 
+-- RLS upsert trap (CLAUDE.md): the app saves events via whole-row upserts
+-- (`INSERT ... ON CONFLICT DO UPDATE` in pushEvent), and an upsert must pass
+-- an INSERT policy's WITH CHECK even on the conflict-UPDATE path. Without
+-- this, a pure-sanctioning (non-admin) member's owner/checklist save would be
+-- rejected despite sanctioning_update above. Justified by spec §A (events
+-- editable by sanctioning + league admins).
+create policy sanctioning_insert on public.events for insert
+  with check (is_admin() or coalesce(auth_has_role('sanctioning'), false));
+
+-- pushEvent also rewrites the event's sessions/squads via delete+insert
+-- (remoteReplace), and those tables are only host/admin-writable today
+-- (host_sessions/host_squads, 20260601000002_rls.sql:124-133). Extend write
+-- reach to sanctioning with per-command policies -- NOT `for all`, so each
+-- grant is explicit (delete IS needed here for remoteReplace's delete step).
+-- Existing policies stay untouched; permissive policies for the same command
+-- OR together.
+create policy sanctioning_sessions_insert on public.event_sessions for insert
+  with check (is_admin() or coalesce(auth_has_role('sanctioning'), false));
+create policy sanctioning_sessions_update on public.event_sessions for update
+  using (is_admin() or coalesce(auth_has_role('sanctioning'), false))
+  with check (is_admin() or coalesce(auth_has_role('sanctioning'), false));
+create policy sanctioning_sessions_delete on public.event_sessions for delete
+  using (is_admin() or coalesce(auth_has_role('sanctioning'), false));
+
+create policy sanctioning_squads_insert on public.squads for insert
+  with check (is_admin() or coalesce(auth_has_role('sanctioning'), false));
+create policy sanctioning_squads_update on public.squads for update
+  using (is_admin() or coalesce(auth_has_role('sanctioning'), false))
+  with check (is_admin() or coalesce(auth_has_role('sanctioning'), false));
+create policy sanctioning_squads_delete on public.squads for delete
+  using (is_admin() or coalesce(auth_has_role('sanctioning'), false));
+
 -- ---------------------------------------------------------------------------
 -- list_sanctioning_team(): the sanctioning/admin roster for the owner-assign
 -- dropdown. SECURITY DEFINER so a non-admin sanctioning caller can read
