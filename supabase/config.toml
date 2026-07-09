@@ -5,8 +5,9 @@
 # it AUTO-CONFIRMS the prompt. Every [auth]/[auth.*] key below is therefore
 # load-bearing: it mirrors the intended remote value so a push only changes what
 # we mean to change. Bit us live 2026-07-08 (site_url/redirects/confirmations
-# reset to localhost defaults for ~minutes). Always run `supabase config push
-# </dev/null` FIRST and read the printed diff before a real push.
+# reset to localhost defaults for ~minutes). Closed stdin defaults the [Y/n] prompt
+# to YES — the only safe dry-run is `echo n | supabase config push --agent no`;
+# run it FIRST and read the printed diff before a real push.
 #
 # Auth email template HTML is GENERATED — do not edit the files by hand:
 #   node --experimental-strip-types scripts/render-auth-email-templates.mts

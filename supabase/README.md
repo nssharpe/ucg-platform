@@ -181,9 +181,11 @@ the SAME shared layout as the Resend emails and live in the repo:
    first push reset prod `site_url`/`additional_redirect_urls`/`enable_confirmations`/
    `otp_length`/MFA to localhost defaults for a few minutes. That's why `config.toml`
    mirrors the full intended `[auth]` config; keep every key in it deliberate.
-2. Under agent/CI detection the CLI **auto-confirms** the diff prompt. For a true
-   dry-run: `supabase config push --agent no </dev/null` (prompt aborts on closed
-   stdin) and read the printed diff first.
+2. Under agent/CI detection the CLI **auto-confirms** the diff prompt, and a closed
+   stdin (`</dev/null`) makes the `[Y/n]` prompt default to **Yes** — so `--agent no
+   </dev/null` is NOT a dry-run (it applied once, 2026-07-09). The only safe dry-run
+   is an EXPLICIT decline: `echo n | supabase config push --agent no` — read the
+   printed diff before any real push.
 3. CLI **v2.107 silently skipped template `content`** (pushed subjects only) — fixed
    by v2.109. Keep the CLI current before template pushes.
 4. **Staging is a no-op:** free tier + default email provider → Supabase 400s the

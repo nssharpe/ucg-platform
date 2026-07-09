@@ -48,7 +48,7 @@ ${footnote}
 </table>
 <p style="text-align:center;color:${FOOTER_MUTED};font-size:12px;margin:20px 0 0;">
 United Club Gymnastics &middot; For the love of the sport.<br>
-<a href="https://naigc.org" style="color:${FOOTER_MUTED};text-decoration:underline;">naigc.org</a>
+<a href="https://www.unitedgymnastics.org" style="color:${FOOTER_MUTED};text-decoration:underline;">unitedgymnastics.org</a>
 </p>
 </div>`;
 }

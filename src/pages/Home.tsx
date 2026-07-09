@@ -5,6 +5,7 @@ import { Stat, Badge } from '../components/ui';
 import { useFmtDate } from '../components/ui-hooks';
 import { fmtMoney } from '../lib/scoring';
 import { deriveEventPhase, eventIsInPhase, type EventPhaseInput } from '../lib/events-core';
+import logotypeAlt2 from '../assets/brand/logotype-alt2.svg';
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -95,7 +96,27 @@ function Hero() {
           </Link>
         )}
       </div>
-      <div className="display" aria-hidden style={{ position: 'absolute', right: -30, bottom: -42, fontSize: 190, color: 'rgba(244,105,73,0.14)', pointerEvents: 'none' }}>UCG</div>
+      {/* Official Logotype Alt2 watermark, coral-tinted via CSS mask (SVG is single-fill) */}
+      <div
+        aria-hidden
+        style={{
+          position: 'absolute',
+          right: -30,
+          bottom: -42,
+          width: 494,
+          height: 190,
+          background: 'rgba(244, 105, 74, 0.14)',
+          /* URL must be quoted: Vite may inline the SVG as a data: URI containing
+             raw parens (clip-path url(#…)), which breaks an unquoted CSS url() */
+          WebkitMaskImage: `url("${logotypeAlt2}")`,
+          maskImage: `url("${logotypeAlt2}")`,
+          WebkitMaskRepeat: 'no-repeat',
+          maskRepeat: 'no-repeat',
+          WebkitMaskSize: 'contain',
+          maskSize: 'contain',
+          pointerEvents: 'none',
+        }}
+      />
     </div>
   );
 }

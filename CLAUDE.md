@@ -328,8 +328,9 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   render from the SAME layout: `scripts/render-auth-email-templates.mts` →
   `supabase/templates/*.html` → `supabase config push` (prod only — staging is free-tier
   and 400s template pushes). ⚠ `config push` pushes DEFAULTS for undeclared `[auth]`
-  keys and AUTO-CONFIRMS under agent detection — dry-run `supabase config push
-  --agent no </dev/null` and read the diff first; keep every config.toml key deliberate.
+  keys and AUTO-CONFIRMS under agent detection (closed stdin also defaults the prompt
+  to Yes) — dry-run with `echo n | supabase config push --agent no` and read the diff
+  first; keep every config.toml key deliberate.
   Full runbook + traps: `supabase/README.md` "Auth email templates".
 - Deploy: `supabase functions deploy <name> --project-ref wkyerxlgricfphopocoz`
   (sandbox disabled; no Docker; `_shared/` bundles automatically).
