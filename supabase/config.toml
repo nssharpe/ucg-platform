@@ -1,0 +1,88 @@
+# Supabase config — ONLY the sections we deliberately manage are declared.
+#
+# ⚠ `supabase config push` pushes CLI DEFAULTS for any key NOT declared here (it
+# diffs the full section, not just declared keys) — and under agent/CI detection
+# it AUTO-CONFIRMS the prompt. Every [auth]/[auth.*] key below is therefore
+# load-bearing: it mirrors the intended remote value so a push only changes what
+# we mean to change. Bit us live 2026-07-08 (site_url/redirects/confirmations
+# reset to localhost defaults for ~minutes). Always run `supabase config push
+# </dev/null` FIRST and read the printed diff before a real push.
+#
+# Auth email template HTML is GENERATED — do not edit the files by hand:
+#   node --experimental-strip-types scripts/render-auth-email-templates.mts
+# Apply: supabase config push                                    (prod, linked)
+#        (staging: see [remotes.staging] below)
+project_id = "ucg-platform"
+
+[auth]
+enabled = true
+site_url = "https://nssharpe.github.io/ucg-platform/"
+additional_redirect_urls = [
+  "https://nssharpe.github.io/ucg-platform/",
+  "http://localhost:5173/",
+  "https://nssharpe.github.io/ucg-platform/**",
+  "http://localhost:5173/**",
+]
+jwt_expiry = 3600
+enable_refresh_token_rotation = true
+
+[auth.mfa]
+max_enrolled_factors = 10
+
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = true
+enable_confirmations = true
+secure_password_change = false
+max_frequency = "1m0s"
+otp_length = 8
+otp_expiry = 3600
+
+[auth.email.template.confirmation]
+subject = "Confirm your UCG account"
+content_path = "./supabase/templates/confirmation.html"
+
+[auth.email.template.invite]
+subject = "You're invited to United Club Gymnastics"
+content_path = "./supabase/templates/invite.html"
+
+[auth.email.template.magic_link]
+subject = "Your UCG sign-in link"
+content_path = "./supabase/templates/magic_link.html"
+
+[auth.email.template.recovery]
+subject = "Reset your UCG password"
+content_path = "./supabase/templates/recovery.html"
+
+[auth.email.template.email_change]
+subject = "Confirm your new UCG email"
+content_path = "./supabase/templates/email_change.html"
+
+[auth.email.template.reauthentication]
+subject = "{{ .Token }} is your UCG verification code"
+content_path = "./supabase/templates/reauthentication.html"
+
+# Staging (ucg-staging) — same templates, but its OWN auth URLs (localhost app on
+# 5177, Playwright E2E server on 5178). `supabase config push --project-ref
+# xogpiksqtkayxwmczlbx` matches this block by project_id and merges it over the
+# base [auth] config, so the prod site_url above never reaches staging.
+# ⚠ CURRENTLY A NO-OP: staging is free-tier with the default email provider, and
+# Supabase 400s the whole auth-config update ("Email template modification is not
+# available for free tier projects…"), so NOTHING here is applied (verified
+# 2026-07-08 — staging keeps default templates AND its old site_url localhost:3000).
+# Becomes usable if staging ever gets custom SMTP or a paid plan.
+[remotes.staging]
+project_id = "xogpiksqtkayxwmczlbx"
+
+[remotes.staging.auth]
+site_url = "http://localhost:5177/"
+additional_redirect_urls = [
+  "http://localhost:5177/",
+  "http://localhost:5177/**",
+  "http://localhost:5178/",
+  "http://localhost:5178/**",
+]

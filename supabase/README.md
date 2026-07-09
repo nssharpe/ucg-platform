@@ -159,6 +159,39 @@ on that legacy client-side path), and an in-app admin refund path (today refunds
 **manually in the Stripe Dashboard** — a Dashboard refund does not yet reflect back into
 `payments.status`/fulfillment; sketch in the checklist).
 
+## Auth email templates (repo-managed since 2026-07-08)
+
+Supabase Auth's transactional emails (confirmation / invite / magic link / recovery /
+email change / reauthentication) are **no longer Dashboard-managed**. They render from
+the SAME shared layout as the Resend emails and live in the repo:
+
+- `scripts/render-auth-email-templates.mts` imports `_shared/email-layout.ts`
+  (via `node --experimental-strip-types`) and generates `supabase/templates/*.html`
+  (Go-template vars like `{{ .ConfirmationURL }}` left intact). Never hand-edit the
+  generated HTML — change the copy in the script or the design in `email-layout.ts`,
+  regenerate, and push. Restyling the Resend wrapper therefore also restyles Auth
+  emails **after a regenerate + config push**.
+- `supabase/config.toml` declares the subjects + `content_path`s; apply with
+  `supabase config push` (prod, linked project). Verified live 2026-07-08 (recovery
+  email received with branded body; template-content propagation to the running auth
+  service takes ~5 min — subjects are near-instant).
+
+**⚠ `config push` traps (bit us live 2026-07-08):**
+1. It pushes CLI **defaults for every key you did NOT declare** in the section — the
+   first push reset prod `site_url`/`additional_redirect_urls`/`enable_confirmations`/
+   `otp_length`/MFA to localhost defaults for a few minutes. That's why `config.toml`
+   mirrors the full intended `[auth]` config; keep every key in it deliberate.
+2. Under agent/CI detection the CLI **auto-confirms** the diff prompt. For a true
+   dry-run: `supabase config push --agent no </dev/null` (prompt aborts on closed
+   stdin) and read the printed diff first.
+3. CLI **v2.107 silently skipped template `content`** (pushed subjects only) — fixed
+   by v2.109. Keep the CLI current before template pushes.
+4. **Staging is a no-op:** free tier + default email provider → Supabase 400s the
+   whole auth-config update ("Email template modification is not available for free
+   tier projects"). Staging keeps GoTrue default templates and its old
+   `site_url` (localhost:3000); the `[remotes.staging]` block in config.toml becomes
+   usable only if staging gets custom SMTP/paid plan.
+
 ## Staging project (`ucg-staging`, since 2026-07-04)
 
 A second Supabase project in the NAIGC org — ref **`xogpiksqtkayxwmczlbx`** — so

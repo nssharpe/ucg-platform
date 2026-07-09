@@ -322,10 +322,15 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
 - All transactional emails render through `_shared/email-layout.ts` (`renderEmail({
   heading, bodyHtml, cta?, footnoteHtml? })`) — the branded navy-header/white-card/
   orange-CTA wrapper matching Supabase's magic-link email. New email-sending functions
-  should use it rather than composing bare `<p>` HTML. Exceptions: `send-email` (admin
-  free-text broadcast — caller controls the full body) and Supabase Auth's own
-  templates (magic-link/invite/recovery — configured in the Supabase Dashboard, not
-  in this repo).
+  should use it rather than composing bare `<p>` HTML. Exception: `send-email` (admin
+  free-text broadcast — caller controls the full body). Supabase Auth's own templates
+  (confirmation/invite/magic-link/recovery/…) are repo-managed since 2026-07-08 and
+  render from the SAME layout: `scripts/render-auth-email-templates.mts` →
+  `supabase/templates/*.html` → `supabase config push` (prod only — staging is free-tier
+  and 400s template pushes). ⚠ `config push` pushes DEFAULTS for undeclared `[auth]`
+  keys and AUTO-CONFIRMS under agent detection — dry-run `supabase config push
+  --agent no </dev/null` and read the diff first; keep every config.toml key deliberate.
+  Full runbook + traps: `supabase/README.md` "Auth email templates".
 - Deploy: `supabase functions deploy <name> --project-ref wkyerxlgricfphopocoz`
   (sandbox disabled; no Docker; `_shared/` bundles automatically).
 - **CRITICAL — `--no-verify-jwt` is NOT sticky.** A bare redeploy silently resets
