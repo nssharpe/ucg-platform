@@ -705,7 +705,10 @@ export function EventHostPage() {
           <h1 className="page-title display">{event.name} — Host dashboard</h1>
           <p className="page-sub">{event.city}, {event.state} · {fmtDate(event.startDate)}–{fmtDate(event.endDate)}</p>
         </div>
-        <Link className="btn ghost small" to={`/events/${event.slug}`}>← Event page</Link>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Link className="btn ghost small" to={`/events/${event.slug}/communicate`}>Email registrants</Link>
+          <Link className="btn ghost small" to={`/events/${event.slug}`}>← Event page</Link>
+        </div>
       </div>
 
       <HostStatusCard event={event} fmtDate={fmtDate} toast={toast} />

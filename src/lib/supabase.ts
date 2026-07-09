@@ -795,6 +795,37 @@ export async function sendEmail(
   return data as SendEmailResult;
 }
 
+export interface SendEventEmailResult {
+  ok: boolean;
+  sent: number;
+  failed: number;
+  recipientCount: number;
+  error?: string;
+}
+
+/** Send (or test-send) an event-scoped email via the send-event-email Edge
+ *  Function (event-mgmt v2 §J). Recipients are resolved SERVER-SIDE from the
+ *  event's registrations + the given filters — the client never sends a
+ *  recipient list. Caller must be an admin, sanctioning, manage the event's
+ *  host club, or hold an event_admins grant (the function re-checks). */
+export async function sendEventEmail(args: {
+  eventId: string;
+  subject: string;
+  html: string;
+  text?: string;
+  replyTo?: string;
+  fromAlias?: string;
+  cc?: string[];
+  filters: { roles: ('athlete' | 'manager' | 'clubEmail')[]; sessionIds?: string[]; levelIds?: string[]; disciplines?: string[] };
+  test?: boolean;
+}): Promise<SendEventEmailResult> {
+  if (!supabase) return { ok: false, sent: 0, failed: 0, recipientCount: 0, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('send-event-email', { body: args });
+  if (error) return { ok: false, sent: 0, failed: 0, recipientCount: 0, error: await edgeErrorMessage(error) };
+  const result = data as { sent: number; failed: number; recipientCount: number };
+  return { ok: true, ...result };
+}
+
 export interface SendSmsResult {
   ok: boolean;
   sentCount: number;
@@ -1005,6 +1036,10 @@ export interface CommLogEntry {
   segments?: number | null;
   encoding?: string | null;
   costEstimate?: number | null;
+  /** Set for event-scoped sends (EventCommunicate page) — lets the per-event
+   *  sent log filter to just this event's rows (event-mgmt v2 §J). Absent
+   *  for the league Communicate tool's org-wide sends. */
+  eventId?: string | null;
 }
 
 /** Insert a comm-log row (best-effort; never throws). */
@@ -1019,20 +1054,25 @@ export async function logComm(entry: CommLogEntry): Promise<void> {
       recipient_count: entry.recipientCount, sent_count: entry.sentCount, failed_count: entry.failedCount,
       recipients: entry.recipients, error: entry.error,
       segments: entry.segments ?? null, encoding: entry.encoding ?? null, cost_estimate: entry.costEstimate ?? null,
+      event_id: entry.eventId ?? null,
     });
   } catch (e) { console.error('[supabase] logComm failed:', e); }
 }
 
-/** The signed-in user's communication history (admins see all, via RLS). */
-export async function fetchCommLog(limit = 100): Promise<(CommLogEntry & { id: string; sentAt: string })[]> {
+/** The signed-in user's communication history (admins see all, via RLS).
+ *  Pass `eventId` to filter to one event's sends (EventCommunicate page). */
+export async function fetchCommLog(limit = 100, eventId?: string): Promise<(CommLogEntry & { id: string; sentAt: string })[]> {
   if (!supabase) return [];
-  const { data, error } = await supabase.from('comm_log').select('*').order('sent_at', { ascending: false }).limit(limit);
+  let q = supabase.from('comm_log').select('*').order('sent_at', { ascending: false }).limit(limit);
+  if (eventId) q = q.eq('event_id', eventId);
+  const { data, error } = await q;
   if (error) { console.error('[supabase] fetchCommLog failed:', error); return []; }
   return (data ?? []).map((r) => ({
     id: r.id, sentAt: r.sent_at, channel: r.channel, isTest: r.is_test, subject: r.subject, body: r.body,
     recipientCount: r.recipient_count, sentCount: r.sent_count, failedCount: r.failed_count,
     recipients: (r.recipients ?? []) as { name: string; contact: string }[], error: r.error,
     segments: r.segments ?? null, encoding: r.encoding ?? null, costEstimate: r.cost_estimate ?? null,
+    eventId: r.event_id ?? null,
   }));
 }
 

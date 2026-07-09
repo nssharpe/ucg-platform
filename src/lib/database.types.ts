@@ -356,6 +356,7 @@ export type Database = {
           cost_estimate: number | null
           encoding: string | null
           error: string | null
+          event_id: string | null
           failed_count: number | null
           id: string
           is_test: boolean
@@ -374,6 +375,7 @@ export type Database = {
           cost_estimate?: number | null
           encoding?: string | null
           error?: string | null
+          event_id?: string | null
           failed_count?: number | null
           id?: string
           is_test?: boolean
@@ -392,6 +394,7 @@ export type Database = {
           cost_estimate?: number | null
           encoding?: string | null
           error?: string | null
+          event_id?: string | null
           failed_count?: number | null
           id?: string
           is_test?: boolean
