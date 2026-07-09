@@ -640,6 +640,77 @@ export async function revokeEventAdmin(eventId: string, userId: string): Promise
   return null;
 }
 
+/** One row of the event host viewing page's registration roster (event-mgmt
+ *  v2 §C — `event_host_roster` RPC). Column set mirrors the admin CSV export
+ *  (Events.tsx exportCsv) plus the reg-identity fields needed to group it. */
+export interface HostRosterRow {
+  regId: string;
+  athleteId: string;
+  firstName: string;
+  lastName: string;
+  clubId: string | null;
+  clubName: string | null;
+  discipline: string;
+  levelId: string | null;
+  apparatus: string[];
+  apparatusLevels: Record<string, string> | null;
+  sessionId: string | null;
+  paid: boolean;
+  updatedPending: boolean;
+  partnerAthleteId: string | null;
+  shirt: string | null;
+  dietary: string[];
+  email: string | null;
+  phone: string | null;
+  emergencyContact: string | null;
+  studentStatus: string | null;
+  region: string | null;
+}
+
+/** Event-wide registration roster for the host viewing page (event-mgmt v2
+ *  §C) — a deliberate RLS exception (`event_host_roster`, SECURITY DEFINER):
+ *  hosts need to see athletes from every competing club, not just their own.
+ *  Returns [] on error/unconfigured; callers should still surface a toast by
+ *  checking the returned ok flag from the tuple-returning variant if needed —
+ *  kept simple (array-only) since the page already gates on caps.isEventHost
+ *  before calling, so an error here is an unexpected failure, not an
+ *  authorization question. */
+export async function fetchEventHostRoster(eventId: string): Promise<{ ok: true; rows: HostRosterRow[] } | { ok: false; error: string }> {
+  if (!supabase) return { ok: false, error: 'Not configured.' };
+  const { data, error } = await supabase.rpc('event_host_roster', { p_event_id: eventId });
+  if (error) { console.error('[supabase] event_host_roster failed:', error); return { ok: false, error: error.message }; }
+  const rows = ((data ?? []) as FnReturns<'event_host_roster'>).map((r) => ({
+    regId: r.reg_id, athleteId: r.athlete_id, firstName: r.first_name, lastName: r.last_name,
+    clubId: r.club_id, clubName: r.club_name, discipline: r.discipline, levelId: r.level_id,
+    apparatus: r.apparatus ?? [], apparatusLevels: (r.apparatus_levels as Record<string, string> | null) ?? null,
+    sessionId: r.session_id, paid: !!r.paid, updatedPending: !!r.updated_pending,
+    partnerAthleteId: r.partner_athlete_id, shirt: r.shirt, dietary: r.dietary ?? [],
+    email: r.email, phone: r.phone, emergencyContact: r.emergency_contact,
+    studentStatus: r.student_status, region: r.region,
+  }));
+  return { ok: true, rows };
+}
+
+/** Total collected so far for an event through the platform (dollars,
+ *  excluding processing/service fees) — for the host status card. */
+export async function fetchEventCollectedTotal(eventId: string): Promise<{ ok: true; total: number } | { ok: false; error: string }> {
+  if (!supabase) return { ok: false, error: 'Not configured.' };
+  const { data, error } = await supabase.rpc('event_collected_total', { p_event_id: eventId });
+  if (error) { console.error('[supabase] event_collected_total failed:', error); return { ok: false, error: error.message }; }
+  return { ok: true, total: Number(data ?? 0) };
+}
+
+/** Mark the host as having received the medals shipment — the host's one
+ *  scoped write on the event-mgmt v2 §C host page (they can't UPDATE events
+ *  directly; see `mark_medals_received`). Returns an error message on
+ *  failure, null on success. */
+export async function markMedalsReceived(eventId: string): Promise<string | null> {
+  if (!supabase) return 'Not configured.';
+  const { error } = await supabase.rpc('mark_medals_received', { p_event_id: eventId });
+  if (error) { console.error('[supabase] mark_medals_received failed:', error); return error.message; }
+  return null;
+}
+
 const INSURANCE_CERT_ALLOWED_EXT = ['pdf', 'jpg', 'jpeg', 'png'];
 const INSURANCE_CERT_MAX_BYTES = 10 * 1024 * 1024; // 10MB
 

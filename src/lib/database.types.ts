@@ -1959,6 +1959,33 @@ export type Database = {
         Returns: string
       }
       email_has_account: { Args: { p_email: string }; Returns: boolean }
+      event_collected_total: { Args: { p_event_id: string }; Returns: number }
+      event_host_roster: {
+        Args: { p_event_id: string }
+        Returns: {
+          apparatus: string[]
+          apparatus_levels: Json
+          athlete_id: string
+          club_id: string | null
+          club_name: string | null
+          dietary: string[] | null
+          discipline: string
+          email: string | null
+          emergency_contact: string | null
+          first_name: string
+          last_name: string
+          level_id: string | null
+          paid: boolean | null
+          partner_athlete_id: string | null
+          phone: string | null
+          reg_id: string
+          region: string | null
+          session_id: string | null
+          shirt: string | null
+          student_status: string | null
+          updated_pending: boolean | null
+        }[]
+      }
       get_manager_access_request: {
         Args: { p_token: string }
         Returns: {
@@ -1995,6 +2022,7 @@ export type Database = {
         Returns: { email: string; name: string; user_id: string }[]
       }
       manages_club: { Args: { cid: string }; Returns: boolean }
+      mark_medals_received: { Args: { p_event_id: string }; Returns: undefined }
       my_person_id: { Args: never; Returns: string }
       redeem_coupon: {
         Args: { p_code: string; p_person_id?: string }

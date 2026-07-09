@@ -71,6 +71,7 @@ const SanctionVotePage = lazy(() => loaders.Sanction().then((m) => ({ default: m
 const Events = lazy(() => loaders.Events().then((m) => ({ default: m.Events })));
 const EventDetail = lazy(() => loaders.Events().then((m) => ({ default: m.EventDetail })));
 const EventManage = lazy(() => loaders.Events().then((m) => ({ default: m.EventManage })));
+const EventHostPage = lazy(() => loaders.Events().then((m) => ({ default: m.EventHostPage })));
 const Nationals = lazy(() => loaders.Nationals().then((m) => ({ default: m.Nationals })));
 const Judge = lazy(() => loaders.Judge().then((m) => ({ default: m.Judge })));
 const ScoreDetail = lazy(() => loaders.ScoreDetail().then((m) => ({ default: m.ScoreDetail })));
@@ -232,6 +233,7 @@ export default function App() {
               <Route path="/club/:clubId/registrations" element={<RequireAccount><ClubRegistrations /></RequireAccount>} />
               <Route path="/club/:clubId/cart" element={<ClubCartRedirect />} />
               <Route path="/events/:slug/manage" element={<RequireAccount><EventManage /></RequireAccount>} />
+              <Route path="/events/:slug/host" element={<RequireAccount><EventHostPage /></RequireAccount>} />
               <Route path="/events/:slug/nationals" element={<RequireAccount><Nationals /></RequireAccount>} />
               <Route path="/meets/:slug/manage" element={<MeetManageRedirect />} />
               <Route path="/meets/:slug/nationals" element={<MeetNationalsRedirect />} />

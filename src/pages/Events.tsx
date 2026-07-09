@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
+import { useRolesLoaded } from '../lib/auth';
 import { seasonForDate, clubHasActiveMembership, paidRegistrationClub } from '../lib/capabilities-core';
 import { eventIsInPhase } from '../lib/events-core';
 import { Badge, Field, Modal, Tabs } from '../components/ui';
@@ -12,8 +13,13 @@ import { EventStatusBadge } from './Home';
 import { APPARATUS, SHIRT_SIZES } from '../lib/types';
 import type { Athlete, CartItem, Discipline, Event, EventAdmin, EventSession, Registration } from '../lib/types';
 import { DisciplineIcon } from '../components/DisciplineIcon';
-import { deleteRegistration, grantEventAdmin, insuranceCertificateUrl, listSanctioningTeam, pushCart, pushEvent, pushEventSessions, pushRegistration, revokeEventAdmin, syncSynchroPartnerLevelRemote, uploadInsuranceCertificate } from '../lib/supabase';
-import type { SanctioningTeamMember } from '../lib/supabase';
+import {
+  deleteRegistration, fetchEventCollectedTotal, fetchEventHostRoster, grantEventAdmin, insuranceCertificateUrl,
+  listSanctioningTeam, markMedalsReceived, pushCart, pushEvent, pushEventSessions, pushRegistration,
+  revokeEventAdmin, syncSynchroPartnerLevelRemote, uploadInsuranceCertificate,
+} from '../lib/supabase';
+import type { HostRosterRow, SanctioningTeamMember } from '../lib/supabase';
+import { summarizeRoster, levelNameResolver } from '../lib/host-page';
 import { stateCode } from '../lib/sanction';
 import { fmtMoney } from '../lib/scoring';
 import { newRegistrationEntryTotal, registrationChangeFee, syncSynchroPartnerLevel, findIncomingSynchroPartner, lateFeeApplies, lateFeeAnchor } from '../lib/pricing';
@@ -21,6 +27,7 @@ import { OWNER_TASKS, ownerTaskDueDate } from '../../supabase/functions/_shared/
 import type { OwnerChecklist, OwnerChecklistEntry, OwnerTaskId } from '../../supabase/functions/_shared/owner-checklist';
 
 const today = () => new Date().toISOString().slice(0, 10);
+const isPast = (iso: string) => Date.now() > new Date(iso).getTime();
 
 /** Registration state for an event from its open/close timestamps (vs now):
  *  `regOpen` = now within [opens, closes]; `regClosed` = now past closes. */
@@ -248,6 +255,9 @@ export function EventDetail() {
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <EventStatusBadge event={event} />
+          {(canManage || caps.isSanctioning) && (
+            <Link className="btn small ghost" to={`/events/${event.slug}/host`}>Host dashboard →</Link>
+          )}
           {canManage && (
             <button className="btn small ghost" onClick={() => setEditWizardOpen(true)}>Edit event</button>
           )}
@@ -433,7 +443,7 @@ function OwnerAssignBlock({ event, toast }: { event: Event; toast: (msg: string,
 // (exact-email account lookup server-side — deliberately no name search);
 // this card only reflects the result into the local db.
 
-function EventAdminsCard({ event, toast }: { event: Event; toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void }) {
+export function EventAdminsCard({ event, toast }: { event: Event; toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void }) {
   const db = useDB();
   const admins = (db.eventAdmins ?? []).filter((ea) => ea.eventId === event.id);
   const [email, setEmail] = useState('');
@@ -620,7 +630,7 @@ function OwnerChecklistCard({ event, fmtDate, toast }: { event: Event; fmtDate: 
  *  CLICK (not on render) — signed URLs expire (~10 min), so resolving eagerly
  *  would churn them for no reason. Reusable by the host-facing page (event-mgmt
  *  v2 §C status card) as well as this owner checklist. */
-function InsuranceCertificateLink({ filePath }: { filePath: string }) {
+export function InsuranceCertificateLink({ filePath }: { filePath: string }) {
   const [loading, setLoading] = useState(false);
   return (
     <button
@@ -635,6 +645,215 @@ function InsuranceCertificateLink({ filePath }: { filePath: string }) {
     >
       {loading ? 'Opening…' : 'View certificate'}
     </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// EventHostPage — event-mgmt v2 §C: status card + registration summary for
+// hosts (host-club managers, granted event admins) and the sanctioning team.
+// Excel exports (the follow-up task) belong on this page too — see the
+// "Excel exports" spot below the registration summary card, left empty here.
+// ---------------------------------------------------------------------------
+
+export function EventHostPage() {
+  const { slug } = useParams();
+  const db = useDB();
+  const caps = useCapabilities();
+  const toast = useToast();
+  const fmtDate = useFmtDate();
+  const rolesLoaded = useRolesLoaded();
+  const event = db.events.find((m) => m.slug === slug);
+
+  if (!event) return <div className="page"><p>Event not found.</p></div>;
+
+  // Roles load async after the session resolves (CLAUDE.md "rolesLoaded
+  // gate") — wait rather than flashing "access denied" at an actual host on
+  // refresh.
+  if (!rolesLoaded) return <div className="page"><p>Loading…</p></div>;
+
+  const canManage = caps.isEventHost(event.id) || caps.isSanctioning;
+  if (!canManage) {
+    return (
+      <div className="page">
+        <p>You don't have access to this event's host dashboard. Contact the event host or a UCG administrator if you believe this is an error.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <h1 className="page-title display">{event.name} — Host dashboard</h1>
+          <p className="page-sub">{event.city}, {event.state} · {fmtDate(event.startDate)}–{fmtDate(event.endDate)}</p>
+        </div>
+        <Link className="btn ghost small" to={`/events/${event.slug}`}>← Event page</Link>
+      </div>
+
+      <HostStatusCard event={event} fmtDate={fmtDate} toast={toast} />
+      <HostRegistrationSummaryCard event={event} toast={toast} />
+
+      {/* Excel exports (event-mgmt v2 Phase 1, next task) go here — a card
+          alongside the registration summary above, offering per-level /
+          per-club roster workbooks. Not implemented yet. */}
+
+      <EventAdminsCard event={event} toast={toast} />
+    </div>
+  );
+}
+
+/** Status card (§C): each line reads "waiting" until the underlying data
+ *  exists — event owner contact, hotel block, insurance, medal order/
+ *  tracking, onsite rep, and payment status. */
+function HostStatusCard({ event, fmtDate, toast }: { event: Event; fmtDate: (iso: string) => string; toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void }) {
+  const checklist: OwnerChecklist = event.ownerChecklist ?? {};
+  const medalsOrdered = checklist.medalsOrdered;
+  const medalsTracking = checklist.medalsTracking;
+  const onsiteRep = checklist.onsiteRep;
+  const payHost = checklist.payHost;
+  const [markingReceived, setMarkingReceived] = useState(false);
+  const [collected, setCollected] = useState<number | null>(null);
+  const [collectedError, setCollectedError] = useState(false);
+
+  const hasPricedAddons = !!(event.tshirtAddon?.price || event.bannerAddon?.price || event.banquet?.price);
+  const collectingFees = !(event.entryFee === 0 && !hasPricedAddons);
+
+  useEffect(() => {
+    if (!collectingFees) return;
+    let cancelled = false;
+    fetchEventCollectedTotal(event.id).then((res) => {
+      if (cancelled) return;
+      if (!res.ok) { setCollectedError(true); toast(`Couldn't load the amount collected: ${res.error}`, { variant: 'error' }); return; }
+      setCollected(res.total);
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [event.id, collectingFees]);
+
+  const markReceived = async () => {
+    setMarkingReceived(true);
+    const err = await markMedalsReceived(event.id);
+    setMarkingReceived(false);
+    if (err) { toast(err, { variant: 'error' }); return; }
+    const updated: Event = { ...event, ownerChecklist: { ...checklist, medalsTracking: { ...medalsTracking, hostReceived: true } } };
+    mutate((d) => {
+      const idx = d.events.findIndex((e) => e.id === event.id);
+      if (idx >= 0) d.events[idx] = updated;
+    });
+    toast('Marked medals as received.');
+  };
+
+  const pastEndDate = isPast(event.endDate);
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 18 }}>
+      <h3 className="card-title">Event status</h3>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, fontSize: 14 }}>
+        <div>
+          <strong>UCG event-owner contact: </strong>
+          {event.owner ? <span>{event.owner.name} ({event.owner.email})</span> : <span style={{ color: 'var(--ink-soft)' }}>Waiting for owner assignment</span>}
+        </div>
+        <div>
+          <strong>Hotel block: </strong>
+          {event.hotelLink ? <a href={event.hotelLink} target="_blank" rel="noopener noreferrer">Book here →</a> : <span style={{ color: 'var(--ink-soft)' }}>Waiting on hotel block</span>}
+        </div>
+        <div>
+          <strong>Insurance: </strong>
+          {checklist.insurance?.filePath
+            ? <InsuranceCertificateLink filePath={checklist.insurance.filePath} />
+            : <span style={{ color: 'var(--ink-soft)' }}>Waiting on insurance certificate</span>}
+        </div>
+        <div>
+          <strong>Medal order: </strong>
+          {!medalsOrdered?.orderedOn ? (
+            <span style={{ color: 'var(--ink-soft)' }}>Waiting</span>
+          ) : (
+            <span>
+              Ordered {fmtDate(medalsOrdered.orderedOn.slice(0, 10))}
+              {medalsTracking?.trackingLink && (
+                <> · <a href={medalsTracking.trackingLink} target="_blank" rel="noopener noreferrer">Track shipment →</a></>
+              )}
+              {medalsTracking?.trackingLink && !medalsTracking.hostReceived && (
+                <> · <button className="btn small ghost" disabled={markingReceived} onClick={markReceived}>{markingReceived ? 'Marking…' : 'Mark received'}</button></>
+              )}
+              {medalsTracking?.hostReceived && <> · <span style={{ fontWeight: 700 }}>Received ✓</span></>}
+            </span>
+          )}
+        </div>
+        <div>
+          <strong>Onsite rep: </strong>
+          {onsiteRep?.name || onsiteRep?.email
+            ? <span>{onsiteRep.name} {onsiteRep.email && <span style={{ color: 'var(--ink-soft)' }}>({onsiteRep.email})</span>}</span>
+            : <span style={{ color: 'var(--ink-soft)' }}>Assigned 2 weeks before the event</span>}
+        </div>
+        <div>
+          <strong>Payment status: </strong>
+          {!collectingFees ? (
+            <span style={{ color: 'var(--ink-soft)' }}>Not collecting fees through the platform</span>
+          ) : (
+            <>
+              <span>
+                {collectedError ? 'Could not load the amount collected.' : collected === null ? 'Loading…' : `Collected so far: ${fmtMoney(collected)} (excluding processing fees)`}
+              </span>
+              {payHost?.done ? (
+                <div>Sent via {payHost.method === 'paypal' ? 'PayPal' : 'check'} on {payHost.paidOn ? fmtDate(payHost.paidOn.slice(0, 10)) : ''}</div>
+              ) : pastEndDate ? (
+                <div style={{ color: 'var(--coral-700)', fontWeight: 700 }}>Payment will be sent 1 week after the event</div>
+              ) : null}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Registration summary card (§C): per level, participating clubs + athletes
+ *  per apparatus, from `event_host_roster` (a deliberate RLS exception —
+ *  hosts see athlete detail across every competing club for THIS event). */
+function HostRegistrationSummaryCard({ event, toast }: { event: Event; toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void }) {
+  const db = useDB();
+  const [rows, setRows] = useState<HostRosterRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchEventHostRoster(event.id).then((res) => {
+      if (cancelled) return;
+      if (!res.ok) { setError(res.error); toast(`Couldn't load the registration roster: ${res.error}`, { variant: 'error' }); return; }
+      setRows(res.rows);
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [event.id]);
+
+  const summary = useMemo(
+    () => (rows ? summarizeRoster(rows, levelNameResolver(db.levels)) : null),
+    [rows, db.levels],
+  );
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 18 }}>
+      <h3 className="card-title">Registration summary</h3>
+      {error && <p style={{ color: 'var(--coral-700)' }}>Couldn't load the roster — try refreshing the page.</p>}
+      {!error && !summary && <p style={{ color: 'var(--ink-soft)' }}>Loading…</p>}
+      {summary && summary.length === 0 && <p style={{ color: 'var(--ink-soft)' }}>No registrations yet.</p>}
+      {summary && summary.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {summary.map((level) => (
+            <div key={level.levelId || 'unassigned'} style={{ paddingBottom: 12, borderBottom: '1px solid var(--line)' }}>
+              <h4 style={{ margin: '0 0 6px' }}>{level.levelName}</h4>
+              <p style={{ margin: '0 0 6px', fontSize: 13, color: 'var(--ink-soft)' }}>
+                {level.clubs.map((c) => `${c.clubName} (${c.athleteCount})`).join(' · ')}
+              </p>
+              <p style={{ margin: 0, fontSize: 13 }}>
+                {Object.entries(level.apparatusCounts).map(([code, count]) => `${code}: ${count}`).join(' · ')}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
