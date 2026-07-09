@@ -20,6 +20,7 @@ import {
 } from '../lib/supabase';
 import type { HostRosterRow, SanctioningTeamMember } from '../lib/supabase';
 import { summarizeRoster, levelNameResolver } from '../lib/host-page';
+import { buildRegistrationWorkbookSheets, type SheetModel } from '../lib/host-export';
 import { stateCode } from '../lib/sanction';
 import { fmtMoney } from '../lib/scoring';
 import { newRegistrationEntryTotal, registrationChangeFee, syncSynchroPartnerLevel, findIncomingSynchroPartner, lateFeeApplies, lateFeeAnchor } from '../lib/pricing';
@@ -664,6 +665,23 @@ export function EventHostPage() {
   const rolesLoaded = useRolesLoaded();
   const event = db.events.find((m) => m.slug === slug);
 
+  // Roster is fetched once here and shared by the registration-summary card
+  // and the Excel-export card below, rather than each fetching its own copy.
+  const [rosterRows, setRosterRows] = useState<HostRosterRow[] | null>(null);
+  const [rosterError, setRosterError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!event) return;
+    let cancelled = false;
+    fetchEventHostRoster(event.id).then((res) => {
+      if (cancelled) return;
+      if (!res.ok) { setRosterError(res.error); toast(`Couldn't load the registration roster: ${res.error}`, { variant: 'error' }); return; }
+      setRosterRows(res.rows);
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [event?.id]);
+
   if (!event) return <div className="page"><p>Event not found.</p></div>;
 
   // Roles load async after the session resolves (CLAUDE.md "rolesLoaded
@@ -691,15 +709,79 @@ export function EventHostPage() {
       </div>
 
       <HostStatusCard event={event} fmtDate={fmtDate} toast={toast} />
-      <HostRegistrationSummaryCard event={event} toast={toast} />
+      <HostRegistrationSummaryCard rows={rosterRows} error={rosterError} />
 
-      {/* Excel exports (event-mgmt v2 Phase 1, next task) go here — a card
-          alongside the registration summary above, offering per-level /
-          per-club roster workbooks. Not implemented yet. */}
+      <HostExportCard event={event} rows={rosterRows} error={rosterError} toast={toast} />
 
       <EventAdminsCard event={event} toast={toast} />
     </div>
   );
+}
+
+/** Excel-export card (event-mgmt v2 §C/§K): one workbook, three sheets
+ *  (Athletes / Counts / Shirt sizes) built from the shared host roster — see
+ *  src/lib/host-export.ts for the sheet shapes and the scope decision on
+ *  what's deferred to Phase 2 (leo sizes, banquet quantities). exceljs is
+ *  dynamically imported so it isn't in the main bundle (same reasoning as
+ *  any heavy on-demand export lib — this page is the only place it's used). */
+function HostExportCard({ event, rows, error, toast }: { event: Event; rows: HostRosterRow[] | null; error: string | null; toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void }) {
+  const db = useDB();
+  const [building, setBuilding] = useState(false);
+  const ready = !!rows && !error;
+
+  const download = async () => {
+    if (!rows) return;
+    setBuilding(true);
+    try {
+      const sheets = buildRegistrationWorkbookSheets(rows, levelNameResolver(db.levels));
+      const { Workbook } = await import('exceljs');
+      const wb = new Workbook();
+      wb.creator = 'UCG Registration Platform';
+      wb.created = new Date();
+      for (const sheet of sheets) writeSheet(wb, sheet);
+      const buffer = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${event.slug}-registrations.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast(`Couldn't build the workbook: ${err instanceof Error ? err.message : String(err)}`, { variant: 'error' });
+    } finally {
+      setBuilding(false);
+    }
+  };
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 18 }}>
+      <h3 className="card-title">Registration workbook</h3>
+      <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--ink-soft)' }}>
+        Full athlete detail, level × club × apparatus counts, and profile shirt-size tallies in one .xlsx file.
+      </p>
+      {error && <p style={{ color: 'var(--coral-700)' }}>Couldn't load the roster — try refreshing the page.</p>}
+      <button className="btn primary small" disabled={!ready || building} onClick={download}>
+        {building ? 'Building…' : 'Download registration workbook (.xlsx)'}
+      </button>
+    </div>
+  );
+}
+
+/** Thin exceljs wiring for one sheet model: header row (bold, frozen),
+ *  column widths sized to content, and the data rows as-is. Kept
+ *  intentionally untested — the shaping logic it wires up is in
+ *  src/lib/host-export.ts and IS unit-tested. */
+function writeSheet(wb: import('exceljs').Workbook, sheet: SheetModel): void {
+  const ws = wb.addWorksheet(sheet.name.slice(0, 31), { views: [{ state: 'frozen', ySplit: 1 }] });
+  ws.columns = sheet.columns.map((header, i) => ({
+    header,
+    width: Math.min(40, Math.max(10, header.length + 2, ...sheet.rows.map((r) => String(r[i] ?? '').length + 2))),
+  }));
+  ws.getRow(1).font = { bold: true };
+  for (const row of sheet.rows) ws.addRow(row);
 }
 
 /** Status card (§C): each line reads "waiting" until the underlying data
@@ -810,22 +892,11 @@ function HostStatusCard({ event, fmtDate, toast }: { event: Event; fmtDate: (iso
 
 /** Registration summary card (§C): per level, participating clubs + athletes
  *  per apparatus, from `event_host_roster` (a deliberate RLS exception —
- *  hosts see athlete detail across every competing club for THIS event). */
-function HostRegistrationSummaryCard({ event, toast }: { event: Event; toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void }) {
+ *  hosts see athlete detail across every competing club for THIS event).
+ *  Roster is fetched once by the parent (`EventHostPage`) and shared with
+ *  the Excel-export card below it. */
+function HostRegistrationSummaryCard({ rows, error }: { rows: HostRosterRow[] | null; error: string | null }) {
   const db = useDB();
-  const [rows, setRows] = useState<HostRosterRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchEventHostRoster(event.id).then((res) => {
-      if (cancelled) return;
-      if (!res.ok) { setError(res.error); toast(`Couldn't load the registration roster: ${res.error}`, { variant: 'error' }); return; }
-      setRows(res.rows);
-    });
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [event.id]);
 
   const summary = useMemo(
     () => (rows ? summarizeRoster(rows, levelNameResolver(db.levels)) : null),
