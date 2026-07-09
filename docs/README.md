@@ -44,7 +44,7 @@ Live build/tooling notes live in [`../CLAUDE.md`](../CLAUDE.md); open work is th
 | [dev-test-auth](specs/2026-06-25-dev-test-auth.md) | Dev-only real auto-login of a seeded Supabase test user (`.env.local`-gated) so authenticated UI is exercisable locally | ✅ shipped |
 | [stripe-integration](specs/2026-06-25-stripe-integration.md) | Stripe Embedded Checkout architecture (S1–S5) | ✅ shipped |
 | [security-review-findings (7/02)](specs/2026-07-02-security-review-findings.md) | Deep review of the money paths: RLS, edge functions, cart state machine — verified findings by severity | 🟡 findings logged; fixes planned |
-| [event-management-v2-requirements](specs/2026-07-06-event-management-v2-requirements.md) | Julia's full event-management requirements (7/06) digested + gap-mapped: host dashboard, refunds, capacity/waitlists, add-ons v2, nationals ops, finance dashboards — phasing V2-P0…P6 | 🟡 validated (phasing approved, §N7 answered); **P0 build started** — scheduler infra (Task 1) shipped |
+| [event-management-v2-requirements](specs/2026-07-06-event-management-v2-requirements.md) | Julia's full event-management requirements (7/06) digested + gap-mapped: host dashboard, refunds, capacity/waitlists, add-ons v2, nationals ops, finance dashboards — phasing V2-P0…P6 | 🟡 validated (phasing approved, §N7 answered); **P0 shipped (staging; prod pending Nate)**; **P1 build started** — event-owner assignment + checklist (Task 1) shipped |
 
 ## Plans (`plans/`) — step-by-step implementation records
 
@@ -150,6 +150,16 @@ here — update THIS list when priorities change, not rival copies.
   **P0 deploy state (2026-07-07):** staging fully deployed + E2E green (5/5).
   Prod is PENDING Nate: vault secrets (both envs), prod `supabase db push`, the three
   prod function deploys (`stripe-webhook` with `--no-verify-jwt`!), then merge to main.
+  **P1 Task 1 shipped:** event-owner assignment + task checklist (§B3-4) —
+  `events.owner`/`owner_checklist` jsonb columns; sanctioning-team members can now
+  UPDATE events (new `sanctioning_update` RLS policy, alongside admin) via
+  `list_sanctioning_team()` RPC for the assign-owner dropdown; pure due-date +
+  escalating-reminder-stage logic in `supabase/functions/_shared/owner-checklist.ts`
+  (`ownerTaskDueDate`/`ownerReminderStage`, unit-tested, no Deno imports — ready for
+  the scheduler to consume once reminder emails are built, a later task); UI on the
+  event page (owner field + 7-item checklist with payload inputs) gated on
+  `isSanctioning`, and a red "No owner assigned" badge on the Sanctioning Queue's
+  decided list linking to the event.
   §N7 open questions **all answered by Julia 2026-07-06** (recorded in the spec;
   every phase is unblocked — only the §F partial-fit capacity design wants a
   confirm at P4 kickoff). This absorbs several
