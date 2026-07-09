@@ -7,7 +7,7 @@
 // block the UI) and are no-ops when `isSupabaseConfigured` is false.
 import { createClient, type SupabaseClient, type RealtimePostgresChangesPayload, type PostgrestError } from '@supabase/supabase-js';
 import type {
-  AccountInvite, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, Invoice, Level, Event, Membership, MembershipType, Payment, Region, Registration, SanctionRequest, SanctionVote, Score, Season,
+  AccountInvite, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, EventAdmin, Invoice, Level, Event, Membership, MembershipType, Payment, Region, Registration, SanctionRequest, SanctionVote, Score, Season,
   WaiverDocument, WaiverSignature,
 } from './types';
 import { writeQueue, type WriteOp, type ExecResult } from './write-queue';
@@ -332,6 +332,10 @@ const rowToClubMembership = (r: { id: string; club_id: string; season_id: string
   id: r.id, clubId: r.club_id, seasonId: r.season_id, status: 'active',
   grantedByAdmin: !!r.granted_by_admin, createdAt: r.created_at,
 });
+const rowToEventAdmin = (r: { id: string; event_id: string; user_id: string; email: string; name: string | null; granted_by: string | null; created_at: string }): EventAdmin => ({
+  id: r.id, eventId: r.event_id, userId: r.user_id, email: r.email,
+  name: r.name, grantedBy: r.granted_by, createdAt: r.created_at,
+});
 const rowToPayment = (r: {
   id: string; stripe_session_id: string | null; stripe_payment_intent_id: string | null;
   person_id: string | null; status: string; amount_subtotal: number | null; service_fee: number | null;
@@ -610,6 +614,30 @@ export async function listSanctioningTeam(): Promise<SanctioningTeamMember[]> {
   return ((data ?? []) as { user_id: string; name: string; email: string }[]).map((r) => ({
     userId: r.user_id, name: r.name, email: r.email,
   }));
+}
+
+/** Grant per-event admin access (event-mgmt v2 §C) to the account matching
+ *  `email` exactly. Awaited (not queued) because the UI needs the matched
+ *  identity — or the RPC's raised exception message ("No account found for
+ *  that email.") — synchronously to toast. */
+export async function grantEventAdmin(
+  eventId: string, email: string,
+): Promise<{ ok: true; userId: string; email: string; name: string | null } | { ok: false; error: string }> {
+  if (!supabase) return { ok: false, error: 'Not configured.' };
+  const { data, error } = await supabase.rpc('grant_event_admin', { p_event_id: eventId, p_email: email });
+  if (error) { console.error('[supabase] grant_event_admin failed:', error); return { ok: false, error: error.message }; }
+  const row = ((data ?? []) as { user_id: string; email: string; name: string | null }[])[0];
+  if (!row) return { ok: false, error: 'No account found for that email.' };
+  return { ok: true, userId: row.user_id, email: row.email, name: row.name };
+}
+
+/** Revoke a per-event admin grant. Returns an error message on failure
+ *  (unwrapped from the RPC's raised exception), null on success. */
+export async function revokeEventAdmin(eventId: string, userId: string): Promise<string | null> {
+  if (!supabase) return 'Not configured.';
+  const { error } = await supabase.rpc('revoke_event_admin', { p_event_id: eventId, p_user_id: userId });
+  if (error) { console.error('[supabase] revoke_event_admin failed:', error); return error.message; }
+  return null;
 }
 
 /** Atomically record one redemption of a coupon (enforces max_uses server-side).
@@ -1058,7 +1086,7 @@ export async function loadAll(): Promise<DB | null> {
       seasonsR, levelsR, clubsR, clubManagersR, peopleR, altClubsR, membershipsR,
       eventsR, sessionsR, squadsR, registrationsR, scoresR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
       clubRequestsR, appSettingsR, accountInvitesR, sanctionRequestsR, sanctionVotesR,
-      waiverDocsR, waiverSigsR, clubMembershipsR, paymentsR,
+      waiverDocsR, waiverSigsR, clubMembershipsR, paymentsR, eventAdminsR,
     ] = await Promise.all([
       supabase.from('seasons').select('*'),
       supabase.from('levels').select('*'),
@@ -1085,6 +1113,7 @@ export async function loadAll(): Promise<DB | null> {
       supabase.from('waiver_signatures').select('*'),   // tolerated if absent
       supabase.from('club_memberships').select('*'),    // tolerated if absent
       supabase.from('payments').select('*'),            // S1; tolerated if absent
+      supabase.from('event_admins').select('*'),        // emv2 P1 T3; tolerated if absent
     ]);
 
     // club_requests may not exist on a pre-0005 DB — tolerate its error, fail on the rest.
@@ -1257,6 +1286,8 @@ export async function loadAll(): Promise<DB | null> {
       .map(rowToClubMembership);
     const payments: Payment[] = (paymentsR.error ? [] : paymentsR.data ?? [])
       .map(rowToPayment);
+    const eventAdmins: EventAdmin[] = (eventAdminsR.error ? [] : eventAdminsR.data ?? [])
+      .map(rowToEventAdmin);
 
     return {
       seasons, levels, clubs, people, events, registrations, scores, invoices, coupons,
@@ -1269,6 +1300,7 @@ export async function loadAll(): Promise<DB | null> {
       ...(waiverSignatures.length ? { waiverSignatures } : {}),
       ...(clubMemberships.length ? { clubMemberships } : {}),
       ...(payments.length ? { payments } : {}),
+      ...(eventAdmins.length ? { eventAdmins } : {}),
     };
   } catch (e) {
     console.error('[supabase] loadAll threw:', e);

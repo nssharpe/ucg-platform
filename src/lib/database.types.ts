@@ -527,6 +527,44 @@ export type Database = {
         }
         Relationships: []
       }
+      event_admins: {
+        Row: {
+          created_at: string
+          email: string
+          event_id: string
+          granted_by: string | null
+          id: string
+          name: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          email: string
+          event_id: string
+          granted_by?: string | null
+          id: string
+          name?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          email?: string
+          event_id?: string
+          granted_by?: string | null
+          id?: string
+          name?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "event_admins_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       event_sessions: {
         Row: {
           date: string | null
@@ -1943,6 +1981,10 @@ export type Database = {
           waiver_type: string
         }[]
       }
+      grant_event_admin: {
+        Args: { p_event_id: string; p_email: string }
+        Returns: { email: string; name: string | null; user_id: string }[]
+      }
       is_admin: { Args: never; Returns: boolean }
       link_or_create_person: {
         Args: { p_first: string; p_last: string }
@@ -1960,6 +2002,10 @@ export type Database = {
       }
       replace_club_managers: {
         Args: { p_club_id: string; p_person_ids: string[] }
+        Returns: undefined
+      }
+      revoke_event_admin: {
+        Args: { p_event_id: string; p_user_id: string }
         Returns: undefined
       }
     }

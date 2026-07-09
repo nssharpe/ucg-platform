@@ -28,6 +28,15 @@ function authPersonId(db: DB, uid: string | undefined | null, email: string | un
   return db.people.find((p) => p.email && p.email.toLowerCase() === lower)?.id ?? null;
 }
 
+/** Event ids where the signed-in auth user holds a per-event admin grant
+ *  (event_admins rows, event-mgmt v2 §C). Grants are auth-uid-scoped, so this
+ *  parallels authPersonId() — keyed to the session uid, not the acting
+ *  (possibly impersonated) person. */
+function eventAdminEventIds(db: DB, uid: string | undefined | null): string[] {
+  if (!uid) return [];
+  return (db.eventAdmins ?? []).filter((ea) => ea.userId === uid).map((ea) => ea.eventId);
+}
+
 export function useCapabilities(): Capabilities {
   // Hooks run unconditionally; we branch on configuration afterward.
   const db = useDB();
@@ -41,7 +50,8 @@ export function useCapabilities(): Capabilities {
     return deriveCapabilities(db, true, ['admin'], persona.athleteId, null, season);
   }
   const personId = authPersonId(db, session?.user?.id, session?.user?.email);
-  return deriveCapabilities(db, !!session, roles, personId, getViewPersonId(), season);
+  return deriveCapabilities(db, !!session, roles, personId, getViewPersonId(), season,
+    eventAdminEventIds(db, session?.user?.id));
 }
 
 export function getCapabilities(): Capabilities {
@@ -52,5 +62,6 @@ export function getCapabilities(): Capabilities {
   }
   const session = getSession();
   const personId = authPersonId(db, session?.user?.id, session?.user?.email);
-  return deriveCapabilities(db, !!session, getMyRoles(), personId, getViewPersonId(), season);
+  return deriveCapabilities(db, !!session, getMyRoles(), personId, getViewPersonId(), season,
+    eventAdminEventIds(db, session?.user?.id));
 }

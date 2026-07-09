@@ -196,6 +196,30 @@ describe('deriveCapabilities', () => {
     expect(caps.isEventHost('meet-clubB')).toBe(false); // hosted by club-B, not managed
   });
 
+  describe('4b. per-event admin grants (event_admins, emv2 §C)', () => {
+    it('a grant makes isEventHost true for exactly that event', () => {
+      const caps = deriveCapabilities(db, true, [], 'p-athlete-active', null, 's1', ['meet-clubB']);
+
+      expect(caps.isEventHost('meet-clubB')).toBe(true); // granted
+      expect(caps.isEventHost('meet-1')).toBe(false); // NOT granted, not a manager
+      expect(caps.managedClubIds).toEqual([]); // grant does not confer club management
+    });
+
+    it('no grants (default param) leaves isEventHost purely club-derived', () => {
+      const caps = deriveCapabilities(db, true, [], 'p-coach', null, 's1');
+
+      expect(caps.isEventHost('meet-1')).toBe(true);
+      expect(caps.isEventHost('meet-clubB')).toBe(false);
+    });
+
+    it('grants and club management combine (union)', () => {
+      const caps = deriveCapabilities(db, true, [], 'p-coach', null, 's1', ['meet-clubB']);
+
+      expect(caps.isEventHost('meet-1')).toBe(true); // via managed club-A
+      expect(caps.isEventHost('meet-clubB')).toBe(true); // via grant
+    });
+  });
+
   describe('5. impersonation requires admin', () => {
     it('5a. admin impersonating a club manager: capabilities recompute for the target person', () => {
       const caps = deriveCapabilities(db, true, ['admin'], 'p-admin', 'p-coach', 's1');

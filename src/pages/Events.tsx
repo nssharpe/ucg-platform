@@ -10,9 +10,9 @@ import { EventWizard } from '../components/EventWizard';
 import { RegistrationEditor } from '../components/RegistrationEditor';
 import { EventStatusBadge } from './Home';
 import { APPARATUS, SHIRT_SIZES } from '../lib/types';
-import type { Athlete, CartItem, Discipline, Event, EventSession, Registration } from '../lib/types';
+import type { Athlete, CartItem, Discipline, Event, EventAdmin, EventSession, Registration } from '../lib/types';
 import { DisciplineIcon } from '../components/DisciplineIcon';
-import { deleteRegistration, listSanctioningTeam, pushCart, pushEvent, pushEventSessions, pushRegistration, syncSynchroPartnerLevelRemote } from '../lib/supabase';
+import { deleteRegistration, grantEventAdmin, listSanctioningTeam, pushCart, pushEvent, pushEventSessions, pushRegistration, revokeEventAdmin, syncSynchroPartnerLevelRemote } from '../lib/supabase';
 import type { SanctioningTeamMember } from '../lib/supabase';
 import { stateCode } from '../lib/sanction';
 import { fmtMoney } from '../lib/scoring';
@@ -266,6 +266,11 @@ export function EventDetail() {
         </>
       )}
 
+      {/* Per-event admin grants (event-mgmt v2 §C) — visible to anyone with
+          host-level access (host-club managers, league admins, and granted
+          event admins themselves). */}
+      {canManage && <EventAdminsCard event={event} toast={toast} />}
+
       <div className="grid cols-3" style={{ marginBottom: 18 }}>
         <div className="card card-pad">
           <h3 className="card-title">Registration</h3>
@@ -416,6 +421,79 @@ function OwnerAssignBlock({ event, toast }: { event: Event; toast: (msg: string,
           <button className="btn small ghost" onClick={() => setEditing(false)}>Cancel</button>
         </>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// EventAdminsCard — per-event admin grants (event-mgmt v2 §C)
+// ---------------------------------------------------------------------------
+// Hosts grant other ACCOUNTS host-level access to this ONE event. Writes go
+// through the grant_event_admin/revoke_event_admin SECURITY DEFINER RPCs
+// (exact-email account lookup server-side — deliberately no name search);
+// this card only reflects the result into the local db.
+
+function EventAdminsCard({ event, toast }: { event: Event; toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void }) {
+  const db = useDB();
+  const admins = (db.eventAdmins ?? []).filter((ea) => ea.eventId === event.id);
+  const [email, setEmail] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const add = async () => {
+    const addr = email.trim();
+    if (!addr) return;
+    setBusy(true);
+    const res = await grantEventAdmin(event.id, addr);
+    setBusy(false);
+    if (!res.ok) { toast(res.error, { variant: 'error' }); return; }
+    mutate((d) => {
+      const list = d.eventAdmins ?? (d.eventAdmins = []);
+      const existing = list.find((ea) => ea.eventId === event.id && ea.userId === res.userId);
+      if (existing) { existing.email = res.email; existing.name = res.name; }
+      // Local-only synthetic id — the server generated its own; the next full
+      // sync replaces this row. Uniqueness per (event, user) matches the DB.
+      else list.push({ id: `ea-${event.id}-${res.userId}`, eventId: event.id, userId: res.userId, email: res.email, name: res.name });
+    });
+    setEmail('');
+    toast(`${res.name || res.email} can now manage this event.`);
+  };
+
+  const remove = async (ea: EventAdmin) => {
+    const err = await revokeEventAdmin(event.id, ea.userId);
+    if (err) { toast(err, { variant: 'error' }); return; }
+    mutate((d) => {
+      d.eventAdmins = (d.eventAdmins ?? []).filter((x) => !(x.eventId === event.id && x.userId === ea.userId));
+    });
+    toast(`Removed ${ea.name || ea.email} as an event admin.`);
+  };
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 18 }}>
+      <h3 className="card-title">Event admins</h3>
+      <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--ink-soft)' }}>
+        Grant another account the same management access as the host — for this event only.
+      </p>
+      {admins.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+          {admins.map((ea) => (
+            <div key={ea.id} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <strong>{ea.name || ea.email}</strong>
+              {ea.name && <span style={{ color: 'var(--ink-soft)', fontSize: 13 }}>({ea.email})</span>}
+              <button className="btn small ghost" aria-label={`Remove ${ea.name || ea.email}`} onClick={() => remove(ea)}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <input
+          type="email" className="input" style={{ maxWidth: 280 }} placeholder="Account email"
+          value={email} onChange={(e) => setEmail(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') add(); }}
+        />
+        <button className="btn small primary" disabled={busy || !email.trim()} onClick={add}>
+          {busy ? 'Adding…' : 'Add admin'}
+        </button>
+      </div>
     </div>
   );
 }

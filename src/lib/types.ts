@@ -603,6 +603,22 @@ export interface DB {
   clubMemberships?: ClubMembership[];
   /** Stripe Embedded Checkout payment records (server source of truth). */
   payments?: Payment[];
+  /** Per-event admin grants — host-level access to ONE event, granted to
+   *  another account (event-mgmt v2 §C). Not a club role. */
+  eventAdmins?: EventAdmin[];
+}
+
+/** A per-event admin grant: `userId` holds the same host-level access to
+ *  `eventId` as the event's host-club managers. Written only via the
+ *  grant_event_admin/revoke_event_admin RPCs — never a direct table write. */
+export interface EventAdmin {
+  id: string;
+  eventId: string;
+  userId: string;
+  email: string;
+  name?: string | null;
+  grantedBy?: string | null;
+  createdAt?: string;
 }
 
 /** A club's membership for a season. Its presence (status 'active') is the gate
