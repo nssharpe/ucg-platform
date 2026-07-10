@@ -18,6 +18,10 @@ import {
   anyAddonWindowOpen,
   initialClubAddonDraft,
   buildClubAddonCartItems,
+  initialCampSurveyDraft,
+  campSurveyValid,
+  campSurveyToStored,
+  campSurveySummary,
 } from '../src/lib/pricing';
 import type { AddonPricingEvent, AddonDraftEvent, ClubAddonDraftEvent, PartnerReg, RegFeeEvent, SynchroReg } from '../src/lib/pricing';
 import type { Coupon, Membership, Season } from '../src/lib/types';
@@ -506,5 +510,44 @@ describe('club-manager per-unit add-on draft (emv2 P2 T4)', () => {
 
   it('produces no lines from an all-empty draft', () => {
     expect(buildClubAddonCartItems(clubEvent, { shirtUnits: [], banquetUnits: [], bannerText: '' }, nameOf, 4000)).toHaveLength(0);
+  });
+});
+
+describe('camp overnight-accommodations survey (emv2 P2 T5, spec §G)', () => {
+  it('initialCampSurveyDraft starts blank with no existing answers', () => {
+    expect(initialCampSurveyDraft()).toEqual({ bedtime: '', noiseLevel: '', cabinGenderPref: '', roommateRequest: '' });
+  });
+  it('initialCampSurveyDraft prefills from an existing stored survey (edit case)', () => {
+    expect(initialCampSurveyDraft({ bedtime: 'after-midnight', noiseLevel: 'lively', cabinGenderPref: 'Female', roommateRequest: 'Jamie' }))
+      .toEqual({ bedtime: 'after-midnight', noiseLevel: 'lively', cabinGenderPref: 'Female', roommateRequest: 'Jamie' });
+  });
+
+  it('campSurveyValid requires bedtime + noiseLevel + cabinGenderPref, not roommateRequest', () => {
+    expect(campSurveyValid({ bedtime: '', noiseLevel: '', cabinGenderPref: '', roommateRequest: '' })).toBe(false);
+    expect(campSurveyValid({ bedtime: 'before-10', noiseLevel: 'quiet', cabinGenderPref: '', roommateRequest: '' })).toBe(false);
+    expect(campSurveyValid({ bedtime: 'before-10', noiseLevel: 'quiet', cabinGenderPref: 'No preference', roommateRequest: '' })).toBe(true);
+  });
+
+  it('campSurveyToStored returns undefined for a fully-blank draft', () => {
+    expect(campSurveyToStored({ bedtime: '', noiseLevel: '', cabinGenderPref: '', roommateRequest: '   ' })).toBeUndefined();
+  });
+  it('campSurveyToStored trims roommateRequest and omits unanswered keys', () => {
+    expect(campSurveyToStored({ bedtime: 'before-10', noiseLevel: '', cabinGenderPref: '', roommateRequest: '  Jamie Lee  ' }))
+      .toEqual({ bedtime: 'before-10', roommateRequest: 'Jamie Lee' });
+  });
+  it('campSurveyToStored carries every answered field', () => {
+    expect(campSurveyToStored({ bedtime: '10-to-midnight', noiseLevel: 'moderate', cabinGenderPref: 'Male', roommateRequest: 'Alex' }))
+      .toEqual({ bedtime: '10-to-midnight', noiseLevel: 'moderate', cabinGenderPref: 'Male', roommateRequest: 'Alex' });
+  });
+
+  it('campSurveySummary is empty for no survey', () => {
+    expect(campSurveySummary(undefined)).toBe('');
+  });
+  it('campSurveySummary joins answered fields with human labels', () => {
+    expect(campSurveySummary({ bedtime: '10-to-midnight', noiseLevel: 'quiet', cabinGenderPref: 'Female', roommateRequest: 'Jamie' }))
+      .toBe('bedtime: 10pm–midnight, noise: Quiet, cabin: Female, roommate: Jamie');
+  });
+  it('campSurveySummary only includes fields that were actually answered', () => {
+    expect(campSurveySummary({ noiseLevel: 'lively' })).toBe('noise: Lively');
   });
 });

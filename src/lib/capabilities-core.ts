@@ -2,7 +2,7 @@
 // types, which erase at compile time). This is the security-critical core, kept
 // importable in a plain Node test environment. The React hooks that feed it the
 // live session/DB/impersonation live in capabilities.ts.
-import type { Athlete, DB, Membership, MembershipStatus, Registration } from './types';
+import type { Athlete, DB, Event, Membership, MembershipStatus, Registration } from './types';
 
 export interface Capabilities {
   signedIn: boolean;
@@ -56,6 +56,33 @@ export function clubHasActiveMembership(db: DB, clubId: string | null, seasonId:
   return (db.clubMemberships ?? []).some(
     (cm) => cm.clubId === clubId && cm.seasonId === seasonId && cm.status === 'active',
   );
+}
+
+/** Whether the club-membership gate applies to REGISTERING for an event of
+ *  this type (event-mgmt v2 §G, Julia-confirmed 2026-07-06). Camps are
+ *  individual self-registration only — a camp registrant's club needn't hold
+ *  a club membership, so the gate is waived. Competitions (the default, incl.
+ *  `undefined`) keep the gate. This does NOT touch the separate individual-
+ *  membership requirement (`Capabilities.canRegister`), which still applies
+ *  to camps, nor a club's OWN membership requirement to HOST an event. */
+export function clubMembershipGateApplies(eventType: Event['eventType'] | undefined): boolean {
+  return eventType !== 'camp';
+}
+
+/** Event-aware wrapper around `clubHasActiveMembership`: for a camp, the club
+ *  gate is waived entirely (always "satisfied"); for a competition, delegates
+ *  to the plain check. Use this at every REGISTRATION entry point that gates
+ *  on the competing club's membership; use the plain `clubHasActiveMembership`
+ *  for non-registration purposes (e.g. the club membership status card, or a
+ *  club's hosting eligibility). */
+export function clubHasActiveMembershipForEvent(
+  db: DB,
+  clubId: string | null,
+  seasonId: string | null,
+  eventType: Event['eventType'] | undefined,
+): boolean {
+  if (!clubMembershipGateApplies(eventType)) return true;
+  return clubHasActiveMembership(db, clubId, seasonId);
 }
 
 /** The independent holds keeping a membership from being fully active. Both can

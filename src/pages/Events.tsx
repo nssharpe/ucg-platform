@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { useRolesLoaded } from '../lib/auth';
-import { seasonForDate, clubHasActiveMembership, paidRegistrationClub } from '../lib/capabilities-core';
+import { seasonForDate, clubHasActiveMembershipForEvent, paidRegistrationClub } from '../lib/capabilities-core';
 import { eventIsInPhase } from '../lib/events-core';
 import { Badge, Field, Modal, Tabs } from '../components/ui';
 import { useToast, useFmtDate } from '../components/ui-hooks';
@@ -29,6 +29,7 @@ import {
   newRegistrationEntryTotal, registrationChangeFee, syncSynchroPartnerLevel, findIncomingSynchroPartner,
   lateFeeApplies, lateFeeAnchor, addonPurchaseOpen, initialAddonDraft, anyAddonWindowOpen, addonDraftValid,
   buildAddonCartItems, type AddonDraft,
+  initialCampSurveyDraft, campSurveyValid, campSurveyToStored, campSurveySummary, CABIN_GENDER_OPTIONS, type CampSurveyDraft,
 } from '../lib/pricing';
 import { OWNER_TASKS, ownerTaskDueDate } from '../../supabase/functions/_shared/owner-checklist';
 import type { OwnerChecklist, OwnerChecklistEntry, OwnerTaskId } from '../../supabase/functions/_shared/owner-checklist';
@@ -793,7 +794,7 @@ function RosterToolsCard({
     // the event's season — same idiom as Club.tsx's clubMembershipBlocked().
     // The reg is created under the athlete's main club (find_person_for_host).
     const seasonId = seasonForDate(db, event.startDate);
-    if (!found.clubId || !clubHasActiveMembership(db, found.clubId, seasonId)) {
+    if (!found.clubId || !clubHasActiveMembershipForEvent(db, found.clubId, seasonId, event.eventType)) {
       setAddBusy(false);
       const sName = db.seasons.find((s) => s.id === seasonId)?.name ?? "this event's season";
       toast(
@@ -1512,15 +1513,24 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
 
   // Default to the locked club when one applies, else the athlete's first club.
   const [selectedClubId, setSelectedClubId] = useState(lockedClubId ?? myClubs[0]?.id ?? '');
-  const [step, setStep] = useState<'reg' | 'addons'>('reg');
+  const [step, setStep] = useState<'reg' | 'addons' | 'survey'>('reg');
   // Add-on selections (per-unit model — one cart line per unit, Phase 2 T3).
   const [addonDraft, setAddonDraft] = useState<AddonDraft>(() => initialAddonDraft(event, 'registration'));
-  // Saved regs from editor (used in add-on step)
+  // Saved regs from editor (used in the add-on / survey steps)
   const [pendingRegs, setPendingRegs] = useState<Registration[] | null>(null);
+  const [pendingAddonItems, setPendingAddonItems] = useState<CartItem[]>([]);
 
   const season = db.seasons.find((s) => s.current)!;
   const existingRegs = db.registrations.filter(
     (r) => r.eventId === event.id && r.athleteId === athlete.id && !r.refunded,
+  );
+
+  // Camp overnight-accommodations survey (event-mgmt v2 §G): asked LAST in
+  // the popup, after add-ons, only when the event turns it on. Seeded from
+  // any prior answer on this athlete's existing reg (re-registering keeps it).
+  const surveyRequired = event.eventType === 'camp' && !!event.campConfig?.overnightSurvey;
+  const [surveyDraft, setSurveyDraft] = useState<CampSurveyDraft>(
+    () => initialCampSurveyDraft(existingRegs[0]?.campSurvey),
   );
 
   const changeFeeApplies = !!(
@@ -1538,9 +1548,12 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
       toast(`You're already registered with ${lockedClubShort} for this event — you can't register under a different club. Edit your existing registration instead.`, { variant: 'error' });
       return;
     }
-    // Gate: the competing club must hold an active membership for the event's season.
+    // Gate: the competing club must hold an active membership for the event's
+    // season — waived for camps (event-mgmt v2 §G): a camp registrant's club
+    // needn't be a member; the individual-membership check (caps.canRegister,
+    // gating the "Register yourself" button) still applies to camps.
     const seasonId = seasonForDate(db, event.startDate);
-    if (!clubHasActiveMembership(db, selectedClubId, seasonId)) {
+    if (!clubHasActiveMembershipForEvent(db, selectedClubId, seasonId, event.eventType)) {
       const sName = db.seasons.find((s) => s.id === seasonId)?.name ?? 'this season';
       const club = db.clubs.find((c) => c.id === selectedClubId);
       toast(`${club?.shortName ?? 'Your club'} needs an active ${sName} club membership before anyone can register for this event. A club manager can purchase it on the club page.`, { variant: 'error' });
@@ -1549,12 +1562,21 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
     if (hasAddons) {
       setPendingRegs(regs);
       setStep('addons');
+    } else if (surveyRequired) {
+      setPendingRegs(regs);
+      setStep('survey');
     } else {
       persistRegs(regs, []);
     }
   };
 
   const persistRegs = (regs: Registration[], addonItems: CartItem[]) => {
+    // Camp survey answers (§G) are stored per-registration and are free to
+    // change — never part of the pricing above.
+    const storedSurvey = surveyRequired ? campSurveyToStored(surveyDraft) : undefined;
+    if (storedSurvey) {
+      for (const r of regs) r.campSurvey = storedSurvey;
+    }
     let hostFree = false;
     mutate((d) => {
       const existingForAthlete = d.registrations.filter(
@@ -1646,9 +1668,17 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
 
       if (!alreadyHadRegs && entryTotal > 0) {
         const lateSuffix = lateAnchor !== null && lateFeeApplies(event, lateAnchor) ? ' (incl. late fee)' : '';
+        // Add-on + survey answers summarized on the athlete's line item (§G).
+        const ADDON_TYPE_LABELS: Record<string, string> = { tshirt: 'shirt', leo: 'leotard', banquet: 'banquet', banner: 'banner' };
+        const addonSummary = addonItems
+          .map((it) => (it.refLineType ? ADDON_TYPE_LABELS[it.refLineType] ?? it.refLineType : null))
+          .filter((v): v is string => !!v)
+          .join(', ');
+        const surveySummary = storedSurvey ? campSurveySummary(storedSurvey) : '';
+        const summarySuffix = [addonSummary, surveySummary].filter(Boolean).join('; ');
         cart.push({
           id: `ci-self-${Date.now()}-${athlete.id}`,
-          label: `${event.name} entry — ${athlete.firstName} ${athlete.lastName} (${addedRegs.map((r) => r.discipline).join('+')})${lateSuffix}`,
+          label: `${event.name} entry — ${athlete.firstName} ${athlete.lastName} (${addedRegs.map((r) => r.discipline).join('+')})${lateSuffix}${summarySuffix ? ` [${summarySuffix}]` : ''}`,
           amount: entryTotal,
           kind: 'meet-entry',
           refUserId: athlete.id,
@@ -1701,12 +1731,30 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
       toast('Choose a shirt/leotard option ("No shirt"/"No leotard" if you don\'t want one) before continuing.', { variant: 'error' });
       return;
     }
-    persistRegs(pendingRegs, buildAddonCartItems(event, athlete, addonDraft, Date.now()));
+    const items = buildAddonCartItems(event, athlete, addonDraft, Date.now());
+    if (surveyRequired) {
+      setPendingAddonItems(items);
+      setStep('survey');
+    } else {
+      persistRegs(pendingRegs, items);
+    }
+  };
+
+  // Survey questions come LAST in the popup (§G), after add-ons.
+  const handleSurvey = () => {
+    if (!pendingRegs) return;
+    if (!campSurveyValid(surveyDraft)) {
+      toast('Answer bedtime, noise level, and cabin gender preference before continuing (roommate request is optional).', { variant: 'error' });
+      return;
+    }
+    persistRegs(pendingRegs, pendingAddonItems);
   };
 
   const title = step === 'reg'
     ? `Register for ${event.name}`
-    : `Add-ons — ${event.name}`;
+    : step === 'addons'
+      ? `Add-ons — ${event.name}`
+      : `Overnight accommodations — ${event.name}`;
 
   return (
     <Modal title={title} onClose={onClose}>
@@ -1770,6 +1818,67 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
 
           <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
             <button className="btn primary" onClick={handleAddons} disabled={!addonDraftValid(event, addonDraft, new Date())}>
+              {surveyRequired ? 'Continue' : 'Continue to cart'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {step === 'survey' && (
+        <div>
+          <p style={{ fontSize: 14, color: 'var(--ink-soft)', marginBottom: 14 }}>
+            A few questions about overnight accommodations for {athlete.firstName}. You can update these
+            answers any time before the event's edit deadline.
+          </p>
+
+          <div className="grid cols-2" style={{ gap: 12 }}>
+            <Field label="Bedtime">
+              <select
+                className="input"
+                value={surveyDraft.bedtime}
+                onChange={(e) => setSurveyDraft((d) => ({ ...d, bedtime: e.target.value as CampSurveyDraft['bedtime'] }))}
+              >
+                <option value="" disabled>— select —</option>
+                <option value="before-10">Before 10pm</option>
+                <option value="10-to-midnight">10pm–midnight</option>
+                <option value="after-midnight">After midnight</option>
+              </select>
+            </Field>
+            <Field label="Noise level preference">
+              <select
+                className="input"
+                value={surveyDraft.noiseLevel}
+                onChange={(e) => setSurveyDraft((d) => ({ ...d, noiseLevel: e.target.value as CampSurveyDraft['noiseLevel'] }))}
+              >
+                <option value="" disabled>— select —</option>
+                <option value="quiet">Quiet</option>
+                <option value="moderate">Moderate</option>
+                <option value="lively">Lively</option>
+              </select>
+            </Field>
+            <Field label="Cabin gender preference">
+              <select
+                className="input"
+                value={surveyDraft.cabinGenderPref}
+                onChange={(e) => setSurveyDraft((d) => ({ ...d, cabinGenderPref: e.target.value }))}
+              >
+                <option value="" disabled>— select —</option>
+                {CABIN_GENDER_OPTIONS.map((g) => <option key={g} value={g}>{g}</option>)}
+              </select>
+            </Field>
+          </div>
+
+          <Field label="Roommate request (optional)" hint="Who would you like to room with?">
+            <input
+              className="input"
+              value={surveyDraft.roommateRequest}
+              onChange={(e) => setSurveyDraft((d) => ({ ...d, roommateRequest: e.target.value }))}
+              placeholder="e.g. Jamie Lee"
+            />
+          </Field>
+
+          <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+            <button className="btn primary" onClick={handleSurvey} disabled={!campSurveyValid(surveyDraft)}>
               Continue to cart
             </button>
           </div>

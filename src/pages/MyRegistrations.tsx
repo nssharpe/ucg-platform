@@ -5,8 +5,11 @@ import { Badge, Combo, Field, Modal, Tabs } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 import { pushRegistration, pushCart, syncSynchroPartnerLevelRemote } from '../lib/supabase';
 import { RegistrationEditor } from '../components/RegistrationEditor';
-import { newRegistrationEntryTotal, registrationChangeFee, changeIsEligible, syncSynchroPartnerLevel, lateFeeApplies, lateFeeAnchor } from '../lib/pricing';
-import type { RegChangeState } from '../lib/pricing';
+import {
+  newRegistrationEntryTotal, registrationChangeFee, changeIsEligible, syncSynchroPartnerLevel, lateFeeApplies, lateFeeAnchor,
+  initialCampSurveyDraft, campSurveyValid, campSurveyToStored, CABIN_GENDER_OPTIONS,
+} from '../lib/pricing';
+import type { RegChangeState, CampSurveyDraft } from '../lib/pricing';
 import { fmtMoney } from '../lib/scoring';
 import type { Athlete, Club, Level, Event, Registration, Season } from '../lib/types';
 import { canStillEditRegistration } from '../lib/events-core';
@@ -429,6 +432,36 @@ function EditRegistrationModal({
   onClose: () => void; onSave: (selectedClubId: string, regs: Registration[]) => void;
 }) {
   const [clubId, setClubId] = useState<string>(currentClubId);
+  const toast = useToast();
+
+  // Camp overnight-accommodations survey (event-mgmt v2 §G): editable any
+  // time up to the event's edit deadline (this whole modal is only reachable
+  // then — MyRegistrationsInner's "Edit" button is hidden past it). Survey
+  // edits are FREE — saved directly here, entirely separate from
+  // RegistrationEditor's discipline/change-fee flow below.
+  const isCamp = event.eventType === 'camp';
+  const surveyRequired = isCamp && !!event.campConfig?.overnightSurvey;
+  const [surveyDraft, setSurveyDraft] = useState<CampSurveyDraft>(
+    () => initialCampSurveyDraft(existing[0]?.campSurvey),
+  );
+
+  const saveSurvey = () => {
+    if (!campSurveyValid(surveyDraft)) {
+      toast('Answer bedtime, noise level, and cabin gender preference before saving (roommate request is optional).', { variant: 'error' });
+      return;
+    }
+    const stored = campSurveyToStored(surveyDraft);
+    mutate((d) => {
+      for (const r of existing) {
+        const idx = d.registrations.findIndex((x) => x.id === r.id);
+        const updated: Registration = { ...(idx >= 0 ? d.registrations[idx] : r), campSurvey: stored };
+        if (idx >= 0) d.registrations[idx] = updated; else d.registrations.push(updated);
+        pushRegistration(updated);
+      }
+    });
+    toast('Overnight-accommodations answers saved.');
+    onClose();
+  };
 
   return (
     <Modal title={`Edit registration — ${event.name}`} onClose={onClose}>
@@ -454,6 +487,62 @@ function EditRegistrationModal({
         onSave={(regs) => onSave(clubId, regs)}
         onCancel={onClose}
       />
+
+      {surveyRequired && (
+        <div style={{ marginTop: 18, paddingTop: 14, borderTop: '1px solid var(--line)' }}>
+          <h4 style={{ margin: '0 0 4px' }}>Overnight accommodations</h4>
+          <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '0 0 12px' }}>
+            Free to update any time before the edit deadline — never a change fee.
+          </p>
+          <div className="grid cols-2" style={{ gap: 12 }}>
+            <Field label="Bedtime">
+              <select
+                className="input"
+                value={surveyDraft.bedtime}
+                onChange={(e) => setSurveyDraft((d) => ({ ...d, bedtime: e.target.value as CampSurveyDraft['bedtime'] }))}
+              >
+                <option value="" disabled>— select —</option>
+                <option value="before-10">Before 10pm</option>
+                <option value="10-to-midnight">10pm–midnight</option>
+                <option value="after-midnight">After midnight</option>
+              </select>
+            </Field>
+            <Field label="Noise level preference">
+              <select
+                className="input"
+                value={surveyDraft.noiseLevel}
+                onChange={(e) => setSurveyDraft((d) => ({ ...d, noiseLevel: e.target.value as CampSurveyDraft['noiseLevel'] }))}
+              >
+                <option value="" disabled>— select —</option>
+                <option value="quiet">Quiet</option>
+                <option value="moderate">Moderate</option>
+                <option value="lively">Lively</option>
+              </select>
+            </Field>
+            <Field label="Cabin gender preference">
+              <select
+                className="input"
+                value={surveyDraft.cabinGenderPref}
+                onChange={(e) => setSurveyDraft((d) => ({ ...d, cabinGenderPref: e.target.value }))}
+              >
+                <option value="" disabled>— select —</option>
+                {CABIN_GENDER_OPTIONS.map((g) => <option key={g} value={g}>{g}</option>)}
+              </select>
+            </Field>
+          </div>
+          <Field label="Roommate request (optional)" hint="Who would you like to room with?">
+            <input
+              className="input"
+              value={surveyDraft.roommateRequest}
+              onChange={(e) => setSurveyDraft((d) => ({ ...d, roommateRequest: e.target.value }))}
+              placeholder="e.g. Jamie Lee"
+            />
+          </Field>
+          <button className="btn ghost" style={{ marginTop: 8 }} onClick={saveSurvey} disabled={!campSurveyValid(surveyDraft)}>
+            Save survey answers
+          </button>
+        </div>
+      )}
     </Modal>
   );
 }

@@ -1,7 +1,7 @@
 // Pure pricing & coupon-validity logic — no React/store/Supabase imports (types
 // erase at compile time). Unit-tested in tests/pricing.test.ts. Used by the
 // membership purchase flow (W6) and promo codes (W14).
-import type { Athlete, CartItem, Coupon, Discipline, Membership, MembershipType, Season } from './types';
+import type { Athlete, CartItem, Coupon, Discipline, Membership, MembershipType, Registration, Season } from './types';
 
 /** Base fee for a membership type in a season. */
 export function membershipFee(season: Season, type: MembershipType): number {
@@ -446,6 +446,75 @@ export function buildAddonCartItems(
     });
   }
   return items;
+}
+
+// --- Camp overnight-accommodations survey (event-mgmt v2 Phase 2 §G) -------
+// Asked per athlete, LAST in the camp registration popup (after add-ons),
+// only when `event.campConfig.overnightSurvey` is on. Persists onto
+// `Registration.campSurvey` (jsonb `camp_survey` column). Survey edits are
+// FREE — never a change fee — so this stays entirely outside the pricing/
+// cart-line logic above; it only affects a line's LABEL summary.
+
+/** Cabin-gender-preference options: the app's existing Gender option
+ *  conventions (Profile.tsx) + "No preference". */
+export const CABIN_GENDER_OPTIONS = ['Male', 'Female', 'Non-binary', 'Genderfluid', 'Agender', 'Other', 'No preference'];
+
+export type CampSurveyDraft = {
+  bedtime: '' | 'before-10' | '10-to-midnight' | 'after-midnight';
+  noiseLevel: '' | 'quiet' | 'moderate' | 'lively';
+  /** A Gender value or 'No preference'; kept as a plain string here so this
+   *  module doesn't need to import the Gender union. */
+  cabinGenderPref: string;
+  roommateRequest: string;
+};
+
+/** Fresh (or edit-seeded) survey draft. Pass the athlete's existing
+ *  `campSurvey` (if any) to prefill an edit. */
+export function initialCampSurveyDraft(existing?: Registration['campSurvey']): CampSurveyDraft {
+  return {
+    bedtime: existing?.bedtime ?? '',
+    noiseLevel: existing?.noiseLevel ?? '',
+    cabinGenderPref: existing?.cabinGenderPref ?? '',
+    roommateRequest: existing?.roommateRequest ?? '',
+  };
+}
+
+const CAMP_BEDTIME_LABELS: Record<string, string> = {
+  'before-10': 'Before 10pm', '10-to-midnight': '10pm–midnight', 'after-midnight': 'After midnight',
+};
+const CAMP_NOISE_LABELS: Record<string, string> = { quiet: 'Quiet', moderate: 'Moderate', lively: 'Lively' };
+
+/** Required fields (bedtime/noise/cabin pref) must be explicitly chosen;
+ *  the free-text roommate request is always optional. */
+export function campSurveyValid(draft: CampSurveyDraft): boolean {
+  return !!draft.bedtime && !!draft.noiseLevel && !!draft.cabinGenderPref;
+}
+
+/** Draft → the shape stored on `Registration.campSurvey`. Returns `undefined`
+ *  when nothing was answered (so a reg with the survey skipped doesn't carry
+ *  an empty-object stub). */
+export function campSurveyToStored(draft: CampSurveyDraft): Registration['campSurvey'] {
+  const roommateRequest = draft.roommateRequest.trim();
+  if (!draft.bedtime && !draft.noiseLevel && !draft.cabinGenderPref && !roommateRequest) return undefined;
+  return {
+    ...(draft.bedtime ? { bedtime: draft.bedtime } : {}),
+    ...(draft.noiseLevel ? { noiseLevel: draft.noiseLevel } : {}),
+    ...(draft.cabinGenderPref ? { cabinGenderPref: draft.cabinGenderPref as NonNullable<Registration['campSurvey']>['cabinGenderPref'] } : {}),
+    ...(roommateRequest ? { roommateRequest } : {}),
+  };
+}
+
+/** Short human-readable summary for a cart/reg line-item label, e.g.
+ *  "bedtime: 10pm–midnight, noise: Quiet, cabin: Female". Empty string when
+ *  there's nothing to summarize. */
+export function campSurveySummary(survey: Registration['campSurvey'] | undefined): string {
+  if (!survey) return '';
+  const parts: string[] = [];
+  if (survey.bedtime) parts.push(`bedtime: ${CAMP_BEDTIME_LABELS[survey.bedtime] ?? survey.bedtime}`);
+  if (survey.noiseLevel) parts.push(`noise: ${CAMP_NOISE_LABELS[survey.noiseLevel] ?? survey.noiseLevel}`);
+  if (survey.cabinGenderPref) parts.push(`cabin: ${survey.cabinGenderPref}`);
+  if (survey.roommateRequest) parts.push(`roommate: ${survey.roommateRequest}`);
+  return parts.join(', ');
 }
 
 // --- Club-manager per-unit add-on draft (Phase 2 Task 4) --------------------

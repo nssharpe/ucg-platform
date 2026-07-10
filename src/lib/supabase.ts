@@ -244,6 +244,7 @@ const registrationToRow = (r: Registration, squadId: string | null = null) => ({
   keep_listed: r.keepListed ?? false,
   partner_athlete_id: r.partnerAthleteId ?? null, apparatus_levels: r.apparatusLevels ?? null,
   paid: r.paid ?? false, updated_pending: r.updatedPending ?? false,
+  camp_survey: r.campSurvey ?? null,
 });
 
 /** squad_id for every registration, derived from session.squads[].athleteRegIds. */
@@ -261,6 +262,7 @@ const rowToRegistration = (r: Row<'registrations'>): Registration => ({
   ...(r.refund_requested ? { refundRequested: true } : {}),
   ...(r.partner_athlete_id ? { partnerAthleteId: r.partner_athlete_id } : {}),
   ...(r.apparatus_levels ? { apparatusLevels: r.apparatus_levels as Registration['apparatusLevels'] } : {}),
+  ...(r.camp_survey ? { campSurvey: r.camp_survey as Registration['campSurvey'] } : {}),
   // READ-ONLY: never included in registrationToRow's push mapping (see Registration.createdAt).
   ...(r.created_at ? { createdAt: r.created_at } : {}),
 });

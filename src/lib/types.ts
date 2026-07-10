@@ -388,6 +388,15 @@ export interface Registration {
    *  shape future-proofs per-apparatus levels for MAG/WAG. Absent ⇒ use
    *  `levelId` for all events. */
   apparatusLevels?: Record<string, string>;
+  /** Camp overnight-accommodations survey answers (event-mgmt v2 §G). Present
+   *  only for camp registrations at events with `campConfig.overnightSurvey`
+   *  on. Free to edit until the event's change deadline — never a change fee. */
+  campSurvey?: {
+    bedtime?: 'before-10' | '10-to-midnight' | 'after-midnight';
+    noiseLevel?: 'quiet' | 'moderate' | 'lively';
+    cabinGenderPref?: Gender | 'No preference';
+    roommateRequest?: string;
+  };
   /** DB `created_at` (timestamptz), READ-ONLY: never written by `pushRegistration`
    *  (the app's whole-row upsert never maps this column back, so the DB default
    *  `now()` — stamped once at first INSERT — is preserved across edits). This is

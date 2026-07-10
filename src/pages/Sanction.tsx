@@ -893,6 +893,17 @@ export function SanctionVotePage() {
         // Sanction form only collects a yes/no "hotel block wanted" — no URL yet,
         // so hotelLink is left for the host to fill in after the event is created.
         ...(p.lateRegStart ? { lateReg: { startsAt: String(p.lateRegStart), fee: Number(p.lateFee) || 0 } } : {}),
+        // Camp-only config (bug found in T1, fixed here in T5): p.leoAddon was
+        // never copied onto event.campConfig, silently dropping a sanctioned
+        // camp's leo add-on. p.overnightSurvey isn't collected by the sanction
+        // form today (no form field), but is carried defensively here too so a
+        // future form addition doesn't require touching this mapping again.
+        ...(p.leoAddon || p.overnightSurvey ? {
+          campConfig: {
+            ...(p.overnightSurvey ? { overnightSurvey: true } : {}),
+            ...(p.leoAddon ? { leoAddon: p.leoAddon as NonNullable<Event['campConfig']>['leoAddon'] } : {}),
+          },
+        } : {}),
       };
 
       mutate((d) => {

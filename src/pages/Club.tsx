@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
-import { clubHasActiveMembership, seasonForDate, membershipHolds, paidRegistrationClub } from '../lib/capabilities-core';
+import { clubHasActiveMembership, clubHasActiveMembershipForEvent, seasonForDate, membershipHolds, paidRegistrationClub } from '../lib/capabilities-core';
 import { eventIsInPhase, canStillEditRegistration } from '../lib/events-core';
 import { Badge, Combo, Field, Modal } from '../components/ui';
 import { useToast, useFmtDate } from '../components/ui-hooks';
@@ -988,10 +988,13 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   const regClosed = !eventIsInPhase(event, 'reg-open');
 
   // Gate: the club must hold an active membership for the event's season before
-  // registering any athlete. Returns true (and toasts) when blocked.
+  // registering any athlete. Returns true (and toasts) when blocked. Waived for
+  // camps (event-mgmt v2 §G) — a camp registrant's club needn't be a member,
+  // though camps are individual self-reg only, so this path shouldn't normally
+  // apply to one; the carve-out is applied here too as a belt-and-suspenders.
   const clubMembershipBlocked = (): boolean => {
     const seasonId = seasonForDate(db, event.startDate);
-    if (!clubHasActiveMembership(db, clubId, seasonId)) {
+    if (!clubHasActiveMembershipForEvent(db, clubId, seasonId, event.eventType)) {
       const sName = db.seasons.find((s) => s.id === seasonId)?.name ?? 'this season';
       const club = db.clubs.find((c) => c.id === clubId);
       toast(`${club?.shortName ?? 'This club'} needs an active ${sName} club membership before registering athletes for this event. Purchase it on the club page.`, { variant: 'error' });
