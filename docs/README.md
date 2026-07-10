@@ -121,7 +121,15 @@ here — update THIS list when priorities change, not rival copies.
   **Phasing approved by Nate 2026-07-06:** V2-P0 foundations/scheduler →
   P1 host experience → P2 add-ons & camps → P3 refunds → P4 capacity/waitlists &
   by-session reg → P5 nationals ops/check-in → P6 finance dashboards.
-  **P1 (host experience) is now fully shipped** — see Tasks 1, 3–8 below. Next up: P2.
+  **P1 (host experience) is now fully shipped** — see Tasks 1, 3–8 below. P2 (add-ons &
+  camps) underway: **Task 1** (per-unit add-on cart/invoice line fields, `addon_size`/
+  `addon_assignee`) and **Task 2** (server-side per-unit add-on pricing + purchase
+  deadlines + banquet-assignment validation in `create-checkout-session`) shipped, plus
+  **Task 3** (individual self-cart per-unit add-on purchase UI: registration-popup add-on
+  step reworked to quantity steppers + per-unit size/assignee pickers, camp shirt/leo
+  forced to an explicit choice, and a new standalone post-registration "Add-ons" dialog
+  on the event page usable past `regCloses` via each type's `lastPurchaseAt`). Club-cart
+  add-on UI (the analogous Club.tsx work) is next.
   **P0 Task 1 shipped:** pg_cron/pg_net scheduler infra (`notification_log` +
   `scheduled-dispatch-15min` job + `scheduled-dispatch` Edge Function, service-role-only
   auth) with its first consumer — 3d/1d/closed sanction-vote reminder emails, idempotent
