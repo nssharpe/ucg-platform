@@ -152,6 +152,15 @@ here — update THIS list when priorities change, not rival copies.
   `event.campConfig`. The finance-side add-ons export and the "no discipline/level/
   apparatus in camp registration" popup simplification (§G) remain open — the camp
   registration popup still reuses the full per-discipline `RegistrationEditor`.
+  **Task 6 shipped:** camp confirmation email (§G) — `stripe-webhook`'s receipt now
+  appends a camp-details block for any purchased CAMP event: each registered
+  athlete's `camp_survey` answers (human labels, omitted per-athlete when unanswered)
+  plus this payment's purchased add-ons (shirt/leo sizes, banquet assignee — reused
+  verbatim from the already-human-readable cart-line label), with a link to
+  `/#/me/registrations` to edit. Pure HTML-building lives in
+  `_shared/camp-confirmation.ts` (Deno + vitest dual-import, mirrors the `event-comm.ts`
+  pattern) and is wrapped in its own try/catch, isolated from the existing per-event
+  confirmation-config block, so a failure there can't break the receipt or fulfillment.
   **P0 Task 1 shipped:** pg_cron/pg_net scheduler infra (`notification_log` +
   `scheduled-dispatch-15min` job + `scheduled-dispatch` Edge Function, service-role-only
   auth) with its first consumer — 3d/1d/closed sanction-vote reminder emails, idempotent
