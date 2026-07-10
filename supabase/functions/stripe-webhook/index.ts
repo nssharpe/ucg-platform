@@ -23,6 +23,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { getStripe, getCryptoProvider } from '../_shared/stripe.ts';
 import { sendOne } from '../_shared/resend.ts';
 import { renderEmail } from '../_shared/email-layout.ts';
+import { buildCampConfirmationHtml, type CampAthleteSurvey } from '../_shared/camp-confirmation.ts';
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -461,14 +462,18 @@ async function emailReceipt(
   const ccSet = new Set<string>();
   const replyTos = new Set<string>();
   const fromAliases = new Set<string>();
+  // Hoisted so the camp-confirmation block (built in its own try/catch below)
+  // can reuse the same event rows without a second round trip.
+  let evs: { id: string; name: string | null; event_type: string | null }[] = [];
   try {
     const eventIds = [...new Set(items.map((i) => i.ref_event_id).filter((id): id is string => !!id))];
     if (eventIds.length) {
-      const { data: evs } = await db
+      const { data: evRows } = await db
         .from('events')
-        .select('id, name, confirmation_email, director')
+        .select('id, name, confirmation_email, director, event_type')
         .in('id', eventIds);
-      for (const evRow of evs ?? []) {
+      evs = (evRows ?? []) as unknown as { id: string; name: string | null; event_type: string | null }[];
+      for (const evRow of evRows ?? []) {
         const ev = evRow as unknown as {
           id: string; name: string | null;
           confirmation_email: { bodyHtml?: string; fromAlias?: string; replyTo?: string } | null;
@@ -496,6 +501,58 @@ async function emailReceipt(
     eventSectionsHtml = ''; ccSet.clear(); replyTos.clear(); fromAliases.clear();
   }
 
+  // Camp confirmation block (emv2 P2 §G): for any purchased CAMP event, append
+  // a summary of each registered athlete's overnight-survey answers plus this
+  // payment's add-ons, with a link back to the member edit surface. Entirely
+  // best-effort — any failure here must never break the receipt, so it's
+  // isolated in its own try/catch and defaults to '' (no camp section) rather
+  // than touching eventSectionsHtml/ccSet/etc. above.
+  let campSectionHtml = '';
+  try {
+    const campEventIds = new Set(evs.filter((ev) => ev.event_type === 'camp').map((ev) => ev.id));
+    if (campEventIds.size) {
+      const regIds = [...new Set(
+        items
+          .filter((i) => i.ref_event_id && campEventIds.has(i.ref_event_id) && i.kind !== 'addon')
+          .flatMap((i) => i.ref_reg_ids ?? []),
+      )];
+      let athletes: CampAthleteSurvey[] = [];
+      if (regIds.length) {
+        const { data: regRows } = await db.from('registrations')
+          .select('id, athlete_id, camp_survey')
+          .in('id', regIds);
+        const regs = (regRows ?? []) as { id: string; athlete_id: string | null; camp_survey: CampAthleteSurvey['survey'] | null }[];
+        const athleteIds = [...new Set(regs.map((r) => r.athlete_id).filter((id): id is string => !!id))];
+        const nameById = new Map<string, string>();
+        if (athleteIds.length) {
+          const { data: peopleRows } = await db.from('people')
+            .select('id, first_name, last_name')
+            .in('id', athleteIds);
+          for (const pr of (peopleRows ?? []) as { id: string; first_name?: string; last_name?: string }[]) {
+            nameById.set(pr.id, `${pr.first_name ?? ''} ${pr.last_name ?? ''}`.trim() || 'Athlete');
+          }
+        }
+        athletes = regs.map((r) => ({
+          name: (r.athlete_id && nameById.get(r.athlete_id)) || 'Athlete',
+          survey: r.camp_survey,
+        }));
+      }
+      // Add-on lines already carry a fully human-readable label (athlete name
+      // + size / assignee baked in by buildAddonCartItems) — reuse as-is
+      // rather than re-resolving names.
+      const addonLabels = items
+        .filter((i) => i.kind === 'addon' && i.ref_event_id && campEventIds.has(i.ref_event_id))
+        .map((i) => i.label);
+      const appUrl = Deno.env.get('APP_PUBLIC_URL') ?? 'https://nssharpe.github.io/ucg-platform';
+      campSectionHtml = buildCampConfirmationHtml({
+        athletes, addonLabels, editUrl: `${appUrl}/#/me/registrations`,
+      });
+    }
+  } catch (e) {
+    console.error('emailReceipt: camp confirmation block failed (sending receipt without it)', e);
+    campSectionHtml = '';
+  }
+
   // Only list lines that carry a charge (grouped-membership "included" lines and
   // $0 host-club lines are server-priced to 0 and would just clutter the receipt).
   const rows = items
@@ -511,7 +568,7 @@ async function emailReceipt(
     heading: 'Your receipt',
     bodyHtml: `<p>Hi ${esc(forName)},</p>
 <p>Thanks for your purchase. Here's your receipt for the items below.</p>
-${eventSectionsHtml}<p style="color:#5b6b7a;font-size:13px;margin:0 0 12px;">Receipt ${esc(invoiceNumber)}</p>
+${eventSectionsHtml}${campSectionHtml}<p style="color:#5b6b7a;font-size:13px;margin:0 0 12px;">Receipt ${esc(invoiceNumber)}</p>
 <table style="border-collapse:collapse;margin:8px 0;font-size:14px;width:100%;">
 ${rows}${feeRow}
 <tr><td style="padding:10px 16px 0 0;border-top:2px solid #1E2B38;font-weight:700;color:#1E2B38;">Total paid</td>
