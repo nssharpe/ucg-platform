@@ -295,6 +295,9 @@ function cartItemToRow(ownerKey: string, item: DB['carts'][string][number], isCl
     ref_reg_ids: item.refRegIds ?? null,
     ref_event_id: item.refEventId ?? null, ref_line_type: item.refLineType ?? null,
     prior_reg_snapshot: item.priorRegSnapshot ?? null,
+    // Per-unit add-on fields (event-mgmt v2 Phase 2): shirt/leo size, and a
+    // banquet ticket's assignee (person id or the 'extra' sentinel).
+    addon_size: item.addonSize ?? null, addon_assignee: item.addonAssigneeId ?? null,
   };
 }
 
@@ -310,6 +313,8 @@ const invoiceItemToRow = (invoiceId: string, it: Invoice['items'][number]) => ({
   ref_user_id: it.refUserId ?? null, refunded: it.refunded ?? false,
   ref_reg_ids: it.refRegIds ?? null,
   ref_event_id: it.refEventId ?? null, ref_line_type: it.refLineType ?? null,
+  // Per-unit add-on fields (event-mgmt v2 Phase 2) — see cartItemToRow.
+  addon_size: it.addonSize ?? null, addon_assignee: it.addonAssigneeId ?? null,
 });
 
 const clubRequestToRow = (r: ClubRequest) => ({
@@ -1420,7 +1425,9 @@ export async function loadAll(): Promise<DB | null> {
       arr.push({ id: r.id, label: r.label, amount: Number(r.amount), kind: r.kind, refUserId: r.ref_user_id ?? undefined, refunded: r.refunded,
         ...((r as { ref_reg_ids?: string[] | null }).ref_reg_ids ? { refRegIds: (r as { ref_reg_ids?: string[] | null }).ref_reg_ids ?? undefined } : {}),
         ...((r as { ref_event_id?: string | null }).ref_event_id ? { refEventId: (r as { ref_event_id?: string | null }).ref_event_id ?? undefined } : {}),
-        ...((r as { ref_line_type?: string | null }).ref_line_type ? { refLineType: (r as { ref_line_type?: string | null }).ref_line_type as Invoice['items'][number]['refLineType'] } : {}) });
+        ...((r as { ref_line_type?: string | null }).ref_line_type ? { refLineType: (r as { ref_line_type?: string | null }).ref_line_type as Invoice['items'][number]['refLineType'] } : {}),
+        ...((r as { addon_size?: string | null }).addon_size ? { addonSize: (r as { addon_size?: string | null }).addon_size ?? undefined } : {}),
+        ...((r as { addon_assignee?: string | null }).addon_assignee ? { addonAssigneeId: (r as { addon_assignee?: string | null }).addon_assignee ?? undefined } : {}) });
       itemsByInvoice.set(r.invoice_id, arr);
     }
     const invoices: Invoice[] = (invoicesR.data ?? []).map((r: Row<'invoices'>) => ({
@@ -1444,7 +1451,9 @@ export async function loadAll(): Promise<DB | null> {
         ...((r as { ref_reg_ids?: string[] | null }).ref_reg_ids ? { refRegIds: (r as { ref_reg_ids?: string[] | null }).ref_reg_ids ?? undefined } : {}),
         ...((r as { ref_event_id?: string | null }).ref_event_id ? { refEventId: (r as { ref_event_id?: string | null }).ref_event_id ?? undefined } : {}),
         ...((r as { ref_line_type?: string | null }).ref_line_type ? { refLineType: (r as { ref_line_type?: string | null }).ref_line_type as Invoice['items'][number]['refLineType'] } : {}),
-        ...((r as { prior_reg_snapshot?: Registration[] | null }).prior_reg_snapshot ? { priorRegSnapshot: (r as { prior_reg_snapshot?: Registration[] | null }).prior_reg_snapshot ?? undefined } : {}) });
+        ...((r as { prior_reg_snapshot?: Registration[] | null }).prior_reg_snapshot ? { priorRegSnapshot: (r as { prior_reg_snapshot?: Registration[] | null }).prior_reg_snapshot ?? undefined } : {}),
+        ...((r as { addon_size?: string | null }).addon_size ? { addonSize: (r as { addon_size?: string | null }).addon_size ?? undefined } : {}),
+        ...((r as { addon_assignee?: string | null }).addon_assignee ? { addonAssigneeId: (r as { addon_assignee?: string | null }).addon_assignee ?? undefined } : {}) });
     }
 
     const clubRequests: ClubRequest[] = (clubRequestsR.error ? [] : clubRequestsR.data ?? []).map(rowToClubRequest);

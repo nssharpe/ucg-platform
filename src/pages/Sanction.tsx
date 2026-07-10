@@ -219,9 +219,11 @@ export function SanctionRequestForm() {
   const [hasTshirtAddon, setHasTshirtAddon] = useState(false);
   const [tshirtPrice, setTshirtPrice] = useState('');
   const [tshirtSizes, setTshirtSizes] = useState<string[]>([...SHIRT_SIZES]);
+  const [tshirtLastPurchaseAt, setTshirtLastPurchaseAt] = useState('');
   const [hasLeoAddon, setHasLeoAddon] = useState(false);
   const [leoPrice, setLeoPrice] = useState('');
   const [leoSizes, setLeoSizes] = useState<string[]>([...SHIRT_SIZES]);
+  const [leoLastPurchaseAt, setLeoLastPurchaseAt] = useState('');
 
   // Misc
   const [yearsPreviouslyHeld, setYearsPreviouslyHeld] = useState('');
@@ -316,8 +318,12 @@ export function SanctionRequestForm() {
       wantBanner,
       hotelBlock,
       overnightDescription: overnightDescription.trim() || null,
-      tshirtAddon: hasTshirtAddon ? { price: Number(tshirtPrice), sizes: tshirtSizes } : null,
-      leoAddon: hasLeoAddon ? { price: Number(leoPrice), sizes: leoSizes } : null,
+      tshirtAddon: hasTshirtAddon
+        ? { price: Number(tshirtPrice), sizes: tshirtSizes, ...(tshirtLastPurchaseAt ? { lastPurchaseAt: tshirtLastPurchaseAt } : {}) }
+        : null,
+      leoAddon: hasLeoAddon
+        ? { price: Number(leoPrice), sizes: leoSizes, ...(leoLastPurchaseAt ? { lastPurchaseAt: leoLastPurchaseAt } : {}) }
+        : null,
       yearsPreviouslyHeld: yearsPreviouslyHeld.trim() || null,
       additionalComments: additionalComments.trim() || null,
       certTypedName: certTypedName.trim(),
@@ -571,6 +577,9 @@ export function SanctionRequestForm() {
                 </label>
               ))}
             </div>
+            <Field label={`Last date to purchase (${timezone})`} hint="Optional. Leave blank to allow purchase any time registration is open.">
+              <input className="input" type="datetime-local" value={tshirtLastPurchaseAt} onChange={(e) => setTshirtLastPurchaseAt(e.target.value)} />
+            </Field>
           </div>
         )}
         <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14, marginBottom: 6 }}>
@@ -588,6 +597,9 @@ export function SanctionRequestForm() {
                 </label>
               ))}
             </div>
+            <Field label={`Last date to purchase (${timezone})`} hint="Optional. Leave blank to allow purchase any time registration is open.">
+              <input className="input" type="datetime-local" value={leoLastPurchaseAt} onChange={(e) => setLeoLastPurchaseAt(e.target.value)} />
+            </Field>
           </div>
         )}
 

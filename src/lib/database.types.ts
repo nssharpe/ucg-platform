@@ -79,6 +79,8 @@ export type Database = {
       }
       cart_items: {
         Row: {
+          addon_assignee: string | null
+          addon_size: string | null
           amount: number
           club_id: string | null
           created_at: string
@@ -95,6 +97,8 @@ export type Database = {
           ref_user_id: string | null
         }
         Insert: {
+          addon_assignee?: string | null
+          addon_size?: string | null
           amount?: number
           club_id?: string | null
           created_at?: string
@@ -111,6 +115,8 @@ export type Database = {
           ref_user_id?: string | null
         }
         Update: {
+          addon_assignee?: string | null
+          addon_size?: string | null
           amount?: number
           club_id?: string | null
           created_at?: string
@@ -745,6 +751,8 @@ export type Database = {
       }
       invoice_items: {
         Row: {
+          addon_assignee: string | null
+          addon_size: string | null
           amount: number
           id: string
           invoice_id: string
@@ -757,6 +765,8 @@ export type Database = {
           refunded: boolean
         }
         Insert: {
+          addon_assignee?: string | null
+          addon_size?: string | null
           amount?: number
           id: string
           invoice_id: string
@@ -769,6 +779,8 @@ export type Database = {
           refunded?: boolean
         }
         Update: {
+          addon_assignee?: string | null
+          addon_size?: string | null
           amount?: number
           id?: string
           invoice_id?: string

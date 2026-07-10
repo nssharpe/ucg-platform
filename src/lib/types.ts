@@ -236,10 +236,13 @@ export interface Event {
   disciplines: Discipline[];
   sessions: EventSession[];
   privateRegCode?: string;
-  banquet?: { price: number; name: string };
+  /** `lastPurchaseAt` (event-mgmt v2 Phase 2): optional ISO datetime after which
+   *  this add-on can no longer be purchased; may be after `regCloses`. Absent ⇒
+   *  purchasable any time registration is open. */
+  banquet?: { price: number; name: string; lastPurchaseAt?: string };
   /** Optional add-ons offered at registration. */
-  tshirtAddon?: { price: number; sizes: string[] };
-  bannerAddon?: { price: number }; // club enters banner text at registration
+  tshirtAddon?: { price: number; sizes: string[]; lastPurchaseAt?: string };
+  bannerAddon?: { price: number; lastPurchaseAt?: string }; // club enters banner text at registration
   /** Fee to modify an existing registration; effective from `startsAt`. */
   changeFee?: { amount: number; startsAt: string };
   /** 'nationals' unlocks the prelim/finals + qualification/awards features and is
@@ -256,7 +259,7 @@ export interface Event {
    *  (event-mgmt v2 Phase 0 §A) since they apply to competitions too. */
   campConfig?: {
     overnightSurvey?: boolean;
-    leoAddon?: { price: number; sizes: string[] };
+    leoAddon?: { price: number; sizes: string[]; lastPurchaseAt?: string };
   };
   /** Venue name (distinct from city/state — e.g. "University Arena"). */
   venue?: string;
@@ -424,6 +427,9 @@ export interface InvoiceItem {
   id: string;
   label: string;
   amount: number;
+  /** `'banquet'` is a LEGACY kind value retained only for pre-Phase-2 data — new
+   *  per-unit add-on lines (banquet/tshirt/banner/leo) all use `kind: 'addon'`,
+   *  differentiated via `refLineType` below (event-mgmt v2 Phase 2). */
   kind: 'membership' | 'meet-entry' | 'banquet' | 'addon' | 'donation' | 'discount' | 'fee';
   refUserId?: string;
   /** For membership cart/invoice lines: the exact season + type this fee covers,
@@ -442,9 +448,18 @@ export interface InvoiceItem {
    *  line (esp. addons, which carry no reg ids). */
   refEventId?: string;
   /** Refines `kind` for server-side re-pricing: 'entry'|'change' for meet-entry
-   *  lines, 'tshirt'|'banner' for addon lines. Memberships leave it unset. */
-  refLineType?: 'entry' | 'change' | 'tshirt' | 'banner';
+   *  lines, 'tshirt'|'banner'|'banquet'|'leo' for addon lines. Memberships leave
+   *  it unset. */
+  refLineType?: 'entry' | 'change' | 'tshirt' | 'banner' | 'banquet' | 'leo';
   refunded?: boolean;
+  /** Per-unit add-on lines (event-mgmt v2 Phase 2): one InvoiceItem/CartItem per
+   *  unit purchased (each shirt/leo/banquet ticket is its own line). */
+  /** Shirt/leo size for this unit (tshirt/leo add-on lines only). */
+  addonSize?: string;
+  /** Who this unit is for (banquet lines only): a person id, or the literal
+   *  sentinel `'extra'` for an unassigned ticket. At most one ASSIGNED ticket per
+   *  person per event is enforced server-side (Task 2, not here). */
+  addonAssigneeId?: string;
   /** For `kind:'meet-entry', refLineType:'change'` lines only: the FULL prior
    *  Registration row(s) (matching `refRegIds`) as they were BEFORE this change
    *  was applied, captured at cart-item creation time. Lets deleting the cart
