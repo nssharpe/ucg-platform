@@ -220,6 +220,15 @@ $$ language plpgsql security definer set search_path = public, pg_temp;
 --    tool. No fee is computed or collected here, by design -- entry-fee
 --    corrections are handled manually by the UCG team (warned to the host
 --    client-side before every roster mutation).
+--
+--    CLUB-MEMBERSHIP GATE: the "club needs an active club_memberships row for
+--    the event's season" rule is enforced CLIENT-side in RosterToolsCard's
+--    add-athlete flow (clubHasActiveMembership/seasonForDate,
+--    src/lib/capabilities-core.ts) -- the same enforcement depth as every
+--    other registration entry point (Club.tsx etc., none of which have a
+--    server-side season check). Deliberately NOT replicated in SQL here:
+--    seasonForDate's season-window logic lives in tested TS, and duplicating
+--    it would create a second source of truth to drift.
 -- ---------------------------------------------------------------------------
 create or replace function host_upsert_registration(p_event_id text, p_reg jsonb)
 returns text

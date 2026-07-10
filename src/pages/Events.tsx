@@ -756,6 +756,22 @@ function RosterToolsCard({
     setAddBusy(true);
     const found = await findPersonForHost(event.id, email);
     if (!found.ok) { setAddBusy(false); toast(found.error, { variant: 'error' }); return; }
+    // Club-membership gate (CLAUDE.md domain rule): every registration entry
+    // point must verify the competing club holds an active club membership for
+    // the event's season — same idiom as Club.tsx's clubMembershipBlocked().
+    // The reg is created under the athlete's main club (find_person_for_host).
+    const seasonId = seasonForDate(db, event.startDate);
+    if (!found.clubId || !clubHasActiveMembership(db, found.clubId, seasonId)) {
+      setAddBusy(false);
+      const sName = db.seasons.find((s) => s.id === seasonId)?.name ?? "this event's season";
+      toast(
+        found.clubId
+          ? `That athlete's club has no active ${sName} club membership, so they can't be registered for this event.`
+          : "That athlete has no club, so they can't be registered for this event.",
+        { variant: 'error' },
+      );
+      return;
+    }
     const reg: Registration = {
       id: `reg-host-${Date.now()}-${found.personId}-${addDiscipline}`,
       eventId: event.id, athleteId: found.personId, clubId: found.clubId ?? '',
