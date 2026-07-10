@@ -5,6 +5,7 @@ import { useCapabilities } from '../lib/capabilities';
 import { useRolesLoaded } from '../lib/auth';
 import { seasonForDate, clubHasActiveMembershipForEvent, paidRegistrationClub } from '../lib/capabilities-core';
 import { eventIsInPhase } from '../lib/events-core';
+import { normalizeExternalUrl } from '../lib/url';
 import { Badge, Field, Modal, Tabs } from '../components/ui';
 import { useToast, useFmtDate } from '../components/ui-hooks';
 import { EventWizard } from '../components/EventWizard';
@@ -604,7 +605,12 @@ function OwnerChecklistCard({ event, fmtDate, toast }: { event: Event; fmtDate: 
                 {id === 'medalsTracking' && (
                   <>
                     <Field label="Tracking link">
-                      <input type="text" className="input" value={entry?.trackingLink ?? ''} onChange={(e) => patchTask(id, { trackingLink: e.target.value })} placeholder="https://…" />
+                      <input
+                        type="text" className="input" value={entry?.trackingLink ?? ''}
+                        onChange={(e) => patchTask(id, { trackingLink: e.target.value })}
+                        onBlur={(e) => patchTask(id, { trackingLink: normalizeExternalUrl(e.target.value) })}
+                        placeholder="https://…"
+                      />
                     </Field>
                     <Field label="Host received?">
                       <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -1184,7 +1190,7 @@ function HostStatusCard({ event, fmtDate, toast }: { event: Event; fmtDate: (iso
         </div>
         <div>
           <strong>Hotel block: </strong>
-          {event.hotelLink ? <a href={event.hotelLink} target="_blank" rel="noopener noreferrer">Book here →</a> : <span style={{ color: 'var(--ink-soft)' }}>Waiting on hotel block</span>}
+          {event.hotelLink ? <a href={normalizeExternalUrl(event.hotelLink)} target="_blank" rel="noopener noreferrer">Book here →</a> : <span style={{ color: 'var(--ink-soft)' }}>Waiting on hotel block</span>}
         </div>
         <div>
           <strong>Insurance: </strong>
@@ -1200,7 +1206,7 @@ function HostStatusCard({ event, fmtDate, toast }: { event: Event; fmtDate: (iso
             <span>
               Ordered {fmtDate(medalsOrdered.orderedOn.slice(0, 10))}
               {medalsTracking?.trackingLink && (
-                <> · <a href={medalsTracking.trackingLink} target="_blank" rel="noopener noreferrer">Track shipment →</a></>
+                <> · <a href={normalizeExternalUrl(medalsTracking.trackingLink)} target="_blank" rel="noopener noreferrer">Track shipment →</a></>
               )}
               {medalsTracking?.trackingLink && !medalsTracking.hostReceived && (
                 <> · <button className="btn small ghost" disabled={markingReceived} onClick={markReceived}>{markingReceived ? 'Marking…' : 'Mark received'}</button></>

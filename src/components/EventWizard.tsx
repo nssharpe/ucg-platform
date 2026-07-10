@@ -5,6 +5,7 @@ import { pushEvent } from '../lib/supabase';
 import { useCapabilities } from '../lib/capabilities';
 import { scaffoldNationalsConfig } from '../lib/nationals-adapter';
 import { toDatetimeLocalValue } from '../lib/events-core';
+import { normalizeExternalUrl } from '../lib/url';
 import { Combo, Field, Modal } from './ui';
 import { useToast } from './ui-hooks';
 import { DISCIPLINES, SHIRT_SIZES, STATE_REGIONS } from '../lib/types';
@@ -322,7 +323,7 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
       venue: venue.trim() || undefined,
       streetAddress: streetAddress.trim() || undefined,
       country: country.trim() || undefined,
-      hotelLink: hotelLink.trim() || undefined,
+      hotelLink: normalizeExternalUrl(hotelLink) || undefined,
       ageCalcAt: hasAgeCalcAt ? ageCalcAt : undefined,
       ...(hasLateReg ? { lateReg: { startsAt: lateRegStartsAt, fee: Number(lateRegFee) } } : { lateReg: undefined }),
       ...(directorName.trim()
