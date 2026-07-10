@@ -41,6 +41,16 @@ export interface NamedContact {
   name?: string;
 }
 
+/** Shape the cc list into ONE extra "copy" message's addressing, instead of
+ *  attaching the cc to every per-recipient message (which would deliver each
+ *  cc address one duplicate PER recipient — 50 recipients ⇒ 50 copies to a
+ *  cc'd director). The first cc address is the copy's `to`; the rest ride
+ *  along as its `cc`. Returns null when there is nothing to cc. */
+export function ccCopyAddressing(cc: string[]): { to: string; cc?: string[] } | null {
+  if (cc.length === 0) return null;
+  return { to: cc[0], ...(cc.length > 1 ? { cc: cc.slice(1) } : {}) };
+}
+
 /** Dedupe a list of candidate recipients by email (case-insensitive), drop
  *  anything without a plausible email address, and preserve first-seen order
  *  (and that occurrence's name) for stable output. Shared by every audience

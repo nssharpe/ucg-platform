@@ -27,7 +27,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendBatch, type EmailMessage } from '../_shared/resend.ts';
-import { dedupeContacts, matchesEventCommFilters, type EventCommFilters, type RegistrationFacetRow } from '../_shared/event-comm.ts';
+import { ccCopyAddressing, dedupeContacts, matchesEventCommFilters, type EventCommFilters, type RegistrationFacetRow } from '../_shared/event-comm.ts';
 
 interface Payload {
   eventId?: string;
@@ -149,9 +149,12 @@ Deno.serve(async (req) => {
   const html = payload.html ?? '';
   const text = payload.text ?? '';
   const replyTo = typeof payload.replyTo === 'string' && payload.replyTo.trim() ? payload.replyTo.trim() : undefined;
+  // Reject a malformed reply-to up front — Resend validates headers batch-wide,
+  // so a bad reply_to would otherwise fail the ENTIRE send with an opaque error.
+  if (replyTo && !EMAIL_RE.test(replyTo)) return json({ error: 'Reply-to is not a valid email address.' }, 400);
   const fromAlias = typeof payload.fromAlias === 'string' && payload.fromAlias.trim() ? payload.fromAlias.trim() : undefined;
   const cc = Array.isArray(payload.cc)
-    ? payload.cc.filter((c): c is string => typeof c === 'string' && EMAIL_RE.test(c.trim())).slice(0, MAX_CC)
+    ? payload.cc.map((c) => (typeof c === 'string' ? c.trim() : '')).filter((c) => EMAIL_RE.test(c)).slice(0, MAX_CC)
     : [];
   const isTest = payload.test === true;
   const filters: EventCommFilters = {
@@ -170,6 +173,9 @@ Deno.serve(async (req) => {
     if (!callerEmail) return json({ error: 'Your account has no email on file to test-send to.' }, 400);
     let result;
     try {
+      // No cc on test sends — a test goes to the caller ONLY. Cc'ing here
+      // would email real third parties from what the sender believes is a
+      // dry run (and re-open the arbitrary-address surface via the cc list).
       result = await sendBatch([{
         to: callerEmail,
         subject: `[Test] ${subject}`,
@@ -177,7 +183,6 @@ Deno.serve(async (req) => {
         text: text || undefined,
         reply_to: replyTo,
         fromName: fromAlias,
-        cc: cc.length ? cc : undefined,
       }]);
     } catch (e) {
       return json({ error: e instanceof Error ? e.message : String(e) }, 500);
@@ -250,7 +255,11 @@ Deno.serve(async (req) => {
     }, 400);
   }
 
-  // --- Send via Resend batch (one distinct message per recipient) ---
+  // --- Send via Resend batch (one distinct message per recipient). The cc
+  //     list is NOT attached per message — that would deliver each cc address
+  //     one duplicate per recipient. Instead, one extra "copy" message goes to
+  //     the cc list (ccCopyAddressing); it rides outside the MAX_RECIPIENTS
+  //     cap check above, bounded by MAX_CC (5). ---
   const messages: EmailMessage[] = recipients.map((r) => ({
     to: r.name ? `${r.name} <${r.email}>` : r.email,
     subject,
@@ -258,8 +267,19 @@ Deno.serve(async (req) => {
     text: text || undefined,
     reply_to: replyTo,
     fromName: fromAlias,
-    cc: cc.length ? cc : undefined,
   }));
+  const ccCopy = ccCopyAddressing(cc);
+  if (ccCopy) {
+    messages.push({
+      to: ccCopy.to,
+      subject,
+      html: html || undefined,
+      text: text || undefined,
+      reply_to: replyTo,
+      fromName: fromAlias,
+      cc: ccCopy.cc,
+    });
+  }
 
   let result;
   try {

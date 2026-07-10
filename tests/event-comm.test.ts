@@ -1,5 +1,22 @@
 import { describe, it, expect } from 'vitest';
-import { matchesEventCommFilters, dedupeContacts } from '../supabase/functions/_shared/event-comm';
+import { ccCopyAddressing, matchesEventCommFilters, dedupeContacts } from '../supabase/functions/_shared/event-comm';
+
+describe('ccCopyAddressing', () => {
+  it('returns null for an empty cc list (no copy message)', () => {
+    expect(ccCopyAddressing([])).toBeNull();
+  });
+
+  it('addresses a single cc as the copy recipient with no cc header', () => {
+    expect(ccCopyAddressing(['a@x.com'])).toEqual({ to: 'a@x.com' });
+  });
+
+  it('puts the first cc in to and the rest in cc', () => {
+    expect(ccCopyAddressing(['a@x.com', 'b@x.com', 'c@x.com'])).toEqual({
+      to: 'a@x.com',
+      cc: ['b@x.com', 'c@x.com'],
+    });
+  });
+});
 
 describe('matchesEventCommFilters', () => {
   const base = { session_id: 's1', level_id: 'lvl1', discipline: 'MAG', refunded: false };
