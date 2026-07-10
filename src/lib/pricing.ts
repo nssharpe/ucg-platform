@@ -245,6 +245,64 @@ export function newRegistrationEntryTotal(
   return total;
 }
 
+// --- Per-unit add-on pricing + purchase deadlines (event-mgmt v2 Phase 2) --
+// Each add-on type (banquet/tshirt/banner/leo) can carry an optional
+// `lastPurchaseAt` independent of `regCloses` (may be AFTER regCloses). Pure
+// client-side mirror of the server's authoritative pricing/deadline logic in
+// supabase/functions/_shared/stripe.ts — used for display/validation ONLY;
+// the server always recomputes and never trusts the client.
+
+/** One add-on's config shape, as stored on the Event (`price` + optional
+ *  `lastPurchaseAt`; `sizes`/`name` are irrelevant to pricing/deadlines). */
+export type AddonConfig = { price: number; lastPurchaseAt?: string };
+
+/** Minimal Event slice the add-on pricing/deadline helpers need. */
+export type AddonPricingEvent = {
+  tshirtAddon?: AddonConfig;
+  bannerAddon?: AddonConfig;
+  banquet?: AddonConfig;
+  campConfig?: { leoAddon?: AddonConfig };
+};
+
+export type AddonLineType = 'tshirt' | 'banner' | 'banquet' | 'leo';
+
+/** This add-on type's config on the event, or `undefined` if not offered. */
+export function addonConfig(
+  event: AddonPricingEvent,
+  lineType: AddonLineType | string | null,
+): AddonConfig | undefined {
+  if (lineType === 'tshirt') return event.tshirtAddon;
+  if (lineType === 'banner') return event.bannerAddon;
+  if (lineType === 'banquet') return event.banquet;
+  if (lineType === 'leo') return event.campConfig?.leoAddon;
+  return undefined;
+}
+
+/** Addon price (DOLLARS), by line type. Unconfigured/unknown type ⇒ `null` —
+ *  callers must treat that as "can't price this" (e.g. hide/disable the
+ *  purchase action), never fall back to charging $0. MIRRORS
+ *  supabase/functions/_shared/stripe.ts's `addonPriceDollars`. */
+export function addonPrice(event: AddonPricingEvent, lineType: AddonLineType | string | null): number | null {
+  const cfg = addonConfig(event, lineType);
+  return cfg ? cfg.price : null;
+}
+
+/**
+ * Is an add-on purchasable RIGHT NOW? Purchasable until `config.lastPurchaseAt`
+ * when set (which MAY be after `regCloses`); when unset, purchasable only
+ * while registration is open (`now <= regCloses`). `now` is a parameter so
+ * this stays pure/testable. MIRRORED IN supabase/functions/_shared/stripe.ts
+ * (`addonPurchaseOpen`) — keep in sync.
+ */
+export function addonPurchaseOpen(
+  config: { lastPurchaseAt?: string } | undefined,
+  regCloses: string,
+  now: Date,
+): boolean {
+  const deadline = config?.lastPurchaseAt ? Date.parse(config.lastPurchaseAt) : Date.parse(regCloses);
+  return now.getTime() <= deadline;
+}
+
 // --- Change-fee eligibility (3h) -------------------------------------------
 // A pure predicate: given the BEFORE and AFTER state of an athlete's
 // registration for an event, is the change "meaningful" enough to be chargeable

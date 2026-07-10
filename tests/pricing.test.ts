@@ -9,8 +9,11 @@ import {
   newRegistrationEntryTotal,
   reassignPartners,
   syncSynchroPartnerLevel,
+  addonConfig,
+  addonPrice,
+  addonPurchaseOpen,
 } from '../src/lib/pricing';
-import type { PartnerReg, RegFeeEvent, SynchroReg } from '../src/lib/pricing';
+import type { AddonPricingEvent, PartnerReg, RegFeeEvent, SynchroReg } from '../src/lib/pricing';
 import type { Coupon, Membership, Season } from '../src/lib/types';
 
 const season: Season = {
@@ -251,5 +254,84 @@ describe('syncSynchroPartnerLevel (B4.4 — first-to-select sets the level for b
     const existing = [{ athleteId: 'b', apparatus: ['SY', 'TR'], apparatusLevels: { SY: 'novice-flyer', TR: 'intermediate-flyer' }, partnerAthleteId: null }];
     const out = syncSynchroPartnerLevel(existing, syReg('a', 'high-flyer', 'b'));
     expect(out?.apparatusLevels).toEqual({ SY: 'high-flyer', TR: 'intermediate-flyer' });
+  });
+});
+
+describe('per-unit add-on pricing (emv2 P2)', () => {
+  const event: AddonPricingEvent = {
+    tshirtAddon: { price: 20 },
+    bannerAddon: { price: 15, lastPurchaseAt: '2026-08-01T00:00:00Z' },
+    banquet: { price: 40 },
+    campConfig: { leoAddon: { price: 60 } },
+  };
+  const regCloses = '2026-07-01T00:00:00Z';
+
+  describe('addonPrice / addonConfig', () => {
+    it('prices each configured type', () => {
+      expect(addonPrice(event, 'tshirt')).toBe(20);
+      expect(addonPrice(event, 'banner')).toBe(15);
+      expect(addonPrice(event, 'banquet')).toBe(40);
+      expect(addonPrice(event, 'leo')).toBe(60);
+    });
+
+    it('returns null (never 0) for an unconfigured type', () => {
+      const bare: AddonPricingEvent = {};
+      expect(addonPrice(bare, 'tshirt')).toBeNull();
+      expect(addonPrice(bare, 'banquet')).toBeNull();
+      expect(addonPrice(bare, 'leo')).toBeNull();
+    });
+
+    it('returns null for an unknown line type', () => {
+      expect(addonPrice(event, 'not-a-real-type')).toBeNull();
+      expect(addonPrice(event, null)).toBeNull();
+    });
+
+    it('leo is only priced when nested under campConfig', () => {
+      const noCamp: AddonPricingEvent = { tshirtAddon: { price: 20 } };
+      expect(addonPrice(noCamp, 'leo')).toBeNull();
+    });
+
+    it('addonConfig returns the full config object', () => {
+      expect(addonConfig(event, 'banner')).toEqual({ price: 15, lastPurchaseAt: '2026-08-01T00:00:00Z' });
+      expect(addonConfig(event, 'tshirt')).toEqual({ price: 20 });
+    });
+  });
+
+  describe('addonPurchaseOpen', () => {
+    it('is open before regCloses when no lastPurchaseAt is set', () => {
+      expect(addonPurchaseOpen(event.tshirtAddon, regCloses, new Date('2026-06-01T00:00:00Z'))).toBe(true);
+    });
+
+    it('is closed after regCloses when no lastPurchaseAt is set', () => {
+      expect(addonPurchaseOpen(event.tshirtAddon, regCloses, new Date('2026-07-02T00:00:00Z'))).toBe(false);
+    });
+
+    it('is open exactly AT regCloses (boundary, no lastPurchaseAt)', () => {
+      expect(addonPurchaseOpen(event.tshirtAddon, regCloses, new Date(regCloses))).toBe(true);
+    });
+
+    it('stays open past regCloses when lastPurchaseAt is set later', () => {
+      // banner's lastPurchaseAt (2026-08-01) is AFTER regCloses (2026-07-01).
+      expect(addonPurchaseOpen(event.bannerAddon, regCloses, new Date('2026-07-15T00:00:00Z'))).toBe(true);
+    });
+
+    it('closes at its own lastPurchaseAt even though that is after regCloses', () => {
+      expect(addonPurchaseOpen(event.bannerAddon, regCloses, new Date('2026-08-02T00:00:00Z'))).toBe(false);
+    });
+
+    it('is open exactly AT its own lastPurchaseAt (boundary)', () => {
+      expect(addonPurchaseOpen(event.bannerAddon, regCloses, new Date(event.bannerAddon!.lastPurchaseAt!))).toBe(true);
+    });
+
+    it('an EARLIER lastPurchaseAt than regCloses still governs (deadline can tighten, not just extend)', () => {
+      const tight = { price: 10, lastPurchaseAt: '2026-06-01T00:00:00Z' };
+      expect(addonPurchaseOpen(tight, regCloses, new Date('2026-06-15T00:00:00Z'))).toBe(false);
+      expect(addonPurchaseOpen(tight, regCloses, new Date('2026-05-15T00:00:00Z'))).toBe(true);
+    });
+
+    it('treats an unconfigured add-on (undefined config) as governed by regCloses alone', () => {
+      expect(addonPurchaseOpen(undefined, regCloses, new Date('2026-06-01T00:00:00Z'))).toBe(true);
+      expect(addonPurchaseOpen(undefined, regCloses, new Date('2026-07-02T00:00:00Z'))).toBe(false);
+    });
   });
 });

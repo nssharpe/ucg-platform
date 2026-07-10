@@ -63,6 +63,8 @@ interface SnapshotItem {
   ref_reg_ids: string[] | null;
   ref_event_id: string | null;
   ref_line_type: string | null;
+  addon_size: string | null;
+  addon_assignee: string | null;
 }
 
 type DB = ReturnType<typeof createClient>;
@@ -212,7 +214,7 @@ async function fulfill(
   } else {
     const { data: itemRows } = cartItemIds.length
       ? await db.from('cart_items')
-        .select('id, club_id, label, amount, kind, ref_user_id, ref_season_id, ref_type, ref_reg_ids, ref_event_id, ref_line_type')
+        .select('id, club_id, label, amount, kind, ref_user_id, ref_season_id, ref_type, ref_reg_ids, ref_event_id, ref_line_type, addon_size, addon_assignee')
         .in('id', cartItemIds)
       : { data: [] as Record<string, unknown>[] };
     items = (itemRows ?? []).map((i) => ({
@@ -222,6 +224,7 @@ async function fulfill(
       ref_season_id: (i.ref_season_id as string | null) ?? null, ref_type: (i.ref_type as string | null) ?? null,
       ref_reg_ids: (i.ref_reg_ids as string[] | null) ?? null, ref_event_id: (i.ref_event_id as string | null) ?? null,
       ref_line_type: (i.ref_line_type as string | null) ?? null,
+      addon_size: (i.addon_size as string | null) ?? null, addon_assignee: (i.addon_assignee as string | null) ?? null,
     }));
   }
   // A club cart ⇒ any item carries the club_id (person carts have it null).
@@ -357,6 +360,7 @@ async function fulfill(
         label: i.label, amount: i.amount_cents / 100, kind: i.kind,
         ref_user_id: i.ref_user_id ?? null,
         ref_reg_ids: i.ref_reg_ids, ref_event_id: i.ref_event_id, ref_line_type: i.ref_line_type,
+        addon_size: i.addon_size ?? null, addon_assignee: i.addon_assignee ?? null,
         refunded: false,
       })),
       { onConflict: 'id' },
