@@ -12,7 +12,8 @@ import {
 import type { RegChangeState, CampSurveyDraft } from '../lib/pricing';
 import { fmtMoney } from '../lib/scoring';
 import type { Athlete, Club, Level, Event, Registration, Season } from '../lib/types';
-import { canStillEditRegistration } from '../lib/events-core';
+import { canStillEditRegistration, eventIsRefundEligible } from '../lib/events-core';
+import { RefundRequestDialog, type RefundRequestItem } from '../components/RefundRequestDialog';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -39,6 +40,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   const [q, setQ] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const [refundTarget, setRefundTarget] = useState<{ event: Event; item: RefundRequestItem } | null>(null);
 
   const lvlName = (id?: string) => db.levels.find((l) => l.id === id)?.name ?? '—';
   const nameOf = (id: string) => {
@@ -345,7 +347,9 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                   </span>
                 </div>
 
-                {isOpen && (
+                {isOpen && (() => {
+                  const refundEligible = eventIsRefundEligible(event, db.clubs);
+                  return (
                   <div style={{ marginTop: 12, borderTop: '1px solid var(--line)', paddingTop: 12 }}>
                     <div style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 8 }}>
                       Status: {event.status} · Registration closes {event.regCloses}
@@ -356,11 +360,28 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                           const base = r.apparatus.join(', ');
                           const evts = r.apparatus.includes('SY') && r.partnerAthleteId
                             ? `${base} (synchro w/ ${nameOf(r.partnerAthleteId)})` : base;
+                          const canRequestRefund = refundEligible && r.paid === true && !r.refunded && !r.refundRequested;
                           return (
                             <tr key={r.id}>
                               <td>{r.discipline === 'TNT' ? 'T&T' : r.discipline}</td>
                               <td>{lvlName(r.levelId)}</td>
                               <td>{evts}</td>
+                              <td style={{ textAlign: 'right' }}>
+                                {r.refundRequested ? (
+                                  <Badge tone="warn">Refund requested</Badge>
+                                ) : canRequestRefund ? (
+                                  <button
+                                    className="btn ghost small"
+                                    style={{ color: 'var(--coral-500)' }}
+                                    onClick={() => setRefundTarget({
+                                      event,
+                                      item: { kind: 'registration', regId: r.id, label: `${r.discipline === 'TNT' ? 'T&T' : r.discipline} — ${lvlName(r.levelId)}` },
+                                    })}
+                                  >
+                                    Request refund
+                                  </button>
+                                ) : null}
+                              </td>
                             </tr>
                           );
                         })}
@@ -384,7 +405,8 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                       )
                     )}
                   </div>
-                )}
+                  );
+                })()}
               </div>
             );
           })}
@@ -413,6 +435,15 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
           />
         );
       })()}
+
+      {refundTarget && (
+        <RefundRequestDialog
+          items={[refundTarget.item]}
+          eventName={refundTarget.event.name}
+          onClose={() => setRefundTarget(null)}
+          onSubmitted={() => { /* store refresh happens inside the dialog via syncFromSupabase() */ }}
+        />
+      )}
     </div>
   );
 }

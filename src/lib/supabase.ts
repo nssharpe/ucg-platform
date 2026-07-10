@@ -1342,6 +1342,28 @@ export async function createWaiverLink(args: {
   return data as { ok: boolean; token?: string; link?: string; signerRole?: 'self' | 'guardian'; error?: string };
 }
 
+/** Request a refund on a paid registration entry or a purchased add-on line
+ *  (event-mgmt v2 Phase 3, spec §H). Server resolves ownership/authorization
+ *  and eligibility (host club must be the league's own — `is_league_host`);
+ *  creates a `refund_requests` row and emails the requester + refund managers.
+ *  Does NOT itself process the refund — that's the review flow (T6). Pass
+ *  `clubId` when requesting on behalf of an athlete from a club-manager
+ *  context (the server verifies the caller actually manages that club before
+ *  honoring it — a mismatched clubId is simply ignored server-side). */
+export async function requestRefund(args: {
+  kind: 'registration' | 'addon';
+  regId?: string;
+  invoiceItemId?: string;
+  reason: 'injury' | 'illness' | 'bereavement' | 'other';
+  reasonDetail?: string;
+  clubId?: string;
+}): Promise<{ ok: boolean; requestId?: string; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('request-refund', { body: args });
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  return data as { ok: boolean; requestId?: string; error?: string };
+}
+
 /** Token lookup for the guardian signing page via SECURITY DEFINER RPC
  *  (the table itself is not publicly readable). */
 export async function fetchSignRequest(token: string): Promise<FnReturns<'get_waiver_sign_request'>[number] | null> {
