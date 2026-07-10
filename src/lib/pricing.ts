@@ -448,6 +448,91 @@ export function buildAddonCartItems(
   return items;
 }
 
+// --- Club-manager per-unit add-on draft (Phase 2 Task 4) --------------------
+// The club-manager "Add-ons card" (Club.tsx) is a variant of the athlete
+// AddonDraft above: no camp/leo (camps have no club-manager registration
+// path), and banquet tickets are assigned to ANY club-affiliated person (not
+// just "self or extra") via a roster dropdown, so the shape differs enough to
+// warrant its own draft type rather than overloading AddonDraft.
+
+/** Minimal Event slice `buildClubAddonCartItems` needs. */
+export type ClubAddonDraftEvent = {
+  id: string;
+  name: string;
+  tshirtAddon?: { price: number; sizes: string[]; lastPurchaseAt?: string };
+  bannerAddon?: AddonConfig;
+  banquet?: { price: number; name: string; lastPurchaseAt?: string };
+};
+
+/** The club manager's in-progress add-on selections. `shirtUnits`: one size
+ *  per unit. `banquetUnits`: one entry per ticket — a club-affiliated
+ *  person's id, or the literal `'extra'` for an unassigned ticket. */
+export interface ClubAddonDraft {
+  shirtUnits: string[];
+  banquetUnits: string[];
+  bannerText: string;
+}
+
+export function initialClubAddonDraft(): ClubAddonDraft {
+  return { shirtUnits: [], banquetUnits: [], bannerText: '' };
+}
+
+/** Turns a club add-on draft into one cart line PER UNIT, matching the
+ *  per-unit add-on model (Tasks 1+2). `assigneeName(id)` resolves a banquet
+ *  ticket's roster person id to a display name for the line label. Ids are
+ *  timestamp+running-index so a mixed multi-type submission never collides. */
+export function buildClubAddonCartItems(
+  event: ClubAddonDraftEvent,
+  draft: ClubAddonDraft,
+  assigneeName: (id: string) => string,
+  ts: number,
+): CartItem[] {
+  const items: CartItem[] = [];
+  let n = 0;
+  if (event.tshirtAddon) {
+    for (const size of draft.shirtUnits) {
+      if (!size) continue;
+      n += 1;
+      items.push({
+        id: `ci-club-tshirt-${ts}-${n}`,
+        label: `${event.name} t-shirt (size ${size})`,
+        amount: event.tshirtAddon.price,
+        kind: 'addon',
+        refEventId: event.id,
+        refLineType: 'tshirt',
+        addonSize: size,
+      });
+    }
+  }
+  if (event.banquet) {
+    for (const assigneeId of draft.banquetUnits) {
+      if (!assigneeId) continue;
+      n += 1;
+      items.push({
+        id: `ci-club-banquet-${ts}-${n}`,
+        label: `${event.name} ${event.banquet.name} — ${assigneeId === 'extra' ? 'Extra ticket' : `For ${assigneeName(assigneeId)}`}`,
+        amount: event.banquet.price,
+        kind: 'addon',
+        refUserId: assigneeId === 'extra' ? undefined : assigneeId,
+        refEventId: event.id,
+        refLineType: 'banquet',
+        addonAssigneeId: assigneeId,
+      });
+    }
+  }
+  if (event.bannerAddon && draft.bannerText.trim()) {
+    items.push({
+      id: `ci-club-banner-${ts}`,
+      label: `${event.name} club banner — "${draft.bannerText.trim()}"`,
+      amount: event.bannerAddon.price,
+      kind: 'addon',
+      refEventId: event.id,
+      refLineType: 'banner',
+    });
+  }
+  return items;
+}
+
 // --- Change-fee eligibility (3h) -------------------------------------------
 // A pure predicate: given the BEFORE and AFTER state of an athlete's
 // registration for an event, is the change "meaningful" enough to be chargeable

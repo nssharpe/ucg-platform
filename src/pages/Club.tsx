@@ -5,12 +5,17 @@ import { useCapabilities } from '../lib/capabilities';
 import { clubHasActiveMembership, seasonForDate, membershipHolds, paidRegistrationClub } from '../lib/capabilities-core';
 import { eventIsInPhase, canStillEditRegistration } from '../lib/events-core';
 import { Badge, Combo, Field, Modal } from '../components/ui';
-import { useToast } from '../components/ui-hooks';
-import { STATE_REGIONS } from '../lib/types';
-import type { Athlete, Club, Registration, Season } from '../lib/types';
+import { useToast, useFmtDate } from '../components/ui-hooks';
+import { STATE_REGIONS, SHIRT_SIZES } from '../lib/types';
+import type { Athlete, CartItem, Club, Event, Registration, Season } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
-import { newRegistrationEntryTotal, reassignPartners, registrationChangeFee, changeIsEligible, syncSynchroPartnerLevel, findIncomingSynchroPartner, lateFeeApplies, lateFeeAnchor } from '../lib/pricing';
-import type { RegChangeState } from '../lib/pricing';
+import {
+  newRegistrationEntryTotal, reassignPartners, registrationChangeFee, changeIsEligible,
+  syncSynchroPartnerLevel, findIncomingSynchroPartner, lateFeeApplies, lateFeeAnchor,
+  addonPurchaseOpen, initialClubAddonDraft, buildClubAddonCartItems,
+} from '../lib/pricing';
+import type { RegChangeState, ClubAddonDraft } from '../lib/pricing';
+import { SizedAddonPicker } from '../components/AddonPickers';
 import {
   deleteRegistration, pushCart, pushClub, pushClubManager,
   pushRegistration, requestManagerAccess, sendClubInvite,
@@ -677,6 +682,252 @@ function RosterTable({
   );
 }
 
+// ---- Club-manager Add-ons card (event-mgmt v2 Phase 2 T4) -------------------
+// Reuses SizedAddonPicker (src/components/AddonPickers.tsx) for the t-shirt
+// quantity+size picker. Banquet tickets need a roster-wide assignee dropdown
+// per ticket (not the athlete-self-or-extra model of Events.tsx's
+// BanquetPicker), so that's its own picker below. Both are MODULE scope, not
+// nested in ClubAddonsCard's render, per the ESLint rule against components
+// defined inside another component's render.
+
+/** One banquet ticket per unit, each assigned via a dropdown of the club's
+ *  affiliated people (athletes + coaches) or "Extra ticket". `personTaken(id,
+ *  unitIndex)` greys out a person already holding a ticket elsewhere (another
+ *  unit in this draft, the club cart, or a purchased invoice line) — the
+ *  currently-selected person for THIS unit is never greyed out for itself. */
+function ClubBanquetPicker({
+  name, price, deadline, roster, personTaken, units, onChange, fmtDate,
+}: {
+  name: string;
+  price: number;
+  deadline?: string;
+  roster: Athlete[];
+  personTaken: (personId: string, unitIndex: number) => boolean;
+  units: string[];
+  onChange: (units: string[]) => void;
+  fmtDate: (iso: string) => string;
+}) {
+  const priceLabel = price === 0 ? 'Free' : fmtMoney(price);
+  const addUnit = () => onChange([...units, 'extra']);
+  const removeUnit = () => onChange(units.slice(0, -1));
+  const setUnit = (i: number, val: string) => onChange(units.map((u, idx) => (idx === i ? val : u)));
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 14 }}>
+      <h3 className="card-title">{name} — {priceLabel}</h3>
+      {deadline && (
+        <p style={{ fontSize: 12, color: 'var(--ink-soft)', margin: '0 0 8px' }}>
+          Purchase by {fmtDate(deadline.slice(0, 10))}
+        </p>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: units.length > 0 ? 10 : 0 }}>
+        <span style={{ fontSize: 14 }}>Tickets</span>
+        <button type="button" className="btn small ghost" onClick={removeUnit} disabled={units.length === 0} aria-label="Remove a ticket">−</button>
+        <span style={{ minWidth: 18, textAlign: 'center' }}>{units.length}</span>
+        <button type="button" className="btn small ghost" onClick={addUnit} aria-label="Add a ticket">+</button>
+      </div>
+      {units.map((u, i) => (
+        <Field key={i} label={`Ticket #${i + 1}`}>
+          <select className="input" value={u} onChange={(e) => setUnit(i, e.target.value)}>
+            <option value="extra">Extra ticket</option>
+            {roster.map((p) => {
+              const taken = u !== p.id && personTaken(p.id, i);
+              return (
+                <option key={p.id} value={p.id} disabled={taken}>
+                  {p.firstName} {p.lastName}{taken ? ' (already has a ticket)' : ''}
+                </option>
+              );
+            })}
+          </select>
+        </Field>
+      ))}
+    </div>
+  );
+}
+
+/** §E3: the Add-ons card on the club-manager event-registration page. Shows
+ *  each configured add-on type whose purchase window is open — remains
+ *  visible after regCloses while any type's `lastPurchaseAt` extends it,
+ *  independent of whether registration itself is still open. Pushes one cart
+ *  line PER UNIT to the CLUB cart (club_id set, person_id null — same
+ *  pushCart(clubId, cart, true) path the rest of this page uses). */
+function ClubAddonsCard({ event, clubId, canManage }: { event: Event; clubId: string; canManage: boolean }) {
+  const db = useDB();
+  const toast = useToast();
+  const fmtDate = useFmtDate();
+  const now = new Date();
+
+  // Caller keys this component on `event.id` (see EventRegGrid's render), so
+  // a fresh draft is mounted whenever the manager switches events — no
+  // synchronous setState-in-effect needed to reset it.
+  const [draft, setDraft] = useState<ClubAddonDraft>(() => initialClubAddonDraft());
+
+  const tshirtOpen = !!event.tshirtAddon && addonPurchaseOpen(event.tshirtAddon, event.regCloses, now);
+  const banquetOpen = !!event.banquet && addonPurchaseOpen(event.banquet, event.regCloses, now);
+  const bannerOpen = !!event.bannerAddon && addonPurchaseOpen(event.bannerAddon, event.regCloses, now);
+
+  if (!canManage || (!tshirtOpen && !banquetOpen && !bannerOpen)) return null;
+
+  const roster = db.people.filter(
+    (p) => p.mainClubId === clubId && (p.roles ? (p.roles.athlete || p.roles.coach) : (p.kind === 'athlete' || p.kind === 'coach')),
+  ).sort((a, b) => a.lastName.localeCompare(b.lastName));
+
+  const nameOf = (id: string) => {
+    const p = db.people.find((x) => x.id === id);
+    return p ? `${p.firstName} ${p.lastName}` : 'Unknown';
+  };
+
+  const clubCart: CartItem[] = db.carts[clubId] ?? [];
+  const cartAddonsForEvent = clubCart.filter((c) => c.kind === 'addon' && c.refEventId === event.id);
+
+  // Purchased (non-refunded) add-on invoice lines for this club+event — cheap
+  // to derive client-side since RLS already restricts db.invoices to invoices
+  // this manager can see (their own club's).
+  const purchasedItems: CartItem[] = db.invoices
+    .filter((inv) => inv.clubId === clubId)
+    .flatMap((inv) => inv.items.filter((it) => it.kind === 'addon' && it.refEventId === event.id && !it.refunded));
+
+  const cartAssigned = new Set(
+    cartAddonsForEvent
+      .filter((c) => c.refLineType === 'banquet' && c.addonAssigneeId && c.addonAssigneeId !== 'extra')
+      .map((c) => c.addonAssigneeId as string),
+  );
+  const purchasedAssigned = new Set(
+    purchasedItems
+      .filter((c) => c.refLineType === 'banquet' && c.addonAssigneeId && c.addonAssigneeId !== 'extra')
+      .map((c) => c.addonAssigneeId as string),
+  );
+  // Max-1-assigned-per-person, across (a) other units in this draft, (b) the
+  // club cart, and (c) already-purchased non-refunded invoice lines.
+  const personTaken = (personId: string, unitIndex: number) =>
+    draft.banquetUnits.some((u, i) => i !== unitIndex && u === personId) ||
+    cartAssigned.has(personId) ||
+    purchasedAssigned.has(personId);
+
+  const bannerInCart = cartAddonsForEvent.some((c) => c.refLineType === 'banner');
+  const bannerPurchased = purchasedItems.some((c) => c.refLineType === 'banner');
+  const bannerLocked = bannerInCart || bannerPurchased;
+
+  const hasSelection =
+    draft.shirtUnits.some((u) => !!u) ||
+    draft.banquetUnits.length > 0 ||
+    (!bannerLocked && draft.bannerText.trim().length > 0);
+
+  const handleAddToCart = () => {
+    const items = buildClubAddonCartItems(
+      event,
+      { ...draft, bannerText: bannerLocked ? '' : draft.bannerText },
+      nameOf,
+      Date.now(),
+    );
+    if (items.length === 0) {
+      toast('Choose at least one add-on to add to the cart.', { variant: 'error' });
+      return;
+    }
+    mutate((d) => {
+      const cart = d.carts[clubId] ?? (d.carts[clubId] = []);
+      for (const item of items) cart.push(item);
+      pushCart(clubId, cart, true);
+    });
+    toast('Add-ons added to the club cart.');
+    setDraft(initialClubAddonDraft());
+  };
+
+  const addonLabel = (it: CartItem) => {
+    if (it.refLineType === 'tshirt') return `T-shirt (size ${it.addonSize ?? '—'})`;
+    if (it.refLineType === 'banner') {
+      const match = it.label.match(/"([^"]*)"\s*$/);
+      return `Club banner — "${match ? match[1] : it.label}"`;
+    }
+    if (it.refLineType === 'banquet') {
+      return it.addonAssigneeId && it.addonAssigneeId !== 'extra'
+        ? `${event.banquet?.name ?? 'Banquet ticket'} — ${nameOf(it.addonAssigneeId)}`
+        : `${event.banquet?.name ?? 'Banquet ticket'} — Extra ticket`;
+    }
+    return it.label;
+  };
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 18 }}>
+      <h3 className="card-title">Add-ons</h3>
+      <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 12 }}>
+        Purchase t-shirts, banquet tickets, and a club banner for this event.
+      </p>
+
+      {tshirtOpen && event.tshirtAddon && (
+        <SizedAddonPicker
+          title="T-shirt"
+          price={event.tshirtAddon.price}
+          sizes={event.tshirtAddon.sizes.length > 0 ? event.tshirtAddon.sizes : SHIRT_SIZES}
+          deadline={event.tshirtAddon.lastPurchaseAt}
+          forceSingle={false}
+          noneLabel="No shirt"
+          units={draft.shirtUnits}
+          onChange={(units) => setDraft((d) => ({ ...d, shirtUnits: units }))}
+          fmtDate={fmtDate}
+        />
+      )}
+
+      {banquetOpen && event.banquet && (
+        roster.length === 0 ? (
+          <p style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
+            No athletes or coaches on this club's roster yet — add roster members before purchasing banquet tickets.
+          </p>
+        ) : (
+          <ClubBanquetPicker
+            name={event.banquet.name}
+            price={event.banquet.price}
+            deadline={event.banquet.lastPurchaseAt}
+            roster={roster}
+            personTaken={personTaken}
+            units={draft.banquetUnits}
+            onChange={(units) => setDraft((d) => ({ ...d, banquetUnits: units }))}
+            fmtDate={fmtDate}
+          />
+        )
+      )}
+
+      {bannerOpen && event.bannerAddon && (
+        <div className="card card-pad" style={{ marginBottom: 14 }}>
+          <h3 className="card-title">Club banner — {event.bannerAddon.price === 0 ? 'Free' : fmtMoney(event.bannerAddon.price)}</h3>
+          {event.bannerAddon.lastPurchaseAt && (
+            <p style={{ fontSize: 12, color: 'var(--ink-soft)', margin: '0 0 8px' }}>
+              Purchase by {fmtDate(event.bannerAddon.lastPurchaseAt.slice(0, 10))}
+            </p>
+          )}
+          {bannerLocked ? (
+            <p style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
+              {bannerPurchased ? 'A banner has already been purchased for this event.' : 'A banner is already in the club cart for this event — remove it there to change the text.'}
+            </p>
+          ) : (
+            <Field label="Banner text (exact name)" hint="Text to print on the club banner. Leave blank to skip.">
+              <input
+                className="input"
+                value={draft.bannerText}
+                onChange={(e) => setDraft((d) => ({ ...d, bannerText: e.target.value }))}
+                placeholder="e.g. Springfield Gymnastics Club"
+              />
+            </Field>
+          )}
+        </div>
+      )}
+
+      <button className="btn primary" disabled={!hasSelection} onClick={handleAddToCart}>
+        Add to cart
+      </button>
+
+      {purchasedItems.length > 0 && (
+        <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+          <h4 style={{ margin: '0 0 6px', fontSize: 14 }}>Purchased add-ons ({purchasedItems.length})</h4>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: 'var(--ink-soft)' }}>
+            {purchasedItems.map((it) => <li key={it.id}>{addonLabel(it)}</li>)}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---- EventRegGrid (three-card layout) ----------------------------------------
 
 function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolean }) {
@@ -1181,6 +1432,8 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
           Registration is closed for this event. Changes require a league admin override.
         </div>
       )}
+
+      <ClubAddonsCard key={event.id} event={event} clubId={clubId} canManage={canManage} />
 
       {/* Card 1: Already registered */}
       <div className="card card-pad" style={{ marginBottom: 18 }}>

@@ -16,8 +16,10 @@ import {
   addonDraftValid,
   buildAddonCartItems,
   anyAddonWindowOpen,
+  initialClubAddonDraft,
+  buildClubAddonCartItems,
 } from '../src/lib/pricing';
-import type { AddonPricingEvent, AddonDraftEvent, PartnerReg, RegFeeEvent, SynchroReg } from '../src/lib/pricing';
+import type { AddonPricingEvent, AddonDraftEvent, ClubAddonDraftEvent, PartnerReg, RegFeeEvent, SynchroReg } from '../src/lib/pricing';
 import type { Coupon, Membership, Season } from '../src/lib/types';
 
 const season: Season = {
@@ -459,5 +461,50 @@ describe('per-unit add-on draft (individual purchase UI, emv2 P2 T3)', () => {
       expect(anyAddonWindowOpen(bannerOnly, now)).toBe(true);
       expect(anyAddonWindowOpen(bannerOnly, now, { includeBanner: false })).toBe(false);
     });
+  });
+});
+
+describe('club-manager per-unit add-on draft (emv2 P2 T4)', () => {
+  const clubEvent: ClubAddonDraftEvent = {
+    id: 'ev-1', name: 'Springfield Open',
+    tshirtAddon: { price: 20, sizes: ['S', 'M', 'L'] },
+    bannerAddon: { price: 15 },
+    banquet: { price: 40, name: 'Awards Banquet' },
+  };
+  const names: Record<string, string> = { 'p-1': 'Jamie Lee', 'p-2': 'Alex Kim' };
+  const nameOf = (id: string) => names[id] ?? id;
+
+  it('initialClubAddonDraft starts fully empty', () => {
+    expect(initialClubAddonDraft()).toEqual({ shirtUnits: [], banquetUnits: [], bannerText: '' });
+  });
+
+  it('one line per shirt unit, skipping blank entries', () => {
+    const items = buildClubAddonCartItems(clubEvent, { shirtUnits: ['M', '', 'L'], banquetUnits: [], bannerText: '' }, nameOf, 1000);
+    expect(items).toHaveLength(2);
+    expect(items[0]).toMatchObject({ kind: 'addon', refLineType: 'tshirt', addonSize: 'M', amount: 20, refEventId: 'ev-1' });
+    expect(items[1]).toMatchObject({ addonSize: 'L' });
+  });
+
+  it('banquet tickets: assigned lines name the roster person, extra lines say "Extra ticket", refUserId set only when assigned', () => {
+    const items = buildClubAddonCartItems(
+      clubEvent, { shirtUnits: [], banquetUnits: ['p-1', 'extra', 'p-2'], bannerText: '' }, nameOf, 2000,
+    );
+    expect(items).toHaveLength(3);
+    expect(items[0]).toMatchObject({ refLineType: 'banquet', addonAssigneeId: 'p-1', refUserId: 'p-1', label: expect.stringContaining('Jamie Lee') });
+    expect(items[1]).toMatchObject({ addonAssigneeId: 'extra', refUserId: undefined, label: expect.stringContaining('Extra ticket') });
+    expect(items[2]).toMatchObject({ addonAssigneeId: 'p-2', refUserId: 'p-2', label: expect.stringContaining('Alex Kim') });
+  });
+
+  it('banner: one line with the trimmed club text, skipped when blank', () => {
+    const withText = buildClubAddonCartItems(clubEvent, { shirtUnits: [], banquetUnits: [], bannerText: '  Springfield  ' }, nameOf, 3000);
+    expect(withText).toHaveLength(1);
+    expect(withText[0]).toMatchObject({ refLineType: 'banner', label: expect.stringContaining('Springfield') });
+
+    const blank = buildClubAddonCartItems(clubEvent, { shirtUnits: [], banquetUnits: [], bannerText: '   ' }, nameOf, 3000);
+    expect(blank).toHaveLength(0);
+  });
+
+  it('produces no lines from an all-empty draft', () => {
+    expect(buildClubAddonCartItems(clubEvent, { shirtUnits: [], banquetUnits: [], bannerText: '' }, nameOf, 4000)).toHaveLength(0);
   });
 });
