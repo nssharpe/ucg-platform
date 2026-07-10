@@ -711,6 +711,53 @@ export async function markMedalsReceived(eventId: string): Promise<string | null
   return null;
 }
 
+/** Add/edit a registration through the host roster tool (event-mgmt v2 P1
+ *  Task 8, spec §C). Applies ONLY the server whitelist (athlete/club/
+ *  discipline/level/apparatus/apparatus_levels/session/partner) -- paid/
+ *  updated_pending/refunded are never touched by this path. A brand-new
+ *  host-added registration lands `paid: true` with no cart line/fee (see
+ *  `host_upsert_registration`'s migration comment for the payment-semantics
+ *  decision). Awaited (not queued) so the caller can toast the RPC's raised
+ *  message synchronously. Returns an error message on failure, null on
+ *  success. */
+export async function hostUpsertRegistration(eventId: string, reg: Registration): Promise<string | null> {
+  if (!supabase) return 'Not configured.';
+  const payload = {
+    id: reg.id, event_id: reg.eventId, athlete_id: reg.athleteId, club_id: reg.clubId,
+    discipline: reg.discipline, level_id: reg.levelId, apparatus: reg.apparatus,
+    apparatus_levels: reg.apparatusLevels ?? null, session_id: reg.sessionId || null,
+    partner_athlete_id: reg.partnerAthleteId ?? null,
+  };
+  const { error } = await supabase.rpc('host_upsert_registration', { p_event_id: eventId, p_reg: payload });
+  if (error) { console.error('[supabase] host_upsert_registration failed:', error); return error.message; }
+  return null;
+}
+
+/** Remove a registration through the host roster tool -- a hard delete with
+ *  NO refund/payment side effect (refunds are a Phase 3 feature; see
+ *  `host_delete_registration`'s migration comment). Returns an error message
+ *  on failure, null on success. */
+export async function hostDeleteRegistration(eventId: string, regId: string): Promise<string | null> {
+  if (!supabase) return 'Not configured.';
+  const { error } = await supabase.rpc('host_delete_registration', { p_event_id: eventId, p_reg_id: regId });
+  if (error) { console.error('[supabase] host_delete_registration failed:', error); return error.message; }
+  return null;
+}
+
+/** Resolve an existing account by exact email for the host roster tool's
+ *  "add athlete by email" flow (mirrors grantEventAdmin's exact-email-only
+ *  lookup -- no general people-search exposed to a host). */
+export async function findPersonForHost(
+  eventId: string, email: string,
+): Promise<{ ok: true; personId: string; firstName: string; lastName: string; clubId: string | null } | { ok: false; error: string }> {
+  if (!supabase) return { ok: false, error: 'Not configured.' };
+  const { data, error } = await supabase.rpc('find_person_for_host', { p_event_id: eventId, p_email: email });
+  if (error) { console.error('[supabase] find_person_for_host failed:', error); return { ok: false, error: error.message }; }
+  const row = ((data ?? []) as FnReturns<'find_person_for_host'>)[0];
+  if (!row) return { ok: false, error: 'No account found for that email.' };
+  return { ok: true, personId: row.person_id, firstName: row.first_name, lastName: row.last_name, clubId: row.club_id };
+}
+
 const INSURANCE_CERT_ALLOWED_EXT = ['pdf', 'jpg', 'jpeg', 'png'];
 const INSURANCE_CERT_MAX_BYTES = 10 * 1024 * 1024; // 10MB
 

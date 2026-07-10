@@ -121,6 +121,7 @@ here — update THIS list when priorities change, not rival copies.
   **Phasing approved by Nate 2026-07-06:** V2-P0 foundations/scheduler →
   P1 host experience → P2 add-ons & camps → P3 refunds → P4 capacity/waitlists &
   by-session reg → P5 nationals ops/check-in → P6 finance dashboards.
+  **P1 (host experience) is now fully shipped** — see Tasks 1, 3–8 below. Next up: P2.
   **P0 Task 1 shipped:** pg_cron/pg_net scheduler infra (`notification_log` +
   `scheduled-dispatch-15min` job + `scheduled-dispatch` Edge Function, service-role-only
   auth) with its first consumer — 3d/1d/closed sanction-vote reminder emails, idempotent
@@ -202,6 +203,21 @@ here — update THIS list when priorities change, not rival copies.
   league-admin-only, exposed as an admin-only channel toggle on the same page reusing
   the existing `send-sms` path. `comm_log.event_id` (new column) scopes the page's
   per-event sent log.
+  **P1 Task 8 shipped (final P1 task):** scoped post-regCloses host editing (§C +
+  Nate's 2026-07-09 scope answer) — once `now > event.regCloses`, the host page's new
+  "Competition setup" section links to sessions/squads (`/events/:slug/manage`) plus a
+  "Roster tools" card (grouped-by-club level/apparatus/session edits, remove, and
+  "add athlete by email"), gated behind a one-time-per-visit warning modal that a
+  removal is NOT a refund and an add is NOT a charge. Writes go through two new
+  SECURITY DEFINER RPCs (`host_upsert_registration`/`host_delete_registration`) —
+  `registrations` RLS itself stays untouched, so hosts never get a blanket reg-write
+  grant; a host-added registration lands `paid:true` with no cart line (mirrors the
+  existing host-club-$0 rule). Also closed a review-flagged gap: an `event_admins`
+  grantee (no club management) could see the `EventManage`/scoring UI but every save
+  silently failed RLS — new `is_event_host()` helper + policies on
+  `event_sessions`/`squads`/`scores` fix it. Hosts still get NO refunds, NO fee/pricing
+  config, NO event creation — those stay admin/sanctioning-only. Full migration
+  contents in `supabase/README.md`.
   §N7 open questions **all answered by Julia 2026-07-06** (recorded in the spec;
   every phase is unblocked — only the §F partial-fit capacity design wants a
   confirm at P4 kickoff). This absorbs several

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
@@ -14,7 +14,8 @@ import { APPARATUS, SHIRT_SIZES } from '../lib/types';
 import type { Athlete, CartItem, Discipline, Event, EventAdmin, EventSession, Registration } from '../lib/types';
 import { DisciplineIcon } from '../components/DisciplineIcon';
 import {
-  deleteRegistration, fetchEventCollectedTotal, fetchEventHostRoster, grantEventAdmin, insuranceCertificateUrl,
+  deleteRegistration, fetchEventCollectedTotal, fetchEventHostRoster, findPersonForHost, grantEventAdmin,
+  hostDeleteRegistration, hostUpsertRegistration, insuranceCertificateUrl,
   listSanctioningTeam, markMedalsReceived, pushCart, pushEvent, pushEventSessions, pushRegistration,
   revokeEventAdmin, syncSynchroPartnerLevelRemote, uploadInsuranceCertificate,
 } from '../lib/supabase';
@@ -656,6 +657,246 @@ export function InsuranceCertificateLink({ filePath }: { filePath: string }) {
 // "Excel exports" spot below the registration summary card, left empty here.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// RosterToolsCard — event-mgmt v2 P1 Task 8: scoped post-close host roster
+// editing (spec §C + Nate's 2026-07-09 scope answer). Hosts (host-club
+// managers + event-admin grantees) can add/remove athletes and adjust
+// level/apparatus/session on THEIR event once registration has closed.
+// Every write goes through host_upsert_registration/host_delete_registration/
+// find_person_for_host (never a direct `registrations` write) and NEVER
+// touches payment state: a host-added registration lands paid:true with no
+// cart line/fee (mirrors the host-club $0 rule); removal does NOT refund
+// (refunds are a Phase 3 feature). A one-time-per-page-visit warning modal
+// gates the FIRST roster mutation.
+// ---------------------------------------------------------------------------
+
+const HOST_ROSTER_WARNING =
+  "You're editing registrations directly as the event host. Changes here do not charge or refund anyone — "
+  + 'removed athletes are NOT automatically refunded, and added athletes are NOT charged. Entry-fee corrections '
+  + 'must be handled with the UCG team.';
+
+interface RosterDraft { levelId: string; apparatus: string[]; sessionId: string }
+
+function RosterToolsCard({
+  event, rows, onChanged, toast,
+}: {
+  event: Event;
+  rows: HostRosterRow[] | null;
+  onChanged: () => void;
+  toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void;
+}) {
+  const db = useDB();
+  const [warned, setWarned] = useState(false);
+  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, RosterDraft>>({});
+
+  const [addEmail, setAddEmail] = useState('');
+  const [addDiscipline, setAddDiscipline] = useState<Discipline>(event.disciplines[0]);
+  const [addLevelId, setAddLevelId] = useState('');
+  const [addApparatus, setAddApparatus] = useState<string[]>([]);
+  const [addSessionId, setAddSessionId] = useState('');
+  const [addBusy, setAddBusy] = useState(false);
+
+  const disciplineLevels = (disc: Discipline) => db.levels.filter((l) => l.discipline === disc && !l.retired);
+  const disciplineSessions = (disc: Discipline) => event.sessions.filter((s) => s.discipline === disc);
+
+  const draftFor = (row: HostRosterRow): RosterDraft =>
+    drafts[row.regId] ?? { levelId: row.levelId ?? '', apparatus: row.apparatus, sessionId: row.sessionId ?? '' };
+  const setDraft = (row: HostRosterRow, patch: Partial<RosterDraft>) => {
+    setDrafts((prev) => ({ ...prev, [row.regId]: { ...draftFor(row), ...patch } }));
+  };
+
+  /** Runs `action` immediately once the host has seen the warning this page
+   *  visit; otherwise stashes it and opens the modal. */
+  const runOrWarn = (action: () => void) => {
+    if (warned) { action(); return; }
+    setPendingAction(() => action);
+  };
+  const confirmWarning = () => {
+    setWarned(true);
+    const action = pendingAction;
+    setPendingAction(null);
+    if (action) action();
+  };
+
+  const save = async (row: HostRosterRow) => {
+    const d = draftFor(row);
+    if (!d.levelId || d.apparatus.length === 0) { toast('Pick a level and at least one apparatus.', { variant: 'error' }); return; }
+    setBusyId(row.regId);
+    const reg: Registration = {
+      id: row.regId, eventId: event.id, athleteId: row.athleteId, clubId: row.clubId ?? '',
+      discipline: row.discipline as Discipline, levelId: d.levelId, apparatus: d.apparatus,
+      sessionId: d.sessionId || null,
+      ...(row.apparatusLevels ? { apparatusLevels: row.apparatusLevels } : {}),
+      ...(row.partnerAthleteId ? { partnerAthleteId: row.partnerAthleteId } : {}),
+    };
+    const err = await hostUpsertRegistration(event.id, reg);
+    setBusyId(null);
+    if (err) { toast(err, { variant: 'error' }); return; }
+    toast('Registration updated.');
+    onChanged();
+  };
+
+  const remove = async (row: HostRosterRow) => {
+    setBusyId(row.regId);
+    const err = await hostDeleteRegistration(event.id, row.regId);
+    setBusyId(null);
+    if (err) { toast(err, { variant: 'error' }); return; }
+    toast(`Removed ${row.firstName} ${row.lastName}. This does not issue a refund.`);
+    onChanged();
+  };
+
+  const addAthlete = async () => {
+    const email = addEmail.trim();
+    if (!email || !addLevelId || addApparatus.length === 0) {
+      toast('Enter an email, level, and at least one apparatus.', { variant: 'error' });
+      return;
+    }
+    setAddBusy(true);
+    const found = await findPersonForHost(event.id, email);
+    if (!found.ok) { setAddBusy(false); toast(found.error, { variant: 'error' }); return; }
+    const reg: Registration = {
+      id: `reg-host-${Date.now()}-${found.personId}-${addDiscipline}`,
+      eventId: event.id, athleteId: found.personId, clubId: found.clubId ?? '',
+      discipline: addDiscipline, levelId: addLevelId, apparatus: addApparatus,
+      sessionId: addSessionId || null,
+    };
+    const err = await hostUpsertRegistration(event.id, reg);
+    setAddBusy(false);
+    if (err) { toast(err, { variant: 'error' }); return; }
+    toast(`Added ${found.firstName} ${found.lastName}. No charge was made.`);
+    setAddEmail(''); setAddApparatus([]); setAddSessionId('');
+    onChanged();
+  };
+
+  const byClub = new Map<string, HostRosterRow[]>();
+  for (const row of rows ?? []) {
+    const key = row.clubId ?? 'unassigned';
+    const list = byClub.get(key) ?? [];
+    list.push(row);
+    byClub.set(key, list);
+  }
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 18 }}>
+      <h3 className="card-title">Roster tools</h3>
+      <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--ink-soft)' }}>
+        Add or remove athletes and adjust level/apparatus/session directly. This does not charge or refund anyone —
+        entry-fee corrections go through the UCG team.
+      </p>
+
+      {!rows && <p style={{ fontSize: 13, color: 'var(--ink-soft)' }}>Loading roster…</p>}
+      {rows && rows.length === 0 && <p style={{ fontSize: 13, color: 'var(--ink-soft)' }}>No registrations yet.</p>}
+
+      {rows && rows.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 18, marginBottom: 18 }}>
+          {[...byClub.entries()].map(([clubKey, clubRows]) => (
+            <div key={clubKey}>
+              <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8 }}>{clubRows[0]?.clubName ?? 'Unassigned'}</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {clubRows.map((row) => {
+                  const d = draftFor(row);
+                  const disc = row.discipline as Discipline;
+                  return (
+                    <div
+                      key={row.regId}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 8 }}
+                    >
+                      <DisciplineIcon discipline={disc} size={16} />
+                      <strong style={{ minWidth: 140 }}>{row.firstName} {row.lastName}</strong>
+                      <select className="input" style={{ maxWidth: 160 }} value={d.levelId} onChange={(e) => setDraft(row, { levelId: e.target.value })}>
+                        <option value="" disabled>Level…</option>
+                        {disciplineLevels(disc).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                      </select>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 8px' }}>
+                        {APPARATUS[disc].map((ev) => (
+                          <label key={ev.code} className="checkrow" style={{ fontSize: 12 }}>
+                            <input
+                              type="checkbox"
+                              checked={d.apparatus.includes(ev.code)}
+                              onChange={() => setDraft(row, {
+                                apparatus: d.apparatus.includes(ev.code)
+                                  ? d.apparatus.filter((c) => c !== ev.code)
+                                  : [...d.apparatus, ev.code],
+                              })}
+                            />
+                            {ev.code}
+                          </label>
+                        ))}
+                      </div>
+                      <select className="input" style={{ maxWidth: 180 }} value={d.sessionId} onChange={(e) => setDraft(row, { sessionId: e.target.value })}>
+                        <option value="">No session</option>
+                        {disciplineSessions(disc).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                      <button className="btn small primary" disabled={busyId === row.regId} onClick={() => runOrWarn(() => save(row))}>
+                        {busyId === row.regId ? 'Saving…' : 'Save'}
+                      </button>
+                      <button
+                        className="btn small ghost" aria-label={`Remove ${row.firstName} ${row.lastName}`}
+                        disabled={busyId === row.regId} onClick={() => runOrWarn(() => remove(row))}
+                      >✕</button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ borderTop: '1px solid var(--line)', paddingTop: 14 }}>
+        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8 }}>Add athlete by email</div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
+          <input
+            type="email" className="input" style={{ maxWidth: 240 }} placeholder="Account email"
+            value={addEmail} onChange={(e) => setAddEmail(e.target.value)}
+          />
+          <select
+            className="input" style={{ maxWidth: 100 }} value={addDiscipline}
+            onChange={(e) => { setAddDiscipline(e.target.value as Discipline); setAddLevelId(''); setAddApparatus([]); setAddSessionId(''); }}
+          >
+            {event.disciplines.map((dsc) => <option key={dsc} value={dsc}>{dsc === 'TNT' ? 'T&T' : dsc}</option>)}
+          </select>
+          <select className="input" style={{ maxWidth: 160 }} value={addLevelId} onChange={(e) => setAddLevelId(e.target.value)}>
+            <option value="" disabled>Level…</option>
+            {disciplineLevels(addDiscipline).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+          </select>
+          <select className="input" style={{ maxWidth: 180 }} value={addSessionId} onChange={(e) => setAddSessionId(e.target.value)}>
+            <option value="">No session</option>
+            {disciplineSessions(addDiscipline).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', marginBottom: 10 }}>
+          {APPARATUS[addDiscipline].map((ev) => (
+            <label key={ev.code} className="checkrow" style={{ fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={addApparatus.includes(ev.code)}
+                onChange={() => setAddApparatus((prev) => (prev.includes(ev.code) ? prev.filter((c) => c !== ev.code) : [...prev, ev.code]))}
+              />
+              {ev.code} — {ev.name}
+            </label>
+          ))}
+        </div>
+        <button className="btn small primary" disabled={addBusy || !addEmail.trim()} onClick={() => runOrWarn(addAthlete)}>
+          {addBusy ? 'Adding…' : 'Add athlete'}
+        </button>
+      </div>
+
+      {pendingAction && (
+        <Modal title="You're editing this event's roster" onClose={() => setPendingAction(null)}>
+          <p style={{ marginBottom: 16, fontSize: 14 }}>{HOST_ROSTER_WARNING}</p>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button className="btn primary" onClick={confirmWarning}>Continue</button>
+            <button className="btn ghost" onClick={() => setPendingAction(null)}>Cancel</button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 export function EventHostPage() {
   const { slug } = useParams();
   const db = useDB();
@@ -670,15 +911,18 @@ export function EventHostPage() {
   const [rosterRows, setRosterRows] = useState<HostRosterRow[] | null>(null);
   const [rosterError, setRosterError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const refreshRoster = useCallback(() => {
     if (!event) return;
-    let cancelled = false;
     fetchEventHostRoster(event.id).then((res) => {
-      if (cancelled) return;
       if (!res.ok) { setRosterError(res.error); toast(`Couldn't load the registration roster: ${res.error}`, { variant: 'error' }); return; }
+      setRosterError(null);
       setRosterRows(res.rows);
     });
-    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [event?.id]);
+
+  useEffect(() => {
+    refreshRoster();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [event?.id]);
 
@@ -717,6 +961,29 @@ export function EventHostPage() {
       <HostExportCard event={event} rows={rosterRows} error={rosterError} toast={toast} />
 
       <EventAdminsCard event={event} toast={toast} />
+
+      <div className="card card-pad" style={{ marginBottom: 18 }}>
+        <h3 className="card-title">Competition setup</h3>
+        {isPast(event.regCloses) ? (
+          <>
+            <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--ink-soft)' }}>
+              Registration is closed. Build session squads and run scoring from Manage this event, or use Roster
+              tools below for last-minute roster corrections.
+            </p>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <Link className="btn ghost small" to={`/events/${event.slug}/manage`}>Sessions & squads →</Link>
+            </div>
+          </>
+        ) : (
+          <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)' }}>
+            Competition setup (roster corrections, sessions/squads) unlocks when registration closes.
+          </p>
+        )}
+      </div>
+
+      {isPast(event.regCloses) && (
+        <RosterToolsCard event={event} rows={rosterRows} onChanged={refreshRoster} toast={toast} />
+      )}
     </div>
   );
 }
@@ -1333,7 +1600,7 @@ export function EventManage() {
   const [sessionId, setSessionId] = useState(event?.sessions[0]?.id ?? '');
   if (!event) return <p>Event not found.</p>;
   const session = event.sessions.find((s) => s.id === sessionId) ?? event.sessions[0];
-  const canScore = caps.isEventHost(event.id);
+  const canScore = caps.isEventHost(event.id) || caps.isSanctioning;
 
   return (
     <div>

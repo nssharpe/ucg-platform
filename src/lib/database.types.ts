@@ -1989,6 +1989,10 @@ export type Database = {
           updated_pending: boolean | null
         }[]
       }
+      find_person_for_host: {
+        Args: { p_event_id: string; p_email: string }
+        Returns: { person_id: string; first_name: string; last_name: string; club_id: string | null }[]
+      }
       get_manager_access_request: {
         Args: { p_token: string }
         Returns: {
@@ -2015,7 +2019,16 @@ export type Database = {
         Args: { p_event_id: string; p_email: string }
         Returns: { email: string; name: string | null; user_id: string }[]
       }
+      host_delete_registration: {
+        Args: { p_event_id: string; p_reg_id: string }
+        Returns: undefined
+      }
+      host_upsert_registration: {
+        Args: { p_event_id: string; p_reg: Json }
+        Returns: string
+      }
       is_admin: { Args: never; Returns: boolean }
+      is_event_host: { Args: { p_event_id: string }; Returns: boolean }
       link_or_create_person: {
         Args: { p_first: string; p_last: string }
         Returns: string
