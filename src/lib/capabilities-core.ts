@@ -18,6 +18,10 @@ export interface Capabilities {
   /** True when the user holds the 'regional_rep' role. Admins are NOT
    *  implicitly regional reps. */
   isRegionalRep: boolean;
+  /** True when the user holds the 'refund_manager' role (event-mgmt v2 Phase
+   *  3, spec §H). Admins are NOT implicitly refund managers — page gates use
+   *  `isAdmin || isRefundManager` explicitly, matching isFinanceAdmin. */
+  isRefundManager: boolean;
   /** True only when the user is a real admin AND not currently impersonating
    *  anyone. Use this to gate admin POWERS in the UI (admin nav, edit buttons,
    *  grant/revoke) so that "View as (person)" faithfully shows what that
@@ -155,6 +159,7 @@ export function deriveCapabilities(
   const isSanctioning = isAdmin || roles.includes('sanctioning');
   const isFinanceAdmin = roles.includes('finance_admin');
   const isRegionalRep = roles.includes('regional_rep');
+  const isRefundManager = roles.includes('refund_manager');
   const impersonating = isAdmin && !!viewPersonId && viewPersonId !== authPersonId;
   const personId = impersonating ? viewPersonId : authPersonId;
   const person = personId ? db.people.find((p) => p.id === personId) ?? null : null;
@@ -171,6 +176,7 @@ export function deriveCapabilities(
     isSanctioning,
     isFinanceAdmin,
     isRegionalRep,
+    isRefundManager,
     actingAsAdmin: isAdmin && !impersonating,
     personId,
     person,

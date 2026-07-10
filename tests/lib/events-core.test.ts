@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deriveEventPhase, eventIsInPhase, canStillEditRegistration, toDatetimeLocalValue, type EventPhaseInput } from '../../src/lib/events-core';
+import { deriveEventPhase, eventIsInPhase, canStillEditRegistration, toDatetimeLocalValue, eventIsRefundEligible, type EventPhaseInput } from '../../src/lib/events-core';
 
 function event(overrides: Partial<EventPhaseInput> = {}): EventPhaseInput {
   return {
@@ -115,5 +115,29 @@ describe('toDatetimeLocalValue (event-edit datetime-local round-trip)', () => {
     expect(toDatetimeLocalValue(null)).toBe('');
     expect(toDatetimeLocalValue(undefined)).toBe('');
     expect(toDatetimeLocalValue('')).toBe('');
+  });
+});
+
+describe('eventIsRefundEligible (event-mgmt v2 Phase 3, spec §H)', () => {
+  const clubs = [
+    { id: 'club-league', isLeagueHost: true },
+    { id: 'club-member', isLeagueHost: false },
+    { id: 'club-unset', isLeagueHost: undefined },
+  ];
+
+  it('is eligible when the host club has isLeagueHost === true', () => {
+    expect(eventIsRefundEligible({ hostClubId: 'club-league' }, clubs)).toBe(true);
+  });
+
+  it('is not eligible when the host club has isLeagueHost === false', () => {
+    expect(eventIsRefundEligible({ hostClubId: 'club-member' }, clubs)).toBe(false);
+  });
+
+  it('is not eligible when the host club has no isLeagueHost value set', () => {
+    expect(eventIsRefundEligible({ hostClubId: 'club-unset' }, clubs)).toBe(false);
+  });
+
+  it('is not eligible when the host club is not found at all', () => {
+    expect(eventIsRefundEligible({ hostClubId: 'club-nonexistent' }, clubs)).toBe(false);
   });
 });

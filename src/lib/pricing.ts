@@ -969,3 +969,23 @@ export function resolveRegRemoval(
 
   return { toDelete, toRevert, kept };
 }
+
+/**
+ * Refund amount for one item (event-mgmt v2 Phase 3, spec §H — Nate decision
+ * 2026-07-10): the SERVICE FEE IS NEVER REFUNDED — this takes only the item's
+ * own price (entry fee or add-on price), already excluding the service fee.
+ * 100% back when approved on/before the event's `lastDateToEdit` (or when the
+ * event has no `lastDateToEdit` at all — matches `canStillEditRegistration`'s
+ * "no cutoff ⇒ always" convention in events-core.ts); 75% back after.
+ * `Math.round` (not floor/ceil) on the 75% case, matching the service fee's
+ * "documented rounding direction, mirrored consistently" spirit elsewhere in
+ * this file. `approvedAt`/`lastDateToEdit` are both ISO timestamps compared
+ * via `Date`, exactly like `canStillEditRegistration`. */
+export function refundAmountCents(
+  itemAmountCents: number,
+  lastDateToEdit: string | null | undefined,
+  approvedAt: string,
+): number {
+  const onTime = !lastDateToEdit || new Date(approvedAt).getTime() <= new Date(lastDateToEdit).getTime();
+  return onTime ? itemAmountCents : Math.round(itemAmountCents * 0.75);
+}

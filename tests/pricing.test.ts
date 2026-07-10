@@ -22,6 +22,7 @@ import {
   campSurveyValid,
   campSurveyToStored,
   campSurveySummary,
+  refundAmountCents,
 } from '../src/lib/pricing';
 import type { AddonPricingEvent, AddonDraftEvent, ClubAddonDraftEvent, PartnerReg, RegFeeEvent, SynchroReg } from '../src/lib/pricing';
 import type { Coupon, Membership, Season } from '../src/lib/types';
@@ -549,5 +550,29 @@ describe('camp overnight-accommodations survey (emv2 P2 T5, spec §G)', () => {
   });
   it('campSurveySummary only includes fields that were actually answered', () => {
     expect(campSurveySummary({ noiseLevel: 'lively' })).toBe('noise: Lively');
+  });
+});
+
+describe('refundAmountCents', () => {
+  it('refunds 100% when there is no lastDateToEdit at all', () => {
+    expect(refundAmountCents(5000, null, '2026-08-01T00:00:00Z')).toBe(5000);
+    expect(refundAmountCents(5000, undefined, '2026-08-01T00:00:00Z')).toBe(5000);
+  });
+  it('refunds 100% when approved exactly at lastDateToEdit (boundary is inclusive)', () => {
+    expect(refundAmountCents(5000, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')).toBe(5000);
+  });
+  it('refunds 100% when approved before lastDateToEdit', () => {
+    expect(refundAmountCents(5000, '2026-08-01T00:00:00Z', '2026-07-31T23:59:59Z')).toBe(5000);
+  });
+  it('refunds 75% when approved after lastDateToEdit', () => {
+    expect(refundAmountCents(5000, '2026-08-01T00:00:00Z', '2026-08-01T00:00:01Z')).toBe(3750);
+  });
+  it('rounds the 75% case to the nearest cent (odd amount)', () => {
+    // 3333 * 0.75 = 2499.75 -> rounds up to 2500
+    expect(refundAmountCents(3333, '2026-08-01T00:00:00Z', '2026-08-02T00:00:00Z')).toBe(2500);
+  });
+  it('never refunds the service fee — caller is responsible for excluding it from itemAmountCents', () => {
+    // Documents the contract: this function only ever scales the amount it is given.
+    expect(refundAmountCents(0, null, '2026-08-01T00:00:00Z')).toBe(0);
   });
 });

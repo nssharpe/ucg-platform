@@ -7,7 +7,7 @@
 // block the UI) and are no-ops when `isSupabaseConfigured` is false.
 import { createClient, type SupabaseClient, type RealtimePostgresChangesPayload, type PostgrestError } from '@supabase/supabase-js';
 import type {
-  AccountInvite, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, EventAdmin, Invoice, Level, Event, Membership, MembershipType, Payment, Region, Registration, SanctionRequest, SanctionVote, Score, Season,
+  AccountInvite, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, EventAdmin, Invoice, Level, Event, Membership, MembershipType, Payment, Region, Registration, RefundRequest, SanctionRequest, SanctionVote, Score, Season,
   WaiverDocument, WaiverSignature,
 } from './types';
 import { writeQueue, type WriteOp, type ExecResult } from './write-queue';
@@ -152,10 +152,17 @@ const rowToLevel = (r: Row<'levels'>): Level => ({
 const clubToRow = (c: Club) => ({
   id: c.id, name: c.name, short_name: c.shortName, state: c.state, region: c.region,
   email: c.email, allow_club_pay: c.allowClubPay, access: c.access ?? 'open',
+  is_league_host: c.isLeagueHost ?? false,
 });
-const rowToClub = (r: Row<'clubs'>): Club => ({
+// `is_league_host` is not yet in the generated database.types.ts (its migration
+// hasn't been applied/regenerated against at write time) — CLAUDE.md: from()
+// still typechecks fine since the client has no Database generic; the row
+// param just needs the extra optional field spliced in, same pattern as
+// rowToPayment/rowToEventAdmin's inline row types for pre-generation tables.
+const rowToClub = (r: Row<'clubs'> & { is_league_host?: boolean | null }): Club => ({
   id: r.id, name: r.name, shortName: r.short_name ?? '', state: r.state ?? '', region: (r.region ?? 'Other') as Club['region'],
   managerIds: [], email: r.email ?? '', allowClubPay: r.allow_club_pay, access: (r.access ?? 'open') as Club['access'],
+  isLeagueHost: r.is_league_host ?? false,
 });
 
 const couponToRow = (c: Coupon) => ({
@@ -356,6 +363,25 @@ const rowToPayment = (r: {
   currency: r.currency ?? 'usd', cartItemIds: r.cart_item_ids ?? [], refRegIds: r.ref_reg_ids ?? [],
   refSeasonId: r.ref_season_id, refType: r.ref_type, invoiceId: r.invoice_id,
   stripeEventId: r.stripe_event_id, createdAt: r.created_at, fulfilledAt: r.fulfilled_at,
+});
+// refund_requests is not yet in the generated database.types.ts (T4 does not
+// apply/regenerate against its own migration — the controller pushes it at
+// phase end), so this uses an inline row type like rowToPayment/rowToEventAdmin
+// rather than Row<'refund_requests'>. No refundRequestToRow / pushRefundRequest
+// exists — writes are server-side only (SECURITY DEFINER RPCs / Edge
+// Functions in T5/T6), matching the payments table's read-only-from-client model.
+const rowToRefundRequest = (r: {
+  id: string; created_at: string; requester_person_id: string; club_id: string | null;
+  event_id: string; kind: string; reg_id: string | null; invoice_item_id: string | null;
+  payment_id: string | null; reason: string; reason_detail: string | null; status: string;
+  reviewed_by: string | null; reviewed_at: string | null; refund_amount_cents: number | null;
+  stripe_refund_id: string | null;
+}): RefundRequest => ({
+  id: r.id, createdAt: r.created_at, requesterPersonId: r.requester_person_id, clubId: r.club_id,
+  eventId: r.event_id, kind: r.kind as RefundRequest['kind'], regId: r.reg_id, invoiceItemId: r.invoice_item_id,
+  paymentId: r.payment_id, reason: r.reason as RefundRequest['reason'], reasonDetail: r.reason_detail,
+  status: r.status as RefundRequest['status'], reviewedBy: r.reviewed_by, reviewedAt: r.reviewed_at,
+  refundAmountCents: r.refund_amount_cents, stripeRefundId: r.stripe_refund_id,
 });
 const rowToWaiverSignature = (r: Row<'waiver_signatures'>): WaiverSignature => ({
   id: r.id, personId: r.person_id, seasonId: r.season_id, waiverType: r.waiver_type as WaiverSignature['waiverType'],
@@ -1345,7 +1371,7 @@ export async function loadAll(): Promise<DB | null> {
       seasonsR, levelsR, clubsR, clubManagersR, peopleR, altClubsR, membershipsR,
       eventsR, sessionsR, squadsR, registrationsR, scoresR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
       clubRequestsR, appSettingsR, accountInvitesR, sanctionRequestsR, sanctionVotesR,
-      waiverDocsR, waiverSigsR, clubMembershipsR, paymentsR, eventAdminsR,
+      waiverDocsR, waiverSigsR, clubMembershipsR, paymentsR, eventAdminsR, refundRequestsR,
     ] = await Promise.all([
       supabase.from('seasons').select('*'),
       supabase.from('levels').select('*'),
@@ -1373,6 +1399,7 @@ export async function loadAll(): Promise<DB | null> {
       supabase.from('club_memberships').select('*'),    // tolerated if absent
       supabase.from('payments').select('*'),            // S1; tolerated if absent
       supabase.from('event_admins').select('*'),        // emv2 P1 T3; tolerated if absent
+      supabase.from('refund_requests').select('*'),     // emv2 P3 T4; tolerated if absent
     ]);
 
     // club_requests may not exist on a pre-0005 DB — tolerate its error, fail on the rest.
@@ -1551,6 +1578,8 @@ export async function loadAll(): Promise<DB | null> {
       .map(rowToPayment);
     const eventAdmins: EventAdmin[] = (eventAdminsR.error ? [] : eventAdminsR.data ?? [])
       .map(rowToEventAdmin);
+    const refundRequests: RefundRequest[] = (refundRequestsR.error ? [] : refundRequestsR.data ?? [])
+      .map(rowToRefundRequest);
 
     return {
       seasons, levels, clubs, people, events, registrations, scores, invoices, coupons,
@@ -1564,6 +1593,7 @@ export async function loadAll(): Promise<DB | null> {
       ...(clubMemberships.length ? { clubMemberships } : {}),
       ...(payments.length ? { payments } : {}),
       ...(eventAdmins.length ? { eventAdmins } : {}),
+      ...(refundRequests.length ? { refundRequests } : {}),
     };
   } catch (e) {
     console.error('[supabase] loadAll threw:', e);

@@ -1,6 +1,6 @@
 // Pure event-phase derivation (B4). Kept free of React/runtime deps for
 // Vitest coverage, mirroring capabilities-core.ts/pricing.ts.
-import type { EventPhase } from './types';
+import type { Club, EventPhase } from './types';
 
 export interface EventPhaseInput {
   regOpens: string;
@@ -77,4 +77,20 @@ export function canStillEditRegistration(
   if (!event.lastDateToEdit) return true;
   if (now.getTime() <= new Date(event.lastDateToEdit).getTime()) return true;
   return bypasses;
+}
+
+/**
+ * Whether an event is eligible for the refund-request flow at all (event-mgmt
+ * v2 Phase 3, spec §H — Nate decision 2026-07-10): refunds are only offered
+ * for events whose HOST club is the league's own club, flagged via the new
+ * `clubs.is_league_host` boolean (set by admins on exactly the league's own
+ * club — "UCG - Main" — in the admin clubs editor). Any other host club
+ * (member clubs hosting their own competitions) is NOT refund-eligible.
+ * Looks the host club up in `clubs` rather than trusting a denormalized flag
+ * on the event, so it always reflects the club's current setting. */
+export function eventIsRefundEligible(
+  event: { hostClubId: string },
+  clubs: Pick<Club, 'id' | 'isLeagueHost'>[],
+): boolean {
+  return clubs.some((c) => c.id === event.hostClubId && c.isLeagueHost === true);
 }
