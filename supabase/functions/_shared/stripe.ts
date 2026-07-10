@@ -90,15 +90,23 @@ export function priceForTypesDollars(
 // second-discipline, change). All helpers return DOLLARS (use toCents to Stripe).
 
 /** Minimal event slice the registration/addon pricing needs (snake_case DB cols).
- *  `change_fee` / `tshirt_addon` / `banner_addon` / `late_reg` are nullable jsonb. */
+ *  `change_fee` / `tshirt_addon` / `banner_addon` / `banquet` / `camp_config` /
+ *  `late_reg` are nullable jsonb. */
 export interface RegFeeEvent {
   id: string;
   host_club_id: string | null;
   entry_fee: number;
   second_discipline_fee: number;
   change_fee: { amount: number; startsAt?: string } | null;
-  tshirt_addon: { price: number } | null;
-  banner_addon: { price: number } | null;
+  tshirt_addon: { price: number; lastPurchaseAt?: string } | null;
+  banner_addon: { price: number; lastPurchaseAt?: string } | null;
+  /** Per-ticket banquet add-on (event-mgmt v2 Phase 2). */
+  banquet: { price: number; name: string; lastPurchaseAt?: string } | null;
+  /** Camp-only leo add-on lives nested under camp_config. */
+  camp_config: { leoAddon?: { price: number; sizes: string[]; lastPurchaseAt?: string } } | null;
+  /** Registration close instant (ISO) — the fallback add-on purchase deadline
+   *  when a type has no `lastPurchaseAt` of its own. */
+  reg_closes: string;
   /** Late-registration surcharge (emv2 P0 Task 3), DOLLARS, added ON TOP of the
    *  normal entry/second-discipline fee — NOT the change fee. MIRRORED IN
    *  src/lib/pricing.ts (RegFeeEvent.lateReg / lateFeeApplies) — keep in sync. */
@@ -206,11 +214,47 @@ export function registrationChangeFeeDollars(
   return event.change_fee?.amount ?? 0;
 }
 
-/** Addon price (DOLLARS) for an event, by line type. Unknown/missing ⇒ 0. */
-export function addonPriceDollars(event: RegFeeEvent, lineType: string | null): number {
-  if (lineType === 'tshirt') return event.tshirt_addon?.price ?? 0;
-  if (lineType === 'banner') return event.banner_addon?.price ?? 0;
-  return 0;
+/** Addon price (DOLLARS) for an event, by line type. FAIL-CLOSED: an unknown
+ *  line type, or a type not configured on this event (e.g. a tshirt line for
+ *  an event with no `tshirt_addon`), returns `null` — the caller MUST reject
+ *  the checkout rather than price it at 0 (a $0 add-on line would let a
+ *  crafted/stale cart line through for free). Mirrors (extends) the pricing
+ *  intent of the pre-Phase-2 version, which defaulted unknown → 0; that was
+ *  safe only because addons were single-line-per-event with client-controlled
+ *  presence — the per-unit model (Task 2) needs a hard reject instead. */
+export function addonPriceDollars(event: RegFeeEvent, lineType: string | null): number | null {
+  if (lineType === 'tshirt') return event.tshirt_addon ? event.tshirt_addon.price : null;
+  if (lineType === 'banner') return event.banner_addon ? event.banner_addon.price : null;
+  if (lineType === 'banquet') return event.banquet ? event.banquet.price : null;
+  if (lineType === 'leo') return event.camp_config?.leoAddon ? event.camp_config.leoAddon.price : null;
+  return null;
+}
+
+/** The configured purchase deadline (ISO), if any, for an add-on line type on
+ *  this event — `undefined` when that type has no `lastPurchaseAt` set (the
+ *  caller then falls back to `reg_closes` via `addonPurchaseOpen`). */
+export function addonLastPurchaseAt(event: RegFeeEvent, lineType: string | null): string | undefined {
+  if (lineType === 'tshirt') return event.tshirt_addon?.lastPurchaseAt;
+  if (lineType === 'banner') return event.banner_addon?.lastPurchaseAt;
+  if (lineType === 'banquet') return event.banquet?.lastPurchaseAt;
+  if (lineType === 'leo') return event.camp_config?.leoAddon?.lastPurchaseAt;
+  return undefined;
+}
+
+/**
+ * Is an add-on purchasable RIGHT NOW? Purchasable until `lastPurchaseAt` when
+ * set (which MAY be after `regCloses`); when unset, purchasable only while
+ * registration is open (`now <= regCloses`). `now` is a parameter so this
+ * stays pure/testable. MIRRORED IN src/lib/pricing.ts (`addonPurchaseOpen`) —
+ * keep in sync.
+ */
+export function addonPurchaseOpen(
+  lastPurchaseAt: string | undefined,
+  regCloses: string,
+  now: Date,
+): boolean {
+  const deadline = lastPurchaseAt ? Date.parse(lastPurchaseAt) : Date.parse(regCloses);
+  return now.getTime() <= deadline;
 }
 
 /** Dollars → integer cents (Stripe's unit). */

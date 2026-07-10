@@ -236,10 +236,13 @@ export interface Event {
   disciplines: Discipline[];
   sessions: EventSession[];
   privateRegCode?: string;
-  banquet?: { price: number; name: string };
+  /** `lastPurchaseAt` (event-mgmt v2 Phase 2): optional ISO datetime after which
+   *  this add-on can no longer be purchased; may be after `regCloses`. Absent ⇒
+   *  purchasable any time registration is open. */
+  banquet?: { price: number; name: string; lastPurchaseAt?: string };
   /** Optional add-ons offered at registration. */
-  tshirtAddon?: { price: number; sizes: string[] };
-  bannerAddon?: { price: number }; // club enters banner text at registration
+  tshirtAddon?: { price: number; sizes: string[]; lastPurchaseAt?: string };
+  bannerAddon?: { price: number; lastPurchaseAt?: string }; // club enters banner text at registration
   /** Fee to modify an existing registration; effective from `startsAt`. */
   changeFee?: { amount: number; startsAt: string };
   /** 'nationals' unlocks the prelim/finals + qualification/awards features and is
@@ -256,7 +259,7 @@ export interface Event {
    *  (event-mgmt v2 Phase 0 §A) since they apply to competitions too. */
   campConfig?: {
     overnightSurvey?: boolean;
-    leoAddon?: { price: number; sizes: string[] };
+    leoAddon?: { price: number; sizes: string[]; lastPurchaseAt?: string };
   };
   /** Venue name (distinct from city/state — e.g. "University Arena"). */
   venue?: string;
@@ -385,6 +388,15 @@ export interface Registration {
    *  shape future-proofs per-apparatus levels for MAG/WAG. Absent ⇒ use
    *  `levelId` for all events. */
   apparatusLevels?: Record<string, string>;
+  /** Camp overnight-accommodations survey answers (event-mgmt v2 §G). Present
+   *  only for camp registrations at events with `campConfig.overnightSurvey`
+   *  on. Free to edit until the event's change deadline — never a change fee. */
+  campSurvey?: {
+    bedtime?: 'before-10' | '10-to-midnight' | 'after-midnight';
+    noiseLevel?: 'quiet' | 'moderate' | 'lively';
+    cabinGenderPref?: Gender | 'No preference';
+    roommateRequest?: string;
+  };
   /** DB `created_at` (timestamptz), READ-ONLY: never written by `pushRegistration`
    *  (the app's whole-row upsert never maps this column back, so the DB default
    *  `now()` — stamped once at first INSERT — is preserved across edits). This is
@@ -424,6 +436,9 @@ export interface InvoiceItem {
   id: string;
   label: string;
   amount: number;
+  /** `'banquet'` is a LEGACY kind value retained only for pre-Phase-2 data — new
+   *  per-unit add-on lines (banquet/tshirt/banner/leo) all use `kind: 'addon'`,
+   *  differentiated via `refLineType` below (event-mgmt v2 Phase 2). */
   kind: 'membership' | 'meet-entry' | 'banquet' | 'addon' | 'donation' | 'discount' | 'fee';
   refUserId?: string;
   /** For membership cart/invoice lines: the exact season + type this fee covers,
@@ -442,9 +457,18 @@ export interface InvoiceItem {
    *  line (esp. addons, which carry no reg ids). */
   refEventId?: string;
   /** Refines `kind` for server-side re-pricing: 'entry'|'change' for meet-entry
-   *  lines, 'tshirt'|'banner' for addon lines. Memberships leave it unset. */
-  refLineType?: 'entry' | 'change' | 'tshirt' | 'banner';
+   *  lines, 'tshirt'|'banner'|'banquet'|'leo' for addon lines. Memberships leave
+   *  it unset. */
+  refLineType?: 'entry' | 'change' | 'tshirt' | 'banner' | 'banquet' | 'leo';
   refunded?: boolean;
+  /** Per-unit add-on lines (event-mgmt v2 Phase 2): one InvoiceItem/CartItem per
+   *  unit purchased (each shirt/leo/banquet ticket is its own line). */
+  /** Shirt/leo size for this unit (tshirt/leo add-on lines only). */
+  addonSize?: string;
+  /** Who this unit is for (banquet lines only): a person id, or the literal
+   *  sentinel `'extra'` for an unassigned ticket. At most one ASSIGNED ticket per
+   *  person per event is enforced server-side (Task 2, not here). */
+  addonAssigneeId?: string;
   /** For `kind:'meet-entry', refLineType:'change'` lines only: the FULL prior
    *  Registration row(s) (matching `refRegIds`) as they were BEFORE this change
    *  was applied, captured at cart-item creation time. Lets deleting the cart

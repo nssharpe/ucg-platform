@@ -1,7 +1,7 @@
 // Pure pricing & coupon-validity logic — no React/store/Supabase imports (types
 // erase at compile time). Unit-tested in tests/pricing.test.ts. Used by the
 // membership purchase flow (W6) and promo codes (W14).
-import type { CartItem, Coupon, Discipline, Membership, MembershipType, Season } from './types';
+import type { Athlete, CartItem, Coupon, Discipline, Membership, MembershipType, Registration, Season } from './types';
 
 /** Base fee for a membership type in a season. */
 export function membershipFee(season: Season, type: MembershipType): number {
@@ -243,6 +243,368 @@ export function newRegistrationEntryTotal(
     total += event.lateReg!.fee;
   }
   return total;
+}
+
+// --- Per-unit add-on pricing + purchase deadlines (event-mgmt v2 Phase 2) --
+// Each add-on type (banquet/tshirt/banner/leo) can carry an optional
+// `lastPurchaseAt` independent of `regCloses` (may be AFTER regCloses). Pure
+// client-side mirror of the server's authoritative pricing/deadline logic in
+// supabase/functions/_shared/stripe.ts — used for display/validation ONLY;
+// the server always recomputes and never trusts the client.
+
+/** One add-on's config shape, as stored on the Event (`price` + optional
+ *  `lastPurchaseAt`; `sizes`/`name` are irrelevant to pricing/deadlines). */
+export type AddonConfig = { price: number; lastPurchaseAt?: string };
+
+/** Minimal Event slice the add-on pricing/deadline helpers need. */
+export type AddonPricingEvent = {
+  tshirtAddon?: AddonConfig;
+  bannerAddon?: AddonConfig;
+  banquet?: AddonConfig;
+  campConfig?: { leoAddon?: AddonConfig };
+};
+
+export type AddonLineType = 'tshirt' | 'banner' | 'banquet' | 'leo';
+
+/** This add-on type's config on the event, or `undefined` if not offered. */
+export function addonConfig(
+  event: AddonPricingEvent,
+  lineType: AddonLineType | string | null,
+): AddonConfig | undefined {
+  if (lineType === 'tshirt') return event.tshirtAddon;
+  if (lineType === 'banner') return event.bannerAddon;
+  if (lineType === 'banquet') return event.banquet;
+  if (lineType === 'leo') return event.campConfig?.leoAddon;
+  return undefined;
+}
+
+/** Addon price (DOLLARS), by line type. Unconfigured/unknown type ⇒ `null` —
+ *  callers must treat that as "can't price this" (e.g. hide/disable the
+ *  purchase action), never fall back to charging $0. MIRRORS
+ *  supabase/functions/_shared/stripe.ts's `addonPriceDollars`. */
+export function addonPrice(event: AddonPricingEvent, lineType: AddonLineType | string | null): number | null {
+  const cfg = addonConfig(event, lineType);
+  return cfg ? cfg.price : null;
+}
+
+/**
+ * Is an add-on purchasable RIGHT NOW? Purchasable until `config.lastPurchaseAt`
+ * when set (which MAY be after `regCloses`); when unset, purchasable only
+ * while registration is open (`now <= regCloses`). `now` is a parameter so
+ * this stays pure/testable. MIRRORED IN supabase/functions/_shared/stripe.ts
+ * (`addonPurchaseOpen`) — keep in sync.
+ */
+export function addonPurchaseOpen(
+  config: { lastPurchaseAt?: string } | undefined,
+  regCloses: string,
+  now: Date,
+): boolean {
+  const deadline = config?.lastPurchaseAt ? Date.parse(config.lastPurchaseAt) : Date.parse(regCloses);
+  return now.getTime() <= deadline;
+}
+
+// --- Per-unit add-on draft state (individual purchase UI, Phase 2 Task 3) --
+// Pure helpers shared by the registration popup's add-on step and the
+// standalone post-registration purchase dialog in src/pages/Events.tsx. One
+// cart line is created per UNIT (each shirt/leo/banquet ticket its own line).
+
+/** Minimal Event slice the add-on draft helpers need (name/id for labels,
+ *  regCloses/eventType for windows + camp forced-choice behavior). Overrides
+ *  `AddonPricingEvent`'s bare `AddonConfig`s with the fuller shapes
+ *  (`sizes`/`name`) `buildAddonCartItems` needs for labels/pricing. */
+export type AddonDraftEvent = {
+  id: string;
+  name: string;
+  regCloses: string;
+  eventType?: 'competition' | 'camp';
+  tshirtAddon?: { price: number; sizes: string[]; lastPurchaseAt?: string };
+  bannerAddon?: AddonConfig;
+  banquet?: { price: number; name: string; lastPurchaseAt?: string };
+  campConfig?: { leoAddon?: { price: number; sizes: string[]; lastPurchaseAt?: string } };
+};
+
+/** One athlete's in-progress add-on selections. Each array entry is one
+ *  purchasable UNIT — one cart line per entry once submitted. Shirt/leo unit
+ *  values: a real size, `'none'` (camp explicit opt-out), or `''` (camp: not
+ *  yet chosen — invalid). Banquet unit values: a person id (assigned) or the
+ *  literal `'extra'`. */
+export interface AddonDraft {
+  shirtUnits: string[];
+  leoUnits: string[];
+  banquetUnits: string[];
+  /** Registration-popup only — the standalone purchase doesn't offer the banner. */
+  bannerText: string;
+}
+
+/** Fresh draft for `event`. In the REGISTRATION popup on a CAMP, the shirt/leo
+ *  pickers must force an explicit choice (event-mgmt v2 Phase 2 spec §G) —
+ *  seed a single unfilled unit (`''`) so the picker renders required and
+ *  nothing is pre-selected. Standalone purchases are always optional/
+ *  quantity-based, so they start empty regardless of event type. */
+export function initialAddonDraft(event: AddonDraftEvent, mode: 'registration' | 'standalone'): AddonDraft {
+  const forceCamp = mode === 'registration' && event.eventType === 'camp';
+  return {
+    shirtUnits: forceCamp && event.tshirtAddon ? [''] : [],
+    leoUnits: forceCamp && event.campConfig?.leoAddon ? [''] : [],
+    banquetUnits: [],
+    bannerText: '',
+  };
+}
+
+/** Any configured add-on type still purchasable right now? Gates whether the
+ *  registration popup shows an add-ons step, and whether the standalone
+ *  "Add-ons" affordance appears on the event page. `includeBanner` is false
+ *  for the standalone check (the banner is a registration-time-only line). */
+export function anyAddonWindowOpen(event: AddonDraftEvent, now: Date, opts: { includeBanner?: boolean } = {}): boolean {
+  const includeBanner = opts.includeBanner ?? true;
+  return (
+    (!!event.tshirtAddon && addonPurchaseOpen(event.tshirtAddon, event.regCloses, now)) ||
+    (includeBanner && !!event.bannerAddon && addonPurchaseOpen(event.bannerAddon, event.regCloses, now)) ||
+    (!!event.banquet && addonPurchaseOpen(event.banquet, event.regCloses, now)) ||
+    (!!event.campConfig?.leoAddon && addonPurchaseOpen(event.campConfig.leoAddon, event.regCloses, now))
+  );
+}
+
+/** Camp forced-choice validation: any configured+open camp shirt/leo picker
+ *  must have an explicit selection (a size or `'none'`) before continuing.
+ *  Always true for non-camp events (their shirt add-on is quantity-based, so
+ *  0 selected just means "skip it"). `now` is a parameter so this stays pure. */
+export function addonDraftValid(event: AddonDraftEvent, draft: AddonDraft, now: Date): boolean {
+  if (event.eventType !== 'camp') return true;
+  if (event.tshirtAddon && addonPurchaseOpen(event.tshirtAddon, event.regCloses, now) && !draft.shirtUnits[0]) return false;
+  if (event.campConfig?.leoAddon && addonPurchaseOpen(event.campConfig.leoAddon, event.regCloses, now) && !draft.leoUnits[0]) return false;
+  return true;
+}
+
+/** Turns a draft into one cart line PER UNIT (per-unit add-on model, Tasks
+ *  1+2). `'none'`/`''` shirt-leo units are skipped (no line). Ids are
+ *  timestamp+running-index so a mixed multi-type submission never collides. */
+export function buildAddonCartItems(
+  event: AddonDraftEvent,
+  athlete: Pick<Athlete, 'id' | 'firstName' | 'lastName'>,
+  draft: AddonDraft,
+  ts: number,
+): CartItem[] {
+  const items: CartItem[] = [];
+  let n = 0;
+  if (event.tshirtAddon) {
+    for (const size of draft.shirtUnits) {
+      if (!size || size === 'none') continue;
+      n += 1;
+      items.push({
+        id: `ci-tshirt-${ts}-${n}`,
+        label: `${event.name} t-shirt — ${athlete.firstName} ${athlete.lastName} (size ${size})`,
+        amount: event.tshirtAddon.price,
+        kind: 'addon',
+        refUserId: athlete.id,
+        refEventId: event.id,
+        refLineType: 'tshirt',
+        addonSize: size,
+      });
+    }
+  }
+  if (event.campConfig?.leoAddon) {
+    for (const size of draft.leoUnits) {
+      if (!size || size === 'none') continue;
+      n += 1;
+      items.push({
+        id: `ci-leo-${ts}-${n}`,
+        label: `${event.name} leotard — ${athlete.firstName} ${athlete.lastName} (size ${size})`,
+        amount: event.campConfig.leoAddon.price,
+        kind: 'addon',
+        refUserId: athlete.id,
+        refEventId: event.id,
+        refLineType: 'leo',
+        addonSize: size,
+      });
+    }
+  }
+  if (event.banquet) {
+    for (const assigneeId of draft.banquetUnits) {
+      n += 1;
+      items.push({
+        id: `ci-banquet-${ts}-${n}`,
+        label: `${event.name} ${event.banquet.name} — ${assigneeId === athlete.id ? `For ${athlete.firstName} ${athlete.lastName}` : 'Extra ticket'}`,
+        amount: event.banquet.price,
+        kind: 'addon',
+        refUserId: athlete.id,
+        refEventId: event.id,
+        refLineType: 'banquet',
+        addonAssigneeId: assigneeId,
+      });
+    }
+  }
+  if (event.bannerAddon && draft.bannerText.trim()) {
+    items.push({
+      id: `ci-banner-${ts}`,
+      label: `${event.name} club banner — "${draft.bannerText.trim()}"`,
+      amount: event.bannerAddon.price,
+      kind: 'addon',
+      refUserId: athlete.id,
+      refEventId: event.id,
+      refLineType: 'banner',
+    });
+  }
+  return items;
+}
+
+// --- Camp overnight-accommodations survey (event-mgmt v2 Phase 2 §G) -------
+// Asked per athlete, LAST in the camp registration popup (after add-ons),
+// only when `event.campConfig.overnightSurvey` is on. Persists onto
+// `Registration.campSurvey` (jsonb `camp_survey` column). Survey edits are
+// FREE — never a change fee — so this stays entirely outside the pricing/
+// cart-line logic above; it only affects a line's LABEL summary.
+
+/** Cabin-gender-preference options: the app's existing Gender option
+ *  conventions (Profile.tsx) + "No preference". */
+export const CABIN_GENDER_OPTIONS = ['Male', 'Female', 'Non-binary', 'Genderfluid', 'Agender', 'Other', 'No preference'];
+
+export type CampSurveyDraft = {
+  bedtime: '' | 'before-10' | '10-to-midnight' | 'after-midnight';
+  noiseLevel: '' | 'quiet' | 'moderate' | 'lively';
+  /** A Gender value or 'No preference'; kept as a plain string here so this
+   *  module doesn't need to import the Gender union. */
+  cabinGenderPref: string;
+  roommateRequest: string;
+};
+
+/** Fresh (or edit-seeded) survey draft. Pass the athlete's existing
+ *  `campSurvey` (if any) to prefill an edit. */
+export function initialCampSurveyDraft(existing?: Registration['campSurvey']): CampSurveyDraft {
+  return {
+    bedtime: existing?.bedtime ?? '',
+    noiseLevel: existing?.noiseLevel ?? '',
+    cabinGenderPref: existing?.cabinGenderPref ?? '',
+    roommateRequest: existing?.roommateRequest ?? '',
+  };
+}
+
+// Exported so other client modules needing the same human labels (the host
+// workbook's camp export, src/lib/host-export.ts) reuse these rather than
+// keeping a third copy — mirrors supabase/functions/_shared/camp-
+// confirmation.ts's CAMP_BEDTIME_LABELS/CAMP_NOISE_LABELS (that file can't be
+// imported directly: it lives outside tsconfig.app.json's `src` rootDir).
+export const CAMP_BEDTIME_LABELS: Record<string, string> = {
+  'before-10': 'Before 10pm', '10-to-midnight': '10pm–midnight', 'after-midnight': 'After midnight',
+};
+export const CAMP_NOISE_LABELS: Record<string, string> = { quiet: 'Quiet', moderate: 'Moderate', lively: 'Lively' };
+
+/** Required fields (bedtime/noise/cabin pref) must be explicitly chosen;
+ *  the free-text roommate request is always optional. */
+export function campSurveyValid(draft: CampSurveyDraft): boolean {
+  return !!draft.bedtime && !!draft.noiseLevel && !!draft.cabinGenderPref;
+}
+
+/** Draft → the shape stored on `Registration.campSurvey`. Returns `undefined`
+ *  when nothing was answered (so a reg with the survey skipped doesn't carry
+ *  an empty-object stub). */
+export function campSurveyToStored(draft: CampSurveyDraft): Registration['campSurvey'] {
+  const roommateRequest = draft.roommateRequest.trim();
+  if (!draft.bedtime && !draft.noiseLevel && !draft.cabinGenderPref && !roommateRequest) return undefined;
+  return {
+    ...(draft.bedtime ? { bedtime: draft.bedtime } : {}),
+    ...(draft.noiseLevel ? { noiseLevel: draft.noiseLevel } : {}),
+    ...(draft.cabinGenderPref ? { cabinGenderPref: draft.cabinGenderPref as NonNullable<Registration['campSurvey']>['cabinGenderPref'] } : {}),
+    ...(roommateRequest ? { roommateRequest } : {}),
+  };
+}
+
+/** Short human-readable summary for a cart/reg line-item label, e.g.
+ *  "bedtime: 10pm–midnight, noise: Quiet, cabin: Female". Empty string when
+ *  there's nothing to summarize. */
+export function campSurveySummary(survey: Registration['campSurvey'] | undefined): string {
+  if (!survey) return '';
+  const parts: string[] = [];
+  if (survey.bedtime) parts.push(`bedtime: ${CAMP_BEDTIME_LABELS[survey.bedtime] ?? survey.bedtime}`);
+  if (survey.noiseLevel) parts.push(`noise: ${CAMP_NOISE_LABELS[survey.noiseLevel] ?? survey.noiseLevel}`);
+  if (survey.cabinGenderPref) parts.push(`cabin: ${survey.cabinGenderPref}`);
+  if (survey.roommateRequest) parts.push(`roommate: ${survey.roommateRequest}`);
+  return parts.join(', ');
+}
+
+// --- Club-manager per-unit add-on draft (Phase 2 Task 4) --------------------
+// The club-manager "Add-ons card" (Club.tsx) is a variant of the athlete
+// AddonDraft above: no camp/leo (camps have no club-manager registration
+// path), and banquet tickets are assigned to ANY club-affiliated person (not
+// just "self or extra") via a roster dropdown, so the shape differs enough to
+// warrant its own draft type rather than overloading AddonDraft.
+
+/** Minimal Event slice `buildClubAddonCartItems` needs. */
+export type ClubAddonDraftEvent = {
+  id: string;
+  name: string;
+  tshirtAddon?: { price: number; sizes: string[]; lastPurchaseAt?: string };
+  bannerAddon?: AddonConfig;
+  banquet?: { price: number; name: string; lastPurchaseAt?: string };
+};
+
+/** The club manager's in-progress add-on selections. `shirtUnits`: one size
+ *  per unit. `banquetUnits`: one entry per ticket — a club-affiliated
+ *  person's id, or the literal `'extra'` for an unassigned ticket. */
+export interface ClubAddonDraft {
+  shirtUnits: string[];
+  banquetUnits: string[];
+  bannerText: string;
+}
+
+export function initialClubAddonDraft(): ClubAddonDraft {
+  return { shirtUnits: [], banquetUnits: [], bannerText: '' };
+}
+
+/** Turns a club add-on draft into one cart line PER UNIT, matching the
+ *  per-unit add-on model (Tasks 1+2). `assigneeName(id)` resolves a banquet
+ *  ticket's roster person id to a display name for the line label. Ids are
+ *  timestamp+running-index so a mixed multi-type submission never collides. */
+export function buildClubAddonCartItems(
+  event: ClubAddonDraftEvent,
+  draft: ClubAddonDraft,
+  assigneeName: (id: string) => string,
+  ts: number,
+): CartItem[] {
+  const items: CartItem[] = [];
+  let n = 0;
+  if (event.tshirtAddon) {
+    for (const size of draft.shirtUnits) {
+      if (!size) continue;
+      n += 1;
+      items.push({
+        id: `ci-club-tshirt-${ts}-${n}`,
+        label: `${event.name} t-shirt (size ${size})`,
+        amount: event.tshirtAddon.price,
+        kind: 'addon',
+        refEventId: event.id,
+        refLineType: 'tshirt',
+        addonSize: size,
+      });
+    }
+  }
+  if (event.banquet) {
+    for (const assigneeId of draft.banquetUnits) {
+      if (!assigneeId) continue;
+      n += 1;
+      items.push({
+        id: `ci-club-banquet-${ts}-${n}`,
+        label: `${event.name} ${event.banquet.name} — ${assigneeId === 'extra' ? 'Extra ticket' : `For ${assigneeName(assigneeId)}`}`,
+        amount: event.banquet.price,
+        kind: 'addon',
+        refUserId: assigneeId === 'extra' ? undefined : assigneeId,
+        refEventId: event.id,
+        refLineType: 'banquet',
+        addonAssigneeId: assigneeId,
+      });
+    }
+  }
+  if (event.bannerAddon && draft.bannerText.trim()) {
+    items.push({
+      id: `ci-club-banner-${ts}`,
+      label: `${event.name} club banner — "${draft.bannerText.trim()}"`,
+      amount: event.bannerAddon.price,
+      kind: 'addon',
+      refEventId: event.id,
+      refLineType: 'banner',
+    });
+  }
+  return items;
 }
 
 // --- Change-fee eligibility (3h) -------------------------------------------

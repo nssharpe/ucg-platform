@@ -121,7 +121,61 @@ here — update THIS list when priorities change, not rival copies.
   **Phasing approved by Nate 2026-07-06:** V2-P0 foundations/scheduler →
   P1 host experience → P2 add-ons & camps → P3 refunds → P4 capacity/waitlists &
   by-session reg → P5 nationals ops/check-in → P6 finance dashboards.
-  **P1 (host experience) is now fully shipped** — see Tasks 1, 3–8 below. Next up: P2.
+  **P1 (host experience) is now fully shipped** — see Tasks 1, 3–8 below. **P2 (add-ons
+  & camps) is now fully shipped** (Tasks 1–7, pending one migration push — see Task 7
+  below); P3 (refunds) is next. **Task 1** (per-unit add-on cart/invoice line fields, `addon_size`/
+  `addon_assignee`) and **Task 2** (server-side per-unit add-on pricing + purchase
+  deadlines + banquet-assignment validation in `create-checkout-session`) shipped, plus
+  **Task 3** (individual self-cart per-unit add-on purchase UI: registration-popup add-on
+  step reworked to quantity steppers + per-unit size/assignee pickers, camp shirt/leo
+  forced to an explicit choice, and a new standalone post-registration "Add-ons" dialog
+  on the event page usable past `regCloses` via each type's `lastPurchaseAt`). **Task 4
+  shipped:** the club-manager Add-ons card (§E3) on Club.tsx's event-registration page —
+  t-shirt quantity+size (reusing the picker, now extracted to
+  `src/components/AddonPickers.tsx`), banquet tickets assigned to any roster
+  athlete/coach via a new `ClubBanquetPicker` (max-1-assigned-per-person checked against
+  the draft, the club cart, AND already-purchased invoice lines), and a locked-once-added
+  club banner text field. Pushes one cart line per unit to the CLUB cart.
+  **Task 5 shipped:** camp club-membership gate carve-out + overnight-accommodations
+  survey UI (§G). Camps waive the *club*-membership gate at every registration entry
+  point (`clubHasActiveMembershipForEvent`/`clubMembershipGateApplies`,
+  `capabilities-core.ts`) — the individual-membership check (`caps.canRegister`) still
+  applies unchanged, and a club's own hosting-eligibility gate is untouched. The
+  registration popup (`SelfRegModal`) now asks a bedtime/noise-level/cabin-gender-pref/
+  roommate-request survey LAST, after add-ons, when `campConfig.overnightSurvey` is on
+  — persisted on `Registration.campSurvey` ↔ `registrations.camp_survey` (new pure
+  helpers in `pricing.ts`: `CampSurveyDraft`/`campSurveyValid`/`campSurveyToStored`/
+  `campSurveySummary`); a brand-new entry cart line's label summarizes add-ons + survey
+  answers. Survey answers are editable any time before the edit deadline via a new
+  block in `MyRegistrations.tsx`'s `EditRegistrationModal` — always free, never a
+  change fee. Also fixed a T1 bug where Sanction.tsx's approval mapping dropped
+  `p.leoAddon` (and `overnightSurvey`) instead of copying them onto
+  `event.campConfig`. The finance-side add-ons export and the "no discipline/level/
+  apparatus in camp registration" popup simplification (§G) remain open — the camp
+  registration popup still reuses the full per-discipline `RegistrationEditor`.
+  **Task 6 shipped:** camp confirmation email (§G) — `stripe-webhook`'s receipt now
+  appends a camp-details block for any purchased CAMP event: each registered
+  athlete's `camp_survey` answers (human labels, omitted per-athlete when unanswered)
+  plus this payment's purchased add-ons (shirt/leo sizes, banquet assignee — reused
+  verbatim from the already-human-readable cart-line label), with a link to
+  `/#/me/registrations` to edit. Pure HTML-building lives in
+  `_shared/camp-confirmation.ts` (Deno + vitest dual-import, mirrors the `event-comm.ts`
+  pattern) and is wrapped in its own try/catch, isolated from the existing per-event
+  confirmation-config block, so a failure there can't break the receipt or fulfillment.
+  **Task 7 shipped (final P2 task):** the host workbook's deferred purchased-add-on
+  sheets + a camp roster sheet (`src/lib/host-export.ts`). Adds Shirts (purchased),
+  Leo sizes, and Banquet sheets (each omitted, not emitted empty, unless its add-on is
+  BOTH configured and has at least one purchased unit) sourced from a new
+  `event_host_addons` RPC — an RLS exception mirroring `event_host_roster` so a host
+  sees purchased units across every competing club, not just their own. Adds a Camp
+  roster sheet for camp events: one row per athlete (birthday, gender, profile vs.
+  purchased shirt size, purchased leo size, all four overnight-survey answers with
+  human labels, date registered) — required extending `event_host_roster` with
+  `dob`/`gender`/`camp_survey`/`created_at`. ⚠ The migration
+  (`20260710151638_event_host_addons_and_camp_detail.sql`) is written but **not yet
+  pushed** (T7 was scoped client-side-only) — apply it before the new sheets return
+  real data. **P2 (add-ons & camps) is now fully shipped** (Tasks 1–7) pending that one
+  migration push; P3 (refunds) is next.
   **P0 Task 1 shipped:** pg_cron/pg_net scheduler infra (`notification_log` +
   `scheduled-dispatch-15min` job + `scheduled-dispatch` Edge Function, service-role-only
   auth) with its first consumer — 3d/1d/closed sanction-vote reminder emails, idempotent
@@ -185,15 +239,15 @@ here — update THIS list when priorities change, not rival copies.
   "Host dashboard →" link on the event page for anyone with host-level access or
   sanctioning.
   **P1 Task 6 shipped:** Excel registration workbook (§C/§K) — "Download registration
-  workbook (.xlsx)" card on the host page, one workbook / three sheets built from the
-  same shared host roster: Athletes (one row per registration — apparatus codes
-  overlap MAG/WAG so a multi-discipline athlete gets one row per discipline rather
-  than a clashing merged row), Counts (level × club × apparatus with a totals row),
-  Shirt sizes (profile-size tally, explicitly labeled as not purchased-shirt
-  quantities). Leo sizes and banquet quantities are deferred to the add-ons v2 rework
-  (Phase 2), when purchased-line quantity/size/assignment data exists to query. Sheet
+  workbook (.xlsx)" card on the host page, built from the same shared host roster:
+  Athletes (one row per registration — apparatus codes overlap MAG/WAG so a
+  multi-discipline athlete gets one row per discipline rather than a clashing merged
+  row), Counts (level × club × apparatus with a totals row), Shirt sizes (profile)
+  (profile-size tally, explicitly labeled as not purchased-shirt quantities). Sheet
   shaping is pure + unit-tested (`src/lib/host-export.ts`); `exceljs` is dynamically
-  imported so it ships as its own chunk, not the entry bundle.
+  imported so it ships as its own chunk, not the entry bundle. **P2 Task 7 extended
+  this** (below) with the purchased-add-on sheets P1 deferred, plus a camp roster
+  sheet.
   **P1 Task 7 shipped:** event-scoped communication (§J) — `/events/:slug/communicate`
   lets hosts, event admins, sanctioning, and admins email one event's registrants,
   filtered by role (athletes/managers/club emails) + session/level/discipline, via the

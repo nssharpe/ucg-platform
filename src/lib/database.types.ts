@@ -79,6 +79,8 @@ export type Database = {
       }
       cart_items: {
         Row: {
+          addon_assignee: string | null
+          addon_size: string | null
           amount: number
           club_id: string | null
           created_at: string
@@ -95,6 +97,8 @@ export type Database = {
           ref_user_id: string | null
         }
         Insert: {
+          addon_assignee?: string | null
+          addon_size?: string | null
           amount?: number
           club_id?: string | null
           created_at?: string
@@ -111,6 +115,8 @@ export type Database = {
           ref_user_id?: string | null
         }
         Update: {
+          addon_assignee?: string | null
+          addon_size?: string | null
           amount?: number
           club_id?: string | null
           created_at?: string
@@ -745,6 +751,8 @@ export type Database = {
       }
       invoice_items: {
         Row: {
+          addon_assignee: string | null
+          addon_size: string | null
           amount: number
           id: string
           invoice_id: string
@@ -757,6 +765,8 @@ export type Database = {
           refunded: boolean
         }
         Insert: {
+          addon_assignee?: string | null
+          addon_size?: string | null
           amount?: number
           id: string
           invoice_id: string
@@ -769,6 +779,8 @@ export type Database = {
           refunded?: boolean
         }
         Update: {
+          addon_assignee?: string | null
+          addon_size?: string | null
           amount?: number
           id?: string
           invoice_id?: string
@@ -1963,19 +1975,36 @@ export type Database = {
       }
       email_has_account: { Args: { p_email: string }; Returns: boolean }
       event_collected_total: { Args: { p_event_id: string }; Returns: number }
+      event_host_addons: {
+        Args: { p_event_id: string }
+        Returns: {
+          addon_assignee: string | null
+          addon_size: string | null
+          assignee_first_name: string | null
+          assignee_last_name: string | null
+          item_id: string
+          label: string
+          ref_line_type: string | null
+          ref_user_id: string | null
+        }[]
+      }
       event_host_roster: {
         Args: { p_event_id: string }
         Returns: {
           apparatus: string[]
           apparatus_levels: Json
           athlete_id: string
+          camp_survey: Json | null
           club_id: string | null
           club_name: string | null
+          created_at: string | null
           dietary: string[] | null
           discipline: string
+          dob: string | null
           email: string | null
           emergency_contact: string | null
           first_name: string
+          gender: string | null
           last_name: string
           level_id: string | null
           paid: boolean | null

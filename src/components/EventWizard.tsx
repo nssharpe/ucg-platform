@@ -136,13 +136,16 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
   const [hasBanquet, setHasBanquet] = useState(!!editEvent?.banquet);
   const [banquetName, setBanquetName] = useState(editEvent?.banquet?.name ?? 'Banquet');
   const [banquetPrice, setBanquetPrice] = useState(String(editEvent?.banquet?.price ?? 45));
+  const [banquetLastPurchaseAt, setBanquetLastPurchaseAt] = useState(editEvent?.banquet?.lastPurchaseAt ?? '');
   // T-shirt add-on
   const [hasTshirt, setHasTshirt] = useState(!!editEvent?.tshirtAddon);
   const [tshirtPrice, setTshirtPrice] = useState(String(editEvent?.tshirtAddon?.price ?? 25));
   const [tshirtSizes, setTshirtSizes] = useState<string[]>(editEvent?.tshirtAddon?.sizes ?? [...SHIRT_SIZES]);
+  const [tshirtLastPurchaseAt, setTshirtLastPurchaseAt] = useState(editEvent?.tshirtAddon?.lastPurchaseAt ?? '');
   // Banner add-on
   const [hasBanner, setHasBanner] = useState(!!editEvent?.bannerAddon);
   const [bannerPrice, setBannerPrice] = useState(String(editEvent?.bannerAddon?.price ?? 30));
+  const [bannerLastPurchaseAt, setBannerLastPurchaseAt] = useState(editEvent?.bannerAddon?.lastPurchaseAt ?? '');
   // Change fee
   const [hasChangeFee, setHasChangeFee] = useState(!!editEvent?.changeFee);
   const [changeFeeAmount, setChangeFeeAmount] = useState(String(editEvent?.changeFee?.amount ?? 15));
@@ -307,9 +310,9 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
       entryFee: fee, secondDisciplineFee: fee2,
       disciplines: orderedDisciplines,
       sessions: eventSessions,
-      ...(hasBanquet ? { banquet: { name: banquetName.trim(), price: bPrice } } : { banquet: undefined }),
-      ...(hasTshirt ? { tshirtAddon: { price: Number(tshirtPrice), sizes: tshirtSizes } } : { tshirtAddon: undefined }),
-      ...(hasBanner ? { bannerAddon: { price: Number(bannerPrice) } } : { bannerAddon: undefined }),
+      ...(hasBanquet ? { banquet: { name: banquetName.trim(), price: bPrice, ...(banquetLastPurchaseAt ? { lastPurchaseAt: banquetLastPurchaseAt } : {}) } } : { banquet: undefined }),
+      ...(hasTshirt ? { tshirtAddon: { price: Number(tshirtPrice), sizes: tshirtSizes, ...(tshirtLastPurchaseAt ? { lastPurchaseAt: tshirtLastPurchaseAt } : {}) } } : { tshirtAddon: undefined }),
+      ...(hasBanner ? { bannerAddon: { price: Number(bannerPrice), ...(bannerLastPurchaseAt ? { lastPurchaseAt: bannerLastPurchaseAt } : {}) } } : { bannerAddon: undefined }),
       ...(hasChangeFee ? { changeFee: { amount: Number(changeFeeAmount), startsAt: changeFeeStartsAt } } : { changeFee: undefined }),
       lastDateToEdit: hasEditLockout ? lastDateToEdit : null,
       venue: venue.trim() || undefined,
@@ -470,6 +473,9 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
         <div className="grid cols-3">
           <Field label="Banquet name"><input className="input" value={banquetName} onChange={(e) => setBanquetName(e.target.value)} /></Field>
           <Field label="Banquet price ($)"><input className="input" type="number" min={0} step={5} value={banquetPrice} onChange={(e) => setBanquetPrice(e.target.value)} /></Field>
+          <Field label={`Last date to purchase (${timezone})`} hint="Optional. Leave blank to allow purchase any time registration is open.">
+            <input className="input" type="datetime-local" value={banquetLastPurchaseAt} onChange={(e) => setBanquetLastPurchaseAt(e.target.value)} />
+          </Field>
         </div>
       )}
 
@@ -481,6 +487,9 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
         <div className="card card-pad" style={{ marginBottom: 8 }}>
           <div className="grid cols-3" style={{ marginBottom: 10 }}>
             <Field label="T-shirt price ($)"><input className="input" type="number" min={0} step={1} value={tshirtPrice} onChange={(e) => setTshirtPrice(e.target.value)} /></Field>
+            <Field label={`Last date to purchase (${timezone})`} hint="Optional. Leave blank to allow purchase any time registration is open.">
+              <input className="input" type="datetime-local" value={tshirtLastPurchaseAt} onChange={(e) => setTshirtLastPurchaseAt(e.target.value)} />
+            </Field>
           </div>
           <div style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 6 }}>Available sizes</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px' }}>
@@ -501,6 +510,9 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
         <div className="grid cols-3" style={{ marginBottom: 8 }}>
           <Field label="Banner price ($)" hint="Clubs enter their banner text at registration.">
             <input className="input" type="number" min={0} step={5} value={bannerPrice} onChange={(e) => setBannerPrice(e.target.value)} />
+          </Field>
+          <Field label={`Last date to purchase (${timezone})`} hint="Optional. Leave blank to allow purchase any time registration is open.">
+            <input className="input" type="datetime-local" value={bannerLastPurchaseAt} onChange={(e) => setBannerLastPurchaseAt(e.target.value)} />
           </Field>
         </div>
       )}

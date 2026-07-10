@@ -121,6 +121,20 @@ Excel exports ship as ONE workbook with Athletes / Counts / Shirt-sizes
 (profile) sheets; leo-size and banquet-quantity sheets wait for the P2 add-on
 model (no purchased-unit size/quantity data exists yet).
 
+**P2 decisions (Nate 2026-07-10, shipped with V2-P2):** (1) ONE cart/invoice
+line per unit for ALL quantity add-ons (banquet/shirt/leo), each carrying its
+size (`addon_size`) or banquet assignee (`addon_assignee`: person id or
+`'extra'`) — uniform, refund-ready for P3. (2) Purchase deadlines are PER
+add-on type (`lastPurchaseAt` on each config); unset ⇒ purchasable only while
+registration is open — so a stale add-on cart line for a closed event now
+fails checkout by design. (3) Standalone add-on purchase shipped: event page
+(self cart, post-registration) + club Add-ons card (§E3), both live until each
+type's window closes, including past regCloses. (4) The camp confirmation's
+"receipt attached" is DEFERRED to P3's server-side receipt rendering — the P2
+camp email carries survey + add-on summary + an edit link instead. Known
+carry-over gap: camp registration still reuses the full per-discipline editor
+(§G's simplified no-discipline camp popup remains unbuilt).
+
 ## D. Registration page & flow deltas (EXTENDS existing)
 
 - Unique registration page per event + easy link copy — exists (slug); add
@@ -232,14 +246,23 @@ editor. Deltas:
 ## G. Camps/clinics deltas (EXTENDS existing)
 
 - Individual self-registration only (no club-manager reg) — shipped intent;
-  **club membership is NOT required for camps** — today the club-membership
-  gate applies at *every* entry point, so camps need an explicit carve-out.
-  **Individual membership IS required** (for the season the camp occurs in) —
-  answered by Julia 2026-07-06.
-- No discipline/level/apparatus in camp registration — simpler popup.
+  **club membership is NOT required for camps** — **shipped emv2 P2 T5**:
+  `clubHasActiveMembershipForEvent`/`clubMembershipGateApplies`
+  (`capabilities-core.ts`) waive the gate for `eventType:'camp'` at every
+  registration entry point. **Individual membership IS required** (for the
+  season the camp occurs in) — answered by Julia 2026-07-06, unchanged
+  (`caps.canRegister` already applies regardless of event type).
+- No discipline/level/apparatus in camp registration — simpler popup. **Still
+  open** — the camp registration popup (`SelfRegModal`) reuses the full
+  per-discipline `RegistrationEditor` unchanged; a future task should build
+  the simplified camp-only reg step.
 - **Overnight-accommodations survey UI** (bedtime / noise level / cabin gender
   pref / roommate free-text) asked per athlete at checkout when enabled —
-  DB field (`camp_survey`) shipped, **UI missing**.
+  **shipped emv2 P2 T5**: asked LAST in `SelfRegModal`, after add-ons;
+  editable any time before the edit deadline via `MyRegistrations.tsx`
+  (free, never a change fee). `camp_survey` ↔ `Registration.campSurvey`
+  plumbed in `supabase.ts`; pure draft/validation/summary helpers in
+  `pricing.ts`.
 - Add-ons: size must be chosen, $0 price allowed, explicit "no shirt/leo"
   options.
 - Confirmation email: survey answers + add-on summary, nicely formatted HTML,

@@ -18,7 +18,9 @@
 // but their ids stay in cart_item_ids so the webhook still clears/flips them.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
+  addonLastPurchaseAt,
   addonPriceDollars,
+  addonPurchaseOpen,
   getStripe,
   lateFeeAnchor,
   membershipFeeDollars,
@@ -54,6 +56,8 @@ interface CartItemRow {
   ref_reg_ids: string[] | null;
   ref_event_id: string | null;
   ref_line_type: string | null;
+  addon_size: string | null;
+  addon_assignee: string | null;
 }
 
 interface RegRow {
@@ -102,7 +106,7 @@ Deno.serve(async (req) => {
   // --- Load the requested cart items (service role; we authorize ownership below) ---
   const { data: itemRows, error: itemErr } = await db
     .from('cart_items')
-    .select('id, club_id, person_id, label, amount, kind, ref_user_id, ref_season_id, ref_type, ref_reg_ids, ref_event_id, ref_line_type')
+    .select('id, club_id, person_id, label, amount, kind, ref_user_id, ref_season_id, ref_type, ref_reg_ids, ref_event_id, ref_line_type, addon_size, addon_assignee')
     .in('id', cartItemIds);
   if (itemErr) return json({ ok: false, error: itemErr.message }, 500);
   const items = (itemRows ?? []) as CartItemRow[];
@@ -178,7 +182,7 @@ Deno.serve(async (req) => {
   if (eventIds.length) {
     const { data: mr, error: mErr } = await db
       .from('events')
-      .select('id, host_club_id, entry_fee, second_discipline_fee, change_fee, tshirt_addon, banner_addon, late_reg')
+      .select('id, host_club_id, entry_fee, second_discipline_fee, change_fee, tshirt_addon, banner_addon, banquet, camp_config, reg_closes, late_reg')
       .in('id', eventIds);
     if (mErr) return json({ ok: false, error: mErr.message }, 500);
     events = new Map((mr ?? []).map((m) => [m.id as string, m as unknown as RegFeeEvent]));
@@ -259,6 +263,83 @@ Deno.serve(async (req) => {
       .eq('status', 'active');
     if (cmErr) return json({ ok: false, error: cmErr.message }, 500);
     for (const c of cmr ?? []) clubMembershipSeasons.add(`${c.club_id}:${c.season_id}`);
+  }
+
+  // --- Banquet ticket assignment (emv2 P2 Task 2) -----------------------------
+  // Each banquet line (`kind:'addon'`, `ref_line_type:'banquet'`) must name an
+  // assignee: a person id, or the literal sentinel 'extra' for an unassigned
+  // ticket. Person-assigned tickets are authorized the same way H4 authorizes a
+  // membership target (self cart ⇒ only the payer; club cart ⇒ only someone on
+  // that club's roster), and capped at ONE assigned ticket per person per event
+  // — counting already-purchased (non-refunded) invoice_items plus every other
+  // line in THIS checkout that assigns the same person for the same event.
+  const banquetItems = items.filter((i) => i.kind === 'addon' && i.ref_line_type === 'banquet');
+  if (banquetItems.length) {
+    const missingAssignee = banquetItems.find((i) => !i.addon_assignee);
+    if (missingAssignee) {
+      return json({ ok: false, error:
+        `Banquet ticket "${missingAssignee.label}" needs an assignee — select a person or "Extra ticket" before checking out.` }, 400);
+    }
+
+    const assigneeIds = Array.from(new Set(
+      banquetItems.map((i) => i.addon_assignee).filter((a): a is string => !!a && a !== 'extra'),
+    ));
+    if (assigneeIds.length) {
+      if (isSelfCart) {
+        const bad = assigneeIds.find((id) => id !== personId);
+        if (bad) return json({ ok: false, error: 'You can only assign a banquet ticket to yourself in your own cart.' }, 403);
+      } else if (clubId) {
+        const affiliated = new Set<string>();
+        const { data: pr } = await db.from('people').select('id, main_club_id').in('id', assigneeIds);
+        for (const p of pr ?? []) {
+          if ((p as { main_club_id?: string }).main_club_id === clubId) affiliated.add(p.id as string);
+        }
+        const { data: alt } = await db.from('person_alt_clubs')
+          .select('person_id').eq('club_id', clubId).in('person_id', assigneeIds);
+        for (const a of alt ?? []) affiliated.add((a as { person_id: string }).person_id);
+        const bad = assigneeIds.find((id) => !affiliated.has(id));
+        if (bad) return json({ ok: false, error: 'A banquet ticket is assigned to a person who is not on this club’s roster.' }, 403);
+      }
+
+      // Count assigned tickets per (event, person): existing paid tickets + this checkout's.
+      // Keyed by JSON-encoded [eventId, assignee] pair to avoid any string-concat
+      // collision risk between an id and the separator.
+      const eventIdsForBanquet = Array.from(new Set(banquetItems.map((i) => i.ref_event_id).filter((e): e is string => !!e)));
+      const totalCounts = new Map<string, { eventId: string; assignee: string; count: number }>();
+      const bump = (eventId: string, assignee: string) => {
+        const k = JSON.stringify([eventId, assignee]);
+        const entry = totalCounts.get(k) ?? { eventId, assignee, count: 0 };
+        entry.count += 1;
+        totalCounts.set(k, entry);
+      };
+      if (eventIdsForBanquet.length) {
+        const { data: existingLines, error: exErr } = await db
+          .from('invoice_items')
+          .select('ref_event_id, addon_assignee, refunded')
+          .eq('kind', 'addon')
+          .eq('ref_line_type', 'banquet')
+          .in('ref_event_id', eventIdsForBanquet)
+          .in('addon_assignee', assigneeIds)
+          .eq('refunded', false);
+        if (exErr) return json({ ok: false, error: exErr.message }, 500);
+        for (const row of existingLines ?? []) {
+          const eId = row.ref_event_id as string | null;
+          const assignee = row.addon_assignee as string | null;
+          if (!eId || !assignee) continue;
+          bump(eId, assignee);
+        }
+      }
+      for (const i of banquetItems) {
+        if (!i.addon_assignee || i.addon_assignee === 'extra' || !i.ref_event_id) continue;
+        bump(i.ref_event_id, i.addon_assignee);
+      }
+      for (const { assignee, count } of totalCounts.values()) {
+        if (count > 1) {
+          return json({ ok: false, error:
+            `More than one banquet ticket is assigned to the same person (${assignee}) for this event — each person may have at most one assigned ticket.` }, 400);
+        }
+      }
+    }
   }
 
   // --- Recompute each line into Stripe line items + subtotal ----------------
@@ -384,12 +465,32 @@ Deno.serve(async (req) => {
       continue;
     }
 
-    // --- Addon (tshirt / banner) ---
+    // --- Addon (tshirt / banner / banquet / leo), per unit --------------------
     if (i.kind === 'addon') {
       if (!i.ref_event_id) return json({ ok: false, error: `Addon line ${i.id} has no event.` }, 400);
       const event = events.get(i.ref_event_id);
       if (!event) return json({ ok: false, error: `Unknown event ${i.ref_event_id}.` }, 400);
-      pushLine(i.id, i.label, addonPriceDollars(event, i.ref_line_type), 'meet-entry', i.ref_event_id);
+      const lineType = i.ref_line_type;
+      const typeName = lineType === 'tshirt' ? 'T-shirt'
+        : lineType === 'banner' ? 'Club banner'
+        : lineType === 'banquet' ? 'Banquet'
+        : lineType === 'leo' ? 'Leotard'
+        : 'Add-on';
+      // Fail-closed: an unconfigured/unknown add-on type is REJECTED, never
+      // priced at 0 (see addonPriceDollars's doc comment — this is what
+      // actually closes the gap the old default-0 behavior left open).
+      const price = addonPriceDollars(event, lineType);
+      if (price === null) {
+        return json({ ok: false, error:
+          `"${i.label}" is not a configured add-on for this event — remove it from your cart (✕) and try again.` }, 400);
+      }
+      // Purchase deadline: this type's own lastPurchaseAt if set (may be after
+      // regCloses), else registration must still be open.
+      const deadline = addonLastPurchaseAt(event, lineType);
+      if (!addonPurchaseOpen(deadline, event.reg_closes, new Date())) {
+        return json({ ok: false, error: `The purchase window for the ${typeName} add-on has closed.` }, 400);
+      }
+      pushLine(i.id, i.label, price, 'meet-entry', i.ref_event_id);
       continue;
     }
 
@@ -518,6 +619,8 @@ Deno.serve(async (req) => {
     ref_reg_ids: i.ref_reg_ids,
     ref_event_id: i.ref_event_id,
     ref_line_type: i.ref_line_type,
+    addon_size: i.addon_size,
+    addon_assignee: i.addon_assignee,
   }));
 
   let session;

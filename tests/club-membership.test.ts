@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { clubHasActiveMembership, seasonForDate } from '../src/lib/capabilities-core';
+import { clubHasActiveMembership, clubHasActiveMembershipForEvent, clubMembershipGateApplies, seasonForDate } from '../src/lib/capabilities-core';
 import type { DB } from '../src/lib/types';
 
 const db = {
@@ -36,6 +36,30 @@ describe('club membership gate', () => {
       carts: { c1: [{ id: 'ci1', label: 'club membership', amount: 109, kind: 'membership', refSeasonId: 's26', refType: 'club' }] },
     } as unknown as DB;
     expect(clubHasActiveMembership(pending, 'c1', 's26')).toBe(false);
+  });
+});
+
+describe('club membership gate — camp carve-out (emv2 P2 T5, spec §G)', () => {
+  it('gate applies to competitions (default/undefined eventType)', () => {
+    expect(clubMembershipGateApplies(undefined)).toBe(true);
+    expect(clubMembershipGateApplies('competition')).toBe(true);
+  });
+  it('gate is waived for camps', () => {
+    expect(clubMembershipGateApplies('camp')).toBe(false);
+  });
+  it('clubHasActiveMembershipForEvent still gates a competition without an active club membership', () => {
+    expect(clubHasActiveMembershipForEvent(db, 'c2', 's26', 'competition')).toBe(false);
+    expect(clubHasActiveMembershipForEvent(db, 'c2', 's26', undefined)).toBe(false);
+  });
+  it('clubHasActiveMembershipForEvent passes a competition with an active club membership', () => {
+    expect(clubHasActiveMembershipForEvent(db, 'c1', 's26', 'competition')).toBe(true);
+  });
+  it('clubHasActiveMembershipForEvent bypasses the club gate for a camp, even with no club membership at all', () => {
+    expect(clubHasActiveMembershipForEvent(db, 'c2', 's26', 'camp')).toBe(true);
+    expect(clubHasActiveMembershipForEvent(db, null, null, 'camp')).toBe(true);
+  });
+  it('the underlying clubHasActiveMembership (non-event-aware) is unaffected — still used for the club membership status card', () => {
+    expect(clubHasActiveMembership(db, 'c2', 's26')).toBe(false);
   });
 });
 

@@ -9,8 +9,21 @@ import {
   newRegistrationEntryTotal,
   reassignPartners,
   syncSynchroPartnerLevel,
+  addonConfig,
+  addonPrice,
+  addonPurchaseOpen,
+  initialAddonDraft,
+  addonDraftValid,
+  buildAddonCartItems,
+  anyAddonWindowOpen,
+  initialClubAddonDraft,
+  buildClubAddonCartItems,
+  initialCampSurveyDraft,
+  campSurveyValid,
+  campSurveyToStored,
+  campSurveySummary,
 } from '../src/lib/pricing';
-import type { PartnerReg, RegFeeEvent, SynchroReg } from '../src/lib/pricing';
+import type { AddonPricingEvent, AddonDraftEvent, ClubAddonDraftEvent, PartnerReg, RegFeeEvent, SynchroReg } from '../src/lib/pricing';
 import type { Coupon, Membership, Season } from '../src/lib/types';
 
 const season: Season = {
@@ -251,5 +264,290 @@ describe('syncSynchroPartnerLevel (B4.4 — first-to-select sets the level for b
     const existing = [{ athleteId: 'b', apparatus: ['SY', 'TR'], apparatusLevels: { SY: 'novice-flyer', TR: 'intermediate-flyer' }, partnerAthleteId: null }];
     const out = syncSynchroPartnerLevel(existing, syReg('a', 'high-flyer', 'b'));
     expect(out?.apparatusLevels).toEqual({ SY: 'high-flyer', TR: 'intermediate-flyer' });
+  });
+});
+
+describe('per-unit add-on pricing (emv2 P2)', () => {
+  const event: AddonPricingEvent = {
+    tshirtAddon: { price: 20 },
+    bannerAddon: { price: 15, lastPurchaseAt: '2026-08-01T00:00:00Z' },
+    banquet: { price: 40 },
+    campConfig: { leoAddon: { price: 60 } },
+  };
+  const regCloses = '2026-07-01T00:00:00Z';
+
+  describe('addonPrice / addonConfig', () => {
+    it('prices each configured type', () => {
+      expect(addonPrice(event, 'tshirt')).toBe(20);
+      expect(addonPrice(event, 'banner')).toBe(15);
+      expect(addonPrice(event, 'banquet')).toBe(40);
+      expect(addonPrice(event, 'leo')).toBe(60);
+    });
+
+    it('returns null (never 0) for an unconfigured type', () => {
+      const bare: AddonPricingEvent = {};
+      expect(addonPrice(bare, 'tshirt')).toBeNull();
+      expect(addonPrice(bare, 'banquet')).toBeNull();
+      expect(addonPrice(bare, 'leo')).toBeNull();
+    });
+
+    it('returns null for an unknown line type', () => {
+      expect(addonPrice(event, 'not-a-real-type')).toBeNull();
+      expect(addonPrice(event, null)).toBeNull();
+    });
+
+    it('leo is only priced when nested under campConfig', () => {
+      const noCamp: AddonPricingEvent = { tshirtAddon: { price: 20 } };
+      expect(addonPrice(noCamp, 'leo')).toBeNull();
+    });
+
+    it('addonConfig returns the full config object', () => {
+      expect(addonConfig(event, 'banner')).toEqual({ price: 15, lastPurchaseAt: '2026-08-01T00:00:00Z' });
+      expect(addonConfig(event, 'tshirt')).toEqual({ price: 20 });
+    });
+  });
+
+  describe('addonPurchaseOpen', () => {
+    it('is open before regCloses when no lastPurchaseAt is set', () => {
+      expect(addonPurchaseOpen(event.tshirtAddon, regCloses, new Date('2026-06-01T00:00:00Z'))).toBe(true);
+    });
+
+    it('is closed after regCloses when no lastPurchaseAt is set', () => {
+      expect(addonPurchaseOpen(event.tshirtAddon, regCloses, new Date('2026-07-02T00:00:00Z'))).toBe(false);
+    });
+
+    it('is open exactly AT regCloses (boundary, no lastPurchaseAt)', () => {
+      expect(addonPurchaseOpen(event.tshirtAddon, regCloses, new Date(regCloses))).toBe(true);
+    });
+
+    it('stays open past regCloses when lastPurchaseAt is set later', () => {
+      // banner's lastPurchaseAt (2026-08-01) is AFTER regCloses (2026-07-01).
+      expect(addonPurchaseOpen(event.bannerAddon, regCloses, new Date('2026-07-15T00:00:00Z'))).toBe(true);
+    });
+
+    it('closes at its own lastPurchaseAt even though that is after regCloses', () => {
+      expect(addonPurchaseOpen(event.bannerAddon, regCloses, new Date('2026-08-02T00:00:00Z'))).toBe(false);
+    });
+
+    it('is open exactly AT its own lastPurchaseAt (boundary)', () => {
+      expect(addonPurchaseOpen(event.bannerAddon, regCloses, new Date(event.bannerAddon!.lastPurchaseAt!))).toBe(true);
+    });
+
+    it('an EARLIER lastPurchaseAt than regCloses still governs (deadline can tighten, not just extend)', () => {
+      const tight = { price: 10, lastPurchaseAt: '2026-06-01T00:00:00Z' };
+      expect(addonPurchaseOpen(tight, regCloses, new Date('2026-06-15T00:00:00Z'))).toBe(false);
+      expect(addonPurchaseOpen(tight, regCloses, new Date('2026-05-15T00:00:00Z'))).toBe(true);
+    });
+
+    it('treats an unconfigured add-on (undefined config) as governed by regCloses alone', () => {
+      expect(addonPurchaseOpen(undefined, regCloses, new Date('2026-06-01T00:00:00Z'))).toBe(true);
+      expect(addonPurchaseOpen(undefined, regCloses, new Date('2026-07-02T00:00:00Z'))).toBe(false);
+    });
+  });
+});
+
+describe('per-unit add-on draft (individual purchase UI, emv2 P2 T3)', () => {
+  const athlete = { id: 'ath-1', firstName: 'Jamie', lastName: 'Lee' };
+  const regCloses = '2026-07-01T00:00:00Z';
+  const competition: AddonDraftEvent = {
+    id: 'ev-1', name: 'Springfield Open', regCloses, eventType: 'competition',
+    tshirtAddon: { price: 20, sizes: ['S', 'M', 'L'] },
+    bannerAddon: { price: 15 },
+    banquet: { price: 40, name: 'Awards Banquet' },
+  };
+  const camp: AddonDraftEvent = {
+    id: 'ev-2', name: 'Summer Camp', regCloses, eventType: 'camp',
+    tshirtAddon: { price: 0, sizes: ['S', 'M', 'L'] },
+    campConfig: { leoAddon: { price: 30, sizes: ['CS', 'CM'] } },
+  };
+
+  describe('initialAddonDraft', () => {
+    it('starts empty for a competition registration', () => {
+      expect(initialAddonDraft(competition, 'registration')).toEqual({
+        shirtUnits: [], leoUnits: [], banquetUnits: [], bannerText: '',
+      });
+    });
+
+    it('seeds a single unfilled unit for camp shirt/leo in registration mode (forces an explicit choice)', () => {
+      expect(initialAddonDraft(camp, 'registration')).toEqual({
+        shirtUnits: [''], leoUnits: [''], banquetUnits: [], bannerText: '',
+      });
+    });
+
+    it('never forces a choice in standalone mode, even for a camp', () => {
+      expect(initialAddonDraft(camp, 'standalone')).toEqual({
+        shirtUnits: [], leoUnits: [], banquetUnits: [], bannerText: '',
+      });
+    });
+  });
+
+  describe('addonDraftValid', () => {
+    const now = new Date('2026-06-01T00:00:00Z');
+    it('is always valid for a non-camp event', () => {
+      expect(addonDraftValid(competition, { shirtUnits: [''], leoUnits: [], banquetUnits: [], bannerText: '' }, now)).toBe(true);
+    });
+
+    it('rejects an unmade camp shirt/leo choice while the window is open', () => {
+      expect(addonDraftValid(camp, { shirtUnits: [''], leoUnits: ['CS'], banquetUnits: [], bannerText: '' }, now)).toBe(false);
+      expect(addonDraftValid(camp, { shirtUnits: ['none'], leoUnits: [''], banquetUnits: [], bannerText: '' }, now)).toBe(false);
+    });
+
+    it('accepts an explicit "none" opt-out for camp shirt/leo', () => {
+      expect(addonDraftValid(camp, { shirtUnits: ['none'], leoUnits: ['none'], banquetUnits: [], bannerText: '' }, now)).toBe(true);
+    });
+
+    it('accepts a real size choice for camp shirt/leo', () => {
+      expect(addonDraftValid(camp, { shirtUnits: ['M'], leoUnits: ['CM'], banquetUnits: [], bannerText: '' }, now)).toBe(true);
+    });
+
+    it('does not require a choice for a camp add-on whose window has already closed', () => {
+      const closedCamp: AddonDraftEvent = { ...camp, tshirtAddon: { price: 0, sizes: ['S'], lastPurchaseAt: '2026-01-01T00:00:00Z' } };
+      expect(addonDraftValid(closedCamp, { shirtUnits: [''], leoUnits: ['CM'], banquetUnits: [], bannerText: '' }, now)).toBe(true);
+    });
+  });
+
+  describe('buildAddonCartItems', () => {
+    it('creates one line per non-empty shirt unit, skipping blank/none', () => {
+      const items = buildAddonCartItems(competition, athlete, { shirtUnits: ['M', '', 'L'], leoUnits: [], banquetUnits: [], bannerText: '' }, 1000);
+      expect(items).toHaveLength(2);
+      expect(items[0]).toMatchObject({ kind: 'addon', refLineType: 'tshirt', addonSize: 'M', amount: 20, refEventId: 'ev-1', refUserId: 'ath-1' });
+      expect(items[1]).toMatchObject({ refLineType: 'tshirt', addonSize: 'L' });
+      expect(items[0].id).not.toBe(items[1].id);
+    });
+
+    it('skips a camp shirt/leo unit explicitly set to "none"', () => {
+      const items = buildAddonCartItems(camp, athlete, { shirtUnits: ['none'], leoUnits: ['CS'], banquetUnits: [], bannerText: '' }, 1000);
+      expect(items).toHaveLength(1);
+      expect(items[0]).toMatchObject({ refLineType: 'leo', addonSize: 'CS', amount: 30 });
+    });
+
+    it('labels a banquet ticket assigned to the athlete vs an extra ticket', () => {
+      const items = buildAddonCartItems(
+        competition, athlete,
+        { shirtUnits: [], leoUnits: [], banquetUnits: ['ath-1', 'extra'], bannerText: '' },
+        2000,
+      );
+      expect(items).toHaveLength(2);
+      expect(items[0]).toMatchObject({ refLineType: 'banquet', addonAssigneeId: 'ath-1' });
+      expect(items[0].label).toContain('For Jamie Lee');
+      expect(items[1]).toMatchObject({ refLineType: 'banquet', addonAssigneeId: 'extra' });
+      expect(items[1].label).toContain('Extra ticket');
+    });
+
+    it('adds a banner line only when text is present and non-blank', () => {
+      const withText = buildAddonCartItems(competition, athlete, { shirtUnits: [], leoUnits: [], banquetUnits: [], bannerText: '  Springfield  ' }, 3000);
+      expect(withText).toHaveLength(1);
+      expect(withText[0]).toMatchObject({ refLineType: 'banner' });
+      expect(withText[0].label).toContain('Springfield');
+
+      const blank = buildAddonCartItems(competition, athlete, { shirtUnits: [], leoUnits: [], banquetUnits: [], bannerText: '   ' }, 3000);
+      expect(blank).toHaveLength(0);
+    });
+
+    it('produces no lines from an all-empty draft', () => {
+      expect(buildAddonCartItems(competition, athlete, { shirtUnits: [], leoUnits: [], banquetUnits: [], bannerText: '' }, 4000)).toHaveLength(0);
+    });
+  });
+
+  describe('anyAddonWindowOpen', () => {
+    const now = new Date('2026-06-01T00:00:00Z');
+    it('true when at least one configured type is open', () => {
+      expect(anyAddonWindowOpen(competition, now)).toBe(true);
+    });
+
+    it('false once every configured type has closed', () => {
+      const closed: AddonDraftEvent = { id: 'ev-3', name: 'x', regCloses: '2026-01-01T00:00:00Z' };
+      expect(anyAddonWindowOpen(closed, now)).toBe(false);
+    });
+
+    it('excludes the banner when includeBanner is false (standalone-purchase gate)', () => {
+      const bannerOnly: AddonDraftEvent = { id: 'ev-4', name: 'x', regCloses, bannerAddon: { price: 15 } };
+      expect(anyAddonWindowOpen(bannerOnly, now)).toBe(true);
+      expect(anyAddonWindowOpen(bannerOnly, now, { includeBanner: false })).toBe(false);
+    });
+  });
+});
+
+describe('club-manager per-unit add-on draft (emv2 P2 T4)', () => {
+  const clubEvent: ClubAddonDraftEvent = {
+    id: 'ev-1', name: 'Springfield Open',
+    tshirtAddon: { price: 20, sizes: ['S', 'M', 'L'] },
+    bannerAddon: { price: 15 },
+    banquet: { price: 40, name: 'Awards Banquet' },
+  };
+  const names: Record<string, string> = { 'p-1': 'Jamie Lee', 'p-2': 'Alex Kim' };
+  const nameOf = (id: string) => names[id] ?? id;
+
+  it('initialClubAddonDraft starts fully empty', () => {
+    expect(initialClubAddonDraft()).toEqual({ shirtUnits: [], banquetUnits: [], bannerText: '' });
+  });
+
+  it('one line per shirt unit, skipping blank entries', () => {
+    const items = buildClubAddonCartItems(clubEvent, { shirtUnits: ['M', '', 'L'], banquetUnits: [], bannerText: '' }, nameOf, 1000);
+    expect(items).toHaveLength(2);
+    expect(items[0]).toMatchObject({ kind: 'addon', refLineType: 'tshirt', addonSize: 'M', amount: 20, refEventId: 'ev-1' });
+    expect(items[1]).toMatchObject({ addonSize: 'L' });
+  });
+
+  it('banquet tickets: assigned lines name the roster person, extra lines say "Extra ticket", refUserId set only when assigned', () => {
+    const items = buildClubAddonCartItems(
+      clubEvent, { shirtUnits: [], banquetUnits: ['p-1', 'extra', 'p-2'], bannerText: '' }, nameOf, 2000,
+    );
+    expect(items).toHaveLength(3);
+    expect(items[0]).toMatchObject({ refLineType: 'banquet', addonAssigneeId: 'p-1', refUserId: 'p-1', label: expect.stringContaining('Jamie Lee') });
+    expect(items[1]).toMatchObject({ addonAssigneeId: 'extra', refUserId: undefined, label: expect.stringContaining('Extra ticket') });
+    expect(items[2]).toMatchObject({ addonAssigneeId: 'p-2', refUserId: 'p-2', label: expect.stringContaining('Alex Kim') });
+  });
+
+  it('banner: one line with the trimmed club text, skipped when blank', () => {
+    const withText = buildClubAddonCartItems(clubEvent, { shirtUnits: [], banquetUnits: [], bannerText: '  Springfield  ' }, nameOf, 3000);
+    expect(withText).toHaveLength(1);
+    expect(withText[0]).toMatchObject({ refLineType: 'banner', label: expect.stringContaining('Springfield') });
+
+    const blank = buildClubAddonCartItems(clubEvent, { shirtUnits: [], banquetUnits: [], bannerText: '   ' }, nameOf, 3000);
+    expect(blank).toHaveLength(0);
+  });
+
+  it('produces no lines from an all-empty draft', () => {
+    expect(buildClubAddonCartItems(clubEvent, { shirtUnits: [], banquetUnits: [], bannerText: '' }, nameOf, 4000)).toHaveLength(0);
+  });
+});
+
+describe('camp overnight-accommodations survey (emv2 P2 T5, spec §G)', () => {
+  it('initialCampSurveyDraft starts blank with no existing answers', () => {
+    expect(initialCampSurveyDraft()).toEqual({ bedtime: '', noiseLevel: '', cabinGenderPref: '', roommateRequest: '' });
+  });
+  it('initialCampSurveyDraft prefills from an existing stored survey (edit case)', () => {
+    expect(initialCampSurveyDraft({ bedtime: 'after-midnight', noiseLevel: 'lively', cabinGenderPref: 'Female', roommateRequest: 'Jamie' }))
+      .toEqual({ bedtime: 'after-midnight', noiseLevel: 'lively', cabinGenderPref: 'Female', roommateRequest: 'Jamie' });
+  });
+
+  it('campSurveyValid requires bedtime + noiseLevel + cabinGenderPref, not roommateRequest', () => {
+    expect(campSurveyValid({ bedtime: '', noiseLevel: '', cabinGenderPref: '', roommateRequest: '' })).toBe(false);
+    expect(campSurveyValid({ bedtime: 'before-10', noiseLevel: 'quiet', cabinGenderPref: '', roommateRequest: '' })).toBe(false);
+    expect(campSurveyValid({ bedtime: 'before-10', noiseLevel: 'quiet', cabinGenderPref: 'No preference', roommateRequest: '' })).toBe(true);
+  });
+
+  it('campSurveyToStored returns undefined for a fully-blank draft', () => {
+    expect(campSurveyToStored({ bedtime: '', noiseLevel: '', cabinGenderPref: '', roommateRequest: '   ' })).toBeUndefined();
+  });
+  it('campSurveyToStored trims roommateRequest and omits unanswered keys', () => {
+    expect(campSurveyToStored({ bedtime: 'before-10', noiseLevel: '', cabinGenderPref: '', roommateRequest: '  Jamie Lee  ' }))
+      .toEqual({ bedtime: 'before-10', roommateRequest: 'Jamie Lee' });
+  });
+  it('campSurveyToStored carries every answered field', () => {
+    expect(campSurveyToStored({ bedtime: '10-to-midnight', noiseLevel: 'moderate', cabinGenderPref: 'Male', roommateRequest: 'Alex' }))
+      .toEqual({ bedtime: '10-to-midnight', noiseLevel: 'moderate', cabinGenderPref: 'Male', roommateRequest: 'Alex' });
+  });
+
+  it('campSurveySummary is empty for no survey', () => {
+    expect(campSurveySummary(undefined)).toBe('');
+  });
+  it('campSurveySummary joins answered fields with human labels', () => {
+    expect(campSurveySummary({ bedtime: '10-to-midnight', noiseLevel: 'quiet', cabinGenderPref: 'Female', roommateRequest: 'Jamie' }))
+      .toBe('bedtime: 10pm–midnight, noise: Quiet, cabin: Female, roommate: Jamie');
+  });
+  it('campSurveySummary only includes fields that were actually answered', () => {
+    expect(campSurveySummary({ noiseLevel: 'lively' })).toBe('noise: Lively');
   });
 });

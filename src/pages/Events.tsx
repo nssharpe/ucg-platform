@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { useRolesLoaded } from '../lib/auth';
-import { seasonForDate, clubHasActiveMembership, paidRegistrationClub } from '../lib/capabilities-core';
+import { seasonForDate, clubHasActiveMembershipForEvent, paidRegistrationClub } from '../lib/capabilities-core';
 import { eventIsInPhase } from '../lib/events-core';
 import { Badge, Field, Modal, Tabs } from '../components/ui';
 import { useToast, useFmtDate } from '../components/ui-hooks';
@@ -13,8 +13,9 @@ import { EventStatusBadge } from './Home';
 import { APPARATUS, SHIRT_SIZES } from '../lib/types';
 import type { Athlete, CartItem, Discipline, Event, EventAdmin, EventSession, Registration } from '../lib/types';
 import { DisciplineIcon } from '../components/DisciplineIcon';
+import { SizedAddonPicker } from '../components/AddonPickers';
 import {
-  deleteRegistration, fetchEventCollectedTotal, fetchEventHostRoster, findPersonForHost, grantEventAdmin,
+  deleteRegistration, fetchEventCollectedTotal, fetchEventHostAddons, fetchEventHostRoster, findPersonForHost, grantEventAdmin,
   hostDeleteRegistration, hostUpsertRegistration, insuranceCertificateUrl,
   listSanctioningTeam, markMedalsReceived, pushCart, pushEvent, pushEventSessions, pushRegistration,
   revokeEventAdmin, syncSynchroPartnerLevelRemote, uploadInsuranceCertificate,
@@ -24,7 +25,12 @@ import { summarizeRoster, levelNameResolver } from '../lib/host-page';
 import { buildRegistrationWorkbookSheets, type SheetModel } from '../lib/host-export';
 import { stateCode } from '../lib/sanction';
 import { fmtMoney } from '../lib/scoring';
-import { newRegistrationEntryTotal, registrationChangeFee, syncSynchroPartnerLevel, findIncomingSynchroPartner, lateFeeApplies, lateFeeAnchor } from '../lib/pricing';
+import {
+  newRegistrationEntryTotal, registrationChangeFee, syncSynchroPartnerLevel, findIncomingSynchroPartner,
+  lateFeeApplies, lateFeeAnchor, addonPurchaseOpen, initialAddonDraft, anyAddonWindowOpen, addonDraftValid,
+  buildAddonCartItems, type AddonDraft,
+  initialCampSurveyDraft, campSurveyValid, campSurveyToStored, campSurveySummary, CABIN_GENDER_OPTIONS, type CampSurveyDraft,
+} from '../lib/pricing';
 import { OWNER_TASKS, ownerTaskDueDate } from '../../supabase/functions/_shared/owner-checklist';
 import type { OwnerChecklist, OwnerChecklistEntry, OwnerTaskId } from '../../supabase/functions/_shared/owner-checklist';
 
@@ -230,12 +236,24 @@ export function EventDetail() {
   const event = db.events.find((m) => m.slug === slug);
   const [editWizardOpen, setEditWizardOpen] = useState(false);
   const [selfRegOpen, setSelfRegOpen] = useState(false);
+  const [addonsOpen, setAddonsOpen] = useState(false);
 
   if (!event) return <p>Event not found.</p>;
   const host = db.clubs.find((c) => c.id === event.hostClubId);
   const regs = db.registrations.filter((r) => r.eventId === event.id && !r.refunded);
   const canManage = caps.isEventHost(event.id);
   const tz = tzAbbrev(event.timezone);
+
+  // Standalone add-on purchase (Phase 2 T3): available to a signed-in user who
+  // already has a (non-refunded) registration for this event, for as long as ANY
+  // configured add-on type's purchase window is still open — which may extend
+  // PAST regCloses via `lastPurchaseAt`. Banner isn't offered here (registration-
+  // popup only, per spec) so it's excluded from the window check.
+  const myAthlete = caps.personId ? db.people.find((p) => p.id === caps.personId) : undefined;
+  const myRegs = myAthlete
+    ? db.registrations.filter((r) => r.eventId === event.id && r.athleteId === myAthlete.id && !r.refunded)
+    : [];
+  const anyStandaloneAddonOpen = anyAddonWindowOpen(event, new Date(), { includeBanner: false });
 
   return (
     <div>
@@ -319,6 +337,11 @@ export function EventDetail() {
               <button className="btn small ghost" data-tip="Generates a private reg link + password for late adds" onClick={() => toast(`Private link: ucg.org/#/events/${event.slug}?code=LATE26 (demo)`)}>Private reg link</button>
             </div>
           )}
+          {myAthlete && myRegs.length > 0 && anyStandaloneAddonOpen && (
+            <div style={{ marginTop: 10 }}>
+              <button className="btn small ghost" onClick={() => setAddonsOpen(true)}>Add-ons →</button>
+            </div>
+          )}
         </div>
         <div className="card card-pad">
           <h3 className="card-title">Field</h3>
@@ -370,6 +393,16 @@ export function EventDetail() {
           />
         );
       })()}
+
+      {/* Standalone add-on purchase modal (Phase 2 T3) */}
+      {addonsOpen && myAthlete && (
+        <StandaloneAddonsModal
+          event={event}
+          athlete={myAthlete}
+          onClose={() => setAddonsOpen(false)}
+          toast={toast}
+        />
+      )}
     </div>
   );
 }
@@ -761,7 +794,7 @@ function RosterToolsCard({
     // the event's season — same idiom as Club.tsx's clubMembershipBlocked().
     // The reg is created under the athlete's main club (find_person_for_host).
     const seasonId = seasonForDate(db, event.startDate);
-    if (!found.clubId || !clubHasActiveMembership(db, found.clubId, seasonId)) {
+    if (!found.clubId || !clubHasActiveMembershipForEvent(db, found.clubId, seasonId, event.eventType)) {
       setAddBusy(false);
       const sName = db.seasons.find((s) => s.id === seasonId)?.name ?? "this event's season";
       toast(
@@ -1004,22 +1037,39 @@ export function EventHostPage() {
   );
 }
 
-/** Excel-export card (event-mgmt v2 §C/§K): one workbook, three sheets
- *  (Athletes / Counts / Shirt sizes) built from the shared host roster — see
- *  src/lib/host-export.ts for the sheet shapes and the scope decision on
- *  what's deferred to Phase 2 (leo sizes, banquet quantities). exceljs is
- *  dynamically imported so it isn't in the main bundle (same reasoning as
- *  any heavy on-demand export lib — this page is the only place it's used). */
+/** Excel-export card (event-mgmt v2 §C/§K, Phase 2 T7): one workbook built
+ *  from the shared host roster + purchased add-on units — see
+ *  src/lib/host-export.ts for the sheet shapes (Athletes / Counts / Shirt
+ *  sizes [profile] always; Shirts (purchased) / Leo sizes / Banquet when
+ *  configured; Camp roster for camp events). exceljs is dynamically imported
+ *  so it isn't in the main bundle (same reasoning as any heavy on-demand
+ *  export lib — this page is the only place it's used). */
 function HostExportCard({ event, rows, error, toast }: { event: Event; rows: HostRosterRow[] | null; error: string | null; toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void }) {
   const db = useDB();
   const [building, setBuilding] = useState(false);
   const ready = !!rows && !error;
 
+  // Purchased add-on units (Shirts/Leo/Banquet sheets, event-mgmt v2 Phase 2
+  // T7) are only needed at download time, unlike the roster which the
+  // summary card above also renders — fetched fresh on each click rather
+  // than kept in state, since this card has no other reason to re-render on
+  // an addon purchase happening mid-visit.
   const download = async () => {
     if (!rows) return;
     setBuilding(true);
     try {
-      const sheets = buildRegistrationWorkbookSheets(rows, levelNameResolver(db.levels));
+      const addonRes = await fetchEventHostAddons(event.id);
+      if (!addonRes.ok) {
+        toast(`Couldn't load purchased add-ons: ${addonRes.error}`, { variant: 'error' });
+        setBuilding(false);
+        return;
+      }
+      const sheets = buildRegistrationWorkbookSheets(rows, levelNameResolver(db.levels), addonRes.rows, {
+        tshirtConfigured: !!event.tshirtAddon,
+        leoConfigured: !!event.campConfig?.leoAddon,
+        banquetConfigured: !!event.banquet,
+        isCamp: event.eventType === 'camp',
+      });
       const { Workbook } = await import('exceljs');
       const wb = new Workbook();
       wb.creator = 'UCG Registration Platform';
@@ -1046,7 +1096,8 @@ function HostExportCard({ event, rows, error, toast }: { event: Event; rows: Hos
     <div className="card card-pad" style={{ marginBottom: 18 }}>
       <h3 className="card-title">Registration workbook</h3>
       <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--ink-soft)' }}>
-        Full athlete detail, level × club × apparatus counts, and profile shirt-size tallies in one .xlsx file.
+        Full athlete detail, level × club × apparatus counts, shirt/leo/banquet purchases, and (for camps) an
+        overnight-survey roster — all in one .xlsx file.
       </p>
       {error && <p style={{ color: 'var(--coral-700)' }}>Couldn't load the roster — try refreshing the page.</p>}
       <button className="btn primary small" disabled={!ready || building} onClick={download}>
@@ -1215,6 +1266,238 @@ function HostRegistrationSummaryCard({ rows, error }: { rows: HostRosterRow[] | 
 }
 
 // ---------------------------------------------------------------------------
+// Per-unit add-on pickers (event-mgmt v2 Phase 2 T3) — shared between the
+// registration popup's add-on step and the standalone post-registration
+// purchase dialog. Kept at MODULE scope (not nested in SelfRegModal/
+// EventDetail) per the ESLint rule against components defined inside another
+// component's render.
+// ---------------------------------------------------------------------------
+
+// AddonDraft / initialAddonDraft / anyAddonWindowOpen / addonDraftValid /
+// buildAddonCartItems are pure logic — they live in src/lib/pricing.ts
+// (unit-tested in tests/pricing.test.ts) and are imported above.
+// `SizedAddonPicker` (the shirt/leo quantity+size picker) is extracted to
+// src/components/AddonPickers.tsx (T4) so the club-manager Add-ons card can
+// reuse it without importing from this page file.
+
+/** Banquet ticket picker: a quantity stepper where only the FIRST ticket can
+ *  be assigned to the buying athlete (max-1-assigned-per-person server rule +
+ *  self-cart-can-only-assign-self rule) — every additional ticket is always
+ *  "Extra". `alreadyAssignedSelf` disables re-assigning when the athlete
+ *  already has an assigned ticket for this event elsewhere in their cart. */
+function BanquetPicker({
+  name, price, deadline, athleteName, selfAssigneeId, alreadyAssignedSelf, units, onChange, fmtDate,
+}: {
+  name: string;
+  price: number;
+  deadline?: string;
+  athleteName: string;
+  selfAssigneeId: string;
+  alreadyAssignedSelf: boolean;
+  units: string[];
+  onChange: (units: string[]) => void;
+  fmtDate: (iso: string) => string;
+}) {
+  const priceLabel = price === 0 ? 'Free' : fmtMoney(price);
+  const addUnit = () => onChange([...units, units.length === 0 && !alreadyAssignedSelf ? selfAssigneeId : 'extra']);
+  const removeUnit = () => onChange(units.slice(0, -1));
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 14 }}>
+      <h3 className="card-title">{name} — {priceLabel}</h3>
+      {deadline && (
+        <p style={{ fontSize: 12, color: 'var(--ink-soft)', margin: '0 0 8px' }}>
+          Purchase by {fmtDate(deadline.slice(0, 10))}
+        </p>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: units.length > 0 ? 10 : 0 }}>
+        <span style={{ fontSize: 14 }}>Tickets</span>
+        <button type="button" className="btn small ghost" onClick={removeUnit} disabled={units.length === 0} aria-label="Remove a ticket">−</button>
+        <span style={{ minWidth: 18, textAlign: 'center' }}>{units.length}</span>
+        <button type="button" className="btn small ghost" onClick={addUnit} aria-label="Add a ticket">+</button>
+      </div>
+      {units.map((u, i) => (
+        i === 0 ? (
+          <Field key={i} label="Ticket #1">
+            <select
+              className="input"
+              value={u}
+              onChange={(e) => onChange(units.map((x, idx) => (idx === 0 ? e.target.value : x)))}
+            >
+              <option value={selfAssigneeId} disabled={alreadyAssignedSelf}>
+                For {athleteName}{alreadyAssignedSelf ? ' (already have a ticket)' : ''}
+              </option>
+              <option value="extra">Extra ticket</option>
+            </select>
+          </Field>
+        ) : (
+          <div key={i} style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 6 }}>
+            Ticket #{i + 1}: Extra ticket
+          </div>
+        )
+      ))}
+    </div>
+  );
+}
+
+/** Composes the shirt/leo/banquet/banner pickers for one athlete+event,
+ *  shared by the registration popup's add-on step (`mode:'registration'`,
+ *  which also offers the banner) and the standalone post-registration
+ *  purchase dialog (`mode:'standalone'`, shirts/leo/banquet only). Renders
+ *  nothing if every add-on type's purchase window is closed. */
+function AddonSection({ event, athlete, mode, draft, onChange, existingCart, fmtDate }: {
+  event: Event;
+  athlete: Athlete;
+  mode: 'registration' | 'standalone';
+  draft: AddonDraft;
+  onChange: (next: AddonDraft) => void;
+  existingCart: CartItem[];
+  fmtDate: (iso: string) => string;
+}) {
+  const now = new Date();
+  const isCamp = event.eventType === 'camp';
+
+  const tshirtCfg = event.tshirtAddon;
+  const tshirtOpen = !!tshirtCfg && addonPurchaseOpen(tshirtCfg, event.regCloses, now);
+
+  const leoCfg = event.campConfig?.leoAddon;
+  const leoOpen = !!leoCfg && addonPurchaseOpen(leoCfg, event.regCloses, now);
+
+  const banquetCfg = event.banquet;
+  const banquetOpen = !!banquetCfg && addonPurchaseOpen(banquetCfg, event.regCloses, now);
+
+  const bannerCfg = event.bannerAddon;
+  const bannerOpen = mode === 'registration' && !!bannerCfg && addonPurchaseOpen(bannerCfg, event.regCloses, now);
+
+  const alreadyAssignedSelf = existingCart.some(
+    (ci) => ci.kind === 'addon' && ci.refLineType === 'banquet' && ci.refEventId === event.id && ci.addonAssigneeId === athlete.id,
+  );
+
+  if (!tshirtOpen && !leoOpen && !banquetOpen && !bannerOpen) return null;
+
+  return (
+    <div>
+      {tshirtOpen && tshirtCfg && (
+        <SizedAddonPicker
+          title="T-shirt"
+          price={tshirtCfg.price}
+          sizes={tshirtCfg.sizes.length > 0 ? tshirtCfg.sizes : SHIRT_SIZES}
+          deadline={tshirtCfg.lastPurchaseAt}
+          forceSingle={mode === 'registration' && isCamp}
+          noneLabel="No shirt"
+          units={draft.shirtUnits}
+          onChange={(units) => onChange({ ...draft, shirtUnits: units })}
+          fmtDate={fmtDate}
+        />
+      )}
+      {leoOpen && leoCfg && (
+        <SizedAddonPicker
+          title="Leotard"
+          price={leoCfg.price}
+          sizes={leoCfg.sizes.length > 0 ? leoCfg.sizes : SHIRT_SIZES}
+          deadline={leoCfg.lastPurchaseAt}
+          forceSingle={mode === 'registration'}
+          noneLabel="No leotard"
+          units={draft.leoUnits}
+          onChange={(units) => onChange({ ...draft, leoUnits: units })}
+          fmtDate={fmtDate}
+        />
+      )}
+      {banquetOpen && banquetCfg && (
+        <BanquetPicker
+          name={banquetCfg.name}
+          price={banquetCfg.price}
+          deadline={banquetCfg.lastPurchaseAt}
+          athleteName={`${athlete.firstName} ${athlete.lastName}`}
+          selfAssigneeId={athlete.id}
+          alreadyAssignedSelf={alreadyAssignedSelf}
+          units={draft.banquetUnits}
+          onChange={(units) => onChange({ ...draft, banquetUnits: units })}
+          fmtDate={fmtDate}
+        />
+      )}
+      {bannerOpen && bannerCfg && (
+        <div className="card card-pad" style={{ marginBottom: 14 }}>
+          <h3 className="card-title">Club banner — {bannerCfg.price === 0 ? 'Free' : fmtMoney(bannerCfg.price)}</h3>
+          {bannerCfg.lastPurchaseAt && (
+            <p style={{ fontSize: 12, color: 'var(--ink-soft)', margin: '0 0 8px' }}>
+              Purchase by {fmtDate(bannerCfg.lastPurchaseAt.slice(0, 10))}
+            </p>
+          )}
+          <Field label="Banner text (leave blank to skip)" hint="Text to print on the banner.">
+            <input
+              className="input"
+              value={draft.bannerText}
+              onChange={(e) => onChange({ ...draft, bannerText: e.target.value })}
+              placeholder="e.g. Springfield Gymnastics Club"
+            />
+          </Field>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Standalone post-registration add-on purchase (Phase 2 T3): opened from the
+ *  event page for a signed-in athlete who already has a registration here.
+ *  Reuses `AddonSection` in `'standalone'` mode (no banner) and pushes
+ *  straight to the athlete's own cart — available for as long as ANY add-on
+ *  type's window is open, independent of whether registration itself is
+ *  still open (a `lastPurchaseAt` may extend past `regCloses`). */
+function StandaloneAddonsModal({ event, athlete, onClose, toast }: {
+  event: Event;
+  athlete: Athlete;
+  onClose: () => void;
+  toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void;
+}) {
+  const db = useDB();
+  const navigate = useNavigate();
+  const fmtDate = useFmtDate();
+  const [draft, setDraft] = useState<AddonDraft>(() => initialAddonDraft(event, 'standalone'));
+
+  const hasSelection =
+    draft.shirtUnits.some((u) => u && u !== 'none') ||
+    draft.leoUnits.some((u) => u && u !== 'none') ||
+    draft.banquetUnits.length > 0;
+
+  const handleSubmit = () => {
+    const items = buildAddonCartItems(event, athlete, draft, Date.now());
+    if (items.length === 0) {
+      toast('Choose at least one add-on to purchase.', { variant: 'error' });
+      return;
+    }
+    mutate((d) => {
+      const cart = d.carts[athlete.id] ?? (d.carts[athlete.id] = []);
+      for (const item of items) cart.push(item);
+      pushCart(athlete.id, cart, false);
+    });
+    toast('Add-ons saved to your cart. Check out to complete payment.');
+    onClose();
+    navigate('/cart');
+  };
+
+  return (
+    <Modal title={`Add-ons — ${event.name}`} onClose={onClose}>
+      <p style={{ fontSize: 14, color: 'var(--ink-soft)', marginBottom: 14 }}>
+        Purchase additional add-ons for your existing registration.
+      </p>
+      <AddonSection
+        event={event}
+        athlete={athlete}
+        mode="standalone"
+        draft={draft}
+        onChange={setDraft}
+        existingCart={db.carts[athlete.id] ?? []}
+        fmtDate={fmtDate}
+      />
+      <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+        <button className="btn primary" onClick={handleSubmit} disabled={!hasSelection}>Add to cart</button>
+      </div>
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // SelfRegModal — individual self-registration
 // ---------------------------------------------------------------------------
 
@@ -1228,6 +1511,7 @@ interface SelfRegModalProps {
 function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
   const db = useDB();
   const navigate = useNavigate();
+  const fmtDate = useFmtDate();
 
   // Clubs the athlete is affiliated with (main + alt)
   const myClubs = [
@@ -1247,23 +1531,31 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
 
   // Default to the locked club when one applies, else the athlete's first club.
   const [selectedClubId, setSelectedClubId] = useState(lockedClubId ?? myClubs[0]?.id ?? '');
-  const [step, setStep] = useState<'reg' | 'addons'>('reg');
-  // Add-on selections
-  const [tshirtSize, setTshirtSize] = useState('');
-  const [bannerText, setBannerText] = useState('');
-  // Saved regs from editor (used in add-on step)
+  const [step, setStep] = useState<'reg' | 'addons' | 'survey'>('reg');
+  // Add-on selections (per-unit model — one cart line per unit, Phase 2 T3).
+  const [addonDraft, setAddonDraft] = useState<AddonDraft>(() => initialAddonDraft(event, 'registration'));
+  // Saved regs from editor (used in the add-on / survey steps)
   const [pendingRegs, setPendingRegs] = useState<Registration[] | null>(null);
+  const [pendingAddonItems, setPendingAddonItems] = useState<CartItem[]>([]);
 
   const season = db.seasons.find((s) => s.current)!;
   const existingRegs = db.registrations.filter(
     (r) => r.eventId === event.id && r.athleteId === athlete.id && !r.refunded,
   );
 
+  // Camp overnight-accommodations survey (event-mgmt v2 §G): asked LAST in
+  // the popup, after add-ons, only when the event turns it on. Seeded from
+  // any prior answer on this athlete's existing reg (re-registering keeps it).
+  const surveyRequired = event.eventType === 'camp' && !!event.campConfig?.overnightSurvey;
+  const [surveyDraft, setSurveyDraft] = useState<CampSurveyDraft>(
+    () => initialCampSurveyDraft(existingRegs[0]?.campSurvey),
+  );
+
   const changeFeeApplies = !!(
     event.changeFee && new Date() >= new Date(event.changeFee.startsAt)
   );
 
-  const hasAddons = !!(event.tshirtAddon || event.bannerAddon);
+  const hasAddons = anyAddonWindowOpen(event, new Date());
 
   // Called by RegistrationEditor when the athlete confirms their selections
   const handleRegSave = (regs: Registration[]) => {
@@ -1274,9 +1566,12 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
       toast(`You're already registered with ${lockedClubShort} for this event — you can't register under a different club. Edit your existing registration instead.`, { variant: 'error' });
       return;
     }
-    // Gate: the competing club must hold an active membership for the event's season.
+    // Gate: the competing club must hold an active membership for the event's
+    // season — waived for camps (event-mgmt v2 §G): a camp registrant's club
+    // needn't be a member; the individual-membership check (caps.canRegister,
+    // gating the "Register yourself" button) still applies to camps.
     const seasonId = seasonForDate(db, event.startDate);
-    if (!clubHasActiveMembership(db, selectedClubId, seasonId)) {
+    if (!clubHasActiveMembershipForEvent(db, selectedClubId, seasonId, event.eventType)) {
       const sName = db.seasons.find((s) => s.id === seasonId)?.name ?? 'this season';
       const club = db.clubs.find((c) => c.id === selectedClubId);
       toast(`${club?.shortName ?? 'Your club'} needs an active ${sName} club membership before anyone can register for this event. A club manager can purchase it on the club page.`, { variant: 'error' });
@@ -1285,12 +1580,21 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
     if (hasAddons) {
       setPendingRegs(regs);
       setStep('addons');
+    } else if (surveyRequired) {
+      setPendingRegs(regs);
+      setStep('survey');
     } else {
-      persistRegs(regs, [], []);
+      persistRegs(regs, []);
     }
   };
 
-  const persistRegs = (regs: Registration[], tshirtItems: CartItem[], bannerItems: CartItem[]) => {
+  const persistRegs = (regs: Registration[], addonItems: CartItem[]) => {
+    // Camp survey answers (§G) are stored per-registration and are free to
+    // change — never part of the pricing above.
+    const storedSurvey = surveyRequired ? campSurveyToStored(surveyDraft) : undefined;
+    if (storedSurvey) {
+      for (const r of regs) r.campSurvey = storedSurvey;
+    }
     let hostFree = false;
     mutate((d) => {
       const existingForAthlete = d.registrations.filter(
@@ -1382,9 +1686,17 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
 
       if (!alreadyHadRegs && entryTotal > 0) {
         const lateSuffix = lateAnchor !== null && lateFeeApplies(event, lateAnchor) ? ' (incl. late fee)' : '';
+        // Add-on + survey answers summarized on the athlete's line item (§G).
+        const ADDON_TYPE_LABELS: Record<string, string> = { tshirt: 'shirt', leo: 'leotard', banquet: 'banquet', banner: 'banner' };
+        const addonSummary = addonItems
+          .map((it) => (it.refLineType ? ADDON_TYPE_LABELS[it.refLineType] ?? it.refLineType : null))
+          .filter((v): v is string => !!v)
+          .join(', ');
+        const surveySummary = storedSurvey ? campSurveySummary(storedSurvey) : '';
+        const summarySuffix = [addonSummary, surveySummary].filter(Boolean).join('; ');
         cart.push({
           id: `ci-self-${Date.now()}-${athlete.id}`,
-          label: `${event.name} entry — ${athlete.firstName} ${athlete.lastName} (${addedRegs.map((r) => r.discipline).join('+')})${lateSuffix}`,
+          label: `${event.name} entry — ${athlete.firstName} ${athlete.lastName} (${addedRegs.map((r) => r.discipline).join('+')})${lateSuffix}${summarySuffix ? ` [${summarySuffix}]` : ''}`,
           amount: entryTotal,
           kind: 'meet-entry',
           refUserId: athlete.id,
@@ -1406,8 +1718,8 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
         });
       }
 
-      // Add-on cart items
-      for (const item of [...tshirtItems, ...bannerItems]) {
+      // Add-on cart items (one line per unit — per-unit add-on model, Phase 2)
+      for (const item of addonItems) {
         cart.push(item);
       }
 
@@ -1433,39 +1745,34 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
 
   const handleAddons = () => {
     if (!pendingRegs) return;
-    const ts = Date.now();
-    const tshirtItems: CartItem[] = [];
-    const bannerItems: CartItem[] = [];
-
-    if (event.tshirtAddon && tshirtSize) {
-      tshirtItems.push({
-        id: `ci-tshirt-${ts}`,
-        label: `${event.name} t-shirt — ${athlete.firstName} ${athlete.lastName} (${tshirtSize})`,
-        amount: event.tshirtAddon.price,
-        kind: 'addon',
-        refUserId: athlete.id,
-        refEventId: event.id,
-        refLineType: 'tshirt',
-      });
+    if (!addonDraftValid(event, addonDraft, new Date())) {
+      toast('Choose a shirt/leotard option ("No shirt"/"No leotard" if you don\'t want one) before continuing.', { variant: 'error' });
+      return;
     }
-    if (event.bannerAddon && bannerText.trim()) {
-      bannerItems.push({
-        id: `ci-banner-${ts}`,
-        label: `${event.name} club banner — "${bannerText.trim()}"`,
-        amount: event.bannerAddon.price,
-        kind: 'addon',
-        refUserId: athlete.id,
-        refEventId: event.id,
-        refLineType: 'banner',
-      });
+    const items = buildAddonCartItems(event, athlete, addonDraft, Date.now());
+    if (surveyRequired) {
+      setPendingAddonItems(items);
+      setStep('survey');
+    } else {
+      persistRegs(pendingRegs, items);
     }
+  };
 
-    persistRegs(pendingRegs, tshirtItems, bannerItems);
+  // Survey questions come LAST in the popup (§G), after add-ons.
+  const handleSurvey = () => {
+    if (!pendingRegs) return;
+    if (!campSurveyValid(surveyDraft)) {
+      toast('Answer bedtime, noise level, and cabin gender preference before continuing (roommate request is optional).', { variant: 'error' });
+      return;
+    }
+    persistRegs(pendingRegs, pendingAddonItems);
   };
 
   const title = step === 'reg'
     ? `Register for ${event.name}`
-    : `Add-ons — ${event.name}`;
+    : step === 'addons'
+      ? `Add-ons — ${event.name}`
+      : `Overnight accommodations — ${event.name}`;
 
   return (
     <Modal title={title} onClose={onClose}>
@@ -1514,39 +1821,84 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
       {step === 'addons' && (
         <div>
           <p style={{ fontSize: 14, color: 'var(--ink-soft)', marginBottom: 14 }}>
-            Optional add-ons for this event — leave a field blank to omit it.
+            Optional add-ons for this event.
           </p>
 
-          {event.tshirtAddon && (
-            <div className="card card-pad" style={{ marginBottom: 14 }}>
-              <h3 className="card-title">T-shirt — {fmtMoney(event.tshirtAddon.price)}</h3>
-              <Field label="Size (leave blank to skip)">
-                <select className="input" value={tshirtSize} onChange={(e) => setTshirtSize(e.target.value)}>
-                  <option value="">— no t-shirt —</option>
-                  {(event.tshirtAddon.sizes.length > 0 ? event.tshirtAddon.sizes : SHIRT_SIZES).map((sz) => (
-                    <option key={sz} value={sz}>{sz}</option>
-                  ))}
-                </select>
-              </Field>
-            </div>
-          )}
-
-          {event.bannerAddon && (
-            <div className="card card-pad" style={{ marginBottom: 14 }}>
-              <h3 className="card-title">Club banner — {fmtMoney(event.bannerAddon.price)}</h3>
-              <Field label="Banner text (leave blank to skip)" hint="Text to print on the banner.">
-                <input
-                  className="input"
-                  value={bannerText}
-                  onChange={(e) => setBannerText(e.target.value)}
-                  placeholder="e.g. Springfield Gymnastics Club"
-                />
-              </Field>
-            </div>
-          )}
+          <AddonSection
+            event={event}
+            athlete={athlete}
+            mode="registration"
+            draft={addonDraft}
+            onChange={setAddonDraft}
+            existingCart={db.carts[athlete.id] ?? []}
+            fmtDate={fmtDate}
+          />
 
           <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
-            <button className="btn primary" onClick={handleAddons}>Continue to cart</button>
+            <button className="btn primary" onClick={handleAddons} disabled={!addonDraftValid(event, addonDraft, new Date())}>
+              {surveyRequired ? 'Continue' : 'Continue to cart'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {step === 'survey' && (
+        <div>
+          <p style={{ fontSize: 14, color: 'var(--ink-soft)', marginBottom: 14 }}>
+            A few questions about overnight accommodations for {athlete.firstName}. You can update these
+            answers any time before the event's edit deadline.
+          </p>
+
+          <div className="grid cols-2" style={{ gap: 12 }}>
+            <Field label="Bedtime">
+              <select
+                className="input"
+                value={surveyDraft.bedtime}
+                onChange={(e) => setSurveyDraft((d) => ({ ...d, bedtime: e.target.value as CampSurveyDraft['bedtime'] }))}
+              >
+                <option value="" disabled>— select —</option>
+                <option value="before-10">Before 10pm</option>
+                <option value="10-to-midnight">10pm–midnight</option>
+                <option value="after-midnight">After midnight</option>
+              </select>
+            </Field>
+            <Field label="Noise level preference">
+              <select
+                className="input"
+                value={surveyDraft.noiseLevel}
+                onChange={(e) => setSurveyDraft((d) => ({ ...d, noiseLevel: e.target.value as CampSurveyDraft['noiseLevel'] }))}
+              >
+                <option value="" disabled>— select —</option>
+                <option value="quiet">Quiet</option>
+                <option value="moderate">Moderate</option>
+                <option value="lively">Lively</option>
+              </select>
+            </Field>
+            <Field label="Cabin gender preference">
+              <select
+                className="input"
+                value={surveyDraft.cabinGenderPref}
+                onChange={(e) => setSurveyDraft((d) => ({ ...d, cabinGenderPref: e.target.value }))}
+              >
+                <option value="" disabled>— select —</option>
+                {CABIN_GENDER_OPTIONS.map((g) => <option key={g} value={g}>{g}</option>)}
+              </select>
+            </Field>
+          </div>
+
+          <Field label="Roommate request (optional)" hint="Who would you like to room with?">
+            <input
+              className="input"
+              value={surveyDraft.roommateRequest}
+              onChange={(e) => setSurveyDraft((d) => ({ ...d, roommateRequest: e.target.value }))}
+              placeholder="e.g. Jamie Lee"
+            />
+          </Field>
+
+          <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+            <button className="btn primary" onClick={handleSurvey} disabled={!campSurveyValid(surveyDraft)}>
+              Continue to cart
+            </button>
           </div>
         </div>
       )}
