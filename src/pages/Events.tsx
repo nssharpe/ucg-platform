@@ -242,6 +242,16 @@ export function EventDetail() {
   const host = db.clubs.find((c) => c.id === event.hostClubId);
   const regs = db.registrations.filter((r) => r.eventId === event.id && !r.refunded);
   const canManage = caps.isEventHost(event.id);
+  // Editing event DETAIL (dates/fees/disciplines/etc. via EventWizard) is
+  // admin/sanctioning-only — exactly the events-table RLS grant
+  // (20260709131708_event_owner_checklist.sql: sanctioning_update/insert; the
+  // deliberate design in 20260710020303 withholds an events UPDATE policy from
+  // hosts). A host-club manager has canManage/isEventHost=true and so used to
+  // see the "Edit event" button, but their events upsert is rejected by RLS
+  // (verified: rows=0) — the write silently failed and edits "didn't persist".
+  // Gate the edit UI on the real capability instead. (isSanctioning === admin
+  // || sanctioning.)
+  const canEditEvent = caps.isSanctioning;
   const tz = tzAbbrev(event.timezone);
 
   // Standalone add-on purchase (Phase 2 T3): available to a signed-in user who
@@ -278,7 +288,7 @@ export function EventDetail() {
           {(canManage || caps.isSanctioning) && (
             <Link className="btn small ghost" to={`/events/${event.slug}/host`}>Host dashboard →</Link>
           )}
-          {canManage && (
+          {canEditEvent && (
             <button className="btn small ghost" onClick={() => setEditWizardOpen(true)}>Edit event</button>
           )}
         </div>
@@ -329,9 +339,9 @@ export function EventDetail() {
               )}
             </div>
           ) : (
-            <Badge tone="warn">Registration closed{canManage ? ' — edit the event to adjust dates' : ''}</Badge>
+            <Badge tone="warn">Registration closed{canEditEvent ? ' — edit the event to adjust dates' : ''}</Badge>
           )}
-          {canManage && event.status === 'live' && !eventIsInPhase(event, 'reg-open') && (
+          {canEditEvent && event.status === 'live' && !eventIsInPhase(event, 'reg-open') && (
             <div style={{ marginTop: 10, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               <button className="btn small ghost" onClick={() => setEditWizardOpen(true)}>Edit event to adjust registration dates</button>
               <button className="btn small ghost" data-tip="Generates a private reg link + password for late adds" onClick={() => toast(`Private link: ucg.org/#/events/${event.slug}?code=LATE26 (demo)`)}>Private reg link</button>
