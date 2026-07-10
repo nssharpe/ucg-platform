@@ -479,10 +479,15 @@ export function initialCampSurveyDraft(existing?: Registration['campSurvey']): C
   };
 }
 
-const CAMP_BEDTIME_LABELS: Record<string, string> = {
+// Exported so other client modules needing the same human labels (the host
+// workbook's camp export, src/lib/host-export.ts) reuse these rather than
+// keeping a third copy — mirrors supabase/functions/_shared/camp-
+// confirmation.ts's CAMP_BEDTIME_LABELS/CAMP_NOISE_LABELS (that file can't be
+// imported directly: it lives outside tsconfig.app.json's `src` rootDir).
+export const CAMP_BEDTIME_LABELS: Record<string, string> = {
   'before-10': 'Before 10pm', '10-to-midnight': '10pm–midnight', 'after-midnight': 'After midnight',
 };
-const CAMP_NOISE_LABELS: Record<string, string> = { quiet: 'Quiet', moderate: 'Moderate', lively: 'Lively' };
+export const CAMP_NOISE_LABELS: Record<string, string> = { quiet: 'Quiet', moderate: 'Moderate', lively: 'Lively' };
 
 /** Required fields (bedtime/noise/cabin pref) must be explicitly chosen;
  *  the free-text roommate request is always optional. */

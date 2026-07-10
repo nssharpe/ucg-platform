@@ -15,7 +15,7 @@ import type { Athlete, CartItem, Discipline, Event, EventAdmin, EventSession, Re
 import { DisciplineIcon } from '../components/DisciplineIcon';
 import { SizedAddonPicker } from '../components/AddonPickers';
 import {
-  deleteRegistration, fetchEventCollectedTotal, fetchEventHostRoster, findPersonForHost, grantEventAdmin,
+  deleteRegistration, fetchEventCollectedTotal, fetchEventHostAddons, fetchEventHostRoster, findPersonForHost, grantEventAdmin,
   hostDeleteRegistration, hostUpsertRegistration, insuranceCertificateUrl,
   listSanctioningTeam, markMedalsReceived, pushCart, pushEvent, pushEventSessions, pushRegistration,
   revokeEventAdmin, syncSynchroPartnerLevelRemote, uploadInsuranceCertificate,
@@ -1037,22 +1037,39 @@ export function EventHostPage() {
   );
 }
 
-/** Excel-export card (event-mgmt v2 §C/§K): one workbook, three sheets
- *  (Athletes / Counts / Shirt sizes) built from the shared host roster — see
- *  src/lib/host-export.ts for the sheet shapes and the scope decision on
- *  what's deferred to Phase 2 (leo sizes, banquet quantities). exceljs is
- *  dynamically imported so it isn't in the main bundle (same reasoning as
- *  any heavy on-demand export lib — this page is the only place it's used). */
+/** Excel-export card (event-mgmt v2 §C/§K, Phase 2 T7): one workbook built
+ *  from the shared host roster + purchased add-on units — see
+ *  src/lib/host-export.ts for the sheet shapes (Athletes / Counts / Shirt
+ *  sizes [profile] always; Shirts (purchased) / Leo sizes / Banquet when
+ *  configured; Camp roster for camp events). exceljs is dynamically imported
+ *  so it isn't in the main bundle (same reasoning as any heavy on-demand
+ *  export lib — this page is the only place it's used). */
 function HostExportCard({ event, rows, error, toast }: { event: Event; rows: HostRosterRow[] | null; error: string | null; toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void }) {
   const db = useDB();
   const [building, setBuilding] = useState(false);
   const ready = !!rows && !error;
 
+  // Purchased add-on units (Shirts/Leo/Banquet sheets, event-mgmt v2 Phase 2
+  // T7) are only needed at download time, unlike the roster which the
+  // summary card above also renders — fetched fresh on each click rather
+  // than kept in state, since this card has no other reason to re-render on
+  // an addon purchase happening mid-visit.
   const download = async () => {
     if (!rows) return;
     setBuilding(true);
     try {
-      const sheets = buildRegistrationWorkbookSheets(rows, levelNameResolver(db.levels));
+      const addonRes = await fetchEventHostAddons(event.id);
+      if (!addonRes.ok) {
+        toast(`Couldn't load purchased add-ons: ${addonRes.error}`, { variant: 'error' });
+        setBuilding(false);
+        return;
+      }
+      const sheets = buildRegistrationWorkbookSheets(rows, levelNameResolver(db.levels), addonRes.rows, {
+        tshirtConfigured: !!event.tshirtAddon,
+        leoConfigured: !!event.campConfig?.leoAddon,
+        banquetConfigured: !!event.banquet,
+        isCamp: event.eventType === 'camp',
+      });
       const { Workbook } = await import('exceljs');
       const wb = new Workbook();
       wb.creator = 'UCG Registration Platform';
@@ -1079,7 +1096,8 @@ function HostExportCard({ event, rows, error, toast }: { event: Event; rows: Hos
     <div className="card card-pad" style={{ marginBottom: 18 }}>
       <h3 className="card-title">Registration workbook</h3>
       <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--ink-soft)' }}>
-        Full athlete detail, level × club × apparatus counts, and profile shirt-size tallies in one .xlsx file.
+        Full athlete detail, level × club × apparatus counts, shirt/leo/banquet purchases, and (for camps) an
+        overnight-survey roster — all in one .xlsx file.
       </p>
       {error && <p style={{ color: 'var(--coral-700)' }}>Couldn't load the roster — try refreshing the page.</p>}
       <button className="btn primary small" disabled={!ready || building} onClick={download}>

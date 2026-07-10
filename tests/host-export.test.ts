@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { buildAthletesSheet, buildCountsSheet, buildShirtSizesSheet, buildRegistrationWorkbookSheets } from '../src/lib/host-export';
-import type { HostRosterRow } from '../src/lib/supabase';
+import {
+  buildAthletesSheet, buildCountsSheet, buildShirtSizesSheet, buildRegistrationWorkbookSheets,
+  buildPurchasedShirtsSheet, buildLeoSizesSheet, buildBanquetSheet, buildCampRosterSheet,
+} from '../src/lib/host-export';
+import type { HostRosterRow, HostAddonRow } from '../src/lib/supabase';
 
 const row = (overrides: Partial<HostRosterRow>): HostRosterRow => ({
   regId: 'r1', athleteId: 'a1', firstName: 'Ada', lastName: 'Lovelace',
@@ -9,6 +12,13 @@ const row = (overrides: Partial<HostRosterRow>): HostRosterRow => ({
   paid: true, updatedPending: false, partnerAthleteId: null,
   shirt: 'M', dietary: [], email: 'a@x.com', phone: '555-1000',
   emergencyContact: 'Bea 555-2000', studentStatus: 'Student', region: 'Northeast',
+  dob: '2005-04-01', gender: 'Female', campSurvey: null, createdAt: '2026-06-01T00:00:00Z',
+  ...overrides,
+});
+
+const addonRow = (overrides: Partial<HostAddonRow>): HostAddonRow => ({
+  itemId: 'ii1', refLineType: 'tshirt', addonSize: 'M', addonAssignee: null,
+  assigneeFirstName: null, assigneeLastName: null, label: 'Camp t-shirt (size M)', refUserId: null,
   ...overrides,
 });
 
@@ -117,9 +127,9 @@ describe('buildShirtSizesSheet', () => {
     expect(dataRows).toContainEqual(['Total', 3]);
   });
 
-  it('carries a header note explaining this is profile sizes, not purchased quantities', () => {
+  it('carries a header note pointing to the purchased-shirt sheet', () => {
     const sheet = buildShirtSizesSheet([row({})]);
-    expect(sheet.rows[0][0]).toMatch(/purchased-shirt quantities arrive with the add-ons rework/);
+    expect(sheet.rows[0][0]).toMatch(/Shirts \(purchased\)/);
   });
 
   it('returns just the header note for an empty roster', () => {
@@ -128,9 +138,132 @@ describe('buildShirtSizesSheet', () => {
   });
 });
 
+describe('buildPurchasedShirtsSheet / buildLeoSizesSheet', () => {
+  it('lists one row per purchased unit plus a size x count summary, ignoring other line types', () => {
+    const rows: HostAddonRow[] = [
+      addonRow({ itemId: 'i1', refLineType: 'tshirt', addonSize: 'M', label: 'Shirt — Ada (size M)' }),
+      addonRow({ itemId: 'i2', refLineType: 'tshirt', addonSize: 'M', label: 'Shirt — Bob (size M)' }),
+      addonRow({ itemId: 'i3', refLineType: 'tshirt', addonSize: 'L', label: 'Shirt — Cy (size L)' }),
+      addonRow({ itemId: 'i4', refLineType: 'leo', addonSize: 'YM', label: 'Leo — Dee (size YM)' }),
+      addonRow({ itemId: 'i5', refLineType: 'banquet', label: 'Banquet — Extra ticket' }),
+    ];
+    const shirts = buildPurchasedShirtsSheet(rows)!;
+    expect(shirts.name).toBe('Shirts (purchased)');
+    const unitRows = shirts.rows.slice(0, 3);
+    expect(unitRows).toEqual([
+      ['Shirt — Ada (size M)', 'M'],
+      ['Shirt — Bob (size M)', 'M'],
+      ['Shirt — Cy (size L)', 'L'],
+    ]);
+    expect(shirts.rows).toContainEqual(['M', 2]);
+    expect(shirts.rows).toContainEqual(['L', 1]);
+    expect(shirts.rows).toContainEqual(['Total', 3]);
+
+    const leos = buildLeoSizesSheet(rows)!;
+    expect(leos.name).toBe('Leo sizes');
+    expect(leos.rows[0]).toEqual(['Leo — Dee (size YM)', 'YM']);
+    expect(leos.rows).toContainEqual(['Total', 1]);
+  });
+
+  it('returns null when nothing of that type was purchased', () => {
+    expect(buildPurchasedShirtsSheet([addonRow({ refLineType: 'leo' })])).toBeNull();
+    expect(buildLeoSizesSheet([addonRow({ refLineType: 'tshirt' })])).toBeNull();
+    expect(buildPurchasedShirtsSheet([])).toBeNull();
+  });
+
+  it('treats a missing/blank size as Unspecified', () => {
+    const sheet = buildPurchasedShirtsSheet([addonRow({ addonSize: null })])!;
+    expect(sheet.rows[0][1]).toBe('Unspecified');
+    expect(sheet.rows).toContainEqual(['Unspecified', 1]);
+  });
+});
+
+describe('buildBanquetSheet', () => {
+  it('resolves assignee names, tallies assigned vs extra, and returns null when nothing purchased', () => {
+    const rows: HostAddonRow[] = [
+      addonRow({ itemId: 'b1', refLineType: 'banquet', addonAssignee: 'a1', assigneeFirstName: 'Ada', assigneeLastName: 'Lovelace', label: 'Banquet — For Ada' }),
+      addonRow({ itemId: 'b2', refLineType: 'banquet', addonAssignee: 'extra', assigneeFirstName: null, assigneeLastName: null, label: 'Banquet — Extra ticket' }),
+      addonRow({ itemId: 'b3', refLineType: 'tshirt' }),
+    ];
+    const sheet = buildBanquetSheet(rows)!;
+    expect(sheet.name).toBe('Banquet');
+    expect(sheet.rows[0]).toEqual(['Ada Lovelace', 'Banquet — For Ada']);
+    expect(sheet.rows[1]).toEqual(['Extra ticket', 'Banquet — Extra ticket']);
+    expect(sheet.rows).toContainEqual(['Total tickets', 2]);
+    expect(sheet.rows).toContainEqual(['Assigned', 1]);
+    expect(sheet.rows).toContainEqual(['Extra', 1]);
+
+    expect(buildBanquetSheet([addonRow({ refLineType: 'tshirt' })])).toBeNull();
+  });
+});
+
+describe('buildCampRosterSheet', () => {
+  it('gives one row per athlete with survey labels, purchased sizes joined by refUserId, and dedupes multi-reg athletes', () => {
+    const rows: HostRosterRow[] = [
+      row({
+        regId: 'r1', athleteId: 'a1', firstName: 'Ada', lastName: 'Lovelace', dob: '2005-04-01', gender: 'Female',
+        shirt: 'M', createdAt: '2026-06-01T00:00:00Z',
+        campSurvey: { bedtime: '10-to-midnight', noiseLevel: 'quiet', cabinGenderPref: 'Female', roommateRequest: 'Bea' },
+      }),
+      // A second registration for the SAME athlete (shouldn't happen for camps, but the sheet must still dedupe).
+      row({ regId: 'r2', athleteId: 'a1', firstName: 'Ada', lastName: 'Lovelace' }),
+    ];
+    const addonRows: HostAddonRow[] = [
+      addonRow({ refLineType: 'tshirt', addonSize: 'M', refUserId: 'a1', label: 'Shirt' }),
+      addonRow({ refLineType: 'leo', addonSize: 'YM', refUserId: 'a1', label: 'Leo' }),
+      addonRow({ refLineType: 'tshirt', addonSize: 'L', refUserId: 'other', label: 'Shirt for someone else' }),
+    ];
+    const sheet = buildCampRosterSheet(rows, addonRows);
+    expect(sheet.rows).toHaveLength(1);
+    const r = sheet.rows[0];
+    const col = (name: string) => r[sheet.columns.indexOf(name)];
+    expect(col('Athlete')).toBe('Ada Lovelace');
+    expect(col('Birthday')).toBe('2005-04-01');
+    expect(col('Gender')).toBe('Female');
+    expect(col('Shirt (profile)')).toBe('M');
+    expect(col('Shirt (purchased)')).toBe('M');
+    expect(col('Leo (purchased)')).toBe('YM');
+    expect(col('Bedtime')).toBe('10pm–midnight');
+    expect(col('Noise level')).toBe('Quiet');
+    expect(col('Cabin preference')).toBe('Female');
+    expect(col('Roommate request')).toBe('Bea');
+    expect(col('Date registered')).toBe('2026-06-01T00:00:00Z');
+  });
+
+  it('leaves survey columns blank when there is no survey', () => {
+    const sheet = buildCampRosterSheet([row({ campSurvey: undefined })], []);
+    const col = (name: string) => sheet.rows[0][sheet.columns.indexOf(name)];
+    expect(col('Bedtime')).toBe('');
+    expect(col('Noise level')).toBe('');
+    expect(col('Cabin preference')).toBe('');
+    expect(col('Roommate request')).toBe('');
+  });
+});
+
 describe('buildRegistrationWorkbookSheets', () => {
-  it('builds all three sheets in order', () => {
+  it('builds the core three sheets when no add-ons are configured and the event is not a camp', () => {
     const sheets = buildRegistrationWorkbookSheets([row({})], resolve);
-    expect(sheets.map((s) => s.name)).toEqual(['Athletes', 'Counts', 'Shirt sizes']);
+    expect(sheets.map((s) => s.name)).toEqual(['Athletes', 'Counts', 'Shirt sizes (profile)']);
+  });
+
+  it('adds purchased-addon sheets only when configured AND purchased, and the camp sheet only for camps', () => {
+    const addonRows: HostAddonRow[] = [
+      addonRow({ refLineType: 'tshirt', addonSize: 'M', label: 'Shirt' }),
+      addonRow({ refLineType: 'leo', addonSize: 'YM', label: 'Leo' }),
+      addonRow({ refLineType: 'banquet', addonAssignee: 'extra', label: 'Banquet' }),
+    ];
+    const sheets = buildRegistrationWorkbookSheets([row({})], resolve, addonRows, {
+      tshirtConfigured: true, leoConfigured: true, banquetConfigured: true, isCamp: true,
+    });
+    expect(sheets.map((s) => s.name)).toEqual([
+      'Athletes', 'Counts', 'Shirt sizes (profile)', 'Shirts (purchased)', 'Leo sizes', 'Banquet', 'Camp roster',
+    ]);
+  });
+
+  it('omits a configured add-on sheet when nothing of that type was purchased', () => {
+    const sheets = buildRegistrationWorkbookSheets([row({})], resolve, [], {
+      tshirtConfigured: true, leoConfigured: false, banquetConfigured: false, isCamp: false,
+    });
+    expect(sheets.map((s) => s.name)).toEqual(['Athletes', 'Counts', 'Shirt sizes (profile)']);
   });
 });

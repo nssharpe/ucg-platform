@@ -672,6 +672,34 @@ export interface HostRosterRow {
   emergencyContact: string | null;
   studentStatus: string | null;
   region: string | null;
+  /** Camp-workbook fields (event-mgmt v2 Phase 2 T7) -- added to the RPC
+   *  alongside `event_host_addons` in 20260710151638_event_host_addons_and_
+   *  camp_detail.sql. Populated for every event, not just camps; the camp
+   *  export sheet is simply the only consumer today. */
+  dob: string | null;
+  gender: string | null;
+  campSurvey: Registration['campSurvey'] | null;
+  /** Registration `created_at` -- the closest thing to a "date registered"
+   *  timestamp (see Registration.createdAt doc comment in types.ts). */
+  createdAt: string | null;
+}
+
+/** One purchased add-on UNIT (t-shirt/leo/banquet) for an event, across every
+ *  competing club (event-mgmt v2 Phase 2 T7) -- `event_host_addons` RPC,
+ *  the add-on counterpart to `event_host_roster`. Excludes 'banner' (a flat
+ *  per-event purchase, not a per-unit line) and refunded units. */
+export interface HostAddonRow {
+  itemId: string;
+  refLineType: 'tshirt' | 'leo' | 'banquet' | null;
+  addonSize: string | null;
+  addonAssignee: string | null;
+  assigneeFirstName: string | null;
+  assigneeLastName: string | null;
+  label: string;
+  /** Set only for an athlete's own t-shirt/leo self-purchase (see the RPC's
+   *  doc comment in 20260710151638_event_host_addons_and_camp_detail.sql) —
+   *  distinct from `addonAssignee`, which is banquet-only. */
+  refUserId: string | null;
 }
 
 /** Event-wide registration roster for the host viewing page (event-mgmt v2
@@ -694,6 +722,29 @@ export async function fetchEventHostRoster(eventId: string): Promise<{ ok: true;
     partnerAthleteId: r.partner_athlete_id, shirt: r.shirt, dietary: r.dietary ?? [],
     email: r.email, phone: r.phone, emergencyContact: r.emergency_contact,
     studentStatus: r.student_status, region: r.region,
+    dob: r.dob, gender: r.gender,
+    campSurvey: (r.camp_survey as Registration['campSurvey'] | null) ?? null,
+    createdAt: r.created_at,
+  }));
+  return { ok: true, rows };
+}
+
+/** Purchased add-on units (t-shirt/leo/banquet) for an event, across every
+ *  competing club (event-mgmt v2 Phase 2 T7) — same RLS-exception reasoning
+ *  as `fetchEventHostRoster`, via the `event_host_addons` RPC. */
+export async function fetchEventHostAddons(eventId: string): Promise<{ ok: true; rows: HostAddonRow[] } | { ok: false; error: string }> {
+  if (!supabase) return { ok: false, error: 'Not configured.' };
+  const { data, error } = await supabase.rpc('event_host_addons', { p_event_id: eventId });
+  if (error) { console.error('[supabase] event_host_addons failed:', error); return { ok: false, error: error.message }; }
+  const rows = ((data ?? []) as FnReturns<'event_host_addons'>).map((r) => ({
+    itemId: r.item_id,
+    refLineType: (r.ref_line_type as HostAddonRow['refLineType']) ?? null,
+    addonSize: r.addon_size,
+    addonAssignee: r.addon_assignee,
+    assigneeFirstName: r.assignee_first_name,
+    assigneeLastName: r.assignee_last_name,
+    label: r.label,
+    refUserId: r.ref_user_id,
   }));
   return { ok: true, rows };
 }
