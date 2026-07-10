@@ -675,7 +675,40 @@ Deno.serve(async (req) => {
       .single();
     if (freePayErr) return json({ ok: false, error: freePayErr.message }, 500);
 
-    await fulfillPayment(db, freePayment as PaymentRow, { piId: null, stripeFeeCents: null, eventId: null });
+    // --- Fulfill, with an inline retry -------------------------------------
+    // The Stripe path recovers from a mid-fulfillment throw via Stripe's
+    // webhook retries; the free path has NO external retry mechanism, and the
+    // cart items above are already deleted — an unhandled transient failure
+    // (network blip to Resend/Supabase, etc.) would strand the order forever:
+    // payments row stuck pending, registrations never flipped, coupon never
+    // redeemed. fulfillPayment's writes are idempotent by design (its own doc
+    // comment supports a defensive re-call), so: try, retry once inline, and
+    // if BOTH attempts fail, log to error_logs (the webhook's M5 pattern) and
+    // return an honest 500. The payments row is deliberately NOT rolled back —
+    // it holds the lines_snapshot and stays claimable (fulfilled_at NULL) for
+    // a manual re-run by support.
+    const freeOpts = { piId: null, stripeFeeCents: null, eventId: null };
+    try {
+      await fulfillPayment(db, freePayment as PaymentRow, freeOpts);
+    } catch (firstErr) {
+      console.error('[create-checkout-session] free-order fulfillment failed, retrying once:', firstErr);
+      try {
+        await fulfillPayment(db, freePayment as PaymentRow, freeOpts);
+      } catch (retryErr) {
+        const message = retryErr instanceof Error ? retryErr.message : String(retryErr);
+        const stack = retryErr instanceof Error ? retryErr.stack ?? null : null;
+        await db.from('error_logs').insert({
+          context: 'create-checkout-session',
+          message: `free-order fulfillment failed after retry: ${message}`,
+          stack,
+          detail: { kind: 'free-order', paymentId: freePayment.id, personId, couponCode: appliedCouponCode },
+        }).then(() => {}, () => {});
+        return json({ ok: false, error:
+          `Your $0 order was received but could not be finalized automatically — it has been flagged for review, and ` +
+          `no payment is due. If it doesn't appear in your Purchase History soon, contact support with reference ` +
+          `${freePayment.id}.` }, 500);
+      }
+    }
 
     return json({
       ok: true,
