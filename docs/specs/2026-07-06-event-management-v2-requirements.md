@@ -110,6 +110,17 @@ setup):
 - **Event admin grants**: host enters account emails (search by name) to give
   others the same host-level access. Net-new (per-event ACL, not a club role).
 
+**P1 decisions (Nate 2026-07-09, shipped with V2-P1):** host post-close edit
+scope = meet organization (sessions/schedule), meet scoring, and add/remove
+athletes + level/apparatus edits **with a warning** — never refunds or
+fees/pricing config. Host roster edits never touch payment state: host-added
+regs are created `paid:true` with no cart line (host-club $0 rule extended);
+removals do NOT refund (refunds are P3). Event-admin grants are exact-account-
+email only (no name search — PII decision; Julia's "search by name" deferred).
+Excel exports ship as ONE workbook with Athletes / Counts / Shirt-sizes
+(profile) sheets; leo-size and banquet-quantity sheets wait for the P2 add-on
+model (no purchased-unit size/quantity data exists yet).
+
 ## D. Registration page & flow deltas (EXTENDS existing)
 
 - Unique registration page per event + easy link copy — exists (slug); add
@@ -293,6 +304,12 @@ cc(s). Competition filters: role (athlete/coach/club manager/club email),
 **session, level, discipline** (checkboxes). League Communicate shipped;
 event scoping, host access (a non-admin sending email — auth model needs
 care), from/reply-to config, and the session/level/discipline filters are new.
+
+**P1 decision (Nate 2026-07-09, deviation to revisit with Julia):** hosts get
+**email only** — SMS from the event page stays league-admin-only (send-sms
+remains admin-gated; each text bills UCG's Telnyx). Test sends go to the
+caller's own account email only (no arbitrary-address test surface for
+hosts); cc capped at 5 and delivered as ONE copy message.
 
 ## K. Exports (EXTENDS existing)
 

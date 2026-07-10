@@ -351,8 +351,12 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   once-only guard is CLIENT-side in `Membership.tsx`), `send-club-invite`,
   `invite-account` (admin-create auth user + set-password link), `request-manager-access`
   / `notify-manager-access-denied` (no-login manager-access review),
-  `notify-sanction`, `scheduled-dispatch` (pg_cron every 15 min; sanction-vote
-  reminders; verify_jwt STAYS true + requires the `x-cron-secret` header matching its
+  `notify-sanction`, `send-event-email` (event-scoped email to registrants, emv2 P1 §J:
+  authorized for admin/sanctioning/host-club managers/event-admin grantees; recipients
+  resolved SERVER-side, hosts get no SMS, test-send = caller only, cc = one copy message;
+  verify_jwt true), `scheduled-dispatch` (pg_cron every 15 min; sanction-vote
+  reminders + event-owner task escalations (`owner-task` kind, emv2 P1 §B4);
+  verify_jwt STAYS true + requires the `x-cron-secret` header matching its
   `CRON_SECRET` secret — the runtime's env service key ≠ the legacy JWT, bit us
   2026-07-08; runbook in `supabase/README.md`). Notify-style functions allow any signed-in caller and resolve
   recipients server-side; only `send-email`/`send-sms` are admin-gated. (`send-receipt`
