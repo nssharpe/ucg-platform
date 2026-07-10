@@ -44,7 +44,7 @@ Live build/tooling notes live in [`../CLAUDE.md`](../CLAUDE.md); open work is th
 | [dev-test-auth](specs/2026-06-25-dev-test-auth.md) | Dev-only real auto-login of a seeded Supabase test user (`.env.local`-gated) so authenticated UI is exercisable locally | ✅ shipped |
 | [stripe-integration](specs/2026-06-25-stripe-integration.md) | Stripe Embedded Checkout architecture (S1–S5) | ✅ shipped |
 | [security-review-findings (7/02)](specs/2026-07-02-security-review-findings.md) | Deep review of the money paths: RLS, edge functions, cart state machine — verified findings by severity | 🟡 findings logged; fixes planned |
-| [event-management-v2-requirements](specs/2026-07-06-event-management-v2-requirements.md) | Julia's full event-management requirements (7/06) digested + gap-mapped: host dashboard, refunds, capacity/waitlists, add-ons v2, nationals ops, finance dashboards — phasing V2-P0…P6 | 🟡 validated (phasing approved, §N7 answered); **P0 build started** — scheduler infra (Task 1) shipped |
+| [event-management-v2-requirements](specs/2026-07-06-event-management-v2-requirements.md) | Julia's full event-management requirements (7/06) digested + gap-mapped: host dashboard, refunds, capacity/waitlists, add-ons v2, nationals ops, finance dashboards — phasing V2-P0…P6 | 🟡 validated (phasing approved, §N7 answered); **P0 shipped (staging; prod pending Nate)**; **P1 build in progress** — Tasks 1, 3, 4, 5, 6 shipped (owner assignment + checklist, per-event admin grants, insurance-cert upload, host viewing page, Excel exports); P1 nearly done |
 
 ## Plans (`plans/`) — step-by-step implementation records
 
@@ -121,6 +121,7 @@ here — update THIS list when priorities change, not rival copies.
   **Phasing approved by Nate 2026-07-06:** V2-P0 foundations/scheduler →
   P1 host experience → P2 add-ons & camps → P3 refunds → P4 capacity/waitlists &
   by-session reg → P5 nationals ops/check-in → P6 finance dashboards.
+  **P1 (host experience) is now fully shipped** — see Tasks 1, 3–8 below. Next up: P2.
   **P0 Task 1 shipped:** pg_cron/pg_net scheduler infra (`notification_log` +
   `scheduled-dispatch-15min` job + `scheduled-dispatch` Edge Function, service-role-only
   auth) with its first consumer — 3d/1d/closed sanction-vote reminder emails, idempotent
@@ -150,6 +151,73 @@ here — update THIS list when priorities change, not rival copies.
   **P0 deploy state (2026-07-07):** staging fully deployed + E2E green (5/5).
   Prod is PENDING Nate: vault secrets (both envs), prod `supabase db push`, the three
   prod function deploys (`stripe-webhook` with `--no-verify-jwt`!), then merge to main.
+  **P1 Task 1 shipped:** event-owner assignment + task checklist (§B3-4) —
+  `events.owner`/`owner_checklist` jsonb columns; sanctioning-team members can now
+  UPDATE events (new `sanctioning_update` RLS policy, alongside admin) via
+  `list_sanctioning_team()` RPC for the assign-owner dropdown; pure due-date +
+  escalating-reminder-stage logic in `supabase/functions/_shared/owner-checklist.ts`
+  (`ownerTaskDueDate`/`ownerReminderStage`, unit-tested, no Deno imports — ready for
+  the scheduler to consume once reminder emails are built, a later task); UI on the
+  event page (owner field + 7-item checklist with payload inputs) gated on
+  `isSanctioning`, and a red "No owner assigned" badge on the Sanctioning Queue's
+  decided list linking to the event.
+  **P1 Task 3 shipped:** per-event admin grants (§C) — `event_admins` table (per-event
+  ACL, unique `(event_id, user_id)`), read-only RLS with all writes through
+  `grant_event_admin` (exact-account-email lookup — deliberately no name search, PII
+  decision) / `revoke_event_admin` SECURITY DEFINER RPCs (authorized: admins, host-club
+  managers, existing event admins of that event); `isEventHost()` now honors
+  auth-uid-scoped grants (new `eventAdminEventIds` param on `deriveCapabilities`);
+  "Event admins" card on the event page (add by account email / remove) for anyone
+  with host-level access.
+  **P1 Task 4 shipped:** private `event-files` Storage bucket (first RLS'd bucket in the
+  project) for owner-checklist file uploads — currently insurance certificates
+  (`insurance/<event_id>/<filename>`); the owner checklist's insurance task now uploads
+  + resolves a signed view link (`uploadInsuranceCertificate`/`insuranceCertificateUrl`,
+  `InsuranceCertificateLink`) instead of a free-text path.
+  **P1 Task 5 shipped:** event host viewing page (§C) at `/events/:slug/host` —
+  status card (owner contact, hotel block, insurance link, medal order/tracking with a
+  host "Mark received" action, onsite rep, payment status incl. collected-so-far and a
+  post-event unpaid-host warning) plus a per-level registration summary (participating
+  clubs + athletes per apparatus, `summarizeRoster` in `src/lib/host-page.ts`, unit-
+  tested). Three new SECURITY DEFINER RPCs (`event_host_roster`,
+  `event_collected_total`, `mark_medals_received`) give hosts/event-admins/sanctioning
+  the event-scoped read (and one scoped write) their own RLS wouldn't otherwise allow.
+  "Host dashboard →" link on the event page for anyone with host-level access or
+  sanctioning.
+  **P1 Task 6 shipped:** Excel registration workbook (§C/§K) — "Download registration
+  workbook (.xlsx)" card on the host page, one workbook / three sheets built from the
+  same shared host roster: Athletes (one row per registration — apparatus codes
+  overlap MAG/WAG so a multi-discipline athlete gets one row per discipline rather
+  than a clashing merged row), Counts (level × club × apparatus with a totals row),
+  Shirt sizes (profile-size tally, explicitly labeled as not purchased-shirt
+  quantities). Leo sizes and banquet quantities are deferred to the add-ons v2 rework
+  (Phase 2), when purchased-line quantity/size/assignment data exists to query. Sheet
+  shaping is pure + unit-tested (`src/lib/host-export.ts`); `exceljs` is dynamically
+  imported so it ships as its own chunk, not the entry bundle.
+  **P1 Task 7 shipped:** event-scoped communication (§J) — `/events/:slug/communicate`
+  lets hosts, event admins, sanctioning, and admins email one event's registrants,
+  filtered by role (athletes/managers/club emails) + session/level/discipline, via the
+  new `send-event-email` Edge Function (recipients resolved server-side, never
+  client-supplied; test sends go only to the caller's own account email). **Deviation
+  from spec (controller/Nate decision 2026-07-09):** hosts get EMAIL ONLY — SMS stays
+  league-admin-only, exposed as an admin-only channel toggle on the same page reusing
+  the existing `send-sms` path. `comm_log.event_id` (new column) scopes the page's
+  per-event sent log.
+  **P1 Task 8 shipped (final P1 task):** scoped post-regCloses host editing (§C +
+  Nate's 2026-07-09 scope answer) — once `now > event.regCloses`, the host page's new
+  "Competition setup" section links to sessions/squads (`/events/:slug/manage`) plus a
+  "Roster tools" card (grouped-by-club level/apparatus/session edits, remove, and
+  "add athlete by email"), gated behind a one-time-per-visit warning modal that a
+  removal is NOT a refund and an add is NOT a charge. Writes go through two new
+  SECURITY DEFINER RPCs (`host_upsert_registration`/`host_delete_registration`) —
+  `registrations` RLS itself stays untouched, so hosts never get a blanket reg-write
+  grant; a host-added registration lands `paid:true` with no cart line (mirrors the
+  existing host-club-$0 rule). Also closed a review-flagged gap: an `event_admins`
+  grantee (no club management) could see the `EventManage`/scoring UI but every save
+  silently failed RLS — new `is_event_host()` helper + policies on
+  `event_sessions`/`squads`/`scores` fix it. Hosts still get NO refunds, NO fee/pricing
+  config, NO event creation — those stay admin/sanctioning-only. Full migration
+  contents in `supabase/README.md`.
   §N7 open questions **all answered by Julia 2026-07-06** (recorded in the spec;
   every phase is unblocked — only the §F partial-fit capacity design wants a
   confirm at P4 kickoff). This absorbs several

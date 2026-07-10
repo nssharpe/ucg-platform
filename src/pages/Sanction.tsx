@@ -10,7 +10,7 @@ import { pushSanctionRequest, pushSanctionVote, pushEvent, notifySanction } from
 import { useCapabilities } from '../lib/capabilities';
 import { seasonForDate, clubHasActiveMembership } from '../lib/capabilities-core';
 import { useSession } from '../lib/auth';
-import { Combo, Field } from '../components/ui';
+import { Badge, Combo, Field } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 import { tallyVotes, nextSanctionId } from '../lib/sanction';
 import { RIBBON_OPTIONS, DEFAULT_RIBBON } from '../lib/ribbons';
@@ -706,22 +706,36 @@ export function SanctioningQueue() {
                 <th>Kind</th>
                 <th>Status</th>
                 <th>Sanction ID</th>
+                <th>Owner</th>
                 <th>Decided</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {decided.map((r) => (
-                <tr key={r.id}>
-                  <td>{(r.payload.eventName as string) ?? '—'}</td>
-                  <td>{clubName(r.hostClubId)}</td>
-                  <td>{r.eventKind}</td>
-                  <td>{statusBadge(r.status)}</td>
-                  <td>{r.sanctionId ?? '—'}</td>
-                  <td>{r.decidedAt ? new Date(r.decidedAt).toLocaleDateString() : '—'}</td>
-                  <td><Link to={`/sanctioning/${r.id}`} className="btn small ghost">View</Link></td>
-                </tr>
-              ))}
+              {decided.map((r) => {
+                const createdEvent = r.createdEventId ? db.events.find((e) => e.id === r.createdEventId) : undefined;
+                const needsOwner = r.status === 'approved' && createdEvent && !createdEvent.owner;
+                return (
+                  <tr key={r.id}>
+                    <td>{(r.payload.eventName as string) ?? '—'}</td>
+                    <td>{clubName(r.hostClubId)}</td>
+                    <td>{r.eventKind}</td>
+                    <td>{statusBadge(r.status)}</td>
+                    <td>{r.sanctionId ?? '—'}</td>
+                    <td>
+                      {needsOwner ? (
+                        <Link to={`/events/${createdEvent!.slug}`}>
+                          <Badge tone="err">No owner assigned</Badge>
+                        </Link>
+                      ) : createdEvent?.owner ? (
+                        createdEvent.owner.name
+                      ) : '—'}
+                    </td>
+                    <td>{r.decidedAt ? new Date(r.decidedAt).toLocaleDateString() : '—'}</td>
+                    <td><Link to={`/sanctioning/${r.id}`} className="btn small ghost">View</Link></td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

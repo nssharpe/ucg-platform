@@ -356,6 +356,7 @@ export type Database = {
           cost_estimate: number | null
           encoding: string | null
           error: string | null
+          event_id: string | null
           failed_count: number | null
           id: string
           is_test: boolean
@@ -374,6 +375,7 @@ export type Database = {
           cost_estimate?: number | null
           encoding?: string | null
           error?: string | null
+          event_id?: string | null
           failed_count?: number | null
           id?: string
           is_test?: boolean
@@ -392,6 +394,7 @@ export type Database = {
           cost_estimate?: number | null
           encoding?: string | null
           error?: string | null
+          event_id?: string | null
           failed_count?: number | null
           id?: string
           is_test?: boolean
@@ -527,6 +530,44 @@ export type Database = {
         }
         Relationships: []
       }
+      event_admins: {
+        Row: {
+          created_at: string
+          email: string
+          event_id: string
+          granted_by: string | null
+          id: string
+          name: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          email: string
+          event_id: string
+          granted_by?: string | null
+          id: string
+          name?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          email?: string
+          event_id?: string
+          granted_by?: string | null
+          id?: string
+          name?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "event_admins_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       event_sessions: {
         Row: {
           date: string | null
@@ -596,6 +637,8 @@ export type Database = {
           late_reg: Json | null
           name: string
           nationals_config: Json | null
+          owner: Json | null
+          owner_checklist: Json | null
           private_reg_code: string | null
           reg_closes: string | null
           reg_opens: string | null
@@ -634,6 +677,8 @@ export type Database = {
           late_reg?: Json | null
           name: string
           nationals_config?: Json | null
+          owner?: Json | null
+          owner_checklist?: Json | null
           private_reg_code?: string | null
           reg_closes?: string | null
           reg_opens?: string | null
@@ -672,6 +717,8 @@ export type Database = {
           late_reg?: Json | null
           name?: string
           nationals_config?: Json | null
+          owner?: Json | null
+          owner_checklist?: Json | null
           private_reg_code?: string | null
           reg_closes?: string | null
           reg_opens?: string | null
@@ -1915,6 +1962,37 @@ export type Database = {
         Returns: string
       }
       email_has_account: { Args: { p_email: string }; Returns: boolean }
+      event_collected_total: { Args: { p_event_id: string }; Returns: number }
+      event_host_roster: {
+        Args: { p_event_id: string }
+        Returns: {
+          apparatus: string[]
+          apparatus_levels: Json
+          athlete_id: string
+          club_id: string | null
+          club_name: string | null
+          dietary: string[] | null
+          discipline: string
+          email: string | null
+          emergency_contact: string | null
+          first_name: string
+          last_name: string
+          level_id: string | null
+          paid: boolean | null
+          partner_athlete_id: string | null
+          phone: string | null
+          reg_id: string
+          region: string | null
+          session_id: string | null
+          shirt: string | null
+          student_status: string | null
+          updated_pending: boolean | null
+        }[]
+      }
+      find_person_for_host: {
+        Args: { p_event_id: string; p_email: string }
+        Returns: { person_id: string; first_name: string; last_name: string; club_id: string | null }[]
+      }
       get_manager_access_request: {
         Args: { p_token: string }
         Returns: {
@@ -1937,12 +2015,30 @@ export type Database = {
           waiver_type: string
         }[]
       }
+      grant_event_admin: {
+        Args: { p_event_id: string; p_email: string }
+        Returns: { email: string; name: string | null; user_id: string }[]
+      }
+      host_delete_registration: {
+        Args: { p_event_id: string; p_reg_id: string }
+        Returns: undefined
+      }
+      host_upsert_registration: {
+        Args: { p_event_id: string; p_reg: Json }
+        Returns: string
+      }
       is_admin: { Args: never; Returns: boolean }
+      is_event_host: { Args: { p_event_id: string }; Returns: boolean }
       link_or_create_person: {
         Args: { p_first: string; p_last: string }
         Returns: string
       }
+      list_sanctioning_team: {
+        Args: never
+        Returns: { email: string; name: string; user_id: string }[]
+      }
       manages_club: { Args: { cid: string }; Returns: boolean }
+      mark_medals_received: { Args: { p_event_id: string }; Returns: undefined }
       my_person_id: { Args: never; Returns: string }
       redeem_coupon: {
         Args: { p_code: string; p_person_id?: string }
@@ -1950,6 +2046,10 @@ export type Database = {
       }
       replace_club_managers: {
         Args: { p_club_id: string; p_person_ids: string[] }
+        Returns: undefined
+      }
+      revoke_event_admin: {
+        Args: { p_event_id: string; p_user_id: string }
         Returns: undefined
       }
     }

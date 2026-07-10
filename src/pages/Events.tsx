@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
+import { useRolesLoaded } from '../lib/auth';
 import { seasonForDate, clubHasActiveMembership, paidRegistrationClub } from '../lib/capabilities-core';
 import { eventIsInPhase } from '../lib/events-core';
 import { Badge, Field, Modal, Tabs } from '../components/ui';
@@ -10,14 +11,25 @@ import { EventWizard } from '../components/EventWizard';
 import { RegistrationEditor } from '../components/RegistrationEditor';
 import { EventStatusBadge } from './Home';
 import { APPARATUS, SHIRT_SIZES } from '../lib/types';
-import type { Athlete, CartItem, Discipline, Event, EventSession, Registration } from '../lib/types';
+import type { Athlete, CartItem, Discipline, Event, EventAdmin, EventSession, Registration } from '../lib/types';
 import { DisciplineIcon } from '../components/DisciplineIcon';
-import { deleteRegistration, pushCart, pushEventSessions, pushRegistration, syncSynchroPartnerLevelRemote } from '../lib/supabase';
+import {
+  deleteRegistration, fetchEventCollectedTotal, fetchEventHostRoster, findPersonForHost, grantEventAdmin,
+  hostDeleteRegistration, hostUpsertRegistration, insuranceCertificateUrl,
+  listSanctioningTeam, markMedalsReceived, pushCart, pushEvent, pushEventSessions, pushRegistration,
+  revokeEventAdmin, syncSynchroPartnerLevelRemote, uploadInsuranceCertificate,
+} from '../lib/supabase';
+import type { HostRosterRow, SanctioningTeamMember } from '../lib/supabase';
+import { summarizeRoster, levelNameResolver } from '../lib/host-page';
+import { buildRegistrationWorkbookSheets, type SheetModel } from '../lib/host-export';
 import { stateCode } from '../lib/sanction';
 import { fmtMoney } from '../lib/scoring';
 import { newRegistrationEntryTotal, registrationChangeFee, syncSynchroPartnerLevel, findIncomingSynchroPartner, lateFeeApplies, lateFeeAnchor } from '../lib/pricing';
+import { OWNER_TASKS, ownerTaskDueDate } from '../../supabase/functions/_shared/owner-checklist';
+import type { OwnerChecklist, OwnerChecklistEntry, OwnerTaskId } from '../../supabase/functions/_shared/owner-checklist';
 
 const today = () => new Date().toISOString().slice(0, 10);
+const isPast = (iso: string) => Date.now() > new Date(iso).getTime();
 
 /** Registration state for an event from its open/close timestamps (vs now):
  *  `regOpen` = now within [opens, closes]; `regClosed` = now past closes. */
@@ -245,6 +257,9 @@ export function EventDetail() {
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <EventStatusBadge event={event} />
+          {(canManage || caps.isSanctioning) && (
+            <Link className="btn small ghost" to={`/events/${event.slug}/host`}>Host dashboard →</Link>
+          )}
           {canManage && (
             <button className="btn small ghost" onClick={() => setEditWizardOpen(true)}>Edit event</button>
           )}
@@ -252,6 +267,21 @@ export function EventDetail() {
       </div>
 
       {editWizardOpen && <EventWizard editEvent={event} onClose={() => setEditWizardOpen(false)} />}
+
+      {/* Event-owner assignment + task checklist (event-mgmt v2 §B3-4) — visible to
+          the Sanctioning Team (not just the event's host manager) for competitions,
+          which is what actually goes through the sanctioning workflow. */}
+      {caps.isSanctioning && event.eventType !== 'camp' && (
+        <>
+          <OwnerAssignBlock event={event} toast={toast} />
+          <OwnerChecklistCard event={event} fmtDate={fmtDate} toast={toast} />
+        </>
+      )}
+
+      {/* Per-event admin grants (event-mgmt v2 §C) — visible to anyone with
+          host-level access (host-club managers, league admins, and granted
+          event admins themselves). */}
+      {canManage && <EventAdminsCard event={event} toast={toast} />}
 
       <div className="grid cols-3" style={{ marginBottom: 18 }}>
         <div className="card card-pad">
@@ -340,6 +370,846 @@ export function EventDetail() {
           />
         );
       })()}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// OwnerAssignBlock — event-owner assignment (event-mgmt v2 §B3)
+// ---------------------------------------------------------------------------
+
+function saveEventOwner(event: Event, owner: Event['owner']) {
+  const updated: Event = { ...event, owner };
+  mutate((d) => {
+    const idx = d.events.findIndex((e) => e.id === event.id);
+    if (idx >= 0) d.events[idx] = updated;
+  });
+  pushEvent(updated);
+}
+
+function OwnerAssignBlock({ event, toast }: { event: Event; toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [team, setTeam] = useState<SanctioningTeamMember[] | null>(null);
+  const [selectedId, setSelectedId] = useState('');
+
+  const openEditor = async () => {
+    setEditing(true);
+    setSelectedId(event.owner?.userId ?? '');
+    if (team !== null) return;
+    setLoading(true);
+    const list = await listSanctioningTeam();
+    setLoading(false);
+    setTeam(list);
+    if (list.length === 0) toast('Could not load the sanctioning team — try again.', { variant: 'error' });
+  };
+
+  const save = () => {
+    const member = (team ?? []).find((m) => m.userId === selectedId);
+    if (!member) return;
+    saveEventOwner(event, { userId: member.userId, name: member.name, email: member.email });
+    setEditing(false);
+  };
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 18, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+      <strong>Event owner:</strong>
+      {event.owner ? (
+        <span>{event.owner.name} <span style={{ color: 'var(--ink-soft)' }}>({event.owner.email})</span></span>
+      ) : (
+        <Badge tone="err">Unassigned</Badge>
+      )}
+      {!editing ? (
+        <button className="btn small ghost" onClick={openEditor}>{event.owner ? 'Reassign' : 'Assign owner'}</button>
+      ) : (
+        <>
+          <select className="input" style={{ maxWidth: 280 }} value={selectedId} onChange={(e) => setSelectedId(e.target.value)} disabled={loading}>
+            <option value="">{loading ? 'Loading team…' : 'Select a team member'}</option>
+            {(team ?? []).map((m) => (
+              <option key={m.userId} value={m.userId}>{m.name} ({m.email})</option>
+            ))}
+          </select>
+          <button className="btn small primary" disabled={!selectedId} onClick={save}>Save</button>
+          <button className="btn small ghost" onClick={() => setEditing(false)}>Cancel</button>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// EventAdminsCard — per-event admin grants (event-mgmt v2 §C)
+// ---------------------------------------------------------------------------
+// Hosts grant other ACCOUNTS host-level access to this ONE event. Writes go
+// through the grant_event_admin/revoke_event_admin SECURITY DEFINER RPCs
+// (exact-email account lookup server-side — deliberately no name search);
+// this card only reflects the result into the local db.
+
+export function EventAdminsCard({ event, toast }: { event: Event; toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void }) {
+  const db = useDB();
+  const admins = (db.eventAdmins ?? []).filter((ea) => ea.eventId === event.id);
+  const [email, setEmail] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const add = async () => {
+    const addr = email.trim();
+    if (!addr) return;
+    setBusy(true);
+    const res = await grantEventAdmin(event.id, addr);
+    setBusy(false);
+    if (!res.ok) { toast(res.error, { variant: 'error' }); return; }
+    mutate((d) => {
+      const list = d.eventAdmins ?? (d.eventAdmins = []);
+      const existing = list.find((ea) => ea.eventId === event.id && ea.userId === res.userId);
+      if (existing) { existing.email = res.email; existing.name = res.name; }
+      // Local-only synthetic id — the server generated its own; the next full
+      // sync replaces this row. Uniqueness per (event, user) matches the DB.
+      else list.push({ id: `ea-${event.id}-${res.userId}`, eventId: event.id, userId: res.userId, email: res.email, name: res.name });
+    });
+    setEmail('');
+    toast(`${res.name || res.email} can now manage this event.`);
+  };
+
+  const remove = async (ea: EventAdmin) => {
+    const err = await revokeEventAdmin(event.id, ea.userId);
+    if (err) { toast(err, { variant: 'error' }); return; }
+    mutate((d) => {
+      d.eventAdmins = (d.eventAdmins ?? []).filter((x) => !(x.eventId === event.id && x.userId === ea.userId));
+    });
+    toast(`Removed ${ea.name || ea.email} as an event admin.`);
+  };
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 18 }}>
+      <h3 className="card-title">Event admins</h3>
+      <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--ink-soft)' }}>
+        Grant another account the same management access as the host — for this event only.
+      </p>
+      {admins.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+          {admins.map((ea) => (
+            <div key={ea.id} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <strong>{ea.name || ea.email}</strong>
+              {ea.name && <span style={{ color: 'var(--ink-soft)', fontSize: 13 }}>({ea.email})</span>}
+              <button className="btn small ghost" aria-label={`Remove ${ea.name || ea.email}`} onClick={() => remove(ea)}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <input
+          type="email" className="input" style={{ maxWidth: 280 }} placeholder="Account email"
+          value={email} onChange={(e) => setEmail(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') add(); }}
+        />
+        <button className="btn small primary" disabled={busy || !email.trim()} onClick={add}>
+          {busy ? 'Adding…' : 'Add admin'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// OwnerChecklistCard — event-owner task checklist (event-mgmt v2 §B4)
+// ---------------------------------------------------------------------------
+
+function OwnerChecklistCard({ event, fmtDate, toast }: { event: Event; fmtDate: (iso: string) => string; toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void }) {
+  const checklist: OwnerChecklist = event.ownerChecklist ?? {};
+  const [uploading, setUploading] = useState(false);
+
+  const patchTask = (taskId: OwnerTaskId, patch: Partial<OwnerChecklistEntry>) => {
+    const entry = { ...checklist[taskId], ...patch };
+    const updated: Event = { ...event, ownerChecklist: { ...checklist, [taskId]: entry } };
+    mutate((d) => {
+      const idx = d.events.findIndex((e) => e.id === event.id);
+      if (idx >= 0) d.events[idx] = updated;
+    });
+    pushEvent(updated);
+  };
+
+  const toggleDone = (taskId: OwnerTaskId) => {
+    const entry = checklist[taskId];
+    const done = !entry?.done;
+    patchTask(taskId, { done, doneAt: done ? new Date().toISOString() : undefined });
+  };
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 18 }}>
+      <h3 className="card-title">Owner task checklist</h3>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {OWNER_TASKS.map(({ id, label }) => {
+          const entry = checklist[id];
+          const due = ownerTaskDueDate(id, event, checklist);
+          const overdue = !entry?.done && !!due && new Date(due).getTime() < new Date().getTime();
+          return (
+            <div key={id} style={{ paddingBottom: 12, borderBottom: '1px solid var(--line)' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', cursor: 'pointer' }}>
+                <input type="checkbox" checked={!!entry?.done} onChange={() => toggleDone(id)} />
+                <strong>{label}</strong>
+                <span style={{ fontSize: 13, fontWeight: overdue ? 700 : 400, color: overdue ? 'var(--coral-700)' : 'var(--ink-soft)' }}>
+                  {due ? `Due ${fmtDate(due.slice(0, 10))}` : 'No due date yet'}
+                </span>
+              </label>
+
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 8, marginLeft: 24 }}>
+                {id === 'medalsOrdered' && (
+                  <Field label="Ordered on">
+                    <input type="date" className="input" value={entry?.orderedOn ?? ''} onChange={(e) => patchTask(id, { orderedOn: e.target.value })} />
+                  </Field>
+                )}
+                {id === 'medalsTracking' && (
+                  <>
+                    <Field label="Tracking link">
+                      <input type="text" className="input" value={entry?.trackingLink ?? ''} onChange={(e) => patchTask(id, { trackingLink: e.target.value })} placeholder="https://…" />
+                    </Field>
+                    <Field label="Host received?">
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <input type="checkbox" checked={!!entry?.hostReceived} onChange={(e) => patchTask(id, { hostReceived: e.target.checked })} /> Yes
+                      </label>
+                    </Field>
+                  </>
+                )}
+                {id === 'insurance' && (
+                  <Field label="Certificate file" hint="PDF, JPG, or PNG — up to 10MB.">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <input
+                        type="file" accept=".pdf,.jpg,.jpeg,.png" disabled={uploading}
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          e.target.value = '';
+                          if (!file) return;
+                          setUploading(true);
+                          const result = await uploadInsuranceCertificate(event.id, file);
+                          setUploading(false);
+                          if (!result.ok) { toast(result.error, { variant: 'error' }); return; }
+                          patchTask(id, { filePath: result.path });
+                          toast('Certificate uploaded.');
+                        }}
+                      />
+                      {uploading && <span style={{ fontSize: 13, color: 'var(--ink-soft)' }}>Uploading…</span>}
+                      {entry?.filePath && !uploading && <InsuranceCertificateLink filePath={entry.filePath} />}
+                    </div>
+                  </Field>
+                )}
+                {id === 'onsiteRep' && (
+                  <>
+                    <Field label="Rep name">
+                      <input type="text" className="input" value={entry?.name ?? ''} onChange={(e) => patchTask(id, { name: e.target.value })} />
+                    </Field>
+                    <Field label="Rep email">
+                      <input type="email" className="input" value={entry?.email ?? ''} onChange={(e) => patchTask(id, { email: e.target.value })} />
+                    </Field>
+                  </>
+                )}
+                {id === 'payHost' && (
+                  <>
+                    <Field label="Method">
+                      <select className="input" value={entry?.method ?? ''} onChange={(e) => patchTask(id, { method: (e.target.value || undefined) as OwnerChecklistEntry['method'] })}>
+                        <option value="">Select…</option>
+                        <option value="check">Check</option>
+                        <option value="paypal">PayPal</option>
+                      </select>
+                    </Field>
+                    <Field label="Paid on">
+                      <input type="date" className="input" value={entry?.paidOn ?? ''} onChange={(e) => patchTask(id, { paidOn: e.target.value })} />
+                    </Field>
+                  </>
+                )}
+                <Field label="Note">
+                  <input type="text" className="input" value={entry?.note ?? ''} onChange={(e) => patchTask(id, { note: e.target.value })} placeholder="Optional note" />
+                </Field>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Link that resolves a signed URL for a stored insurance certificate ON
+ *  CLICK (not on render) — signed URLs expire (~10 min), so resolving eagerly
+ *  would churn them for no reason. Reusable by the host-facing page (event-mgmt
+ *  v2 §C status card) as well as this owner checklist. */
+export function InsuranceCertificateLink({ filePath }: { filePath: string }) {
+  const [loading, setLoading] = useState(false);
+  return (
+    <button
+      type="button" className="btn small ghost" disabled={loading}
+      onClick={async () => {
+        setLoading(true);
+        const result = await insuranceCertificateUrl(filePath);
+        setLoading(false);
+        if (!result.ok) { window.alert(result.error); return; }
+        window.open(result.url, '_blank', 'noopener,noreferrer');
+      }}
+    >
+      {loading ? 'Opening…' : 'View certificate'}
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// EventHostPage — event-mgmt v2 §C: status card + registration summary for
+// hosts (host-club managers, granted event admins) and the sanctioning team.
+// Excel exports (the follow-up task) belong on this page too — see the
+// "Excel exports" spot below the registration summary card, left empty here.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// RosterToolsCard — event-mgmt v2 P1 Task 8: scoped post-close host roster
+// editing (spec §C + Nate's 2026-07-09 scope answer). Hosts (host-club
+// managers + event-admin grantees) can add/remove athletes and adjust
+// level/apparatus/session on THEIR event once registration has closed.
+// Every write goes through host_upsert_registration/host_delete_registration/
+// find_person_for_host (never a direct `registrations` write) and NEVER
+// touches payment state: a host-added registration lands paid:true with no
+// cart line/fee (mirrors the host-club $0 rule); removal does NOT refund
+// (refunds are a Phase 3 feature). A one-time-per-page-visit warning modal
+// gates the FIRST roster mutation.
+// ---------------------------------------------------------------------------
+
+const HOST_ROSTER_WARNING =
+  "You're editing registrations directly as the event host. Changes here do not charge or refund anyone — "
+  + 'removed athletes are NOT automatically refunded, and added athletes are NOT charged. Entry-fee corrections '
+  + 'must be handled with the UCG team.';
+
+interface RosterDraft { levelId: string; apparatus: string[]; sessionId: string }
+
+function RosterToolsCard({
+  event, rows, onChanged, toast,
+}: {
+  event: Event;
+  rows: HostRosterRow[] | null;
+  onChanged: () => void;
+  toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void;
+}) {
+  const db = useDB();
+  const [warned, setWarned] = useState(false);
+  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, RosterDraft>>({});
+
+  const [addEmail, setAddEmail] = useState('');
+  const [addDiscipline, setAddDiscipline] = useState<Discipline>(event.disciplines[0]);
+  const [addLevelId, setAddLevelId] = useState('');
+  const [addApparatus, setAddApparatus] = useState<string[]>([]);
+  const [addSessionId, setAddSessionId] = useState('');
+  const [addBusy, setAddBusy] = useState(false);
+
+  const disciplineLevels = (disc: Discipline) => db.levels.filter((l) => l.discipline === disc && !l.retired);
+  const disciplineSessions = (disc: Discipline) => event.sessions.filter((s) => s.discipline === disc);
+
+  const draftFor = (row: HostRosterRow): RosterDraft =>
+    drafts[row.regId] ?? { levelId: row.levelId ?? '', apparatus: row.apparatus, sessionId: row.sessionId ?? '' };
+  const setDraft = (row: HostRosterRow, patch: Partial<RosterDraft>) => {
+    setDrafts((prev) => ({ ...prev, [row.regId]: { ...draftFor(row), ...patch } }));
+  };
+
+  /** Runs `action` immediately once the host has seen the warning this page
+   *  visit; otherwise stashes it and opens the modal. */
+  const runOrWarn = (action: () => void) => {
+    if (warned) { action(); return; }
+    setPendingAction(() => action);
+  };
+  const confirmWarning = () => {
+    setWarned(true);
+    const action = pendingAction;
+    setPendingAction(null);
+    if (action) action();
+  };
+
+  const save = async (row: HostRosterRow) => {
+    const d = draftFor(row);
+    if (!d.levelId || d.apparatus.length === 0) { toast('Pick a level and at least one apparatus.', { variant: 'error' }); return; }
+    setBusyId(row.regId);
+    const reg: Registration = {
+      id: row.regId, eventId: event.id, athleteId: row.athleteId, clubId: row.clubId ?? '',
+      discipline: row.discipline as Discipline, levelId: d.levelId, apparatus: d.apparatus,
+      sessionId: d.sessionId || null,
+      ...(row.apparatusLevels ? { apparatusLevels: row.apparatusLevels } : {}),
+      ...(row.partnerAthleteId ? { partnerAthleteId: row.partnerAthleteId } : {}),
+    };
+    const err = await hostUpsertRegistration(event.id, reg);
+    setBusyId(null);
+    if (err) { toast(err, { variant: 'error' }); return; }
+    toast('Registration updated.');
+    onChanged();
+  };
+
+  const remove = async (row: HostRosterRow) => {
+    setBusyId(row.regId);
+    const err = await hostDeleteRegistration(event.id, row.regId);
+    setBusyId(null);
+    if (err) { toast(err, { variant: 'error' }); return; }
+    toast(`Removed ${row.firstName} ${row.lastName}. This does not issue a refund.`);
+    onChanged();
+  };
+
+  const addAthlete = async () => {
+    const email = addEmail.trim();
+    if (!email || !addLevelId || addApparatus.length === 0) {
+      toast('Enter an email, level, and at least one apparatus.', { variant: 'error' });
+      return;
+    }
+    setAddBusy(true);
+    const found = await findPersonForHost(event.id, email);
+    if (!found.ok) { setAddBusy(false); toast(found.error, { variant: 'error' }); return; }
+    // Club-membership gate (CLAUDE.md domain rule): every registration entry
+    // point must verify the competing club holds an active club membership for
+    // the event's season — same idiom as Club.tsx's clubMembershipBlocked().
+    // The reg is created under the athlete's main club (find_person_for_host).
+    const seasonId = seasonForDate(db, event.startDate);
+    if (!found.clubId || !clubHasActiveMembership(db, found.clubId, seasonId)) {
+      setAddBusy(false);
+      const sName = db.seasons.find((s) => s.id === seasonId)?.name ?? "this event's season";
+      toast(
+        found.clubId
+          ? `That athlete's club has no active ${sName} club membership, so they can't be registered for this event.`
+          : "That athlete has no club, so they can't be registered for this event.",
+        { variant: 'error' },
+      );
+      return;
+    }
+    const reg: Registration = {
+      id: `reg-host-${Date.now()}-${found.personId}-${addDiscipline}`,
+      eventId: event.id, athleteId: found.personId, clubId: found.clubId ?? '',
+      discipline: addDiscipline, levelId: addLevelId, apparatus: addApparatus,
+      sessionId: addSessionId || null,
+    };
+    const err = await hostUpsertRegistration(event.id, reg);
+    setAddBusy(false);
+    if (err) { toast(err, { variant: 'error' }); return; }
+    toast(`Added ${found.firstName} ${found.lastName}. No charge was made.`);
+    setAddEmail(''); setAddApparatus([]); setAddSessionId('');
+    onChanged();
+  };
+
+  const byClub = new Map<string, HostRosterRow[]>();
+  for (const row of rows ?? []) {
+    const key = row.clubId ?? 'unassigned';
+    const list = byClub.get(key) ?? [];
+    list.push(row);
+    byClub.set(key, list);
+  }
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 18 }}>
+      <h3 className="card-title">Roster tools</h3>
+      <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--ink-soft)' }}>
+        Add or remove athletes and adjust level/apparatus/session directly. This does not charge or refund anyone —
+        entry-fee corrections go through the UCG team.
+      </p>
+
+      {!rows && <p style={{ fontSize: 13, color: 'var(--ink-soft)' }}>Loading roster…</p>}
+      {rows && rows.length === 0 && <p style={{ fontSize: 13, color: 'var(--ink-soft)' }}>No registrations yet.</p>}
+
+      {rows && rows.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 18, marginBottom: 18 }}>
+          {[...byClub.entries()].map(([clubKey, clubRows]) => (
+            <div key={clubKey}>
+              <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8 }}>{clubRows[0]?.clubName ?? 'Unassigned'}</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {clubRows.map((row) => {
+                  const d = draftFor(row);
+                  const disc = row.discipline as Discipline;
+                  return (
+                    <div
+                      key={row.regId}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 8 }}
+                    >
+                      <DisciplineIcon discipline={disc} size={16} />
+                      <strong style={{ minWidth: 140 }}>{row.firstName} {row.lastName}</strong>
+                      <select className="input" style={{ maxWidth: 160 }} value={d.levelId} onChange={(e) => setDraft(row, { levelId: e.target.value })}>
+                        <option value="" disabled>Level…</option>
+                        {disciplineLevels(disc).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                      </select>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 8px' }}>
+                        {APPARATUS[disc].map((ev) => (
+                          <label key={ev.code} className="checkrow" style={{ fontSize: 12 }}>
+                            <input
+                              type="checkbox"
+                              checked={d.apparatus.includes(ev.code)}
+                              onChange={() => setDraft(row, {
+                                apparatus: d.apparatus.includes(ev.code)
+                                  ? d.apparatus.filter((c) => c !== ev.code)
+                                  : [...d.apparatus, ev.code],
+                              })}
+                            />
+                            {ev.code}
+                          </label>
+                        ))}
+                      </div>
+                      <select className="input" style={{ maxWidth: 180 }} value={d.sessionId} onChange={(e) => setDraft(row, { sessionId: e.target.value })}>
+                        <option value="">No session</option>
+                        {disciplineSessions(disc).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                      <button className="btn small primary" disabled={busyId === row.regId} onClick={() => runOrWarn(() => save(row))}>
+                        {busyId === row.regId ? 'Saving…' : 'Save'}
+                      </button>
+                      <button
+                        className="btn small ghost" aria-label={`Remove ${row.firstName} ${row.lastName}`}
+                        disabled={busyId === row.regId} onClick={() => runOrWarn(() => remove(row))}
+                      >✕</button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ borderTop: '1px solid var(--line)', paddingTop: 14 }}>
+        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8 }}>Add athlete by email</div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
+          <input
+            type="email" className="input" style={{ maxWidth: 240 }} placeholder="Account email"
+            value={addEmail} onChange={(e) => setAddEmail(e.target.value)}
+          />
+          <select
+            className="input" style={{ maxWidth: 100 }} value={addDiscipline}
+            onChange={(e) => { setAddDiscipline(e.target.value as Discipline); setAddLevelId(''); setAddApparatus([]); setAddSessionId(''); }}
+          >
+            {event.disciplines.map((dsc) => <option key={dsc} value={dsc}>{dsc === 'TNT' ? 'T&T' : dsc}</option>)}
+          </select>
+          <select className="input" style={{ maxWidth: 160 }} value={addLevelId} onChange={(e) => setAddLevelId(e.target.value)}>
+            <option value="" disabled>Level…</option>
+            {disciplineLevels(addDiscipline).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+          </select>
+          <select className="input" style={{ maxWidth: 180 }} value={addSessionId} onChange={(e) => setAddSessionId(e.target.value)}>
+            <option value="">No session</option>
+            {disciplineSessions(addDiscipline).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', marginBottom: 10 }}>
+          {APPARATUS[addDiscipline].map((ev) => (
+            <label key={ev.code} className="checkrow" style={{ fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={addApparatus.includes(ev.code)}
+                onChange={() => setAddApparatus((prev) => (prev.includes(ev.code) ? prev.filter((c) => c !== ev.code) : [...prev, ev.code]))}
+              />
+              {ev.code} — {ev.name}
+            </label>
+          ))}
+        </div>
+        <button className="btn small primary" disabled={addBusy || !addEmail.trim()} onClick={() => runOrWarn(addAthlete)}>
+          {addBusy ? 'Adding…' : 'Add athlete'}
+        </button>
+      </div>
+
+      {pendingAction && (
+        <Modal title="You're editing this event's roster" onClose={() => setPendingAction(null)}>
+          <p style={{ marginBottom: 16, fontSize: 14 }}>{HOST_ROSTER_WARNING}</p>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button className="btn primary" onClick={confirmWarning}>Continue</button>
+            <button className="btn ghost" onClick={() => setPendingAction(null)}>Cancel</button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+export function EventHostPage() {
+  const { slug } = useParams();
+  const db = useDB();
+  const caps = useCapabilities();
+  const toast = useToast();
+  const fmtDate = useFmtDate();
+  const rolesLoaded = useRolesLoaded();
+  const event = db.events.find((m) => m.slug === slug);
+
+  // Roster is fetched once here and shared by the registration-summary card
+  // and the Excel-export card below, rather than each fetching its own copy.
+  const [rosterRows, setRosterRows] = useState<HostRosterRow[] | null>(null);
+  const [rosterError, setRosterError] = useState<string | null>(null);
+
+  const refreshRoster = useCallback(() => {
+    if (!event) return;
+    fetchEventHostRoster(event.id).then((res) => {
+      if (!res.ok) { setRosterError(res.error); toast(`Couldn't load the registration roster: ${res.error}`, { variant: 'error' }); return; }
+      setRosterError(null);
+      setRosterRows(res.rows);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [event?.id]);
+
+  useEffect(() => {
+    refreshRoster();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [event?.id]);
+
+  if (!event) return <div className="page"><p>Event not found.</p></div>;
+
+  // Roles load async after the session resolves (CLAUDE.md "rolesLoaded
+  // gate") — wait rather than flashing "access denied" at an actual host on
+  // refresh.
+  if (!rolesLoaded) return <div className="page"><p>Loading…</p></div>;
+
+  const canManage = caps.isEventHost(event.id) || caps.isSanctioning;
+  if (!canManage) {
+    return (
+      <div className="page">
+        <p>You don't have access to this event's host dashboard. Contact the event host or a UCG administrator if you believe this is an error.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <h1 className="page-title display">{event.name} — Host dashboard</h1>
+          <p className="page-sub">{event.city}, {event.state} · {fmtDate(event.startDate)}–{fmtDate(event.endDate)}</p>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Link className="btn ghost small" to={`/events/${event.slug}/communicate`}>Email registrants</Link>
+          <Link className="btn ghost small" to={`/events/${event.slug}`}>← Event page</Link>
+        </div>
+      </div>
+
+      <HostStatusCard event={event} fmtDate={fmtDate} toast={toast} />
+      <HostRegistrationSummaryCard rows={rosterRows} error={rosterError} />
+
+      <HostExportCard event={event} rows={rosterRows} error={rosterError} toast={toast} />
+
+      <EventAdminsCard event={event} toast={toast} />
+
+      <div className="card card-pad" style={{ marginBottom: 18 }}>
+        <h3 className="card-title">Competition setup</h3>
+        {isPast(event.regCloses) ? (
+          <>
+            <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--ink-soft)' }}>
+              Registration is closed. Build session squads and run scoring from Manage this event, or use Roster
+              tools below for last-minute roster corrections.
+            </p>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <Link className="btn ghost small" to={`/events/${event.slug}/manage`}>Sessions & squads →</Link>
+            </div>
+          </>
+        ) : (
+          <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)' }}>
+            Competition setup (roster corrections, sessions/squads) unlocks when registration closes.
+          </p>
+        )}
+      </div>
+
+      {isPast(event.regCloses) && (
+        <RosterToolsCard event={event} rows={rosterRows} onChanged={refreshRoster} toast={toast} />
+      )}
+    </div>
+  );
+}
+
+/** Excel-export card (event-mgmt v2 §C/§K): one workbook, three sheets
+ *  (Athletes / Counts / Shirt sizes) built from the shared host roster — see
+ *  src/lib/host-export.ts for the sheet shapes and the scope decision on
+ *  what's deferred to Phase 2 (leo sizes, banquet quantities). exceljs is
+ *  dynamically imported so it isn't in the main bundle (same reasoning as
+ *  any heavy on-demand export lib — this page is the only place it's used). */
+function HostExportCard({ event, rows, error, toast }: { event: Event; rows: HostRosterRow[] | null; error: string | null; toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void }) {
+  const db = useDB();
+  const [building, setBuilding] = useState(false);
+  const ready = !!rows && !error;
+
+  const download = async () => {
+    if (!rows) return;
+    setBuilding(true);
+    try {
+      const sheets = buildRegistrationWorkbookSheets(rows, levelNameResolver(db.levels));
+      const { Workbook } = await import('exceljs');
+      const wb = new Workbook();
+      wb.creator = 'UCG Registration Platform';
+      wb.created = new Date();
+      for (const sheet of sheets) writeSheet(wb, sheet);
+      const buffer = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${event.slug}-registrations.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast(`Couldn't build the workbook: ${err instanceof Error ? err.message : String(err)}`, { variant: 'error' });
+    } finally {
+      setBuilding(false);
+    }
+  };
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 18 }}>
+      <h3 className="card-title">Registration workbook</h3>
+      <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--ink-soft)' }}>
+        Full athlete detail, level × club × apparatus counts, and profile shirt-size tallies in one .xlsx file.
+      </p>
+      {error && <p style={{ color: 'var(--coral-700)' }}>Couldn't load the roster — try refreshing the page.</p>}
+      <button className="btn primary small" disabled={!ready || building} onClick={download}>
+        {building ? 'Building…' : 'Download registration workbook (.xlsx)'}
+      </button>
+    </div>
+  );
+}
+
+/** Thin exceljs wiring for one sheet model: header row (bold, frozen),
+ *  column widths sized to content, and the data rows as-is. Kept
+ *  intentionally untested — the shaping logic it wires up is in
+ *  src/lib/host-export.ts and IS unit-tested. */
+function writeSheet(wb: import('exceljs').Workbook, sheet: SheetModel): void {
+  const ws = wb.addWorksheet(sheet.name.slice(0, 31), { views: [{ state: 'frozen', ySplit: 1 }] });
+  ws.columns = sheet.columns.map((header, i) => ({
+    header,
+    width: Math.min(40, Math.max(10, header.length + 2, ...sheet.rows.map((r) => String(r[i] ?? '').length + 2))),
+  }));
+  ws.getRow(1).font = { bold: true };
+  for (const row of sheet.rows) ws.addRow(row);
+}
+
+/** Status card (§C): each line reads "waiting" until the underlying data
+ *  exists — event owner contact, hotel block, insurance, medal order/
+ *  tracking, onsite rep, and payment status. */
+function HostStatusCard({ event, fmtDate, toast }: { event: Event; fmtDate: (iso: string) => string; toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void }) {
+  const checklist: OwnerChecklist = event.ownerChecklist ?? {};
+  const medalsOrdered = checklist.medalsOrdered;
+  const medalsTracking = checklist.medalsTracking;
+  const onsiteRep = checklist.onsiteRep;
+  const payHost = checklist.payHost;
+  const [markingReceived, setMarkingReceived] = useState(false);
+  const [collected, setCollected] = useState<number | null>(null);
+  const [collectedError, setCollectedError] = useState(false);
+
+  const hasPricedAddons = !!(event.tshirtAddon?.price || event.bannerAddon?.price || event.banquet?.price);
+  const collectingFees = !(event.entryFee === 0 && !hasPricedAddons);
+
+  useEffect(() => {
+    if (!collectingFees) return;
+    let cancelled = false;
+    fetchEventCollectedTotal(event.id).then((res) => {
+      if (cancelled) return;
+      if (!res.ok) { setCollectedError(true); toast(`Couldn't load the amount collected: ${res.error}`, { variant: 'error' }); return; }
+      setCollected(res.total);
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [event.id, collectingFees]);
+
+  const markReceived = async () => {
+    setMarkingReceived(true);
+    const err = await markMedalsReceived(event.id);
+    setMarkingReceived(false);
+    if (err) { toast(err, { variant: 'error' }); return; }
+    const updated: Event = { ...event, ownerChecklist: { ...checklist, medalsTracking: { ...medalsTracking, hostReceived: true } } };
+    mutate((d) => {
+      const idx = d.events.findIndex((e) => e.id === event.id);
+      if (idx >= 0) d.events[idx] = updated;
+    });
+    toast('Marked medals as received.');
+  };
+
+  const pastEndDate = isPast(event.endDate);
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 18 }}>
+      <h3 className="card-title">Event status</h3>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, fontSize: 14 }}>
+        <div>
+          <strong>UCG event-owner contact: </strong>
+          {event.owner ? <span>{event.owner.name} ({event.owner.email})</span> : <span style={{ color: 'var(--ink-soft)' }}>Waiting for owner assignment</span>}
+        </div>
+        <div>
+          <strong>Hotel block: </strong>
+          {event.hotelLink ? <a href={event.hotelLink} target="_blank" rel="noopener noreferrer">Book here →</a> : <span style={{ color: 'var(--ink-soft)' }}>Waiting on hotel block</span>}
+        </div>
+        <div>
+          <strong>Insurance: </strong>
+          {checklist.insurance?.filePath
+            ? <InsuranceCertificateLink filePath={checklist.insurance.filePath} />
+            : <span style={{ color: 'var(--ink-soft)' }}>Waiting on insurance certificate</span>}
+        </div>
+        <div>
+          <strong>Medal order: </strong>
+          {!medalsOrdered?.orderedOn ? (
+            <span style={{ color: 'var(--ink-soft)' }}>Waiting</span>
+          ) : (
+            <span>
+              Ordered {fmtDate(medalsOrdered.orderedOn.slice(0, 10))}
+              {medalsTracking?.trackingLink && (
+                <> · <a href={medalsTracking.trackingLink} target="_blank" rel="noopener noreferrer">Track shipment →</a></>
+              )}
+              {medalsTracking?.trackingLink && !medalsTracking.hostReceived && (
+                <> · <button className="btn small ghost" disabled={markingReceived} onClick={markReceived}>{markingReceived ? 'Marking…' : 'Mark received'}</button></>
+              )}
+              {medalsTracking?.hostReceived && <> · <span style={{ fontWeight: 700 }}>Received ✓</span></>}
+            </span>
+          )}
+        </div>
+        <div>
+          <strong>Onsite rep: </strong>
+          {onsiteRep?.name || onsiteRep?.email
+            ? <span>{onsiteRep.name} {onsiteRep.email && <span style={{ color: 'var(--ink-soft)' }}>({onsiteRep.email})</span>}</span>
+            : <span style={{ color: 'var(--ink-soft)' }}>Assigned 2 weeks before the event</span>}
+        </div>
+        <div>
+          <strong>Payment status: </strong>
+          {!collectingFees ? (
+            <span style={{ color: 'var(--ink-soft)' }}>Not collecting fees through the platform</span>
+          ) : (
+            <>
+              <span>
+                {collectedError ? 'Could not load the amount collected.' : collected === null ? 'Loading…' : `Collected so far: ${fmtMoney(collected)} (excluding processing fees)`}
+              </span>
+              {payHost?.done ? (
+                <div>Sent via {payHost.method === 'paypal' ? 'PayPal' : 'check'} on {payHost.paidOn ? fmtDate(payHost.paidOn.slice(0, 10)) : ''}</div>
+              ) : pastEndDate ? (
+                <div style={{ color: 'var(--coral-700)', fontWeight: 700 }}>Payment will be sent 1 week after the event</div>
+              ) : null}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Registration summary card (§C): per level, participating clubs + athletes
+ *  per apparatus, from `event_host_roster` (a deliberate RLS exception —
+ *  hosts see athlete detail across every competing club for THIS event).
+ *  Roster is fetched once by the parent (`EventHostPage`) and shared with
+ *  the Excel-export card below it. */
+function HostRegistrationSummaryCard({ rows, error }: { rows: HostRosterRow[] | null; error: string | null }) {
+  const db = useDB();
+
+  const summary = useMemo(
+    () => (rows ? summarizeRoster(rows, levelNameResolver(db.levels)) : null),
+    [rows, db.levels],
+  );
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 18 }}>
+      <h3 className="card-title">Registration summary</h3>
+      {error && <p style={{ color: 'var(--coral-700)' }}>Couldn't load the roster — try refreshing the page.</p>}
+      {!error && !summary && <p style={{ color: 'var(--ink-soft)' }}>Loading…</p>}
+      {summary && summary.length === 0 && <p style={{ color: 'var(--ink-soft)' }}>No registrations yet.</p>}
+      {summary && summary.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {summary.map((level) => (
+            <div key={level.levelId || 'unassigned'} style={{ paddingBottom: 12, borderBottom: '1px solid var(--line)' }}>
+              <h4 style={{ margin: '0 0 6px' }}>{level.levelName}</h4>
+              <p style={{ margin: '0 0 6px', fontSize: 13, color: 'var(--ink-soft)' }}>
+                {level.clubs.map((c) => `${c.clubName} (${c.athleteCount})`).join(' · ')}
+              </p>
+              <p style={{ margin: 0, fontSize: 13 }}>
+                {Object.entries(level.apparatusCounts).map(([code, count]) => `${code}: ${count}`).join(' · ')}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -746,7 +1616,7 @@ export function EventManage() {
   const [sessionId, setSessionId] = useState(event?.sessions[0]?.id ?? '');
   if (!event) return <p>Event not found.</p>;
   const session = event.sessions.find((s) => s.id === sessionId) ?? event.sessions[0];
-  const canScore = caps.isEventHost(event.id);
+  const canScore = caps.isEventHost(event.id) || caps.isSanctioning;
 
   return (
     <div>

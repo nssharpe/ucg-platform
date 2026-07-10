@@ -117,6 +117,12 @@ export function deriveCapabilities(
   authPersonId: string | null,
   viewPersonId: string | null,
   seasonId: string | null,
+  /** Event ids where the signed-in auth user holds a per-event admin grant
+   *  (`event_admins` rows, event-mgmt v2 §C) — makes isEventHost() true for
+   *  exactly those events. Grants are auth-uid-scoped (not person-scoped),
+   *  so callers derive this from the session uid, paralleling how RLS scopes
+   *  the readable rows. Defaults to none. */
+  eventAdminEventIds: string[] = [],
 ): Capabilities {
   const isAdmin = roles.includes('admin');
   const isSanctioning = isAdmin || roles.includes('sanctioning');
@@ -145,6 +151,7 @@ export function deriveCapabilities(
     impersonating,
     isEventHost: (eventId: string) => {
       if (isAdmin) return true;
+      if (eventAdminEventIds.includes(eventId)) return true;
       const event = db.events.find((m) => m.id === eventId);
       return !!event && managedClubIds.includes(event.hostClubId);
     },

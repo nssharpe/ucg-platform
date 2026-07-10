@@ -7,7 +7,7 @@
 // block the UI) and are no-ops when `isSupabaseConfigured` is false.
 import { createClient, type SupabaseClient, type RealtimePostgresChangesPayload, type PostgrestError } from '@supabase/supabase-js';
 import type {
-  AccountInvite, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, Invoice, Level, Event, Membership, MembershipType, Payment, Region, Registration, SanctionRequest, SanctionVote, Score, Season,
+  AccountInvite, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, EventAdmin, Invoice, Level, Event, Membership, MembershipType, Payment, Region, Registration, SanctionRequest, SanctionVote, Score, Season,
   WaiverDocument, WaiverSignature,
 } from './types';
 import { writeQueue, type WriteOp, type ExecResult } from './write-queue';
@@ -223,6 +223,7 @@ const eventToRow = (m: Event) => ({
   hotel_link: m.hotelLink ?? null, age_calc_at: m.ageCalcAt || null,
   late_reg: m.lateReg ?? null, director: m.director ?? null, capacity: m.capacity ?? null,
   confirmation_email: m.confirmationEmail ?? null,
+  owner: m.owner ?? null, owner_checklist: m.ownerChecklist ?? null,
 });
 
 const sessionToRow = (eventId: string, s: Event['sessions'][number]) => ({
@@ -330,6 +331,10 @@ const rowToWaiverDocument = (r: Row<'waiver_documents'>): WaiverDocument => ({
 const rowToClubMembership = (r: { id: string; club_id: string; season_id: string; status: string; granted_by_admin: boolean; created_at: string }): ClubMembership => ({
   id: r.id, clubId: r.club_id, seasonId: r.season_id, status: 'active',
   grantedByAdmin: !!r.granted_by_admin, createdAt: r.created_at,
+});
+const rowToEventAdmin = (r: { id: string; event_id: string; user_id: string; email: string; name: string | null; granted_by: string | null; created_at: string }): EventAdmin => ({
+  id: r.id, eventId: r.event_id, userId: r.user_id, email: r.email,
+  name: r.name, grantedBy: r.granted_by, createdAt: r.created_at,
 });
 const rowToPayment = (r: {
   id: string; stripe_session_id: string | null; stripe_payment_intent_id: string | null;
@@ -598,6 +603,198 @@ export async function linkOrCreatePerson(first: string, last: string): Promise<s
   return (data as string) ?? null;
 }
 
+/** The sanctioning-team roster (sanctioning + admin app_role holders), for the
+ *  event-owner assignment dropdown (event-mgmt v2 §B3). Returns [] on error
+ *  or when unconfigured. */
+export interface SanctioningTeamMember { userId: string; name: string; email: string }
+export async function listSanctioningTeam(): Promise<SanctioningTeamMember[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase.rpc('list_sanctioning_team');
+  if (error) { console.error('[supabase] list_sanctioning_team failed:', error); return []; }
+  return ((data ?? []) as { user_id: string; name: string; email: string }[]).map((r) => ({
+    userId: r.user_id, name: r.name, email: r.email,
+  }));
+}
+
+/** Grant per-event admin access (event-mgmt v2 §C) to the account matching
+ *  `email` exactly. Awaited (not queued) because the UI needs the matched
+ *  identity — or the RPC's raised exception message ("No account found for
+ *  that email.") — synchronously to toast. */
+export async function grantEventAdmin(
+  eventId: string, email: string,
+): Promise<{ ok: true; userId: string; email: string; name: string | null } | { ok: false; error: string }> {
+  if (!supabase) return { ok: false, error: 'Not configured.' };
+  const { data, error } = await supabase.rpc('grant_event_admin', { p_event_id: eventId, p_email: email });
+  if (error) { console.error('[supabase] grant_event_admin failed:', error); return { ok: false, error: error.message }; }
+  const row = ((data ?? []) as { user_id: string; email: string; name: string | null }[])[0];
+  if (!row) return { ok: false, error: 'No account found for that email.' };
+  return { ok: true, userId: row.user_id, email: row.email, name: row.name };
+}
+
+/** Revoke a per-event admin grant. Returns an error message on failure
+ *  (unwrapped from the RPC's raised exception), null on success. */
+export async function revokeEventAdmin(eventId: string, userId: string): Promise<string | null> {
+  if (!supabase) return 'Not configured.';
+  const { error } = await supabase.rpc('revoke_event_admin', { p_event_id: eventId, p_user_id: userId });
+  if (error) { console.error('[supabase] revoke_event_admin failed:', error); return error.message; }
+  return null;
+}
+
+/** One row of the event host viewing page's registration roster (event-mgmt
+ *  v2 §C — `event_host_roster` RPC). Column set mirrors the admin CSV export
+ *  (Events.tsx exportCsv) plus the reg-identity fields needed to group it. */
+export interface HostRosterRow {
+  regId: string;
+  athleteId: string;
+  firstName: string;
+  lastName: string;
+  clubId: string | null;
+  clubName: string | null;
+  discipline: string;
+  levelId: string | null;
+  apparatus: string[];
+  apparatusLevels: Record<string, string> | null;
+  sessionId: string | null;
+  paid: boolean;
+  updatedPending: boolean;
+  partnerAthleteId: string | null;
+  shirt: string | null;
+  dietary: string[];
+  email: string | null;
+  phone: string | null;
+  emergencyContact: string | null;
+  studentStatus: string | null;
+  region: string | null;
+}
+
+/** Event-wide registration roster for the host viewing page (event-mgmt v2
+ *  §C) — a deliberate RLS exception (`event_host_roster`, SECURITY DEFINER):
+ *  hosts need to see athletes from every competing club, not just their own.
+ *  Returns [] on error/unconfigured; callers should still surface a toast by
+ *  checking the returned ok flag from the tuple-returning variant if needed —
+ *  kept simple (array-only) since the page already gates on caps.isEventHost
+ *  before calling, so an error here is an unexpected failure, not an
+ *  authorization question. */
+export async function fetchEventHostRoster(eventId: string): Promise<{ ok: true; rows: HostRosterRow[] } | { ok: false; error: string }> {
+  if (!supabase) return { ok: false, error: 'Not configured.' };
+  const { data, error } = await supabase.rpc('event_host_roster', { p_event_id: eventId });
+  if (error) { console.error('[supabase] event_host_roster failed:', error); return { ok: false, error: error.message }; }
+  const rows = ((data ?? []) as FnReturns<'event_host_roster'>).map((r) => ({
+    regId: r.reg_id, athleteId: r.athlete_id, firstName: r.first_name, lastName: r.last_name,
+    clubId: r.club_id, clubName: r.club_name, discipline: r.discipline, levelId: r.level_id,
+    apparatus: r.apparatus ?? [], apparatusLevels: (r.apparatus_levels as Record<string, string> | null) ?? null,
+    sessionId: r.session_id, paid: !!r.paid, updatedPending: !!r.updated_pending,
+    partnerAthleteId: r.partner_athlete_id, shirt: r.shirt, dietary: r.dietary ?? [],
+    email: r.email, phone: r.phone, emergencyContact: r.emergency_contact,
+    studentStatus: r.student_status, region: r.region,
+  }));
+  return { ok: true, rows };
+}
+
+/** Total collected so far for an event through the platform (dollars,
+ *  excluding processing/service fees) — for the host status card. */
+export async function fetchEventCollectedTotal(eventId: string): Promise<{ ok: true; total: number } | { ok: false; error: string }> {
+  if (!supabase) return { ok: false, error: 'Not configured.' };
+  const { data, error } = await supabase.rpc('event_collected_total', { p_event_id: eventId });
+  if (error) { console.error('[supabase] event_collected_total failed:', error); return { ok: false, error: error.message }; }
+  return { ok: true, total: Number(data ?? 0) };
+}
+
+/** Mark the host as having received the medals shipment — the host's one
+ *  scoped write on the event-mgmt v2 §C host page (they can't UPDATE events
+ *  directly; see `mark_medals_received`). Returns an error message on
+ *  failure, null on success. */
+export async function markMedalsReceived(eventId: string): Promise<string | null> {
+  if (!supabase) return 'Not configured.';
+  const { error } = await supabase.rpc('mark_medals_received', { p_event_id: eventId });
+  if (error) { console.error('[supabase] mark_medals_received failed:', error); return error.message; }
+  return null;
+}
+
+/** Add/edit a registration through the host roster tool (event-mgmt v2 P1
+ *  Task 8, spec §C). Applies ONLY the server whitelist (athlete/club/
+ *  discipline/level/apparatus/apparatus_levels/session/partner) -- paid/
+ *  updated_pending/refunded are never touched by this path. A brand-new
+ *  host-added registration lands `paid: true` with no cart line/fee (see
+ *  `host_upsert_registration`'s migration comment for the payment-semantics
+ *  decision). Awaited (not queued) so the caller can toast the RPC's raised
+ *  message synchronously. Returns an error message on failure, null on
+ *  success. */
+export async function hostUpsertRegistration(eventId: string, reg: Registration): Promise<string | null> {
+  if (!supabase) return 'Not configured.';
+  const payload = {
+    id: reg.id, event_id: reg.eventId, athlete_id: reg.athleteId, club_id: reg.clubId,
+    discipline: reg.discipline, level_id: reg.levelId, apparatus: reg.apparatus,
+    apparatus_levels: reg.apparatusLevels ?? null, session_id: reg.sessionId || null,
+    partner_athlete_id: reg.partnerAthleteId ?? null,
+  };
+  const { error } = await supabase.rpc('host_upsert_registration', { p_event_id: eventId, p_reg: payload });
+  if (error) { console.error('[supabase] host_upsert_registration failed:', error); return error.message; }
+  return null;
+}
+
+/** Remove a registration through the host roster tool -- a hard delete with
+ *  NO refund/payment side effect (refunds are a Phase 3 feature; see
+ *  `host_delete_registration`'s migration comment). Returns an error message
+ *  on failure, null on success. */
+export async function hostDeleteRegistration(eventId: string, regId: string): Promise<string | null> {
+  if (!supabase) return 'Not configured.';
+  const { error } = await supabase.rpc('host_delete_registration', { p_event_id: eventId, p_reg_id: regId });
+  if (error) { console.error('[supabase] host_delete_registration failed:', error); return error.message; }
+  return null;
+}
+
+/** Resolve an existing account by exact email for the host roster tool's
+ *  "add athlete by email" flow (mirrors grantEventAdmin's exact-email-only
+ *  lookup -- no general people-search exposed to a host). */
+export async function findPersonForHost(
+  eventId: string, email: string,
+): Promise<{ ok: true; personId: string; firstName: string; lastName: string; clubId: string | null } | { ok: false; error: string }> {
+  if (!supabase) return { ok: false, error: 'Not configured.' };
+  const { data, error } = await supabase.rpc('find_person_for_host', { p_event_id: eventId, p_email: email });
+  if (error) { console.error('[supabase] find_person_for_host failed:', error); return { ok: false, error: error.message }; }
+  const row = ((data ?? []) as FnReturns<'find_person_for_host'>)[0];
+  if (!row) return { ok: false, error: 'No account found for that email.' };
+  return { ok: true, personId: row.person_id, firstName: row.first_name, lastName: row.last_name, clubId: row.club_id };
+}
+
+const INSURANCE_CERT_ALLOWED_EXT = ['pdf', 'jpg', 'jpeg', 'png'];
+const INSURANCE_CERT_MAX_BYTES = 10 * 1024 * 1024; // 10MB
+
+/** Upload an insurance certificate to the private `event-files` bucket
+ *  (event-mgmt v2 §C / §B4) under `insurance/<eventId>/<filename>` and
+ *  return the stored path (saved onto the owner checklist's `filePath`).
+ *  Only sanctioning/admin callers pass the storage RLS insert policy
+ *  (20260709210935_event_files_bucket.sql) — a host/member caller gets a
+ *  storage error, unwrapped here into a readable message. Validates
+ *  extension + a ~10MB size cap client-side (the source of truth is still
+ *  the storage policy, this is just a friendlier error before the round trip). */
+export async function uploadInsuranceCertificate(eventId: string, file: File): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
+  if (!supabase) return { ok: false, error: 'Not configured.' };
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+  if (!INSURANCE_CERT_ALLOWED_EXT.includes(ext)) {
+    return { ok: false, error: 'Only PDF, JPG, or PNG files are allowed.' };
+  }
+  if (file.size > INSURANCE_CERT_MAX_BYTES) {
+    return { ok: false, error: 'File is too large — the limit is 10MB.' };
+  }
+  const sanitized = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `insurance/${eventId}/${sanitized}`;
+  const { error } = await supabase.storage.from('event-files').upload(path, file, { upsert: true });
+  if (error) { console.error('[supabase] uploadInsuranceCertificate failed:', error); return { ok: false, error: error.message }; }
+  return { ok: true, path };
+}
+
+/** Resolve a signed, time-limited URL for a stored insurance certificate
+ *  (bucket is private — there is no public URL). ~10 minute expiry, so
+ *  callers should resolve on click/open, not cache it on render. */
+export async function insuranceCertificateUrl(path: string): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  if (!supabase) return { ok: false, error: 'Not configured.' };
+  const { data, error } = await supabase.storage.from('event-files').createSignedUrl(path, 600);
+  if (error || !data?.signedUrl) { console.error('[supabase] insuranceCertificateUrl failed:', error); return { ok: false, error: error?.message ?? 'Could not open the certificate.' }; }
+  return { ok: true, url: data.signedUrl };
+}
+
 /** Atomically record one redemption of a coupon (enforces max_uses server-side).
  *  Returns true when a redemption was counted. Best-effort: never throws. */
 export async function redeemCoupon(code: string): Promise<boolean> {
@@ -643,6 +840,37 @@ export async function sendEmail(
     return { ok: false, sentCount: 0, failedCount: recipients.length, error: msg };
   }
   return data as SendEmailResult;
+}
+
+export interface SendEventEmailResult {
+  ok: boolean;
+  sent: number;
+  failed: number;
+  recipientCount: number;
+  error?: string;
+}
+
+/** Send (or test-send) an event-scoped email via the send-event-email Edge
+ *  Function (event-mgmt v2 §J). Recipients are resolved SERVER-SIDE from the
+ *  event's registrations + the given filters — the client never sends a
+ *  recipient list. Caller must be an admin, sanctioning, manage the event's
+ *  host club, or hold an event_admins grant (the function re-checks). */
+export async function sendEventEmail(args: {
+  eventId: string;
+  subject: string;
+  html: string;
+  text?: string;
+  replyTo?: string;
+  fromAlias?: string;
+  cc?: string[];
+  filters: { roles: ('athlete' | 'manager' | 'clubEmail')[]; sessionIds?: string[]; levelIds?: string[]; disciplines?: string[] };
+  test?: boolean;
+}): Promise<SendEventEmailResult> {
+  if (!supabase) return { ok: false, sent: 0, failed: 0, recipientCount: 0, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('send-event-email', { body: args });
+  if (error) return { ok: false, sent: 0, failed: 0, recipientCount: 0, error: await edgeErrorMessage(error) };
+  const result = data as { sent: number; failed: number; recipientCount: number };
+  return { ok: true, ...result };
 }
 
 export interface SendSmsResult {
@@ -855,6 +1083,10 @@ export interface CommLogEntry {
   segments?: number | null;
   encoding?: string | null;
   costEstimate?: number | null;
+  /** Set for event-scoped sends (EventCommunicate page) — lets the per-event
+   *  sent log filter to just this event's rows (event-mgmt v2 §J). Absent
+   *  for the league Communicate tool's org-wide sends. */
+  eventId?: string | null;
 }
 
 /** Insert a comm-log row (best-effort; never throws). */
@@ -869,20 +1101,25 @@ export async function logComm(entry: CommLogEntry): Promise<void> {
       recipient_count: entry.recipientCount, sent_count: entry.sentCount, failed_count: entry.failedCount,
       recipients: entry.recipients, error: entry.error,
       segments: entry.segments ?? null, encoding: entry.encoding ?? null, cost_estimate: entry.costEstimate ?? null,
+      event_id: entry.eventId ?? null,
     });
   } catch (e) { console.error('[supabase] logComm failed:', e); }
 }
 
-/** The signed-in user's communication history (admins see all, via RLS). */
-export async function fetchCommLog(limit = 100): Promise<(CommLogEntry & { id: string; sentAt: string })[]> {
+/** The signed-in user's communication history (admins see all, via RLS).
+ *  Pass `eventId` to filter to one event's sends (EventCommunicate page). */
+export async function fetchCommLog(limit = 100, eventId?: string): Promise<(CommLogEntry & { id: string; sentAt: string })[]> {
   if (!supabase) return [];
-  const { data, error } = await supabase.from('comm_log').select('*').order('sent_at', { ascending: false }).limit(limit);
+  let q = supabase.from('comm_log').select('*').order('sent_at', { ascending: false }).limit(limit);
+  if (eventId) q = q.eq('event_id', eventId);
+  const { data, error } = await q;
   if (error) { console.error('[supabase] fetchCommLog failed:', error); return []; }
   return (data ?? []).map((r) => ({
     id: r.id, sentAt: r.sent_at, channel: r.channel, isTest: r.is_test, subject: r.subject, body: r.body,
     recipientCount: r.recipient_count, sentCount: r.sent_count, failedCount: r.failed_count,
     recipients: (r.recipients ?? []) as { name: string; contact: string }[], error: r.error,
     segments: r.segments ?? null, encoding: r.encoding ?? null, costEstimate: r.cost_estimate ?? null,
+    eventId: r.event_id ?? null,
   }));
 }
 
@@ -1044,7 +1281,7 @@ export async function loadAll(): Promise<DB | null> {
       seasonsR, levelsR, clubsR, clubManagersR, peopleR, altClubsR, membershipsR,
       eventsR, sessionsR, squadsR, registrationsR, scoresR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
       clubRequestsR, appSettingsR, accountInvitesR, sanctionRequestsR, sanctionVotesR,
-      waiverDocsR, waiverSigsR, clubMembershipsR, paymentsR,
+      waiverDocsR, waiverSigsR, clubMembershipsR, paymentsR, eventAdminsR,
     ] = await Promise.all([
       supabase.from('seasons').select('*'),
       supabase.from('levels').select('*'),
@@ -1071,6 +1308,7 @@ export async function loadAll(): Promise<DB | null> {
       supabase.from('waiver_signatures').select('*'),   // tolerated if absent
       supabase.from('club_memberships').select('*'),    // tolerated if absent
       supabase.from('payments').select('*'),            // S1; tolerated if absent
+      supabase.from('event_admins').select('*'),        // emv2 P1 T3; tolerated if absent
     ]);
 
     // club_requests may not exist on a pre-0005 DB — tolerate its error, fail on the rest.
@@ -1168,6 +1406,9 @@ export async function loadAll(): Promise<DB | null> {
       ...(r.director ? { director: r.director as Event['director'] } : {}),
       ...(r.capacity ? { capacity: r.capacity as Event['capacity'] } : {}),
       ...(r.confirmation_email ? { confirmationEmail: r.confirmation_email as Event['confirmationEmail'] } : {}),
+      ...(r.created_at ? { createdAt: r.created_at } : {}),
+      ...(r.owner ? { owner: r.owner as Event['owner'] } : {}),
+      ...(r.owner_checklist ? { ownerChecklist: r.owner_checklist as Event['ownerChecklist'] } : {}),
     }));
 
     const registrations: Registration[] = (registrationsR.data ?? []).map(rowToRegistration);
@@ -1240,6 +1481,8 @@ export async function loadAll(): Promise<DB | null> {
       .map(rowToClubMembership);
     const payments: Payment[] = (paymentsR.error ? [] : paymentsR.data ?? [])
       .map(rowToPayment);
+    const eventAdmins: EventAdmin[] = (eventAdminsR.error ? [] : eventAdminsR.data ?? [])
+      .map(rowToEventAdmin);
 
     return {
       seasons, levels, clubs, people, events, registrations, scores, invoices, coupons,
@@ -1252,6 +1495,7 @@ export async function loadAll(): Promise<DB | null> {
       ...(waiverSignatures.length ? { waiverSignatures } : {}),
       ...(clubMemberships.length ? { clubMemberships } : {}),
       ...(payments.length ? { payments } : {}),
+      ...(eventAdmins.length ? { eventAdmins } : {}),
     };
   } catch (e) {
     console.error('[supabase] loadAll threw:', e);
