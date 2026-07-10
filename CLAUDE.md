@@ -380,7 +380,8 @@ update it there; don't grow a rival list here. Operative notes only:
 - **Event management v2** (Julia's 2026-07-06 requirements): digest + gap analysis in
   `docs/specs/2026-07-06-event-management-v2-requirements.md`; raw materials in
   `docs/reference/` (every "NAIGC" there reads as UCG — Nate 2026-07-06). Phasing
-  V2-P0…P6 approved + all §N7 questions answered by Julia 2026-07-06 — every phase
-  is unblocked and ready to plan/build in order.
+  V2-P0…P6 approved + all §N7 questions answered by Julia 2026-07-06. P0–P2 shipped
+  (P2 = per-unit add-ons + camps, 2026-07-10 — decisions in spec §E3/§G); next is
+  P3 refunds (money-critical, fable review mandatory).
 - Refunds are Stripe-Dashboard-only today; a Dashboard refund does NOT reflect back
   into `payments.status` (full in-app refund requirements: v2 spec §H).

@@ -121,6 +121,20 @@ Excel exports ship as ONE workbook with Athletes / Counts / Shirt-sizes
 (profile) sheets; leo-size and banquet-quantity sheets wait for the P2 add-on
 model (no purchased-unit size/quantity data exists yet).
 
+**P2 decisions (Nate 2026-07-10, shipped with V2-P2):** (1) ONE cart/invoice
+line per unit for ALL quantity add-ons (banquet/shirt/leo), each carrying its
+size (`addon_size`) or banquet assignee (`addon_assignee`: person id or
+`'extra'`) — uniform, refund-ready for P3. (2) Purchase deadlines are PER
+add-on type (`lastPurchaseAt` on each config); unset ⇒ purchasable only while
+registration is open — so a stale add-on cart line for a closed event now
+fails checkout by design. (3) Standalone add-on purchase shipped: event page
+(self cart, post-registration) + club Add-ons card (§E3), both live until each
+type's window closes, including past regCloses. (4) The camp confirmation's
+"receipt attached" is DEFERRED to P3's server-side receipt rendering — the P2
+camp email carries survey + add-on summary + an edit link instead. Known
+carry-over gap: camp registration still reuses the full per-discipline editor
+(§G's simplified no-discipline camp popup remains unbuilt).
+
 ## D. Registration page & flow deltas (EXTENDS existing)
 
 - Unique registration page per event + easy link copy — exists (slug); add
