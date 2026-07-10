@@ -16,6 +16,13 @@
 //
 // $0 lines (host-club regs, already-covered memberships) are DROPPED from Stripe
 // but their ids stay in cart_item_ids so the webhook still clears/flips them.
+//
+// FREE-ORDER PATH (emv2 P3, 2026-07-10): if a coupon reduces the order TOTAL
+// to exactly $0 (e.g. a scholarship code), there's no Stripe session to
+// create — the server fulfills the order directly via the shared
+// `fulfillPayment` core (`_shared/fulfill.ts`, the same core `stripe-webhook`
+// uses) and returns `{ free: true, paymentId }` instead of a client secret.
+// No service fee is charged on a $0 order.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
   addonLastPurchaseAt,
@@ -34,6 +41,7 @@ import {
   type RegFeeEvent,
   type SeasonFees,
 } from '../_shared/stripe.ts';
+import { fulfillPayment, type PaymentRow } from '../_shared/fulfill.ts';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -573,26 +581,14 @@ Deno.serve(async (req) => {
   }
   const preDiscountSubtotalCents = subtotalCents;
   subtotalCents -= discountCents;
-  if (subtotalCents <= 0) {
-    return json({ ok: false, error: 'This coupon fully covers the cost — nothing left to charge a card for.' }, 400);
-  }
-
-  const feeCents = processingFee(subtotalCents);
-  const stripeLineItems = lines
-    .filter((l) => l.cents > 0)
-    .map((l) => ({
-      price_data: { currency: 'usd', unit_amount: l.cents, product_data: { name: l.label } },
-      quantity: 1,
-    }));
-  stripeLineItems.push({
-    price_data: { currency: 'usd', unit_amount: feeCents, product_data: { name: 'Service fee (card processing)' } },
-    quantity: 1,
-  });
-
-  // --- Create the Embedded Checkout Session ---
-  let stripe;
-  try { stripe = getStripe(); } catch (e) {
-    return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 500);
+  // subtotalCents can never go negative: discountCents is capped at
+  // eligibleCents, which is a subset-sum of the (pre-discount) subtotalCents
+  // lines, so eligibleCents <= preDiscountSubtotalCents always. The only way
+  // to reach exactly 0 here is a coupon that discounts EVERY line to 0 (the
+  // subtotalCents<=0 "nothing to pay" guard above already rejected an
+  // already-zero pre-discount cart), which is the free-order case below.
+  if (subtotalCents < 0) {
+    return json({ ok: false, error: 'Coupon discount exceeds the order total — please contact support.' }, 500);
   }
 
   // Single-membership checkouts record the exact (season, type) so any club-pay
@@ -600,7 +596,7 @@ Deno.serve(async (req) => {
   const single = items.length === 1 && items[0].kind === 'membership' ? items[0] : null;
 
   // --- Freeze the validated, server-priced line set onto the payment row -----
-  // The webhook fulfills FROM THIS SNAPSHOT, not from live `cart_items` (which
+  // Fulfillment reads FROM THIS SNAPSHOT, not from live `cart_items` (which
   // stays client-writable until fulfillment — the TOCTOU closed here). One
   // entry per cart item the payment covers, incl. $0 (host-club / already
   // covered) lines so they still get fulfilled. `amount_cents` is the
@@ -622,6 +618,92 @@ Deno.serve(async (req) => {
     addon_size: i.addon_size,
     addon_assignee: i.addon_assignee,
   }));
+
+  // === FREE-ORDER PATH (2026-07-10): a coupon reduced the total to exactly
+  // === $0 — e.g. a scholarship code covering 100% of a Nationals entry. This
+  // === is a real, supported order fulfilled WITHOUT Stripe: no service fee
+  // === (a $0 order must not be charged the $0.30 minimum — `processingFee`
+  // === is simply never called on this path) and no Checkout Session. =======
+  if (subtotalCents === 0) {
+    // A $0 order is reachable ONLY via a coupon (the pre-discount "nothing to
+    // pay" guard above already rejected an already-zero cart) — assert that
+    // invariant rather than silently free-fulfilling a pricing-bug zero.
+    if (!appliedCouponCode || discountCents <= 0) {
+      return json({ ok: false, error: 'Could not verify a $0 total — please try again.' }, 500);
+    }
+
+    // --- Claim the cart items FIRST, atomically, by deleting them ----------
+    // Unlike the Stripe path (where a separate `payments` row + Stripe's own
+    // session lifecycle naturally prevents a double-click from double-
+    // fulfilling — only one session ever gets PAID), the free path fulfills
+    // synchronously inside this one request. A double-click / retry racing
+    // two concurrent requests for the SAME cart items must not both fulfill.
+    // Deleting the cart_items rows here (idempotent delete-by-id, same
+    // operation fulfillment does at the end) and requiring EVERY id to have
+    // actually been deleted is the claim: only the request that wins the
+    // delete proceeds to fulfill; a loser sees fewer rows deleted than it
+    // asked for and is rejected outright, before any money-equivalent state
+    // (membership activation, registration paid-flip, coupon redemption) is
+    // touched.
+    const { data: deletedItems, error: delErr } = await db
+      .from('cart_items')
+      .delete()
+      .in('id', items.map((i) => i.id))
+      .select('id');
+    if (delErr) return json({ ok: false, error: delErr.message }, 500);
+    if (!deletedItems || deletedItems.length !== items.length) {
+      return json({ ok: false, error:
+        'This order was already processed (likely by a duplicate request) — check your Purchase History.' }, 409);
+    }
+
+    const { data: freePayment, error: freePayErr } = await db
+      .from('payments')
+      .insert({
+        stripe_session_id: null,
+        person_id: personId,
+        status: 'pending',
+        amount_subtotal: 0,
+        service_fee: 0,
+        currency: 'usd',
+        cart_item_ids: items.map((i) => i.id),
+        lines_snapshot: linesSnapshot,
+        ref_season_id: single?.ref_season_id ?? null,
+        ref_type: single?.ref_type ?? null,
+        coupon_code: appliedCouponCode,
+      })
+      .select('id, person_id, status, amount_subtotal, service_fee, currency, cart_item_ids, lines_snapshot, invoice_id, stripe_event_id, fulfilled_at, coupon_code')
+      .single();
+    if (freePayErr) return json({ ok: false, error: freePayErr.message }, 500);
+
+    await fulfillPayment(db, freePayment as PaymentRow, { piId: null, stripeFeeCents: null, eventId: null });
+
+    return json({
+      ok: true,
+      free: true,
+      paymentId: freePayment.id,
+      amountSubtotal: preDiscountSubtotalCents,
+      discountAmount: discountCents,
+      serviceFee: 0,
+    });
+  }
+
+  const feeCents = processingFee(subtotalCents);
+  const stripeLineItems = lines
+    .filter((l) => l.cents > 0)
+    .map((l) => ({
+      price_data: { currency: 'usd', unit_amount: l.cents, product_data: { name: l.label } },
+      quantity: 1,
+    }));
+  stripeLineItems.push({
+    price_data: { currency: 'usd', unit_amount: feeCents, product_data: { name: 'Service fee (card processing)' } },
+    quantity: 1,
+  });
+
+  // --- Create the Embedded Checkout Session ---
+  let stripe;
+  try { stripe = getStripe(); } catch (e) {
+    return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 500);
+  }
 
   let session;
   try {

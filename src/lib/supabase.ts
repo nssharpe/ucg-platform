@@ -1014,19 +1014,25 @@ export async function sendMembershipWelcome(
  *  amounts are never trusted), adds the service fee, creates the session, and
  *  inserts a `pending` payments row. Returns the session `client_secret` for the
  *  embedded form plus the payment row id the FE polls (self-read RLS) until
- *  `status='paid'`. The verified `stripe-webhook` is the sole completer. */
+ *  `status='paid'`. The verified `stripe-webhook` is the sole completer.
+ *
+ *  **Free-order path (emv2 P3):** when a coupon reduces the total to exactly
+ *  $0, the server fulfills the order directly and returns `free: true` with
+ *  no `clientSecret` — the caller must check `free` and skip mounting Stripe
+ *  entirely (see `CartCheckout.tsx`). The payment row is already `paid` by
+ *  the time this resolves. */
 export async function createCheckoutSession(args: {
   cartItemIds: string[];
   couponCode?: string;
 }): Promise<{
-  ok: boolean; clientSecret?: string; sessionId?: string; paymentId?: string;
+  ok: boolean; clientSecret?: string; sessionId?: string; paymentId?: string; free?: boolean;
   amountSubtotal?: number; discountAmount?: number; serviceFee?: number; error?: string;
 }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('create-checkout-session', { body: args });
   if (error) return { ok: false, error: await edgeErrorMessage(error) };
   return data as {
-    ok: boolean; clientSecret?: string; sessionId?: string; paymentId?: string;
+    ok: boolean; clientSecret?: string; sessionId?: string; paymentId?: string; free?: boolean;
     amountSubtotal?: number; discountAmount?: number; serviceFee?: number;
   };
 }
