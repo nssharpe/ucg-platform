@@ -232,14 +232,23 @@ editor. Deltas:
 ## G. Camps/clinics deltas (EXTENDS existing)
 
 - Individual self-registration only (no club-manager reg) — shipped intent;
-  **club membership is NOT required for camps** — today the club-membership
-  gate applies at *every* entry point, so camps need an explicit carve-out.
-  **Individual membership IS required** (for the season the camp occurs in) —
-  answered by Julia 2026-07-06.
-- No discipline/level/apparatus in camp registration — simpler popup.
+  **club membership is NOT required for camps** — **shipped emv2 P2 T5**:
+  `clubHasActiveMembershipForEvent`/`clubMembershipGateApplies`
+  (`capabilities-core.ts`) waive the gate for `eventType:'camp'` at every
+  registration entry point. **Individual membership IS required** (for the
+  season the camp occurs in) — answered by Julia 2026-07-06, unchanged
+  (`caps.canRegister` already applies regardless of event type).
+- No discipline/level/apparatus in camp registration — simpler popup. **Still
+  open** — the camp registration popup (`SelfRegModal`) reuses the full
+  per-discipline `RegistrationEditor` unchanged; a future task should build
+  the simplified camp-only reg step.
 - **Overnight-accommodations survey UI** (bedtime / noise level / cabin gender
   pref / roommate free-text) asked per athlete at checkout when enabled —
-  DB field (`camp_survey`) shipped, **UI missing**.
+  **shipped emv2 P2 T5**: asked LAST in `SelfRegModal`, after add-ons;
+  editable any time before the edit deadline via `MyRegistrations.tsx`
+  (free, never a change fee). `camp_survey` ↔ `Registration.campSurvey`
+  plumbed in `supabase.ts`; pure draft/validation/summary helpers in
+  `pricing.ts`.
 - Add-ons: size must be chosen, $0 price allowed, explicit "no shirt/leo"
   options.
 - Confirmation email: survey answers + add-on summary, nicely formatted HTML,

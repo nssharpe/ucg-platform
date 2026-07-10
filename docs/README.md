@@ -134,8 +134,24 @@ here — update THIS list when priorities change, not rival copies.
   `src/components/AddonPickers.tsx`), banquet tickets assigned to any roster
   athlete/coach via a new `ClubBanquetPicker` (max-1-assigned-per-person checked against
   the draft, the club cart, AND already-purchased invoice lines), and a locked-once-added
-  club banner text field. Pushes one cart line per unit to the CLUB cart. Camp/leo
-  purchasing and the finance-side add-ons export are next.
+  club banner text field. Pushes one cart line per unit to the CLUB cart.
+  **Task 5 shipped:** camp club-membership gate carve-out + overnight-accommodations
+  survey UI (§G). Camps waive the *club*-membership gate at every registration entry
+  point (`clubHasActiveMembershipForEvent`/`clubMembershipGateApplies`,
+  `capabilities-core.ts`) — the individual-membership check (`caps.canRegister`) still
+  applies unchanged, and a club's own hosting-eligibility gate is untouched. The
+  registration popup (`SelfRegModal`) now asks a bedtime/noise-level/cabin-gender-pref/
+  roommate-request survey LAST, after add-ons, when `campConfig.overnightSurvey` is on
+  — persisted on `Registration.campSurvey` ↔ `registrations.camp_survey` (new pure
+  helpers in `pricing.ts`: `CampSurveyDraft`/`campSurveyValid`/`campSurveyToStored`/
+  `campSurveySummary`); a brand-new entry cart line's label summarizes add-ons + survey
+  answers. Survey answers are editable any time before the edit deadline via a new
+  block in `MyRegistrations.tsx`'s `EditRegistrationModal` — always free, never a
+  change fee. Also fixed a T1 bug where Sanction.tsx's approval mapping dropped
+  `p.leoAddon` (and `overnightSurvey`) instead of copying them onto
+  `event.campConfig`. The finance-side add-ons export and the "no discipline/level/
+  apparatus in camp registration" popup simplification (§G) remain open — the camp
+  registration popup still reuses the full per-discipline `RegistrationEditor`.
   **P0 Task 1 shipped:** pg_cron/pg_net scheduler infra (`notification_log` +
   `scheduled-dispatch-15min` job + `scheduled-dispatch` Edge Function, service-role-only
   auth) with its first consumer — 3d/1d/closed sanction-vote reminder emails, idempotent
