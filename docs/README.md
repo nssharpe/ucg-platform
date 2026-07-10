@@ -128,8 +128,14 @@ here — update THIS list when priorities change, not rival copies.
   **Task 3** (individual self-cart per-unit add-on purchase UI: registration-popup add-on
   step reworked to quantity steppers + per-unit size/assignee pickers, camp shirt/leo
   forced to an explicit choice, and a new standalone post-registration "Add-ons" dialog
-  on the event page usable past `regCloses` via each type's `lastPurchaseAt`). Club-cart
-  add-on UI (the analogous Club.tsx work) is next.
+  on the event page usable past `regCloses` via each type's `lastPurchaseAt`). **Task 4
+  shipped:** the club-manager Add-ons card (§E3) on Club.tsx's event-registration page —
+  t-shirt quantity+size (reusing the picker, now extracted to
+  `src/components/AddonPickers.tsx`), banquet tickets assigned to any roster
+  athlete/coach via a new `ClubBanquetPicker` (max-1-assigned-per-person checked against
+  the draft, the club cart, AND already-purchased invoice lines), and a locked-once-added
+  club banner text field. Pushes one cart line per unit to the CLUB cart. Camp/leo
+  purchasing and the finance-side add-ons export are next.
   **P0 Task 1 shipped:** pg_cron/pg_net scheduler infra (`notification_log` +
   `scheduled-dispatch-15min` job + `scheduled-dispatch` Edge Function, service-role-only
   auth) with its first consumer — 3d/1d/closed sanction-vote reminder emails, idempotent
