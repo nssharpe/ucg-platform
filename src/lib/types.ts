@@ -184,6 +184,10 @@ export interface EventSession {
   /** Nationals events only: distinguishes prelim sessions from finals sessions.
    *  Absent ⇒ a normal (single-phase) session. See NationalsConfig. */
   phase?: 'prelim' | 'final';
+  /** By-session-mode routine cap per apparatus code, e.g. `{ VT: 12 }`
+   *  (event-mgmt v2 P4). Absent/undefined ⇒ uncapped. Stored only as of P4
+   *  T1 — not enforced yet. */
+  maxRoutines?: Record<string, number>;
 }
 
 /** Placement category, mirroring the reference tool. "Mixed" is team-only. */
@@ -281,12 +285,22 @@ export interface Event {
   lateReg?: { startsAt: string; fee: number };
   /** Event director contact, general to competitions and camps. */
   director?: { name: string; email: string; ccOnConfirmation: boolean };
-  /** Participant caps. Stored only — NOT enforced yet (a later phase). */
+  /** Participant caps (event-mgmt v2 P4). `total` counts ATHLETES (competitions
+   *  AND camps) — one athlete counts once regardless of how many
+   *  disciplines/apparatus they enter. `perDiscipline` (T&T) and `perLevel`
+   *  (WAG/MAG) count ROUTINES, i.e. apparatus entries — one athlete entering 4
+   *  apparatus at a level counts as 4 against that level's cap. Stored only as
+   *  of P4 T1 — enforcement lands in a later P4 task. */
   capacity?: {
     total?: number;
     perDiscipline?: Partial<Record<Discipline, number>>;
     perLevel?: Record<string, number>;
   };
+  /** Registration mode (event-mgmt v2 P4). 'by-discipline' (default — today's
+   *  behavior) vs 'by-session' (sessions are pre-created with per-apparatus
+   *  routine caps and athletes register into a specific session). Absent ⇒
+   *  'by-discipline'. */
+  registrationMode?: 'by-discipline' | 'by-session';
   /** Registration-confirmation email override. */
   confirmationEmail?: { bodyHtml: string; fromAlias?: string; replyTo?: string };
   /** When the event row was created — needed for owner-checklist due dates
@@ -408,6 +422,42 @@ export interface Registration {
    *  the late-registration-fee anchor (emv2 P0 Task 3): the fee applies iff the
    *  EARLIEST `createdAt` among an athlete's regs at an event is at/after
    *  `Event.lateReg.startsAt`. Absent on a client-constructed (not-yet-saved) reg. */
+  createdAt?: string;
+  /** True when this registration is a waitlist placeholder (event-mgmt v2
+   *  P4): no cart line, does not count toward any capacity cap, and is
+   *  excluded from rosters/exports until promoted (flips back to false). */
+  waitlisted?: boolean;
+  /** The WaitlistGroup this registration belongs to while waitlisted. Absent
+   *  once promoted off the waitlist. */
+  waitlistGroupId?: string | null;
+  /** Soft hold on a capacity-capped event: holds this registration's spot for
+   *  30 minutes from cart-add, refreshed when checkout starts. Null/absent ⇒
+   *  no active hold (unlimited event, or hold already consumed/expired). */
+  holdExpiresAt?: string | null;
+}
+
+/** A grouped, all-or-nothing waitlist entry (event-mgmt v2 P4): a club's
+ *  whole cohort of athletes at one level, or a single self-registering
+ *  member, queues together in strict FIFO order (`queuedAt`). A promoted
+ *  group gets a 24h hold (`holdExpiresAt`) to complete checkout before being
+ *  re-queued to the back (`queuedAt` bumped, `status` back to 'waiting').
+ *  Promotion/notify/expiry transitions are service-role (Edge Function)
+ *  concerns — clients may only create a 'waiting' group or cancel their own. */
+export interface WaitlistGroup {
+  id: string;
+  eventId: string;
+  /** Set for a club-manager-queued cohort; null for a personal group. */
+  clubId?: string | null;
+  /** Set for a personal (self-registration) group; null for a club group. */
+  personId?: string | null;
+  discipline: Discipline;
+  levelId?: string | null;
+  /** By-session mode only. */
+  sessionId?: string | null;
+  status: 'waiting' | 'notified' | 'promoted' | 'cancelled' | 'expired';
+  queuedAt: string;
+  notifiedAt?: string | null;
+  holdExpiresAt?: string | null;
   createdAt?: string;
 }
 
@@ -639,6 +689,8 @@ export interface DB {
    *  server-side RPCs/Edge Functions built in T5/T6 — never a direct client
    *  table write, so there is no corresponding pushRefundRequest(). */
   refundRequests?: RefundRequest[];
+  /** Grouped waitlist entries (event-mgmt v2 Phase 4 T1). */
+  waitlistGroups?: WaitlistGroup[];
 }
 
 /** A per-event admin grant: `userId` holds the same host-level access to
