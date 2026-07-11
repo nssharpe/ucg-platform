@@ -277,6 +277,56 @@ describe('checkCapacity', () => {
     expect(checkCapacity(event, [], existing, incoming, noGroups, NOW)).toEqual([]);
   });
 
+  it('incoming unpaid reg with an EXPIRED hold still counts (server re-check at checkout must not oversell)', () => {
+    const event = baseEvent({ capacity: { perLevel: { 'lvl-silver': 4 } } });
+    // Level cap already full via a paid existing reg.
+    const existing = [baseReg({ id: 'r1', athleteId: 'a1', apparatus: ['VT', 'UB', 'BB', 'FX'] })];
+    // Incoming reg's cart hold lapsed — it must STILL count as requested.
+    const incoming = [baseReg({ id: 'r2', athleteId: 'a2', apparatus: ['VT'], paid: false, holdExpiresAt: PAST })];
+    const violations = checkCapacity(event, [], existing, incoming, noGroups, NOW);
+    expect(violations).toEqual([
+      { scope: 'level', levelId: 'lvl-silver', cap: 4, used: 4, requested: 1, remaining: 0 },
+    ]);
+  });
+
+  it('incoming waitlisted reg with a notified-but-LAPSED group hold still counts against a full cap', () => {
+    const event = baseEvent({ capacity: { total: 1 } });
+    const groups: Record<string, WaitlistGroup> = {
+      g1: {
+        id: 'g1', eventId: 'evt1', discipline: 'WAG', status: 'notified',
+        queuedAt: PAST, notifiedAt: PAST, holdExpiresAt: PAST,
+      },
+    };
+    const existing = [baseReg({ id: 'r1', athleteId: 'a1' })]; // cap full
+    const incoming = [baseReg({ id: 'r2', athleteId: 'a2', paid: false, waitlisted: true, waitlistGroupId: 'g1' })];
+    const violations = checkCapacity(event, [], existing, incoming, groups, NOW);
+    expect(violations).toEqual([
+      { scope: 'total', cap: 1, used: 1, requested: 1, remaining: 0 },
+    ]);
+  });
+
+  it('incoming reg with a LIVE notified hold also present in existing counts once — no false violation for its own spot', () => {
+    const event = baseEvent({ capacity: { total: 1 } });
+    const groups: Record<string, WaitlistGroup> = {
+      g1: {
+        id: 'g1', eventId: 'evt1', discipline: 'WAG', status: 'notified',
+        queuedAt: PAST, notifiedAt: PAST, holdExpiresAt: FUTURE,
+      },
+    };
+    const reg = baseReg({ id: 'r1', athleteId: 'a1', paid: false, waitlisted: true, waitlistGroupId: 'g1' });
+    // The only occupant of the cap is this reg's own live hold; checking out
+    // that same reg must not double count it against itself.
+    const violations = checkCapacity(event, [], [reg], [reg], groups, NOW);
+    expect(violations).toEqual([]);
+  });
+
+  it('refunded incoming reg does not count as requested', () => {
+    const event = baseEvent({ capacity: { total: 1 } });
+    const existing = [baseReg({ id: 'r1', athleteId: 'a1' })]; // cap full
+    const incoming = [baseReg({ id: 'r2', athleteId: 'a2', paid: false, refunded: true, holdExpiresAt: PAST })];
+    expect(checkCapacity(event, [], existing, incoming, noGroups, NOW)).toEqual([]);
+  });
+
   it('dedupes an incoming reg that also appears in existing (counts once, as incoming)', () => {
     const event = baseEvent({ capacity: { total: 1 } });
     const reg = baseReg({ id: 'r1', athleteId: 'a1', paid: false, holdExpiresAt: FUTURE });
@@ -313,6 +363,18 @@ describe('splitFit', () => {
     const { fits, overflow } = splitFit(event, [], [], incoming, noGroups, NOW);
     expect(fits.map((r) => r.id)).toEqual(['r1', 'r3']);
     expect(overflow.map((r) => r.id)).toEqual(['r2']);
+  });
+
+  it('expired-hold incoming regs still consume fit slots in order (no skipping)', () => {
+    const event = baseEvent({ capacity: { total: 2 } });
+    const incoming = [
+      baseReg({ id: 'r1', athleteId: 'a1', paid: false, holdExpiresAt: FUTURE }), // live hold
+      baseReg({ id: 'r2', athleteId: 'a2', paid: false, holdExpiresAt: PAST }), // expired hold — must still take slot 2
+      baseReg({ id: 'r3', athleteId: 'a3', paid: false, holdExpiresAt: FUTURE }), // live hold, but cap now full
+    ];
+    const { fits, overflow } = splitFit(event, [], [], incoming, noGroups, NOW);
+    expect(fits.map((r) => r.id)).toEqual(['r1', 'r2']);
+    expect(overflow.map((r) => r.id)).toEqual(['r3']);
   });
 
   it('with no caps configured, everything fits', () => {

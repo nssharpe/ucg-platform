@@ -82,16 +82,16 @@ export interface CapacityUsage {
   perSession: Record<string, Record<string, number>>;
 }
 
-/** Tallies occupying-registration usage: `totalAthletes` = distinct occupying
- *  athletes; `perLevel`/`perDiscipline`/`perSession` = routine (apparatus
- *  entry) counts. */
-export function capacityUsage(
+/** Internal tally over whichever regs `isCounted` admits. The checkout
+ *  validators below count INCOMING regs unconditionally (except refunded) —
+ *  an incoming reg IS the request being validated, so an expired cart hold or
+ *  lapsed promotion hold must not let it slip through uncounted (oversell). */
+function tallyUsage(
   event: Event,
   regs: Registration[],
-  groupsById: Record<string, WaitlistGroup>,
-  now: number,
+  isCounted: (reg: Registration) => boolean,
 ): CapacityUsage {
-  const occupying = regs.filter((r) => r.eventId === event.id && isOccupying(r, groupsById, now));
+  const occupying = regs.filter((r) => r.eventId === event.id && isCounted(r));
 
   const athleteIds = new Set<string>();
   const perLevel: Record<string, number> = {};
@@ -113,6 +113,18 @@ export function capacityUsage(
   }
 
   return { totalAthletes: athleteIds.size, perLevel, perDiscipline, perSession };
+}
+
+/** Tallies LIVE occupying-registration usage (via `isOccupying`):
+ *  `totalAthletes` = distinct occupying athletes; `perLevel`/`perDiscipline`/
+ *  `perSession` = routine (apparatus entry) counts. */
+export function capacityUsage(
+  event: Event,
+  regs: Registration[],
+  groupsById: Record<string, WaitlistGroup>,
+  now: number,
+): CapacityUsage {
+  return tallyUsage(event, regs, (r) => isOccupying(r, groupsById, now));
 }
 
 /** True if the event has ANY capacity configuration set — drives whether
@@ -167,8 +179,18 @@ export function checkCapacity(
   const violations: CapacityViolation[] = [];
   const { baseline, incoming } = splitExistingIncoming(existingRegs, incomingRegs);
 
-  const baselineUsage = capacityUsage(event, baseline, groupsById, now);
-  const combinedUsage = capacityUsage(event, [...baseline, ...incoming], groupsById, now);
+  // Baseline uses live-occupancy semantics; INCOMING regs count unconditionally
+  // (except refunded) — they're the request under validation, so an expired
+  // cart hold / lapsed promotion hold must still consume capacity here. A reg
+  // in both lists was deduped out of `baseline` above, so it counts once, as
+  // incoming (i.e. unconditionally).
+  const incomingIds = new Set(incoming.map((r) => r.id));
+  const baselinePredicate = (r: Registration) => isOccupying(r, groupsById, now);
+  const combinedPredicate = (r: Registration) =>
+    incomingIds.has(r.id) ? !r.refunded : baselinePredicate(r);
+
+  const baselineUsage = tallyUsage(event, baseline, baselinePredicate);
+  const combinedUsage = tallyUsage(event, [...baseline, ...incoming], combinedPredicate);
 
   // Total (athletes).
   const totalCap = event.capacity?.total;
