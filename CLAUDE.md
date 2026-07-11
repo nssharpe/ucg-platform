@@ -44,6 +44,17 @@ Run the suite, `npx eslint` the touched files, and confirm the build before push
   LEAN kickoff prompt that leans on these rules instead of repeating them.
 - **Don't reach for Workflow/`ultracode` to save usage** — one implementer per task is
   the cheap path.
+- **Delegation has fixed overhead** (a subagent cold-starts and re-derives context):
+  the plan-big/execute-small split pays off on token-HEAVY work — reading many files,
+  mechanical edits, sweeps — not on narrow reasoning. A trivial, precisely-known edit
+  the controller can state exactly is cheaper done directly than briefed out.
+- **Send rework back to the SAME subagent** (SendMessage — its context persists) instead
+  of briefing a fresh implementer for review fixes/follow-ups on the same task.
+- **Rigor lives in the brief, not the model:** a cheaper model matches frontier rigor on
+  mechanical work only when the brief spells out the verification protocol and demands
+  evidence (commands run + output), not claims. Never assume a subagent self-imposes
+  rigor. (These three from Anthropic's plan-big-execute-small cookbook, reviewed
+  2026-07-11.)
 
 ### Model routing (adopted 2026-07-02 — adjust from the log)
 - **haiku:** mechanical work with an explicit verify checklist — renames, the DB-plumbing
