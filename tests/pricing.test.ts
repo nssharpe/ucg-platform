@@ -22,6 +22,8 @@ import {
   campSurveyValid,
   campSurveyToStored,
   campSurveySummary,
+  refundAmountCents,
+  capRefundCents,
 } from '../src/lib/pricing';
 import type { AddonPricingEvent, AddonDraftEvent, ClubAddonDraftEvent, PartnerReg, RegFeeEvent, SynchroReg } from '../src/lib/pricing';
 import type { Coupon, Membership, Season } from '../src/lib/types';
@@ -549,5 +551,60 @@ describe('camp overnight-accommodations survey (emv2 P2 T5, spec §G)', () => {
   });
   it('campSurveySummary only includes fields that were actually answered', () => {
     expect(campSurveySummary({ noiseLevel: 'lively' })).toBe('noise: Lively');
+  });
+});
+
+describe('refundAmountCents', () => {
+  it('refunds 100% when there is no lastDateToEdit at all', () => {
+    expect(refundAmountCents(5000, null, '2026-08-01T00:00:00Z')).toBe(5000);
+    expect(refundAmountCents(5000, undefined, '2026-08-01T00:00:00Z')).toBe(5000);
+  });
+  it('refunds 100% when approved exactly at lastDateToEdit (boundary is inclusive)', () => {
+    expect(refundAmountCents(5000, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')).toBe(5000);
+  });
+  it('refunds 100% when approved before lastDateToEdit', () => {
+    expect(refundAmountCents(5000, '2026-08-01T00:00:00Z', '2026-07-31T23:59:59Z')).toBe(5000);
+  });
+  it('refunds 75% when approved after lastDateToEdit', () => {
+    expect(refundAmountCents(5000, '2026-08-01T00:00:00Z', '2026-08-01T00:00:01Z')).toBe(3750);
+  });
+  it('rounds the 75% case to the nearest cent (odd amount)', () => {
+    // 3333 * 0.75 = 2499.75 -> rounds up to 2500
+    expect(refundAmountCents(3333, '2026-08-01T00:00:00Z', '2026-08-02T00:00:00Z')).toBe(2500);
+  });
+  it('never refunds the service fee — caller is responsible for excluding it from itemAmountCents', () => {
+    // Documents the contract: this function only ever scales the amount it is given.
+    expect(refundAmountCents(0, null, '2026-08-01T00:00:00Z')).toBe(0);
+  });
+});
+
+describe('capRefundCents', () => {
+  it('passes the computed amount through when there is plenty left available', () => {
+    expect(capRefundCents(5000, 10000)).toBe(5000);
+  });
+  it('caps at what is left when a coupon meant less was actually paid', () => {
+    expect(capRefundCents(5000, 2000)).toBe(2000);
+  });
+  it('caps at 0 for a free ($0-total) order — no Stripe call, but a valid $0 approval', () => {
+    expect(capRefundCents(5000, 0)).toBe(0);
+  });
+  it('never goes negative even if available is negative (over-refunded already)', () => {
+    expect(capRefundCents(5000, -100)).toBe(0);
+  });
+  it('caps at exactly the available amount on the boundary', () => {
+    expect(capRefundCents(5000, 5000)).toBe(5000);
+  });
+  it('is NOT sufficient alone for a partially-couponed multi-line payment — the base must be paid_cents', () => {
+    // Documented defect scenario (fable review of T6): cart = $135 entry
+    // discounted to $85 by a "$50 off" coupon + a $30 t-shirt ⇒
+    // amount_subtotal $115. With the PRE-discount list price as the base, the
+    // payment-level cap alone still pays out $115 for an item the payer paid
+    // $85 for — taking the shirt's $30 with it:
+    expect(capRefundCents(13500, 11500)).toBe(11500); // wrong money if used as the whole guard
+    // The fix is upstream: create-checkout-session freezes each line's
+    // POST-discount `paid_cents` onto payments.lines_snapshot, and
+    // process-refund uses THAT ($85) as the base; the cap then only guards
+    // against cross-request over-refunds on the same payment:
+    expect(capRefundCents(8500, 11500)).toBe(8500); // correct with the paid_cents base
   });
 });

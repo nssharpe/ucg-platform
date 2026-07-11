@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { fmtMoney } from '../lib/scoring';
-import { createCheckoutSession } from '../lib/supabase';
+import { createCheckoutSession, fetchPaymentStatus } from '../lib/supabase';
 import { StripeCheckout } from './StripeCheckout';
 import type { CartItem } from '../lib/types';
+
+const FREE_POLL_MS = 1500;
+const FREE_MAX_TRIES = 20; // ~30s — the server already ran fulfillment synchronously
+                            // before returning `free:true`, so this should resolve fast.
 
 type Stage =
   | { kind: 'loading' }
@@ -10,6 +14,15 @@ type Stage =
   | {
       kind: 'checkout'; clientSecret: string; paymentId: string;
       amountSubtotal: number; discountAmount: number; serviceFee: number; couponCode?: string;
+    }
+  | {
+      // Free-order path (emv2 P3): a coupon covered the entire cost. The server
+      // already fulfilled the order server-side before responding — no Stripe
+      // form is mounted. We still CONFIRM via the same self-read poll
+      // StripeCheckout uses (never claim success without checking the row) and
+      // let the parent's onPaid own the success UI, same as the paid path.
+      kind: 'free'; paymentId: string;
+      amountSubtotal: number; discountAmount: number; couponCode?: string;
     };
 
 /** Reusable Stripe Embedded Checkout for an arbitrary set of cart lines.
@@ -46,7 +59,12 @@ export function CartCheckout({
     setStage({ kind: 'loading' });
     void createCheckoutSession({ cartItemIds: items.map((i) => i.id), couponCode })
       .then((r) => {
-        if (r.ok && r.clientSecret && r.paymentId && r.amountSubtotal != null && r.serviceFee != null) {
+        if (r.ok && r.free && r.paymentId && r.amountSubtotal != null) {
+          setStage({
+            kind: 'free', paymentId: r.paymentId,
+            amountSubtotal: r.amountSubtotal, discountAmount: r.discountAmount ?? 0, couponCode,
+          });
+        } else if (r.ok && r.clientSecret && r.paymentId && r.amountSubtotal != null && r.serviceFee != null) {
           setStage({
             kind: 'checkout', clientSecret: r.clientSecret, paymentId: r.paymentId,
             amountSubtotal: r.amountSubtotal, discountAmount: r.discountAmount ?? 0,
@@ -99,6 +117,36 @@ export function CartCheckout({
     onError?.(msg);
   };
 
+  // Free-order confirmation poll (emv2 P3): the server already ran
+  // fulfillment synchronously before returning `free:true`, so the row
+  // should already read `paid` — but we still poll the self-read `payments`
+  // row rather than calling onPaid() on the mere presence of `free:true`.
+  // Mirrors StripeCheckout's "never falsely claim success" rule.
+  const freePaymentId = stage.kind === 'free' ? stage.paymentId : null;
+  useEffect(() => {
+    if (!freePaymentId) return;
+    let tries = 0;
+    let cancelled = false;
+    const id = setInterval(() => {
+      tries += 1;
+      void fetchPaymentStatus(freePaymentId).then((res) => {
+        if (cancelled) return;
+        if (res?.status === 'paid') {
+          clearInterval(id);
+          onPaid();
+        } else if (res?.status === 'failed') {
+          clearInterval(id);
+          handleError('This order could not be completed. Please try again.');
+        } else if (tries >= FREE_MAX_TRIES) {
+          clearInterval(id);
+          handleError('Still confirming — check your Purchase History in a few minutes to confirm this order went through.');
+        }
+      });
+    }, FREE_POLL_MS);
+    return () => { cancelled = true; clearInterval(id); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [freePaymentId]);
+
   if (stage.kind === 'error') {
     return (
       <div className="card card-pad" style={{ maxWidth: 520 }}>
@@ -113,6 +161,34 @@ export function CartCheckout({
     return (
       <div className="card card-pad">
         <p style={{ color: 'var(--ink-soft)', margin: 0 }}>Preparing your secure checkout…</p>
+      </div>
+    );
+  }
+
+  if (stage.kind === 'free') {
+    const freeSummary = { subtotal: stage.amountSubtotal / 100, discount: stage.discountAmount / 100 };
+    return (
+      <div className="card card-pad" style={{ maxWidth: 520 }}>
+        <h3 className="card-title" style={{ marginTop: 0, color: 'var(--ink)' }}>Confirming your order…</h3>
+        <div style={{ borderTop: '1px solid var(--line)', margin: '10px 0 0', paddingTop: 10, fontSize: 14 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+            <span style={{ color: 'var(--ink-soft)' }}>Subtotal</span>
+            <span>{fmtMoney(freeSummary.subtotal)}</span>
+          </div>
+          {stage.couponCode && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 4, color: 'var(--green-600)' }}>
+              <span>Coupon {stage.couponCode}</span>
+              <span>−{fmtMoney(freeSummary.discount)}</span>
+            </div>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 8 }}>
+            <strong style={{ fontSize: 16 }}>Total due</strong>
+            <strong style={{ fontSize: 16 }}>{fmtMoney(0)}</strong>
+          </div>
+        </div>
+        <p style={{ color: 'var(--ink-soft)', margin: '12px 0 0' }}>
+          Your coupon covers the full cost — no payment needed. We&rsquo;re finalizing your order now; this usually takes a few seconds.
+        </p>
       </div>
     );
   }

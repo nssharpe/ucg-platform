@@ -5,6 +5,7 @@ import { useCapabilities } from '../lib/capabilities';
 import { useRolesLoaded } from '../lib/auth';
 import { seasonForDate, clubHasActiveMembershipForEvent, paidRegistrationClub } from '../lib/capabilities-core';
 import { eventIsInPhase } from '../lib/events-core';
+import { normalizeExternalUrl } from '../lib/url';
 import { Badge, Field, Modal, Tabs } from '../components/ui';
 import { useToast, useFmtDate } from '../components/ui-hooks';
 import { EventWizard } from '../components/EventWizard';
@@ -242,6 +243,16 @@ export function EventDetail() {
   const host = db.clubs.find((c) => c.id === event.hostClubId);
   const regs = db.registrations.filter((r) => r.eventId === event.id && !r.refunded);
   const canManage = caps.isEventHost(event.id);
+  // Editing event DETAIL (dates/fees/disciplines/etc. via EventWizard) is
+  // admin/sanctioning-only — exactly the events-table RLS grant
+  // (20260709131708_event_owner_checklist.sql: sanctioning_update/insert; the
+  // deliberate design in 20260710020303 withholds an events UPDATE policy from
+  // hosts). A host-club manager has canManage/isEventHost=true and so used to
+  // see the "Edit event" button, but their events upsert is rejected by RLS
+  // (verified: rows=0) — the write silently failed and edits "didn't persist".
+  // Gate the edit UI on the real capability instead. (isSanctioning === admin
+  // || sanctioning.)
+  const canEditEvent = caps.isSanctioning;
   const tz = tzAbbrev(event.timezone);
 
   // Standalone add-on purchase (Phase 2 T3): available to a signed-in user who
@@ -278,7 +289,7 @@ export function EventDetail() {
           {(canManage || caps.isSanctioning) && (
             <Link className="btn small ghost" to={`/events/${event.slug}/host`}>Host dashboard →</Link>
           )}
-          {canManage && (
+          {canEditEvent && (
             <button className="btn small ghost" onClick={() => setEditWizardOpen(true)}>Edit event</button>
           )}
         </div>
@@ -329,9 +340,9 @@ export function EventDetail() {
               )}
             </div>
           ) : (
-            <Badge tone="warn">Registration closed{canManage ? ' — edit the event to adjust dates' : ''}</Badge>
+            <Badge tone="warn">Registration closed{canEditEvent ? ' — edit the event to adjust dates' : ''}</Badge>
           )}
-          {canManage && event.status === 'live' && !eventIsInPhase(event, 'reg-open') && (
+          {canEditEvent && event.status === 'live' && !eventIsInPhase(event, 'reg-open') && (
             <div style={{ marginTop: 10, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               <button className="btn small ghost" onClick={() => setEditWizardOpen(true)}>Edit event to adjust registration dates</button>
               <button className="btn small ghost" data-tip="Generates a private reg link + password for late adds" onClick={() => toast(`Private link: ucg.org/#/events/${event.slug}?code=LATE26 (demo)`)}>Private reg link</button>
@@ -594,7 +605,12 @@ function OwnerChecklistCard({ event, fmtDate, toast }: { event: Event; fmtDate: 
                 {id === 'medalsTracking' && (
                   <>
                     <Field label="Tracking link">
-                      <input type="text" className="input" value={entry?.trackingLink ?? ''} onChange={(e) => patchTask(id, { trackingLink: e.target.value })} placeholder="https://…" />
+                      <input
+                        type="text" className="input" value={entry?.trackingLink ?? ''}
+                        onChange={(e) => patchTask(id, { trackingLink: e.target.value })}
+                        onBlur={(e) => patchTask(id, { trackingLink: normalizeExternalUrl(e.target.value) })}
+                        placeholder="https://…"
+                      />
                     </Field>
                     <Field label="Host received?">
                       <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -1174,7 +1190,7 @@ function HostStatusCard({ event, fmtDate, toast }: { event: Event; fmtDate: (iso
         </div>
         <div>
           <strong>Hotel block: </strong>
-          {event.hotelLink ? <a href={event.hotelLink} target="_blank" rel="noopener noreferrer">Book here →</a> : <span style={{ color: 'var(--ink-soft)' }}>Waiting on hotel block</span>}
+          {event.hotelLink ? <a href={normalizeExternalUrl(event.hotelLink)} target="_blank" rel="noopener noreferrer">Book here →</a> : <span style={{ color: 'var(--ink-soft)' }}>Waiting on hotel block</span>}
         </div>
         <div>
           <strong>Insurance: </strong>
@@ -1190,7 +1206,7 @@ function HostStatusCard({ event, fmtDate, toast }: { event: Event; fmtDate: (iso
             <span>
               Ordered {fmtDate(medalsOrdered.orderedOn.slice(0, 10))}
               {medalsTracking?.trackingLink && (
-                <> · <a href={medalsTracking.trackingLink} target="_blank" rel="noopener noreferrer">Track shipment →</a></>
+                <> · <a href={normalizeExternalUrl(medalsTracking.trackingLink)} target="_blank" rel="noopener noreferrer">Track shipment →</a></>
               )}
               {medalsTracking?.trackingLink && !medalsTracking.hostReceived && (
                 <> · <button className="btn small ghost" disabled={markingReceived} onClick={markReceived}>{markingReceived ? 'Marking…' : 'Mark received'}</button></>
@@ -1911,9 +1927,12 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
 // ---------------------------------------------------------------------------
 
 function exportCsv(db: ReturnType<typeof useDB>, event: Event) {
-  // Spec: "just export all the things and let the user trim"
+  // Spec: "just export all the things and let the user trim". Includes
+  // refunded-but-kept regs (`keepListed`, event-mgmt v2 Phase 3 spec §H —
+  // "name still appears in event materials" for a post-edit-deadline refund);
+  // a pre-deadline refund deletes its row outright and is naturally absent.
   const rows = [['Athlete', 'Club', 'Discipline', 'Level', 'Session', 'Events', 'Shirt', 'Dietary', 'Email', 'Phone', 'Emergency contact', 'Student', 'Region']];
-  for (const r of db.registrations.filter((x) => x.eventId === event.id && !x.refunded)) {
+  for (const r of db.registrations.filter((x) => x.eventId === event.id && (!x.refunded || x.keepListed))) {
     const a = db.people.find((p) => p.id === r.athleteId)!;
     const club = db.clubs.find((c) => c.id === r.clubId)!;
     rows.push([

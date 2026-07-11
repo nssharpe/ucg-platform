@@ -12,7 +12,8 @@ import {
 import type { RegChangeState, CampSurveyDraft } from '../lib/pricing';
 import { fmtMoney } from '../lib/scoring';
 import type { Athlete, Club, Level, Event, Registration, Season } from '../lib/types';
-import { canStillEditRegistration } from '../lib/events-core';
+import { canStillEditRegistration, eventIsRefundEligible } from '../lib/events-core';
+import { RefundRequestDialog, type RefundRequestItem } from '../components/RefundRequestDialog';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -39,6 +40,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   const [q, setQ] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const [refundTarget, setRefundTarget] = useState<{ event: Event; item: RefundRequestItem } | null>(null);
 
   const lvlName = (id?: string) => db.levels.find((l) => l.id === id)?.name ?? '—';
   const nameOf = (id: string) => {
@@ -56,7 +58,11 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   // this plain filter/group per render is correct and cheap (same precedent
   // as Cart.tsx's un-memoized `cart`).
   const byEvent = (() => {
-    const mine = db.registrations.filter((r) => r.athleteId === personId && !r.refunded);
+    // Include refunded-but-kept regs (`keepListed`, event-mgmt v2 Phase 3 spec
+    // §H) so a post-edit-deadline refund still shows here — with apparatus
+    // locked and a "Refunded" badge — instead of silently vanishing (a
+    // pre-deadline refund deletes the row outright, so it naturally drops out).
+    const mine = db.registrations.filter((r) => r.athleteId === personId && (!r.refunded || r.keepListed));
     const groups = new Map<string, Registration[]>();
     for (const r of mine) {
       const arr = groups.get(r.eventId) ?? [];
@@ -286,8 +292,10 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
     setEditingEventId(null);
   };
 
+  // Feeds RegistrationEditor's `existing` prop — must include keepListed
+  // refunded rows too, or the editor can't show its locked/refunded state.
   const existingForEvent = (event: Event) =>
-    db.registrations.filter((r) => r.eventId === event.id && r.athleteId === personId && !r.refunded);
+    db.registrations.filter((r) => r.eventId === event.id && r.athleteId === personId && (!r.refunded || r.keepListed));
 
   return (
     <div style={{ maxWidth: 820 }}>
@@ -345,7 +353,9 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                   </span>
                 </div>
 
-                {isOpen && (
+                {isOpen && (() => {
+                  const refundEligible = eventIsRefundEligible(event, db.clubs);
+                  return (
                   <div style={{ marginTop: 12, borderTop: '1px solid var(--line)', paddingTop: 12 }}>
                     <div style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 8 }}>
                       Status: {event.status} · Registration closes {event.regCloses}
@@ -356,11 +366,30 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                           const base = r.apparatus.join(', ');
                           const evts = r.apparatus.includes('SY') && r.partnerAthleteId
                             ? `${base} (synchro w/ ${nameOf(r.partnerAthleteId)})` : base;
+                          const canRequestRefund = refundEligible && r.paid === true && !r.refunded && !r.refundRequested;
                           return (
                             <tr key={r.id}>
                               <td>{r.discipline === 'TNT' ? 'T&T' : r.discipline}</td>
                               <td>{lvlName(r.levelId)}</td>
                               <td>{evts}</td>
+                              <td style={{ textAlign: 'right' }}>
+                                {r.refunded ? (
+                                  <Badge tone="info">Refunded</Badge>
+                                ) : r.refundRequested ? (
+                                  <Badge tone="warn">Refund requested</Badge>
+                                ) : canRequestRefund ? (
+                                  <button
+                                    className="btn ghost small"
+                                    style={{ color: 'var(--coral-500)' }}
+                                    onClick={() => setRefundTarget({
+                                      event,
+                                      item: { kind: 'registration', regId: r.id, label: `${r.discipline === 'TNT' ? 'T&T' : r.discipline} — ${lvlName(r.levelId)}` },
+                                    })}
+                                  >
+                                    Request refund
+                                  </button>
+                                ) : null}
+                              </td>
                             </tr>
                           );
                         })}
@@ -384,7 +413,8 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                       )
                     )}
                   </div>
-                )}
+                  );
+                })()}
               </div>
             );
           })}
@@ -413,6 +443,15 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
           />
         );
       })()}
+
+      {refundTarget && (
+        <RefundRequestDialog
+          items={[refundTarget.item]}
+          eventName={refundTarget.event.name}
+          onClose={() => setRefundTarget(null)}
+          onSubmitted={() => { /* store refresh happens inside the dialog via syncFromSupabase() */ }}
+        />
+      )}
     </div>
   );
 }
@@ -433,6 +472,7 @@ function EditRegistrationModal({
 }) {
   const [clubId, setClubId] = useState<string>(currentClubId);
   const toast = useToast();
+  const caps = useCapabilities();
 
   // Camp overnight-accommodations survey (event-mgmt v2 §G): editable any
   // time up to the event's edit deadline (this whole modal is only reachable
@@ -486,6 +526,7 @@ function EditRegistrationModal({
         changeFeeApplies={changeFeeApplies}
         onSave={(regs) => onSave(clubId, regs)}
         onCancel={onClose}
+        isAdmin={caps.isAdmin}
       />
 
       {surveyRequired && (

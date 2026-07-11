@@ -969,3 +969,41 @@ export function resolveRegRemoval(
 
   return { toDelete, toRevert, kept };
 }
+
+/**
+ * Refund amount for one item (event-mgmt v2 Phase 3, spec §H — Nate decision
+ * 2026-07-10): the SERVICE FEE IS NEVER REFUNDED — this takes only the item's
+ * own price (entry fee or add-on price), already excluding the service fee.
+ * 100% back when approved on/before the event's `lastDateToEdit` (or when the
+ * event has no `lastDateToEdit` at all — matches `canStillEditRegistration`'s
+ * "no cutoff ⇒ always" convention in events-core.ts); 75% back after.
+ * `Math.round` (not floor/ceil) on the 75% case, matching the service fee's
+ * "documented rounding direction, mirrored consistently" spirit elsewhere in
+ * this file. `approvedAt`/`lastDateToEdit` are both ISO timestamps compared
+ * via `Date`, exactly like `canStillEditRegistration`. */
+export function refundAmountCents(
+  itemAmountCents: number,
+  lastDateToEdit: string | null | undefined,
+  approvedAt: string,
+): number {
+  const onTime = !lastDateToEdit || new Date(approvedAt).getTime() <= new Date(lastDateToEdit).getTime();
+  return onTime ? itemAmountCents : Math.round(itemAmountCents * 0.75);
+}
+
+/**
+ * Cap a computed refund at what's actually left to refund on the payment
+ * (T6, spec §H). The refund BASE is the snapshot line's POST-discount
+ * `paid_cents` (frozen onto payments.lines_snapshot by create-checkout-session;
+ * legacy payments without it fall back to the PRE-coupon `invoice_items.amount`).
+ * This cap is the FINAL guard on top of that base: it covers cross-request
+ * over-refunds on the same payment and the $0-total free-order path
+ * (`payments.amount_subtotal` 0, no Stripe payment intent). `availableCents`
+ * is the caller-computed `payment.amount_subtotal` minus the sum of
+ * `refund_amount_cents` already approved against the SAME payment. Never
+ * negative, never more than what's left. NOT sufficient alone for a legacy
+ * partially-couponed multi-line payment — see the documenting test in
+ * tests/pricing.test.ts. Mirrored in
+ * `supabase/functions/process-refund/index.ts`. */
+export function capRefundCents(computedCents: number, availableCents: number): number {
+  return Math.min(computedCents, Math.max(0, availableCents));
+}

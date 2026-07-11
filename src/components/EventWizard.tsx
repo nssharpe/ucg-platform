@@ -4,6 +4,8 @@ import { mutate, useDB } from '../lib/store';
 import { pushEvent } from '../lib/supabase';
 import { useCapabilities } from '../lib/capabilities';
 import { scaffoldNationalsConfig } from '../lib/nationals-adapter';
+import { toDatetimeLocalValue } from '../lib/events-core';
+import { normalizeExternalUrl } from '../lib/url';
 import { Combo, Field, Modal } from './ui';
 import { useToast } from './ui-hooks';
 import { DISCIPLINES, SHIRT_SIZES, STATE_REGIONS } from '../lib/types';
@@ -119,16 +121,19 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
   const defaultStart = addDays(new Date().toISOString().slice(0, 10), 60);
   const [startDate, setStartDate] = useState(editEvent?.startDate ?? defaultStart);
   const [endDate, setEndDate] = useState(editEvent?.endDate ?? defaultStart);
-  const [regOpens, setRegOpens] = useState(editEvent?.regOpens ?? `${new Date().toISOString().slice(0, 10)}T12:00`);
-  const [regCloses, setRegCloses] = useState(editEvent?.regCloses ?? `${addDays(defaultStart, -14)}T23:59`);
+  // Stored reg dates are timestamptz columns (return with seconds + a 'Z'),
+  // which datetime-local can't render — normalize to YYYY-MM-DDTHH:MM so the
+  // edit wizard shows (and round-trips) them instead of blanking the field.
+  const [regOpens, setRegOpens] = useState(editEvent ? toDatetimeLocalValue(editEvent.regOpens) : `${new Date().toISOString().slice(0, 10)}T12:00`);
+  const [regCloses, setRegCloses] = useState(editEvent ? toDatetimeLocalValue(editEvent.regCloses) : `${addDays(defaultStart, -14)}T23:59`);
   const regClosesDirty = useRef(isEdit);
   // Last date to edit (B4): optional edit-lockout, past which only an admin
   // or the event's host club may still edit a registration.
   const [hasEditLockout, setHasEditLockout] = useState(!!editEvent?.lastDateToEdit);
-  const [lastDateToEdit, setLastDateToEdit] = useState(editEvent?.lastDateToEdit ?? `${addDays(defaultStart, -7)}T23:59`);
+  const [lastDateToEdit, setLastDateToEdit] = useState(editEvent?.lastDateToEdit ? toDatetimeLocalValue(editEvent.lastDateToEdit) : `${addDays(defaultStart, -7)}T23:59`);
   // Age-calculation date (event-mgmt v2 §A): applies to all events, not just camps.
   const [hasAgeCalcAt, setHasAgeCalcAt] = useState(!!editEvent?.ageCalcAt);
-  const [ageCalcAt, setAgeCalcAt] = useState(editEvent?.ageCalcAt ?? `${defaultStart}T00:00`);
+  const [ageCalcAt, setAgeCalcAt] = useState(editEvent?.ageCalcAt ? toDatetimeLocalValue(editEvent.ageCalcAt) : `${defaultStart}T00:00`);
   // Fees
   const [entryFee, setEntryFee] = useState(String(editEvent?.entryFee ?? 60));
   const [secondFee, setSecondFee] = useState(String(editEvent?.secondDisciplineFee ?? 30));
@@ -318,7 +323,7 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
       venue: venue.trim() || undefined,
       streetAddress: streetAddress.trim() || undefined,
       country: country.trim() || undefined,
-      hotelLink: hotelLink.trim() || undefined,
+      hotelLink: normalizeExternalUrl(hotelLink) || undefined,
       ageCalcAt: hasAgeCalcAt ? ageCalcAt : undefined,
       ...(hasLateReg ? { lateReg: { startsAt: lateRegStartsAt, fee: Number(lateRegFee) } } : { lateReg: undefined }),
       ...(directorName.trim()

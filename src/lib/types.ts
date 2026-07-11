@@ -86,6 +86,11 @@ export interface Club {
   email: string;
   allowClubPay: boolean; // athletes may push membership fee to club cart
   access: ClubAccess; // eligibility for registering with this club
+  /** True for exactly the league's own club ("UCG - Main"). Refunds
+   *  (event-mgmt v2 Phase 3, spec §H) are only offered for events whose HOST
+   *  club has this flag set — see `eventIsRefundEligible` (events-core.ts).
+   *  Admin-editable in the clubs editor; defaults false. */
+  isLeagueHost?: boolean;
 }
 
 export type Gender = 'Male' | 'Female' | 'Non-binary' | 'Genderfluid' | 'Agender' | 'Other';
@@ -630,6 +635,10 @@ export interface DB {
   /** Per-event admin grants — host-level access to ONE event, granted to
    *  another account (event-mgmt v2 §C). Not a club role. */
   eventAdmins?: EventAdmin[];
+  /** Refund requests (event-mgmt v2 Phase 3, spec §H). Written only via
+   *  server-side RPCs/Edge Functions built in T5/T6 — never a direct client
+   *  table write, so there is no corresponding pushRefundRequest(). */
+  refundRequests?: RefundRequest[];
 }
 
 /** A per-event admin grant: `userId` holds the same host-level access to
@@ -643,6 +652,37 @@ export interface EventAdmin {
   name?: string | null;
   grantedBy?: string | null;
   createdAt?: string;
+}
+
+/** A request to refund a purchased registration entry fee or add-on
+ *  (event-mgmt v2 Phase 3, spec §H). Refunds are only offered for events
+ *  hosted by the league's own club (`eventIsRefundEligible`, events-core.ts).
+ *  `refundAmountCents` (pricing.ts) computes `refundAmountCents` from the
+ *  item's price, `event.lastDateToEdit`, and `reviewedAt` once approved — the
+ *  service fee is NEVER refunded. All writes (create/approve/reject/process)
+ *  happen via SECURITY DEFINER RPCs / service-role Edge Functions (T5/T6) —
+ *  there is no client-side pushRefundRequest(). */
+export interface RefundRequest {
+  id: string;
+  createdAt: string;
+  requesterPersonId: string;
+  /** Set when requested from a club cart context (a manager requesting on
+   *  behalf of an athlete's purchase); null for a self-serve member request. */
+  clubId?: string | null;
+  eventId: string;
+  kind: 'registration' | 'addon';
+  /** Meaningful when kind === 'registration'. */
+  regId?: string | null;
+  /** Meaningful when kind === 'addon'. */
+  invoiceItemId?: string | null;
+  paymentId?: string | null;
+  reason: 'injury' | 'illness' | 'bereavement' | 'other';
+  reasonDetail?: string | null;
+  status: 'pending' | 'approved' | 'rejected';
+  reviewedBy?: string | null;
+  reviewedAt?: string | null;
+  refundAmountCents?: number | null;
+  stripeRefundId?: string | null;
 }
 
 /** A club's membership for a season. Its presence (status 'active') is the gate

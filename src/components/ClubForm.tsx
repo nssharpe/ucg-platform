@@ -9,7 +9,7 @@ import { nextId } from '../lib/ids';
 
 const BLANK: Omit<Club, 'id'> = {
   name: '', shortName: '', state: '', region: 'Other',
-  managerIds: [], email: '', allowClubPay: true, access: 'open',
+  managerIds: [], email: '', allowClubPay: true, access: 'open', isLeagueHost: false,
 };
 
 const ACCESS_ENTRIES = Object.entries(CLUB_ACCESS_LABELS) as [ClubAccess, string][];
@@ -61,6 +61,12 @@ export function ClubForm({ club, onClose }: { club?: Club; onClose: () => void }
           <label className="checkrow">
             <input type="checkbox" checked={draft.allowClubPay} onChange={(e) => set({ allowClubPay: e.target.checked })} />
             Athletes may push membership fees to the club cart
+          </label>
+        </Field>
+        <Field label="Refunds" hint="Refunds are only offered for events hosted by this club.">
+          <label className="checkrow">
+            <input type="checkbox" checked={!!draft.isLeagueHost} onChange={(e) => set({ isLeagueHost: e.target.checked })} />
+            Is league host club (UCG - Main)
           </label>
         </Field>
       </div>

@@ -15,6 +15,7 @@ const ROLE_DEFS = [
   { role: 'sanctioning', label: 'Sanctioning Team', desc: 'Will see events to vote on (voting UI coming in a later wave).' },
   { role: 'regional_rep', label: 'Regional Representative', desc: 'Represents a region. Set each rep’s region below.' },
   { role: 'finance_admin', label: 'Finance Admin', desc: 'Access to finance tools (finance dashboard coming in a later phase).' },
+  { role: 'refund_manager', label: 'Refund manager', desc: 'Reviews and processes refund requests (event-management v2 Phase 3).' },
 ] as const;
 
 // Canonical NAIGC regions for the Regional Representative dropdown: the distinct

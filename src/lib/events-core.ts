@@ -1,6 +1,6 @@
 // Pure event-phase derivation (B4). Kept free of React/runtime deps for
 // Vitest coverage, mirroring capabilities-core.ts/pricing.ts.
-import type { EventPhase } from './types';
+import type { Club, EventPhase } from './types';
 
 export interface EventPhaseInput {
   regOpens: string;
@@ -39,6 +39,29 @@ export function eventIsInPhase(
 }
 
 /**
+ * Coerce a stored date-time into the exact string an
+ * `<input type="datetime-local">` accepts: `YYYY-MM-DDTHH:MM` (minute
+ * precision, NO seconds and NO zone designator).
+ *
+ * The event's `regOpens`/`regCloses`/`lastDateToEdit`/`ageCalcAt` are backed
+ * by Postgres `timestamptz` COLUMNS, so PostgREST returns them as full ISO
+ * strings with seconds and a `Z`/offset (e.g. `2026-02-01T12:00:00Z`). A
+ * datetime-local input silently BLANKS any value it can't parse — and a
+ * trailing `Z` makes the whole string invalid — so seeding the edit wizard
+ * straight from the stored value shows an empty field, and (if the user
+ * doesn't retype it) the old value is written straight back, i.e. reg-date
+ * edits appear not to persist. Trimming to minute precision restores the
+ * app's naive-local convention (the value is entered/displayed as-is, no zone
+ * math — matching how new events are authored). Non-matching input (empty,
+ * already-clean, or a plain date) is returned unchanged.
+ */
+export function toDatetimeLocalValue(s?: string | null): string {
+  if (!s) return '';
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/);
+  return m ? `${m[1]}T${m[2]}` : s;
+}
+
+/**
  * Client-side mirror of the `registrations_edit_lockout` DB trigger (B4) —
  * for UX only (a friendly disabled state / message), NOT the authoritative
  * gate; the trigger enforces this server-side regardless of what the client
@@ -54,4 +77,20 @@ export function canStillEditRegistration(
   if (!event.lastDateToEdit) return true;
   if (now.getTime() <= new Date(event.lastDateToEdit).getTime()) return true;
   return bypasses;
+}
+
+/**
+ * Whether an event is eligible for the refund-request flow at all (event-mgmt
+ * v2 Phase 3, spec §H — Nate decision 2026-07-10): refunds are only offered
+ * for events whose HOST club is the league's own club, flagged via the new
+ * `clubs.is_league_host` boolean (set by admins on exactly the league's own
+ * club — "UCG - Main" — in the admin clubs editor). Any other host club
+ * (member clubs hosting their own competitions) is NOT refund-eligible.
+ * Looks the host club up in `clubs` rather than trusting a denormalized flag
+ * on the event, so it always reflects the club's current setting. */
+export function eventIsRefundEligible(
+  event: { hostClubId: string },
+  clubs: Pick<Club, 'id' | 'isLeagueHost'>[],
+): boolean {
+  return clubs.some((c) => c.id === event.hostClubId && c.isLeagueHost === true);
 }

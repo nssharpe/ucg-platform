@@ -97,7 +97,7 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   `supabase/migrations/` — **the authoritative migration list + per-migration narrative +
   schema/RLS model is `supabase/README.md`**; keep its table updated with every migration
   (detail goes THERE, not here). All migrations through
-  `20260710024630_addon_unit_fields.sql` are applied. Security hardening:
+  `20260711023234_fix_refund_manager_read_recursion.sql` are applied. Security hardening:
   Phase 1+2 applied; Phase 3 TODO (`docs/plans/2026-07-02-security-hardening.md`).
 - New migrations: `supabase migration new <name>` (timestamp filename format is required).
   Apply via `supabase db push` — network is sandbox-blocked, run with sandbox disabled.
@@ -123,6 +123,14 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   `coalesce(..., false)` — for an anon caller an OR-chain over NULL evaluates to NULL
   and `if not NULL` does NOT raise (bit us: `20260704133502`). Also revoke the default
   PUBLIC execute grant on new functions.
+- **RLS policy recursion (42P17):** a new policy on table A whose subquery reads table B
+  recurses — and breaks ALL reads of A for every caller — when any of B's policies read
+  back into A (Postgres detects the cycle, errors regardless of role). Use SECURITY
+  DEFINER helper functions (the `my_person_id()`/`manages_club()` pattern) instead of raw
+  cross-table subqueries in policies (bit us live: `20260710230000` broke every
+  `invoice_items` read until hotfixed by `20260711023234`).
+- `payments.id` is the lone **uuid** PK in the schema — every other id (incl. FK cols
+  referencing it, e.g. `refund_requests.payment_id`) is app-generated text.
 
 ## Build / tooling gotchas
 - Keep the working copy at `C:\dev\ucg-platform` (short, space-free, outside Dropbox —
@@ -209,8 +217,9 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   that case (no prior localStorage entry yet), which is exactly what caused the
   "confirm my account → flashes a page" report.
 - **App roles** (`user_roles.role`, enum `app_role`): `admin`, `sanctioning`,
-  `regional_rep` (region via `regional_rep_regions`), `finance_admin`. Capabilities:
-  `isSanctioning`/`isRegionalRep`/`isFinanceAdmin` — admins are NOT implicitly either.
+  `regional_rep` (region via `regional_rep_regions`), `finance_admin`, `refund_manager`
+  (emv2 P3). Capabilities: `isSanctioning`/`isRegionalRep`/`isFinanceAdmin`/
+  `isRefundManager` — admins are NOT implicitly any of them.
 - **Self profile save stamps `auth_user_id`:** `pushPerson(p, { selfAuthUserId })` only
   when saving one's OWN row (passes the `people` self-INSERT RLS branch); admin/manager
   creation of others omits it.
@@ -285,6 +294,11 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   row (money cols CENTS) with **`lines_snapshot`** — the validated, server-priced line set
   frozen onto the row so the webhook fulfills from it, not from re-read (client-writable)
   `cart_items` (closes the TOCTOU where a line's refs could be mutated post-create).
+  **$0-total free-order path (emv2 P3):** when a coupon fully covers the cart, the
+  function skips Stripe entirely — inserts the `payments` row with `stripe_session_id:
+  null` and calls the fulfillment core directly (inline retry-once + `error_logs` on
+  failure, so a failure never strands the order pending forever); FE `CartCheckout.tsx`
+  polls a `'free'` stage instead of mounting Stripe Embedded.
 - `stripe-webhook` (deploy `--no-verify-jwt`; signature via `constructEventAsync`,
   fail-closed): fulfills **from `payments.lines_snapshot`** (falls back to live
   `cart_items` only for pre-2026-07-02 pending payments with no snapshot). Because
@@ -299,12 +313,26 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   it logs to `error_logs` and does NOT fulfill (leaves the payment pending for review).
   Club-billed for club carts (`invoices.club_id`), else payer; real `stripe_fee` from the
   balance txn. Trusts the server-written `payments`/snapshot amounts, never the client.
+  The actual fulfillment logic (membership activate, reg paid-flip, invoice write, cart
+  clear, receipt) lives in shared `_shared/fulfill.ts` (`fulfillPayment`, emv2 P3 — the
+  same core the free-order path above calls); semantics unchanged from before extraction.
 - FE: `StripeCheckout.tsx` (embedded form + poll `payments` self-read until
   `paid`/`failed`, ~60s cap, never falsely claims success; `loadStripe` once at module
   scope) inside shared `CartCheckout.tsx` (promo input + server-returned
   Subtotal/Coupon/Fee/Total — UI never sums client amounts as authoritative).
-- **Refunds:** manual in the Stripe Dashboard for now; a Dashboard refund does NOT
-  reflect back into `payments.status` — in-app refund path is deferred.
+- **Refunds (in-app, shipped emv2 P3, 2026-07-11):** only for events hosted by an
+  `is_league_host`-flagged club. Self-serve (`MyRegistrations.tsx`) or club-manager
+  (`Club.tsx`) request via `RefundRequestDialog` → edge fn `request-refund` (validates
+  ownership/eligibility/duplicates, emails requester + refund managers). Review at
+  `#/admin/refunds` (`refund_manager` or `admin` role) → edge fn `process-refund`:
+  reject (email, no state change) or approve — base amount is post-coupon `paid_cents`
+  from `payments.lines_snapshot` (legacy fallback: invoice_item list price), 100% at-or-
+  before `lastDateToEdit` else 75%, capped at the payment's remaining subtotal minus
+  prior approved refunds (`refundAmountCents`/`capRefundCents`, `pricing.ts`); service fee
+  never refunded; $0-capped approvals skip Stripe. On-time approval deletes the
+  registration; post-deadline keeps it `refunded`+`keep_listed` with apparatus blanked.
+  Refund receipts in PurchaseHistory. A Dashboard-issued refund (bypassing this flow)
+  still does NOT reflect back into `payments.status`.
 - **Stripe CLI** (logged in, account "UCG", test mode): `stripe trigger <event>` fires a
   signed test event; verify via `stripe events list` (`pending_webhooks: 0` ⇒ all 2xx —
   but wait ~20s after triggering, checking immediately is a false-positive trap). Stuck
@@ -358,7 +386,9 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   reminders + event-owner task escalations (`owner-task` kind, emv2 P1 §B4);
   verify_jwt STAYS true + requires the `x-cron-secret` header matching its
   `CRON_SECRET` secret — the runtime's env service key ≠ the legacy JWT, bit us
-  2026-07-08; runbook in `supabase/README.md`). Notify-style functions allow any signed-in caller and resolve
+  2026-07-08; runbook in `supabase/README.md`), `request-refund` / `process-refund`
+  (emv2 P3 refund request + review/Stripe-processing; both `verify_jwt: true` — the
+  no-verify-jwt trio above is UNCHANGED). Notify-style functions allow any signed-in caller and resolve
   recipients server-side; only `send-email`/`send-sms` are admin-gated. (`send-receipt`
   was removed 2026-07-04 — dead code, never called from `src/`; `stripe-webhook`'s own
   `emailReceipt()` is the actual live receipt path — since emv2 P0 it also renders each
@@ -380,8 +410,6 @@ update it there; don't grow a rival list here. Operative notes only:
 - **Event management v2** (Julia's 2026-07-06 requirements): digest + gap analysis in
   `docs/specs/2026-07-06-event-management-v2-requirements.md`; raw materials in
   `docs/reference/` (every "NAIGC" there reads as UCG — Nate 2026-07-06). Phasing
-  V2-P0…P6 approved + all §N7 questions answered by Julia 2026-07-06. P0–P2 shipped
-  (P2 = per-unit add-ons + camps, 2026-07-10 — decisions in spec §E3/§G); next is
-  P3 refunds (money-critical, fable review mandatory).
-- Refunds are Stripe-Dashboard-only today; a Dashboard refund does NOT reflect back
-  into `payments.status` (full in-app refund requirements: v2 spec §H).
+  V2-P0…P6 approved + all §N7 questions answered by Julia 2026-07-06. P0–P3 shipped
+  (P2 = per-unit add-ons + camps, 2026-07-10; P3 = in-app refunds, 2026-07-11 — decisions
+  in spec §E3/§G/§H); next is P4 capacity & sessions (waitlists, by-session registration).

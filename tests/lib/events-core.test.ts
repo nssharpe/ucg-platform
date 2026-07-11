@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deriveEventPhase, eventIsInPhase, canStillEditRegistration, type EventPhaseInput } from '../../src/lib/events-core';
+import { deriveEventPhase, eventIsInPhase, canStillEditRegistration, toDatetimeLocalValue, eventIsRefundEligible, type EventPhaseInput } from '../../src/lib/events-core';
 
 function event(overrides: Partial<EventPhaseInput> = {}): EventPhaseInput {
   return {
@@ -89,5 +89,55 @@ describe('canStillEditRegistration (B4.2)', () => {
   it('past the deadline, an admin or the host club (bypasses=true) can still edit', () => {
     const ev = { lastDateToEdit: '2026-06-01T00:00:00' };
     expect(canStillEditRegistration(ev, true, new Date('2026-06-02'))).toBe(true);
+  });
+});
+
+describe('toDatetimeLocalValue (event-edit datetime-local round-trip)', () => {
+  it('strips a trailing Z and seconds from a stored timestamptz (the Bug A repro)', () => {
+    // PostgREST returns reg_opens as e.g. "2026-02-01T12:00:00Z"; datetime-local
+    // blanks any value it cannot parse, and a trailing Z makes it invalid.
+    expect(toDatetimeLocalValue('2026-02-01T12:00:00Z')).toBe('2026-02-01T12:00');
+  });
+
+  it('strips a numeric offset too', () => {
+    expect(toDatetimeLocalValue('2026-02-01T12:00:00+00:00')).toBe('2026-02-01T12:00');
+  });
+
+  it('handles a space-separated form (raw ::text)', () => {
+    expect(toDatetimeLocalValue('2026-02-01 12:00:00+00')).toBe('2026-02-01T12:00');
+  });
+
+  it('passes an already-clean minute-precision value through unchanged', () => {
+    expect(toDatetimeLocalValue('2026-02-01T12:00')).toBe('2026-02-01T12:00');
+  });
+
+  it('returns empty string for null/undefined/empty', () => {
+    expect(toDatetimeLocalValue(null)).toBe('');
+    expect(toDatetimeLocalValue(undefined)).toBe('');
+    expect(toDatetimeLocalValue('')).toBe('');
+  });
+});
+
+describe('eventIsRefundEligible (event-mgmt v2 Phase 3, spec §H)', () => {
+  const clubs = [
+    { id: 'club-league', isLeagueHost: true },
+    { id: 'club-member', isLeagueHost: false },
+    { id: 'club-unset', isLeagueHost: undefined },
+  ];
+
+  it('is eligible when the host club has isLeagueHost === true', () => {
+    expect(eventIsRefundEligible({ hostClubId: 'club-league' }, clubs)).toBe(true);
+  });
+
+  it('is not eligible when the host club has isLeagueHost === false', () => {
+    expect(eventIsRefundEligible({ hostClubId: 'club-member' }, clubs)).toBe(false);
+  });
+
+  it('is not eligible when the host club has no isLeagueHost value set', () => {
+    expect(eventIsRefundEligible({ hostClubId: 'club-unset' }, clubs)).toBe(false);
+  });
+
+  it('is not eligible when the host club is not found at all', () => {
+    expect(eventIsRefundEligible({ hostClubId: 'club-nonexistent' }, clubs)).toBe(false);
   });
 });

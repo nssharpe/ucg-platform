@@ -272,6 +272,18 @@ editor. Deltas:
 
 ## H. Refunds (NET-NEW system; policy is specific)
 
+> **SHIPPED 2026-07-11 (P3).** Built substantially as specified below, with a few
+> concrete decisions: eligibility is driven by a new `clubs.is_league_host` boolean
+> flag (admin-set on the league's own club) rather than a hardcoded club name match;
+> refunds are **item-price-only** — computed from the purchased line's own post-coupon
+> amount (capped at the payment's remaining subtotal), not a whole-order recompute; a
+> coupon-fully-covered ($0-total) order gets its own non-Stripe checkout/fulfillment
+> path so it can still be refunded (as a $0 no-op) through the same flow; banquet-ticket
+> move/mark-EXTRA stays in the existing P2 assignment UI rather than being rebuilt into
+> the refund review page. Full narrative: `supabase/README.md`'s migration table
+> (`20260710212354`–`20260711023234`) and `CLAUDE.md`'s "Refunds (in-app, shipped emv2
+> P3)" bullet.
+
 Only for **UCG-hosted events** (host club "UCG - Main"). Both self-serve
 (individual popup) and club-manager (per line-item) request paths:
 - Request = confirm dialog (removal warning) + reason dropdown (Injury /

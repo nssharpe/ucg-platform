@@ -88,6 +88,7 @@ const SetPassword = lazy(() => import('./pages/SetPassword'));
 const MyRegistrations = lazy(() => import('./pages/MyRegistrations').then((m) => ({ default: m.MyRegistrations })));
 const PurchaseHistory = lazy(() => import('./pages/PurchaseHistory').then((m) => ({ default: m.PurchaseHistory })));
 const ErrorLog = lazy(() => import('./pages/ErrorLog').then((m) => ({ default: m.ErrorLog })));
+const RefundReview = lazy(() => import('./pages/admin/league/RefundReview').then((m) => ({ default: m.RefundReview })));
 const Cart = lazy(() => import('./pages/Cart').then((m) => ({ default: m.Cart })));
 const MembershipsCheckout = lazy(() => import('./pages/Cart').then((m) => ({ default: m.MembershipsCheckout })));
 
@@ -147,6 +148,31 @@ function RequireAdmin({ children }: { children: ReactNode }) {
       <div style={{ padding: '60px 24px', maxWidth: 480, margin: '0 auto', textAlign: 'center' }}>
         <div style={{ fontSize: 32, marginBottom: 16 }}>🔒</div>
         <h2 style={{ marginBottom: 8 }}>Admin access required</h2>
+        <p style={{ color: 'var(--ink-soft)' }}>
+          You don't have access to this page. Contact a UCG administrator if you believe this is an error.
+        </p>
+      </div>
+    );
+  }
+  return <>{children}</>;
+}
+
+/**
+ * Gate the refund review queue (event-mgmt v2 Phase 3, spec §H) to admins OR
+ * the 'refund_manager' role — NOT admin-only, so RequireAdmin doesn't fit
+ * (a refund manager who isn't an admin must still reach this page). Mirrors
+ * RequireAdmin's rolesLoaded-gated shape.
+ */
+function RequireRefundAccess({ children }: { children: ReactNode }) {
+  const caps = useCapabilities();
+  const rolesLoaded = useRolesLoaded();
+  if (!caps.signedIn) return <Gate onUnlock={() => {}} />;
+  if (!rolesLoaded) return <PageFallback />;
+  if (!caps.isAdmin && !caps.isRefundManager) {
+    return (
+      <div style={{ padding: '60px 24px', maxWidth: 480, margin: '0 auto', textAlign: 'center' }}>
+        <div style={{ fontSize: 32, marginBottom: 16 }}>🔒</div>
+        <h2 style={{ marginBottom: 8 }}>Refund manager access required</h2>
         <p style={{ color: 'var(--ink-soft)' }}>
           You don't have access to this page. Contact a UCG administrator if you believe this is an error.
         </p>
@@ -247,6 +273,7 @@ export default function App() {
               <Route path="/admin/league" element={<RequireAdmin><AdminLeague /></RequireAdmin>} />
               <Route path="/admin/communicate" element={<RequireAdmin><Communicate /></RequireAdmin>} />
               <Route path="/admin/errors" element={<RequireAdmin><ErrorLog /></RequireAdmin>} />
+              <Route path="/admin/refunds" element={<RequireRefundAccess><RefundReview /></RequireRefundAccess>} />
               <Route path="/waiver/sign/:token" element={<WaiverSign />} />
               <Route path="/manager-access/:token" element={<ManagerAccessReview />} />
               <Route path="/set-password" element={<SetPassword />} />

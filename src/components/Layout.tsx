@@ -51,6 +51,13 @@ function navFor(caps: ReturnType<typeof useCapabilities>): NavGroup[] {
       { to: '/admin/league', label: 'League Controls' },
       { to: '/admin/communicate', label: 'Communicate' },
       { to: '/admin/errors', label: 'Error Log' },
+      { to: '/admin/refunds', label: 'Refund Requests' },
+    ]});
+  } else if (caps.isRefundManager) {
+    // A refund manager who is NOT an admin has no other League-group access —
+    // isAdmin is never implicitly isRefundManager or vice versa (CLAUDE.md).
+    groups.push({ group: 'Refunds', items: [
+      { to: '/admin/refunds', label: 'Refund Requests' },
     ]});
   }
   return groups;

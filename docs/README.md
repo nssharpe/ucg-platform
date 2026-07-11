@@ -44,7 +44,7 @@ Live build/tooling notes live in [`../CLAUDE.md`](../CLAUDE.md); open work is th
 | [dev-test-auth](specs/2026-06-25-dev-test-auth.md) | Dev-only real auto-login of a seeded Supabase test user (`.env.local`-gated) so authenticated UI is exercisable locally | ✅ shipped |
 | [stripe-integration](specs/2026-06-25-stripe-integration.md) | Stripe Embedded Checkout architecture (S1–S5) | ✅ shipped |
 | [security-review-findings (7/02)](specs/2026-07-02-security-review-findings.md) | Deep review of the money paths: RLS, edge functions, cart state machine — verified findings by severity | 🟡 findings logged; fixes planned |
-| [event-management-v2-requirements](specs/2026-07-06-event-management-v2-requirements.md) | Julia's full event-management requirements (7/06) digested + gap-mapped: host dashboard, refunds, capacity/waitlists, add-ons v2, nationals ops, finance dashboards — phasing V2-P0…P6 | 🟡 validated (phasing approved, §N7 answered); **P0 shipped (staging; prod pending Nate)**; **P1 build in progress** — Tasks 1, 3, 4, 5, 6 shipped (owner assignment + checklist, per-event admin grants, insurance-cert upload, host viewing page, Excel exports); P1 nearly done |
+| [event-management-v2-requirements](specs/2026-07-06-event-management-v2-requirements.md) | Julia's full event-management requirements (7/06) digested + gap-mapped: host dashboard, refunds, capacity/waitlists, add-ons v2, nationals ops, finance dashboards — phasing V2-P0…P6 | 🟡 validated (phasing approved, §N7 answered); **P0–P3 shipped** (P0 foundations/scheduler, P1 host experience, P2 add-ons & camps, P3 in-app refunds — 2026-07-11); **P4 (capacity/waitlists & by-session reg) next** |
 
 ## Plans (`plans/`) — step-by-step implementation records
 
@@ -122,8 +122,8 @@ here — update THIS list when priorities change, not rival copies.
   P1 host experience → P2 add-ons & camps → P3 refunds → P4 capacity/waitlists &
   by-session reg → P5 nationals ops/check-in → P6 finance dashboards.
   **P1 (host experience) is now fully shipped** — see Tasks 1, 3–8 below. **P2 (add-ons
-  & camps) is now fully shipped** (Tasks 1–7, pending one migration push — see Task 7
-  below); P3 (refunds) is next. **Task 1** (per-unit add-on cart/invoice line fields, `addon_size`/
+  & camps) is now fully shipped** (Tasks 1–7). **P3 (refunds, §H) is now fully shipped
+  (2026-07-11)** — see "P3 shipped" below; P4 (capacity & sessions) is next. **Task 1** (per-unit add-on cart/invoice line fields, `addon_size`/
   `addon_assignee`) and **Task 2** (server-side per-unit add-on pricing + purchase
   deadlines + banquet-assignment validation in `create-checkout-session`) shipped, plus
   **Task 3** (individual self-cart per-unit add-on purchase UI: registration-popup add-on
@@ -171,11 +171,33 @@ here — update THIS list when priorities change, not rival copies.
   roster sheet for camp events: one row per athlete (birthday, gender, profile vs.
   purchased shirt size, purchased leo size, all four overnight-survey answers with
   human labels, date registered) — required extending `event_host_roster` with
-  `dob`/`gender`/`camp_survey`/`created_at`. ⚠ The migration
-  (`20260710151638_event_host_addons_and_camp_detail.sql`) is written but **not yet
-  pushed** (T7 was scoped client-side-only) — apply it before the new sheets return
-  real data. **P2 (add-ons & camps) is now fully shipped** (Tasks 1–7) pending that one
-  migration push; P3 (refunds) is next.
+  `dob`/`gender`/`camp_survey`/`created_at`. The migration
+  (`20260710151638_event_host_addons_and_camp_detail.sql`) is applied. **P2 (add-ons &
+  camps) is now fully shipped** (Tasks 1–7).
+  **P3 (refunds, §H) shipped 2026-07-11**, plus 4 bug fixes found/fixed along the way:
+  (1) `EventWizard` datetime-local fields were blanked on load by `timestamptz` values
+  (`toDatetimeLocalValue`, `events-core.ts`); (2) the Edit-event button now gates to
+  admin/sanctioning, matching `events` RLS (hosts were silently rejected on save);
+  (3) `normalizeExternalUrl` (`src/lib/url.ts`) applied to `hotelLink` + medal
+  `trackingLink` at save/render; (4) **$0-total checkout** — a coupon-fully-covered cart
+  now skips Stripe entirely and fulfills directly via the new shared
+  `_shared/fulfill.ts` (`fulfillPayment`, extracted from `stripe-webhook` with unchanged
+  semantics), with inline retry + `error_logs` on failure so a free order never strands
+  unfulfilled; FE `CartCheckout.tsx` gained a `'free'` polling stage. The refund system
+  itself: `refund_manager` role + `clubs.is_league_host` flag (only UCG-hosted, i.e.
+  league-club-hosted, events are refund-eligible) + `refund_requests` table; self-serve
+  (`MyRegistrations.tsx`) and club-manager (`Club.tsx`) request dialogs → edge fn
+  `request-refund` (ownership/eligibility/duplicate validation, notifies requester +
+  refund managers); review page `#/admin/refunds` → edge fn `process-refund` (reject =
+  email only; approve = 100% at-or-before `lastDateToEdit` else 75% of the post-coupon
+  `paid_cents` base, capped at the payment's remaining subtotal, Stripe refund on the
+  original payment intent, atomic claim-before-Stripe with revert-on-failure). On-time
+  approval deletes the registration; post-deadline keeps it `refunded`+`keep_listed`
+  with apparatus blanked (still shows in event materials, un-recheckable except by an
+  admin with a confirm). Refund receipts (jsPDF) appear in Purchase History. A hotfix
+  migration (`20260711023234`) closed an RLS policy-recursion regression (42P17) the
+  review-reads migration introduced, which briefly broke all `invoice_items` reads.
+  **P4 (capacity & sessions — waitlists, by-session registration) is next.**
   **P0 Task 1 shipped:** pg_cron/pg_net scheduler infra (`notification_log` +
   `scheduled-dispatch-15min` job + `scheduled-dispatch` Edge Function, service-role-only
   auth) with its first consumer — 3d/1d/closed sanction-vote reminder emails, idempotent

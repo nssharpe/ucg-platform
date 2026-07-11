@@ -3,8 +3,9 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { clubHasActiveMembership, clubHasActiveMembershipForEvent, seasonForDate, membershipHolds, paidRegistrationClub } from '../lib/capabilities-core';
-import { eventIsInPhase, canStillEditRegistration } from '../lib/events-core';
+import { eventIsInPhase, canStillEditRegistration, eventIsRefundEligible } from '../lib/events-core';
 import { Badge, Combo, Field, Modal } from '../components/ui';
+import { RefundRequestDialog, type RefundRequestItem } from '../components/RefundRequestDialog';
 import { useToast, useFmtDate } from '../components/ui-hooks';
 import { STATE_REGIONS, SHIRT_SIZES } from '../lib/types';
 import type { Athlete, CartItem, Club, Event, Registration, Season } from '../lib/types';
@@ -761,6 +762,7 @@ function ClubAddonsCard({ event, clubId, canManage }: { event: Event; clubId: st
   // a fresh draft is mounted whenever the manager switches events — no
   // synchronous setState-in-effect needed to reset it.
   const [draft, setDraft] = useState<ClubAddonDraft>(() => initialClubAddonDraft());
+  const [addonRefundTarget, setAddonRefundTarget] = useState<RefundRequestItem | null>(null);
 
   const tshirtOpen = !!event.tshirtAddon && addonPurchaseOpen(event.tshirtAddon, event.regCloses, now);
   const banquetOpen = !!event.banquet && addonPurchaseOpen(event.banquet, event.regCloses, now);
@@ -786,6 +788,16 @@ function ClubAddonsCard({ event, clubId, canManage }: { event: Event; clubId: st
   const purchasedItems: CartItem[] = db.invoices
     .filter((inv) => inv.clubId === clubId)
     .flatMap((inv) => inv.items.filter((it) => it.kind === 'addon' && it.refEventId === event.id && !it.refunded));
+
+  // event-mgmt v2 Phase 3 (§H): per-item refund requests on purchased add-ons.
+  // Refunds are only offered for events hosted by the league's own club, and
+  // only for one already pending/approved request per item at a time.
+  const addonRefundEligible = eventIsRefundEligible(event, db.clubs);
+  const addonRefundRequestedIds = new Set(
+    (db.refundRequests ?? [])
+      .filter((r) => r.kind === 'addon' && r.eventId === event.id && (r.status === 'pending' || r.status === 'approved'))
+      .map((r) => r.invoiceItemId),
+  );
 
   const cartAssigned = new Set(
     cartAddonsForEvent
@@ -920,9 +932,37 @@ function ClubAddonsCard({ event, clubId, canManage }: { event: Event; clubId: st
         <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
           <h4 style={{ margin: '0 0 6px', fontSize: 14 }}>Purchased add-ons ({purchasedItems.length})</h4>
           <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: 'var(--ink-soft)' }}>
-            {purchasedItems.map((it) => <li key={it.id}>{addonLabel(it)}</li>)}
+            {purchasedItems.map((it) => {
+              const requested = addonRefundRequestedIds.has(it.id);
+              return (
+                <li key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+                  <span>{addonLabel(it)}</span>
+                  {requested ? (
+                    <Badge tone="warn">Refund requested</Badge>
+                  ) : addonRefundEligible ? (
+                    <button
+                      className="btn ghost small"
+                      style={{ color: 'var(--coral-500)', padding: '2px 10px' }}
+                      onClick={() => setAddonRefundTarget({ kind: 'addon', invoiceItemId: it.id, label: addonLabel(it) })}
+                    >
+                      Request refund
+                    </button>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         </div>
+      )}
+
+      {addonRefundTarget && (
+        <RefundRequestDialog
+          items={[addonRefundTarget]}
+          eventName={event.name}
+          clubId={clubId}
+          onClose={() => setAddonRefundTarget(null)}
+          onSubmitted={() => { /* store refresh happens inside the dialog via syncFromSupabase() */ }}
+        />
       )}
     </div>
   );
@@ -946,6 +986,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   // Modal state for RegistrationEditor
   const [editingAthleteId, setEditingAthleteId] = useState<string | null>(null);
   const [registerAthleteId, setRegisterAthleteId] = useState<string | null>(null);
+  const [refundTarget, setRefundTarget] = useState<RefundRequestItem[] | null>(null);
 
   // NOT memoized on `db` — same M6 in-place-mutation trap as Roster's
   // allRoster above (mutate() never reassigns db.people, so a useMemo keyed
@@ -986,6 +1027,9 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   if (!event) return <p>No events accepting registration.</p>;
 
   const regClosed = !eventIsInPhase(event, 'reg-open');
+  // event-mgmt v2 Phase 3 (§H): refunds only offered for events hosted by the
+  // league's own club — gates the per-athlete "Request refund" action below.
+  const refundEligible = eventIsRefundEligible(event, db.clubs);
 
   // Gate: the club must hold an active membership for the event's season before
   // registering any athlete. Returns true (and toasts) when blocked. Waived for
@@ -1021,9 +1065,13 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   const lateFeeSuffix = (anchor: string | null) =>
     anchor !== null && lateFeeApplies(event, anchor) ? ' (incl. late fee)' : '';
 
-  // All non-refunded regs for this event + club
+  // Regs for this event + club shown in the registered-athletes table below:
+  // active (non-refunded) regs, PLUS refunded-but-kept ones (`keepListed`,
+  // event-mgmt v2 Phase 3 spec §H: "name still appears in event materials"
+  // for a post-edit-deadline refund) — but NOT a refunded row whose refund
+  // deleted it outright (pre-deadline refunds have no row left at all).
   const allRegs = db.registrations.filter(
-    (r) => r.eventId === event.id && r.clubId === clubId && !r.refunded,
+    (r) => r.eventId === event.id && r.clubId === clubId && (!r.refunded || r.keepListed),
   );
 
   const regsFor = (athleteId: string) => allRegs.filter((r) => r.athleteId === athleteId);
@@ -1332,14 +1380,24 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
     });
   };
 
-  const requestRefund = (athleteId: string) => {
-    mutate((d) => {
-      for (const r of d.registrations.filter((x) => x.eventId === event.id && x.athleteId === athleteId && x.clubId === clubId && !x.refunded)) {
-        r.refundRequested = true;
-        pushRegistration(r);
-      }
-    });
-    toast('Refund requested — pending league admin approval.');
+  // Opens the shared RefundRequestDialog (event-mgmt v2 Phase 3, spec §H) with
+  // one item per PAID, not-yet-refund-requested registration this athlete
+  // holds at this event/club — a manager may hold several (one per
+  // discipline). Replaces the old direct `r.refundRequested = true` write:
+  // the dialog now collects a reason and goes through the request-refund edge
+  // function (eligibility/authorization/audit row/emails), matching the
+  // self-serve flow in MyRegistrations.tsx.
+  const openRefundDialog = (athleteId: string) => {
+    const regs = db.registrations.filter(
+      (x) => x.eventId === event.id && x.athleteId === athleteId && x.clubId === clubId
+        && !x.refunded && !x.refundRequested && x.paid === true,
+    );
+    if (regs.length === 0) return;
+    setRefundTarget(regs.map((r) => ({
+      kind: 'registration' as const,
+      regId: r.id,
+      label: `${r.discipline === 'TNT' ? 'T&T' : r.discipline} – ${db.levels.find((l) => l.id === r.levelId)?.name ?? '—'}`,
+    })));
   };
 
   // Swap a registration to another club athlete (who has membership). Applies the
@@ -1457,6 +1515,9 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
               {registered.map((a) => {
                 const regs = regsFor(a.id);
                 const anyRefundReq = regs.some((r) => r.refundRequested);
+                const anyRefunded = regs.some((r) => r.refunded);
+                const allRefunded = regs.length > 0 && regs.every((r) => r.refunded);
+                const anyPaidRefundable = refundEligible && regs.some((r) => r.paid === true && !r.refunded && !r.refundRequested);
                 // H7: undefined-safe. `paid` defaults falsy on a new reg but a
                 // strict `=== false` check lets `undefined` slip through and
                 // render the green "Registered" badge for a reg nothing has
@@ -1468,14 +1529,17 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
                   <tr key={a.id}>
                     <td><strong>{a.firstName} {a.lastName}</strong></td>
                     <td style={{ fontSize: 13 }}>{summary}</td>
-                    <td>
+                    <td style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                       {anyRefundReq
                         ? <Badge tone="warn">Refund requested</Badge>
-                        : anyUpdatedPending
-                          ? <Badge tone="warn">Updated pending purchase</Badge>
-                          : anyUnpaid
-                            ? <Badge tone="warn">Pending purchase</Badge>
-                            : <Badge tone="ok">Registered</Badge>}
+                        : allRefunded
+                          ? null
+                          : anyUpdatedPending
+                            ? <Badge tone="warn">Updated pending purchase</Badge>
+                            : anyUnpaid
+                              ? <Badge tone="warn">Pending purchase</Badge>
+                              : <Badge tone="ok">Registered</Badge>}
+                      {anyRefunded && <Badge tone="info">Refunded</Badge>}
                     </td>
                     {canManage && (
                       <td style={{ whiteSpace: 'nowrap', display: 'flex', gap: 6 }}>
@@ -1495,13 +1559,13 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
                             Edit locked
                           </span>
                         )}
-                        {!anyRefundReq && (
+                        {anyPaidRefundable && (
                           <button
                             className="btn small ghost"
                             style={{ color: 'var(--coral-500)' }}
-                            onClick={() => requestRefund(a.id)}
+                            onClick={() => openRefundDialog(a.id)}
                           >
-                            Refund
+                            Request refund
                           </button>
                         )}
                       </td>
@@ -1641,6 +1705,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
               const r = findIncomingSynchroPartner(db.registrations, event.id, editingAthlete.id);
               return r ? (r.apparatusLevels?.SY ?? r.levelId) : null;
             })()}
+            isAdmin={caps.isAdmin}
           />
         </Modal>
       )}
@@ -1668,6 +1733,16 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
             })()}
           />
         </Modal>
+      )}
+
+      {refundTarget && (
+        <RefundRequestDialog
+          items={refundTarget}
+          eventName={event.name}
+          clubId={clubId}
+          onClose={() => setRefundTarget(null)}
+          onSubmitted={() => { /* store refresh happens inside the dialog via syncFromSupabase() */ }}
+        />
       )}
     </div>
   );
