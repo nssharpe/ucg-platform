@@ -114,6 +114,10 @@ Deno.serve(async (req) => {
   let ownerPersonId: string | null; // self-purchase owner, for the self-serve auth branch
   let itemLabel: string;
   let paymentId: string | null;
+  // Only meaningful for kind='registration' — the invoice_item the payment
+  // lookup below resolved through, stamped on the refund_requests row so T6
+  // has the entry line's amount for the refund calc.
+  let matchedInvoiceItemId: string | null = null;
 
   if (kind === 'registration') {
     const { data: reg, error: regErr } = await db
@@ -131,15 +135,36 @@ Deno.serve(async (req) => {
     ownerPersonId = reg.athlete_id;
     itemLabel = `${reg.discipline === 'TNT' ? 'T&T' : reg.discipline} entry`;
 
-    // Best-effort payment lookup: the payment whose ref_reg_ids covers this reg.
-    const { data: pay } = await db
-      .from('payments')
-      .select('id, created_at')
-      .contains('ref_reg_ids', [regId])
-      .order('created_at', { ascending: true })
-      .limit(1)
-      .maybeSingle();
-    paymentId = pay?.id ?? null;
+    // Best-effort payment lookup: `payments.ref_reg_ids` is never written by
+    // create-checkout-session (reg refs live per-line in lines_snapshot, which
+    // fulfillment mirrors onto invoice_items, never top-level on the payments
+    // row) — so a `.contains('ref_reg_ids', ...)` query against payments would
+    // always come back empty. Resolve via invoice_items instead: find the line(s)
+    // covering this reg, preferring the ENTRY line (kind='meet-entry',
+    // ref_line_type 'entry' or unset) over a change-fee line ('change') so T6
+    // has the entry line's amount for the refund calc, then walk invoice_id ->
+    // payments. A host-club $0 entry gets no cart line/invoice_item at all, so
+    // it correctly stays untraceable (paymentId/matchedInvoiceItemId null).
+    const { data: candidateItems } = await db
+      .from('invoice_items')
+      .select('id, invoice_id, kind, ref_line_type')
+      .contains('ref_reg_ids', [regId]);
+    const regInvoiceItems = (candidateItems ?? []) as
+      { id: string; invoice_id: string; kind: string; ref_line_type: string | null }[];
+    const entryItem = regInvoiceItems.find((it) => it.kind === 'meet-entry' && it.ref_line_type !== 'change');
+    const chosenItem = entryItem ?? regInvoiceItems[0] ?? null;
+    matchedInvoiceItemId = chosenItem?.id ?? null;
+
+    if (chosenItem) {
+      const { data: pays } = await db
+        .from('payments')
+        .select('id, status')
+        .eq('invoice_id', chosenItem.invoice_id);
+      const payRows = (pays ?? []) as { id: string; status: string }[];
+      paymentId = payRows.find((p) => p.status === 'paid')?.id ?? payRows[0]?.id ?? null;
+    } else {
+      paymentId = null;
+    }
   } else {
     const { data: item, error: itemErr } = await db
       .from('invoice_items')
@@ -236,7 +261,7 @@ Deno.serve(async (req) => {
     event_id: eventId,
     kind,
     reg_id: kind === 'registration' ? regId : null,
-    invoice_item_id: kind === 'addon' ? invoiceItemId : null,
+    invoice_item_id: kind === 'addon' ? invoiceItemId : matchedInvoiceItemId,
     payment_id: paymentId,
     reason,
     reason_detail: reasonDetail || null,
