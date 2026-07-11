@@ -1,20 +1,59 @@
-// Pure capacity/violation engine for event-mgmt v2 Phase 4 (capacity & sessions).
-// No React/store/Supabase imports (types erase at compile time) — unit-tested in
-// tests/capacity.test.ts. See Event.capacity / Event.registrationMode /
-// EventSession.maxRoutines / Registration.{waitlisted,waitlistGroupId,holdExpiresAt}
-// / WaitlistGroup in ./types for the shapes this operates on.
+// _shared/capacity.ts — Deno mirror of src/lib/capacity.ts (event-mgmt v2 Phase
+// 4, capacity & sessions engine). Edge Functions bundle only the function dir +
+// this `_shared/` folder, not `src/`, so we re-implement rather than import.
 //
-// MIRRORED in supabase/functions/_shared/capacity.ts for edge-function
-// enforcement (create-checkout-session) — snake_case DB row shapes there vs.
-// the camelCase app types here, but identical function names/semantics. Keep
-// the two in sync (same idiom as _shared/stripe.ts ↔ pricing.ts).
-import type { Discipline, Event, EventSession, Registration, WaitlistGroup } from './types';
+// KEEP LINE-FOR-LINE COMPARABLE WITH src/lib/capacity.ts. Any change to a cap
+// rule, occupancy predicate, or violation shape must land in BOTH files. The
+// vitest suite (tests/capacity.test.ts) is the correctness lock for the src
+// side; this port has no local Deno runner, so it rides on the mirror + review.
+//
+// Row shapes here are snake_case DB columns (vs. the camelCase app types the
+// src side operates on) — see supabase/migrations/20260711135842_emv2_p4_capacity_schema.sql
+// and the base 20260601000001_schema.sql for the registrations/event_sessions
+// columns this mirrors.
 
 /** Minutes a cart-add soft hold reserves a registration's capacity spot for. */
 export const CART_HOLD_MINUTES = 30;
 
 /** Hours a promoted (notified) waitlist group's spot reservation lasts. */
 export const PROMOTION_HOLD_HOURS = 24;
+
+export interface RegRow {
+  id: string;
+  event_id: string;
+  athlete_id: string;
+  discipline: string;
+  level_id: string | null;
+  apparatus: string[] | null;
+  apparatus_levels: Record<string, string> | null;
+  session_id: string | null;
+  paid: boolean | null;
+  updated_pending: boolean | null;
+  refunded: boolean | null;
+  waitlisted: boolean | null;
+  waitlist_group_id: string | null;
+  hold_expires_at: string | null;
+}
+
+export interface SessionRow {
+  id: string;
+  max_routines: Record<string, number> | null;
+}
+
+export interface GroupRow {
+  id: string;
+  status: string;
+  hold_expires_at: string | null;
+}
+
+export interface CapacityEventRow {
+  id: string;
+  capacity: {
+    total?: number;
+    perLevel?: Record<string, number>;
+    perDiscipline?: Record<string, number>;
+  } | null;
+}
 
 /** One routine (apparatus entry) a registration contributes toward capacity,
  *  attributed to whichever level actually governs that apparatus. */
@@ -24,13 +63,13 @@ export interface Routine {
 }
 
 /** The routines (apparatus entries) a registration contributes. Per-apparatus
- *  level attribution: `reg.apparatusLevels?.[apparatus] ?? reg.levelId`. A reg
- *  with an empty `apparatus` array (e.g. a camp reg, or a blanked retained
- *  reg) contributes zero routines. */
-export function regRoutines(reg: Registration): Routine[] {
+ *  level attribution: `reg.apparatus_levels?.[apparatus] ?? reg.level_id`. A
+ *  reg with an empty/null `apparatus` array (e.g. a camp reg, or a blanked
+ *  retained reg) contributes zero routines. */
+export function regRoutines(reg: RegRow): Routine[] {
   return (reg.apparatus ?? []).map((apparatus) => ({
     apparatus,
-    levelId: reg.apparatusLevels?.[apparatus] ?? reg.levelId,
+    levelId: reg.apparatus_levels?.[apparatus] ?? reg.level_id ?? '',
   }));
 }
 
@@ -43,38 +82,38 @@ function parseTime(value: string | null | undefined): number | null {
 /** True while `group` (the registration's waitlist group) is in a promoted,
  *  still-live "notified" hold — its reserved spot counts against capacity so
  *  nobody else can take it during the 24h decision window. */
-function groupHasLiveHold(group: WaitlistGroup | undefined, now: number): boolean {
+function groupHasLiveHold(group: GroupRow | undefined, now: number): boolean {
   if (!group) return false;
   if (group.status !== 'notified') return false;
-  const holdExpires = parseTime(group.holdExpiresAt);
+  const holdExpires = parseTime(group.hold_expires_at);
   return holdExpires !== null && holdExpires > now;
 }
 
 /**
  * Whether a registration currently occupies a capacity spot for its event.
  * A refunded reg never occupies. Otherwise one of:
- *  1. `paid === true` or `updatedPending === true` (an updated-pending athlete
- *     already holds their spot; the change fee doesn't release it), or
- *  2. unpaid with a live soft hold (`holdExpiresAt` in the future), or
+ *  1. `paid === true` or `updated_pending === true` (an updated-pending
+ *     athlete already holds their spot; the change fee doesn't release it), or
+ *  2. unpaid with a live soft hold (`hold_expires_at` in the future), or
  *  3. waitlisted AND its group is a live "notified" promotion hold.
  * Plain waitlisted regs (waiting/expired/cancelled group, or notified-but-
  * lapsed) do NOT occupy.
  */
 export function isOccupying(
-  reg: Registration,
-  groupsById: Record<string, WaitlistGroup>,
+  reg: RegRow,
+  groupsById: Record<string, GroupRow>,
   now: number,
 ): boolean {
   if (reg.refunded) return false;
 
   if (reg.waitlisted) {
-    const group = reg.waitlistGroupId ? groupsById[reg.waitlistGroupId] : undefined;
+    const group = reg.waitlist_group_id ? groupsById[reg.waitlist_group_id] : undefined;
     return groupHasLiveHold(group, now);
   }
 
-  if (reg.paid === true || reg.updatedPending === true) return true;
+  if (reg.paid === true || reg.updated_pending === true) return true;
 
-  const holdExpires = parseTime(reg.holdExpiresAt);
+  const holdExpires = parseTime(reg.hold_expires_at);
   return holdExpires !== null && holdExpires > now;
 }
 
@@ -82,7 +121,7 @@ export function isOccupying(
 export interface CapacityUsage {
   totalAthletes: number;
   perLevel: Record<string, number>;
-  perDiscipline: Partial<Record<Discipline, number>>;
+  perDiscipline: Record<string, number>;
   /** perSession[sessionId][apparatusCode] = routine count. */
   perSession: Record<string, Record<string, number>>;
 }
@@ -92,26 +131,26 @@ export interface CapacityUsage {
  *  an incoming reg IS the request being validated, so an expired cart hold or
  *  lapsed promotion hold must not let it slip through uncounted (oversell). */
 function tallyUsage(
-  event: Event,
-  regs: Registration[],
-  isCounted: (reg: Registration) => boolean,
+  eventId: string,
+  regs: RegRow[],
+  isCounted: (reg: RegRow) => boolean,
 ): CapacityUsage {
-  const occupying = regs.filter((r) => r.eventId === event.id && isCounted(r));
+  const occupying = regs.filter((r) => r.event_id === eventId && isCounted(r));
 
   const athleteIds = new Set<string>();
   const perLevel: Record<string, number> = {};
-  const perDiscipline: Partial<Record<Discipline, number>> = {};
+  const perDiscipline: Record<string, number> = {};
   const perSession: Record<string, Record<string, number>> = {};
 
   for (const reg of occupying) {
-    athleteIds.add(reg.athleteId);
+    athleteIds.add(reg.athlete_id);
 
     for (const routine of regRoutines(reg)) {
       perLevel[routine.levelId] = (perLevel[routine.levelId] ?? 0) + 1;
       perDiscipline[reg.discipline] = (perDiscipline[reg.discipline] ?? 0) + 1;
 
-      if (reg.sessionId) {
-        const sessionCounts = perSession[reg.sessionId] ?? (perSession[reg.sessionId] = {});
+      if (reg.session_id) {
+        const sessionCounts = perSession[reg.session_id] ?? (perSession[reg.session_id] = {});
         sessionCounts[routine.apparatus] = (sessionCounts[routine.apparatus] ?? 0) + 1;
       }
     }
@@ -124,21 +163,21 @@ function tallyUsage(
  *  `totalAthletes` = distinct occupying athletes; `perLevel`/`perDiscipline`/
  *  `perSession` = routine (apparatus entry) counts. */
 export function capacityUsage(
-  event: Event,
-  regs: Registration[],
-  groupsById: Record<string, WaitlistGroup>,
+  eventId: string,
+  regs: RegRow[],
+  groupsById: Record<string, GroupRow>,
   now: number,
 ): CapacityUsage {
-  return tallyUsage(event, regs, (r) => isOccupying(r, groupsById, now));
+  return tallyUsage(eventId, regs, (r) => isOccupying(r, groupsById, now));
 }
 
 /** True if the event has ANY capacity configuration set — drives whether
  *  holds/countdowns are needed at all. */
-export function hasCapacityConfig(event: Event, sessions: EventSession[]): boolean {
+export function hasCapacityConfig(event: CapacityEventRow, sessions: SessionRow[]): boolean {
   if (event.capacity?.total !== undefined) return true;
   if (event.capacity?.perLevel && Object.keys(event.capacity.perLevel).length > 0) return true;
   if (event.capacity?.perDiscipline && Object.keys(event.capacity.perDiscipline).length > 0) return true;
-  return sessions.some((s) => s.maxRoutines && Object.keys(s.maxRoutines).length > 0);
+  return sessions.some((s) => s.max_routines && Object.keys(s.max_routines).length > 0);
 }
 
 export type CapacityViolationScope = 'total' | 'level' | 'discipline' | 'session';
@@ -146,7 +185,7 @@ export type CapacityViolationScope = 'total' | 'level' | 'discipline' | 'session
 export interface CapacityViolation {
   scope: CapacityViolationScope;
   levelId?: string;
-  discipline?: Discipline;
+  discipline?: string;
   sessionId?: string;
   apparatus?: string;
   cap: number;
@@ -159,9 +198,9 @@ export interface CapacityViolation {
  *  is counted once, as incoming (checkout re-validates regs that already hold
  *  spots via a cart-add hold). */
 function splitExistingIncoming(
-  existingRegs: Registration[],
-  incomingRegs: Registration[],
-): { baseline: Registration[]; incoming: Registration[] } {
+  existingRegs: RegRow[],
+  incomingRegs: RegRow[],
+): { baseline: RegRow[]; incoming: RegRow[] } {
   const incomingIds = new Set(incomingRegs.map((r) => r.id));
   const baseline = existingRegs.filter((r) => !incomingIds.has(r.id));
   return { baseline, incoming: incomingRegs };
@@ -174,11 +213,11 @@ function splitExistingIncoming(
  * checkout semantics live in the CALLER — this just enumerates violations.
  */
 export function checkCapacity(
-  event: Event,
-  sessions: EventSession[],
-  existingRegs: Registration[],
-  incomingRegs: Registration[],
-  groupsById: Record<string, WaitlistGroup>,
+  event: CapacityEventRow,
+  sessions: SessionRow[],
+  existingRegs: RegRow[],
+  incomingRegs: RegRow[],
+  groupsById: Record<string, GroupRow>,
   now: number,
 ): CapacityViolation[] {
   const violations: CapacityViolation[] = [];
@@ -190,12 +229,12 @@ export function checkCapacity(
   // in both lists was deduped out of `baseline` above, so it counts once, as
   // incoming (i.e. unconditionally).
   const incomingIds = new Set(incoming.map((r) => r.id));
-  const baselinePredicate = (r: Registration) => isOccupying(r, groupsById, now);
-  const combinedPredicate = (r: Registration) =>
+  const baselinePredicate = (r: RegRow) => isOccupying(r, groupsById, now);
+  const combinedPredicate = (r: RegRow) =>
     incomingIds.has(r.id) ? !r.refunded : baselinePredicate(r);
 
-  const baselineUsage = tallyUsage(event, baseline, baselinePredicate);
-  const combinedUsage = tallyUsage(event, [...baseline, ...incoming], combinedPredicate);
+  const baselineUsage = tallyUsage(event.id, baseline, baselinePredicate);
+  const combinedUsage = tallyUsage(event.id, [...baseline, ...incoming], combinedPredicate);
 
   // Total (athletes).
   const totalCap = event.capacity?.total;
@@ -233,7 +272,7 @@ export function checkCapacity(
 
   // Per-discipline (routines; T&T).
   const perDisciplineCap = event.capacity?.perDiscipline ?? {};
-  for (const [discipline, cap] of Object.entries(perDisciplineCap) as [Discipline, number][]) {
+  for (const [discipline, cap] of Object.entries(perDisciplineCap)) {
     const used = baselineUsage.perDiscipline[discipline] ?? 0;
     const combined = combinedUsage.perDiscipline[discipline] ?? 0;
     const requested = combined - used;
@@ -251,7 +290,7 @@ export function checkCapacity(
 
   // Per-session per-apparatus (by-session mode).
   for (const session of sessions) {
-    const maxRoutines = session.maxRoutines ?? {};
+    const maxRoutines = session.max_routines ?? {};
     for (const [apparatus, cap] of Object.entries(maxRoutines)) {
       const used = baselineUsage.perSession[session.id]?.[apparatus] ?? 0;
       const combined = combinedUsage.perSession[session.id]?.[apparatus] ?? 0;
@@ -280,16 +319,16 @@ export function checkCapacity(
  * "register the N who fit, waitlist the rest" option.
  */
 export function splitFit(
-  event: Event,
-  sessions: EventSession[],
-  existingRegs: Registration[],
-  incomingRegs: Registration[],
-  groupsById: Record<string, WaitlistGroup>,
+  event: CapacityEventRow,
+  sessions: SessionRow[],
+  existingRegs: RegRow[],
+  incomingRegs: RegRow[],
+  groupsById: Record<string, GroupRow>,
   now: number,
-): { fits: Registration[]; overflow: Registration[] } {
+): { fits: RegRow[]; overflow: RegRow[] } {
   const { baseline } = splitExistingIncoming(existingRegs, incomingRegs);
-  const fits: Registration[] = [];
-  const overflow: Registration[] = [];
+  const fits: RegRow[] = [];
+  const overflow: RegRow[] = [];
 
   for (const reg of incomingRegs) {
     const violations = checkCapacity(event, sessions, baseline, [...fits, reg], groupsById, now);
