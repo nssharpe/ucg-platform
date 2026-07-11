@@ -32,6 +32,7 @@ import {
   buildAddonCartItems, type AddonDraft,
   initialCampSurveyDraft, campSurveyValid, campSurveyToStored, campSurveySummary, CABIN_GENDER_OPTIONS, type CampSurveyDraft,
 } from '../lib/pricing';
+import { holdStamp } from '../lib/capacity';
 import { OWNER_TASKS, ownerTaskDueDate } from '../../supabase/functions/_shared/owner-checklist';
 import type { OwnerChecklist, OwnerChecklistEntry, OwnerTaskId } from '../../supabase/functions/_shared/owner-checklist';
 
@@ -1646,6 +1647,17 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
         : 0;
       hostFree = !alreadyHadRegs && entryTotal === 0;
 
+      // Which regs get a cart-add capacity hold stamped (event-mgmt v2 P4):
+      // exactly the regs referenced by a cart line pushed further below —
+      // mirrors those conditions exactly so a free edit never stamps.
+      const cartLinkedIds = new Set<string>();
+      if (!alreadyHadRegs && entryTotal > 0) {
+        for (const r of addedRegs) cartLinkedIds.add(r.id);
+      }
+      if (changeFee > 0) {
+        for (const r of regs) cartLinkedIds.add(r.id);
+      }
+
       // Remove dropped disciplines
       for (const old of existingForAthlete) {
         if (!newDiscSet.has(old.discipline)) {
@@ -1671,6 +1683,9 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
           // Preserve prior payment state on a non-chargeable edit.
           reg.paid = prior.paid ?? false;
           reg.updatedPending = prior.updatedPending ?? false;
+        }
+        if (cartLinkedIds.has(reg.id)) {
+          reg.holdExpiresAt = holdStamp(event, event.sessions, Date.now());
         }
         const idx = d.registrations.findIndex((r) => r.id === reg.id);
         if (idx >= 0) d.registrations[idx] = reg;
@@ -1831,6 +1846,8 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
             const r = findIncomingSynchroPartner(db.registrations, event.id, athlete.id);
             return r ? (r.apparatusLevels?.SY ?? r.levelId) : null;
           })()}
+          allEventRegs={db.registrations.filter((r) => r.eventId === event.id && !r.refunded)}
+          waitlistGroups={db.waitlistGroups?.filter((g) => g.eventId === event.id) ?? []}
         />
       )}
 

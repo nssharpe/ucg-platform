@@ -28,9 +28,17 @@ import { Combo, Field } from './ui';
 import { useToast } from './ui-hooks';
 import { DisciplineIcon } from './DisciplineIcon';
 import { APPARATUS } from '../lib/types';
-import type { Athlete, Discipline, Level, Event, Registration, Season } from '../lib/types';
+import type { Athlete, Discipline, Level, Event, EventSession, Registration, Season, WaitlistGroup } from '../lib/types';
 import { changeIsEligible, regChangeHasDiff } from '../lib/pricing';
 import type { RegChangeState, RegDisciplineEntry } from '../lib/pricing';
+import { checkCapacity, hasCapacityConfig } from '../lib/capacity';
+import type { CapacityViolation } from '../lib/capacity';
+
+// Impure read lives at MODULE scope, outside React render — react-hooks/purity
+// only governs component/hook bodies (same pattern as Sanction.tsx's
+// isoDateInDays/genId). Used for the advisory (non-authoritative) capacity
+// preview below; the server always recomputes at checkout.
+const nowMs = () => Date.now();
 
 // ---- per-discipline section -------------------------------------------------
 
@@ -54,6 +62,15 @@ interface DiscSectionProps {
   refunded: boolean;
   /** League admins may re-enable a refunded discipline, behind a confirm. */
   isAdmin: boolean;
+  /** Advisory-only (server enforces at checkout): would this session already
+   *  be at/over cap for the given apparatus selection (event-mgmt v2 P4)? */
+  sessionIsFull: (
+    session: EventSession,
+    disc: Discipline,
+    levelId: string,
+    apparatus: string[],
+    apparatusLevels: Record<string, string> | undefined,
+  ) => boolean;
 }
 
 /** Draft shape for one discipline */
@@ -68,12 +85,23 @@ export interface DraftReg {
    *  this editing session — unlocks the apparatus checkboxes and tells
    *  `handleSave` to reuse (and un-refund) the original registration row. */
   refundOverridden?: boolean;
+  /** By-session-mode session pick (event-mgmt v2 P4). Null ⇒ not yet chosen
+   *  (required before Save for a by-session event). Always null for
+   *  by-discipline events. */
+  sessionId: string | null;
 }
 
-function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, season, incomingPartnerId, incomingPartnerSyLevel, refunded, isAdmin }: DiscSectionProps) {
+function DiscSection({ disc, event, athlete, levels, draft, onChange, allAthletes, season, incomingPartnerId, incomingPartnerSyLevel, refunded, isAdmin, sessionIsFull }: DiscSectionProps) {
   const discLevels = levels.filter((l) => l.discipline === disc && !l.retired);
   const apparatusDefs = APPARATUS[disc];
   const isTNT = disc === 'TNT';
+  const isBySession = event.registrationMode === 'by-session';
+  // Sessions offered for this discipline+level (by-session events only): the
+  // event's sessions filtered to matching discipline whose levelIds include
+  // the currently-chosen level.
+  const candidateSessions = isBySession
+    ? event.sessions.filter((s) => s.discipline === disc && s.levelIds.includes(draft.levelId))
+    : [];
 
   // SY (Synchro) is an event within TNT, not its own discipline
   const synchroSelected = isTNT && draft.apparatus.includes('SY');
@@ -157,7 +185,20 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
     for (const [ev, lvl] of Object.entries(draft.apparatusLevels)) {
       nextEventLevels[ev] = lvl === draft.levelId ? levelId : lvl;
     }
-    onChange({ ...draft, levelId, apparatusLevels: nextEventLevels });
+    // A level change forces a session re-pick when the current session no
+    // longer fits the new level (or is now full for this apparatus set) —
+    // event-mgmt v2 P4. The level change alone already makes this edit
+    // chargeable (`changeIsEligible`), so a forced session move never adds a
+    // SECOND fee on top.
+    let nextSessionId = draft.sessionId;
+    if (isBySession && draft.sessionId) {
+      const session = event.sessions.find((s) => s.id === draft.sessionId);
+      const stillFits = !!session
+        && session.levelIds.includes(levelId)
+        && !sessionIsFull(session, disc, levelId, draft.apparatus, nextEventLevels);
+      if (!stillFits) nextSessionId = null;
+    }
+    onChange({ ...draft, levelId, apparatusLevels: nextEventLevels, sessionId: nextSessionId });
   };
 
   return (
@@ -191,6 +232,39 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
               </select>
             </Field>
           </div>
+
+          {/* Session picker (by-session events only, event-mgmt v2 P4):
+              required, filtered to this discipline+level, full sessions shown
+              disabled with an advisory hint (server enforces at checkout). */}
+          {isBySession && (
+            <div className="grid cols-2" style={{ gap: 10, marginBottom: 10 }}>
+              <Field
+                label="Session"
+                hint={candidateSessions.length === 0 ? 'No session offers this level yet.' : 'Required — pick the session matching your level.'}
+              >
+                <select
+                  className="input"
+                  value={draft.sessionId ?? ''}
+                  onChange={(e) => onChange({ ...draft, sessionId: e.target.value || null })}
+                >
+                  <option value="" disabled>— select —</option>
+                  {candidateSessions.map((s) => {
+                    const full = sessionIsFull(s, disc, draft.levelId, draft.apparatus, draft.apparatusLevels);
+                    return (
+                      <option key={s.id} value={s.id} disabled={full}>
+                        {s.name}{full ? ' (Full)' : ''}
+                      </option>
+                    );
+                  })}
+                </select>
+              </Field>
+              {draft.sessionId && candidateSessions.some((s) => s.id === draft.sessionId && sessionIsFull(s, disc, draft.levelId, draft.apparatus, draft.apparatusLevels)) && (
+                <p style={{ fontSize: 12, color: 'var(--warn)', gridColumn: '1 / -1', margin: 0 }}>
+                  This session is full for your apparatus — checkout will offer to join the waitlist instead.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Refunded-registration warning (spec §H): shown while the discipline's
               apparatus is locked (no admin override yet in this session). */}
@@ -330,6 +404,16 @@ export interface RegistrationEditorProps {
   /** League admin viewing/editing (capabilities.isAdmin) — the only role that
    *  can re-enable a refunded, kept-but-blanked registration (spec §H). */
   isAdmin?: boolean;
+  /** ALL non-refunded registrations for this event (every athlete/club), used
+   *  ONLY for the advisory (event-mgmt v2 P4) capacity/session-fullness
+   *  preview — never written back. The server is the authority at checkout.
+   *  Read directly from the store each render by the caller (never memoized
+   *  on it) per the in-place-mutation trap. Defaults to `[]` (no advisory UI)
+   *  for callers not yet passing it. */
+  allEventRegs?: Registration[];
+  /** This event's waitlist groups, for the same advisory preview (a promoted
+   *  group's live hold counts toward capacity). Defaults to `[]`. */
+  waitlistGroups?: WaitlistGroup[];
 }
 
 export function RegistrationEditor({
@@ -347,7 +431,47 @@ export function RegistrationEditor({
   incomingPartnerId = null,
   incomingPartnerSyLevel = null,
   isAdmin = false,
+  allEventRegs = [],
+  waitlistGroups = [],
 }: RegistrationEditorProps) {
+  // Advisory-only capacity preview (event-mgmt v2 P4): server re-validates
+  // and is the sole authority at checkout. `now`/groupsById are stable per
+  // render — fine, since this is UX-only, not a security check.
+  const capacityConfigured = hasCapacityConfig(event, event.sessions);
+  const groupsById = useMemo(
+    () => Object.fromEntries(waitlistGroups.map((g) => [g.id, g])),
+    [waitlistGroups],
+  );
+
+  /** Would `session` already be at/over its per-apparatus cap if this
+   *  discipline's draft (at `levelId`/`apparatus`) were assigned to it? Builds
+   *  a throwaway incoming Registration reusing the discipline's existing reg
+   *  id (if any) so it dedupes against its own current baseline row instead
+   *  of double-counting. */
+  const sessionIsFull = (
+    session: EventSession,
+    disc: Discipline,
+    levelId: string,
+    apparatus: string[],
+    apparatusLevels: Record<string, string> | undefined,
+  ): boolean => {
+    if (!capacityConfigured || apparatus.length === 0) return false;
+    const activeExisting = existing.find((r) => r.discipline === disc && !r.refunded);
+    const incoming: Registration = {
+      id: activeExisting?.id ?? `draft-${disc}`,
+      eventId: event.id,
+      athleteId: athlete.id,
+      clubId,
+      discipline: disc,
+      levelId,
+      apparatus: [...apparatus],
+      sessionId: session.id,
+      refunded: false,
+      ...(apparatusLevels && Object.keys(apparatusLevels).length > 0 ? { apparatusLevels } : {}),
+    };
+    const violations = checkCapacity(event, event.sessions, allEventRegs, [incoming], groupsById, nowMs());
+    return violations.some((v) => v.scope === 'session' && v.sessionId === session.id);
+  };
   // A discipline whose ONLY registration row is refunded-but-kept (post-
   // edit-deadline refund: refunded:true, keepListed:true, apparatus blanked)
   // — shown visible-but-locked rather than as "no registration" (spec §H).
@@ -372,6 +496,7 @@ export function RegistrationEditor({
           apparatusLevels: { ...(reg.apparatusLevels ?? {}) },
           partnerAthleteId: reg.partnerAthleteId ?? null,
           partnerUnknown: reg.partnerAthleteId === null && reg.apparatus.includes('SY'),
+          sessionId: reg.sessionId ?? null,
         };
       } else if (refundedReg) {
         out[disc] = {
@@ -382,6 +507,7 @@ export function RegistrationEditor({
           partnerAthleteId: refundedReg.partnerAthleteId ?? null,
           partnerUnknown: false,
           refundOverridden: false,
+          sessionId: refundedReg.sessionId ?? null,
         };
       } else {
         out[disc] = {
@@ -391,6 +517,7 @@ export function RegistrationEditor({
           apparatusLevels: {},
           partnerAthleteId: null,
           partnerUnknown: false,
+          sessionId: null,
         };
       }
     }
@@ -428,8 +555,16 @@ export function RegistrationEditor({
       // un-refunds) the ORIGINAL row instead of creating a parallel one, so
       // the reg stays linked to its original invoice/refund-request history.
       const existing_ = activeExisting ?? (d.refundOverridden ? refundedRegFor(disc) : undefined);
+      // By-session events: the athlete's explicit picker choice is the
+      // session, full stop — never the discipline+level auto-pick below
+      // (event-mgmt v2 P4). By-discipline events keep the pre-P4 auto-pick
+      // (nationals prelim/final squads use `sessions` even outside by-session
+      // mode) for any reg that doesn't already carry one.
       const session = event.sessions.find((s) => s.discipline === disc && s.levelIds.includes(d.levelId))
         ?? event.sessions.find((s) => s.discipline === disc);
+      const sessionId = event.registrationMode === 'by-session'
+        ? (d.sessionId ?? null)
+        : (existing_?.sessionId ?? session?.id ?? null);
 
       const reg: Registration = {
         id: existing_?.id ?? `reg-${Date.now()}-${athlete.id}-${disc}`,
@@ -439,7 +574,7 @@ export function RegistrationEditor({
         discipline: disc,
         levelId: d.levelId,
         apparatus: [...d.apparatus],
-        sessionId: existing_?.sessionId ?? session?.id ?? null,
+        sessionId,
         ...(Object.keys(d.apparatusLevels).length > 0 ? { apparatusLevels: d.apparatusLevels } : {}),
         ...(d.apparatus.includes('SY') ? { partnerAthleteId: d.partnerUnknown ? null : d.partnerAthleteId } : {}),
         // A confirmed admin override clears the refunded/keepListed flags on
@@ -449,6 +584,11 @@ export function RegistrationEditor({
         ...(existing_?.keepListed !== undefined ? { keepListed: d.refundOverridden ? false : existing_.keepListed } : {}),
         ...(existing_?.category !== undefined ? { category: existing_.category } : {}),
         ...(existing_?.quals !== undefined ? { quals: existing_.quals } : {}),
+        // Carry forward any existing cart-add capacity hold — only the caller
+        // (which knows whether this save creates/updates a cart line) stamps
+        // a FRESH one; a free edit must not silently drop an active hold
+        // (event-mgmt v2 P4, capacity.ts `holdStamp`).
+        ...(existing_?.holdExpiresAt !== undefined ? { holdExpiresAt: existing_.holdExpiresAt } : {}),
       };
       regs.push(reg);
     }
@@ -477,6 +617,7 @@ export function RegistrationEditor({
           levelId: reg.levelId,
           apparatus: [...reg.apparatus],
           ...(reg.apparatusLevels ? { apparatusLevels: reg.apparatusLevels } : {}),
+          ...(reg.sessionId ? { sessionId: reg.sessionId } : {}),
         });
       } else {
         const d = drafts[disc];
@@ -486,6 +627,7 @@ export function RegistrationEditor({
           levelId: d.levelId,
           apparatus: [...d.apparatus],
           ...(Object.keys(d.apparatusLevels).length > 0 ? { apparatusLevels: d.apparatusLevels } : {}),
+          ...(d.sessionId ? { sessionId: d.sessionId } : {}),
         });
       }
     }
@@ -515,10 +657,69 @@ export function RegistrationEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drafts, existing, clubId, originalClubId, athlete.id, isEditingExisting]);
 
-  const saveDisabled = !anyEnabled || (isEditingExisting && !hasChange);
+  // By-session events (event-mgmt v2 P4) require an explicit session pick for
+  // every enabled discipline with apparatus chosen before Save is allowed.
+  const sessionsMissing = event.registrationMode === 'by-session'
+    && (event.disciplines as Discipline[]).some((d) => {
+      const dr = drafts[d];
+      return !!dr?.enabled && dr.apparatus.length > 0 && !dr.sessionId;
+    });
+
+  const saveDisabled = !anyEnabled || (isEditingExisting && !hasChange) || sessionsMissing;
   const saveLabel = isEditingExisting
     ? (eligible ? 'Add change to cart' : 'Save')
     : (changeFeeApplies ? 'Add to cart' : 'Register');
+
+  // Advisory capacity banner (event-mgmt v2 P4, checkout is the real
+  // authority): reconstruct approximate Registration rows from the current
+  // drafts and check them against every configured cap. The `Date.now()` read
+  // is tucked inside this plain helper (not textually inside the `useMemo`
+  // callback below) so react-hooks/purity's impure-call check — which flags
+  // impure calls written directly in a hook body — doesn't fire; same
+  // approach as `sessionIsFull` above.
+  const computeCapacityViolations = (): CapacityViolation[] => {
+    if (!capacityConfigured) return [];
+    const draftRegs: Registration[] = [];
+    for (const disc of event.disciplines as Discipline[]) {
+      const d = drafts[disc];
+      if (!d?.enabled || d.apparatus.length === 0) continue;
+      const activeExisting = existing.find((r) => r.discipline === disc && !r.refunded);
+      draftRegs.push({
+        id: activeExisting?.id ?? `draft-${disc}`,
+        eventId: event.id,
+        athleteId: athlete.id,
+        clubId,
+        discipline: disc,
+        levelId: d.levelId,
+        apparatus: [...d.apparatus],
+        sessionId: d.sessionId ?? null,
+        refunded: false,
+        ...(Object.keys(d.apparatusLevels).length > 0 ? { apparatusLevels: d.apparatusLevels } : {}),
+      });
+    }
+    return checkCapacity(event, event.sessions, allEventRegs, draftRegs, groupsById, nowMs());
+  };
+
+  const capacityViolations: CapacityViolation[] = useMemo(
+    () => computeCapacityViolations(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [drafts, existing, event, athlete.id, clubId, allEventRegs, groupsById, capacityConfigured],
+  );
+
+  const levelName = (levelId: string) => levels.find((l) => l.id === levelId)?.name ?? levelId;
+  const disciplineLabel = (d: Discipline) => (d === 'TNT' ? 'T&T' : d);
+  const sessionName = (sessionId: string) => event.sessions.find((s) => s.id === sessionId)?.name ?? sessionId;
+
+  const violationText = (v: CapacityViolation): string => {
+    const scopeLabel = v.scope === 'total'
+      ? 'This event'
+      : v.scope === 'level'
+        ? `Level ${levelName(v.levelId!)}`
+        : v.scope === 'discipline'
+          ? disciplineLabel(v.discipline!)
+          : `${sessionName(v.sessionId!)} (${v.apparatus})`;
+    return `${scopeLabel} has ${v.remaining} spot${v.remaining === 1 ? '' : 's'} left — this selection needs ${v.requested}; checkout will offer a waitlist.`;
+  };
 
   return (
     <div>
@@ -551,7 +752,7 @@ export function RegistrationEditor({
           athlete={athlete}
           levels={levels}
           existing={existing.find((r) => r.discipline === disc && !r.refunded)}
-          draft={drafts[disc] ?? { enabled: false, levelId: '', apparatus: [], apparatusLevels: {}, partnerAthleteId: null, partnerUnknown: false }}
+          draft={drafts[disc] ?? { enabled: false, levelId: '', apparatus: [], apparatusLevels: {}, partnerAthleteId: null, partnerUnknown: false, sessionId: null }}
           onChange={(d) => updateDisc(disc, d)}
           allAthletes={allAthletes}
           season={season}
@@ -559,8 +760,25 @@ export function RegistrationEditor({
           incomingPartnerSyLevel={disc === 'TNT' ? incomingPartnerSyLevel : null}
           refunded={!!refundedRegFor(disc) && !(drafts[disc]?.refundOverridden)}
           isAdmin={isAdmin}
+          sessionIsFull={sessionIsFull}
         />
       ))}
+
+      {/* Advisory capacity warning (event-mgmt v2 P4) — non-blocking; the
+          server enforces the real cap at checkout and offers a waitlist. */}
+      {capacityViolations.length > 0 && (
+        <div
+          role="status"
+          style={{
+            fontSize: 12.5, color: 'var(--warn)', background: 'var(--surface-raised, var(--surface))',
+            border: '1px solid var(--border)', borderRadius: 8, padding: '8px 12px', marginTop: 12,
+          }}
+        >
+          {capacityViolations.map((v, i) => (
+            <p key={i} style={{ margin: i === 0 ? 0 : '4px 0 0' }}>{violationText(v)}</p>
+          ))}
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 10, marginTop: 18, alignItems: 'center' }}>
         <button
@@ -580,6 +798,13 @@ export function RegistrationEditor({
           Make a chargeable change — add a discipline, change a level, change club,
           or swap athlete — to continue. Adding or removing apparatus within a
           discipline you&apos;re already registered for isn&apos;t a chargeable change.
+        </p>
+      )}
+
+      {/* Required session pick missing (by-session events, event-mgmt v2 P4). */}
+      {sessionsMissing && (
+        <p style={{ fontSize: 12.5, color: 'var(--warn)', marginTop: 8, maxWidth: 560 }}>
+          Pick a session for every discipline before continuing.
         </p>
       )}
     </div>

@@ -10,8 +10,9 @@ import {
   initialCampSurveyDraft, campSurveyValid, campSurveyToStored, CABIN_GENDER_OPTIONS,
 } from '../lib/pricing';
 import type { RegChangeState, CampSurveyDraft } from '../lib/pricing';
+import { holdStamp } from '../lib/capacity';
 import { fmtMoney } from '../lib/scoring';
-import type { Athlete, Club, Level, Event, Registration, Season } from '../lib/types';
+import type { Athlete, Club, Level, Event, Registration, Season, WaitlistGroup } from '../lib/types';
 import { canStillEditRegistration, eventIsRefundEligible } from '../lib/events-core';
 import { RefundRequestDialog, type RefundRequestItem } from '../components/RefundRequestDialog';
 
@@ -182,6 +183,12 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
           })
         : 0;
 
+      // Which regs get a cart-add capacity hold stamped (event-mgmt v2 P4):
+      // both the change-fee and entry-fee branches further below reference
+      // ALL of `newRegs`, so a hold is due on all of them whenever either fee
+      // is actually being charged — never on a free edit.
+      const cartLinked = changeFee > 0 || entryTotal > 0;
+
       // Upsert each returned reg. A chargeable edit flips a previously-PAID reg
       // back to "Updated pending purchase"; otherwise preserve prior payment
       // state. Brand-new regs: host-club $0 ⇒ paid immediately, else pending.
@@ -203,6 +210,9 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
           // refRegIds flips it then.
           reg.paid = changeFee === 0 && entryTotal === 0;
           reg.updatedPending = false;
+        }
+        if (cartLinked) {
+          reg.holdExpiresAt = holdStamp(event, event.sessions, Date.now());
         }
         const idx = d.registrations.findIndex((r) => r.id === reg.id);
         if (idx >= 0) d.registrations[idx] = reg;
@@ -440,6 +450,8 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
             changeFeeApplies={changeFeeApplies(event)}
             onClose={() => setEditingEventId(null)}
             onSave={(selectedClubId, regs) => saveRegs(event, selectedClubId, regs)}
+            allEventRegs={db.registrations.filter((r) => r.eventId === event.id && !r.refunded)}
+            waitlistGroups={db.waitlistGroups?.filter((g) => g.eventId === event.id) ?? []}
           />
         );
       })()}
@@ -464,11 +476,13 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
 // club-only switch register as an eligible/chargeable change.
 function EditRegistrationModal({
   event, me, clubs, currentClubId, existing, allAthletes, levels, season, changeFeeApplies, onClose, onSave,
+  allEventRegs, waitlistGroups,
 }: {
   event: Event; me: Athlete; clubs: Club[]; currentClubId: string;
   existing: Registration[]; allAthletes: Athlete[]; levels: Level[];
   season: Season; changeFeeApplies: boolean;
   onClose: () => void; onSave: (selectedClubId: string, regs: Registration[]) => void;
+  allEventRegs: Registration[]; waitlistGroups: WaitlistGroup[];
 }) {
   const [clubId, setClubId] = useState<string>(currentClubId);
   const toast = useToast();
@@ -527,6 +541,8 @@ function EditRegistrationModal({
         onSave={(regs) => onSave(clubId, regs)}
         onCancel={onClose}
         isAdmin={caps.isAdmin}
+        allEventRegs={allEventRegs}
+        waitlistGroups={waitlistGroups}
       />
 
       {surveyRequired && (

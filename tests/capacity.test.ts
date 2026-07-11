@@ -6,6 +6,7 @@ import {
   hasCapacityConfig,
   checkCapacity,
   splitFit,
+  holdStamp,
   CART_HOLD_MINUTES,
   PROMOTION_HOLD_HOURS,
 } from '../src/lib/capacity';
@@ -237,6 +238,33 @@ describe('hasCapacityConfig', () => {
       capacity: { total: null, perLevel: { 'lvl-gold': 3 } } as unknown as Event['capacity'],
     });
     expect(hasCapacityConfig(event, [])).toBe(true);
+  });
+});
+
+describe('holdStamp', () => {
+  it('undefined when the event has no capacity configuration at all', () => {
+    const event = baseEvent();
+    expect(holdStamp(event, [], NOW)).toBeUndefined();
+  });
+
+  it('stamps now + CART_HOLD_MINUTES when a total cap is set', () => {
+    const event = baseEvent({ capacity: { total: 100 } });
+    const stamp = holdStamp(event, [], NOW);
+    expect(stamp).toBe(new Date(NOW + CART_HOLD_MINUTES * 60_000).toISOString());
+  });
+
+  it('stamps when only a session maxRoutines cap is set', () => {
+    const event = baseEvent();
+    const session: EventSession = {
+      id: 's1', name: 'Session 1', discipline: 'WAG', date: '2026-08-15', time: '09:00',
+      levelIds: ['lvl-silver'], squads: [], maxRoutines: { VT: 10 },
+    };
+    expect(holdStamp(event, [session], NOW)).toBe(new Date(NOW + CART_HOLD_MINUTES * 60_000).toISOString());
+  });
+
+  it('undefined when every cap value is an explicit null (not really configured)', () => {
+    const event = baseEvent({ capacity: { total: null } as unknown as Event['capacity'] });
+    expect(holdStamp(event, [], NOW)).toBeUndefined();
   });
 });
 

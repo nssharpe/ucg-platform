@@ -16,6 +16,7 @@ import {
   addonPurchaseOpen, initialClubAddonDraft, buildClubAddonCartItems,
 } from '../lib/pricing';
 import type { RegChangeState, ClubAddonDraft } from '../lib/pricing';
+import { holdStamp } from '../lib/capacity';
 import { SizedAddonPicker } from '../components/AddonPickers';
 import {
   deleteRegistration, pushCart, pushClub, pushClubManager,
@@ -1181,6 +1182,17 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
           })
         : 0;
 
+      // Which regs get a cart-add capacity hold stamped (event-mgmt v2 P4):
+      // exactly the regs that end up referenced by a cart line pushed below —
+      // mirrors the change-fee/entry-fee branch conditions further down so
+      // the two stay in lockstep. A free edit (no cart line) never stamps.
+      const cartLinkedIds = new Set<string>();
+      if (changeFee > 0 && event.changeFee) {
+        for (const r of newRegs) cartLinkedIds.add(r.id);
+      } else if (!changeFeeApplies && entryTotal > 0) {
+        for (const r of newOnlyRegs) cartLinkedIds.add(r.id);
+      }
+
       // Upsert each new reg. A chargeable edit flips a previously-PAID reg back
       // to "Updated pending purchase"; otherwise preserve its payment state.
       // A reg with NO prior (freshly added discipline): paid only when nothing
@@ -1201,6 +1213,9 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
           // saveRegs with skipEntryFeeLine — don't overwrite that here.
           reg.paid = entryTotal === 0;
           reg.updatedPending = false;
+        }
+        if (cartLinkedIds.has(reg.id)) {
+          reg.holdExpiresAt = holdStamp(event, event.sessions, Date.now());
         }
         const idx = d.registrations.findIndex((r) => r.id === reg.id);
         if (idx >= 0) {
@@ -1328,10 +1343,15 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
         late: addAnchor ? { earliestCreatedAtISO: addAnchor } : undefined,
       });
       hostFree = entryTotal === 0;
-      // Stamp paid status on the new regs (saveRegs upserts them below).
+      // Stamp paid status on the new regs (saveRegs upserts them below). A
+      // non-host entry always gets its own cart line below, so stamp a fresh
+      // capacity hold too (event-mgmt v2 P4) — saveRegs is called with
+      // skipEntryFeeLine below and won't touch holdExpiresAt itself, so this
+      // is the ONE place that must do it for this path.
       for (const reg of regs) {
         reg.paid = hostFree;
         reg.updatedPending = false;
+        if (!hostFree) reg.holdExpiresAt = holdStamp(event, event.sessions, Date.now());
       }
     });
 
@@ -1420,6 +1440,12 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
           if (swapFee > 0 && r.paid) {
             r.paid = false;
             r.updatedPending = true;
+          }
+          // A chargeable swap adds a change-fee cart line below referencing
+          // every swapped reg — stamp a fresh capacity hold on all of them
+          // (event-mgmt v2 P4), matching that line's condition exactly.
+          if (swapFee > 0 && event.changeFee) {
+            r.holdExpiresAt = holdStamp(event, event.sessions, Date.now());
           }
           swappedRegIds.push(r.id);
           pushRegistration(r, r.sessionId);
@@ -1706,6 +1732,8 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
               return r ? (r.apparatusLevels?.SY ?? r.levelId) : null;
             })()}
             isAdmin={caps.isAdmin}
+            allEventRegs={db.registrations.filter((r) => r.eventId === event.id && !r.refunded)}
+            waitlistGroups={db.waitlistGroups?.filter((g) => g.eventId === event.id) ?? []}
           />
         </Modal>
       )}
@@ -1731,6 +1759,8 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
               const r = findIncomingSynchroPartner(db.registrations, event.id, registerAthlete.id);
               return r ? (r.apparatusLevels?.SY ?? r.levelId) : null;
             })()}
+            allEventRegs={db.registrations.filter((r) => r.eventId === event.id && !r.refunded)}
+            waitlistGroups={db.waitlistGroups?.filter((g) => g.eventId === event.id) ?? []}
           />
         </Modal>
       )}

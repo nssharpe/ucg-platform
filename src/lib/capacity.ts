@@ -299,6 +299,19 @@ export function checkCapacity(
  * baseline plus everything already admitted. Used for the deliberate-split
  * "register the N who fit, waitlist the rest" option.
  */
+/**
+ * Fresh cart-add soft-hold expiry (ISO timestamp), or `undefined` when the
+ * event has no capacity configuration at all (nothing to hold a spot
+ * against). Call this at the moment a registration is pushed IN CONJUNCTION
+ * WITH creating/updating a cart line (entry or change) — never on a free
+ * edit that adds no cart line, and never just because the reg was touched.
+ * Pure/testable: `now` (epoch ms) is a parameter, no `Date.now()` inside.
+ */
+export function holdStamp(event: Event, sessions: EventSession[], now: number): string | undefined {
+  if (!hasCapacityConfig(event, sessions)) return undefined;
+  return new Date(now + CART_HOLD_MINUTES * 60_000).toISOString();
+}
+
 export function splitFit(
   event: Event,
   sessions: EventSession[],
