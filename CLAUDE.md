@@ -152,6 +152,14 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   `--strictPort`), `ucg-staging` (5177, `--mode staging` → the staging Supabase
   project via `.env.staging.local`). If you run `vite preview` (serves `dist/`):
   rebuild first and clear the service worker or it serves the previous bundle.
+- **Destructive-command guard (PreToolUse hook, 2026-07-11):**
+  `scripts/destructive-command-guard.mjs` (wired in `.claude/settings.json`)
+  denies catastrophic Bash commands (recursive delete of roots/repo/.git, remote
+  `supabase db reset`, force-push to main) and downgrades other destructive ones
+  to ask. Pattern-based — a quoted "rm -rf" in e.g. a commit message can
+  false-positive as "ask"; rephrase rather than fighting it.
+  `--self-test` runs its case battery. Daily DB backups: `scripts/backup-db.mjs`
+  + the "UCG DB Backup" scheduled task (runbook: `supabase/README.md` → "Data backups").
 - `npm run lint` is fully clean project-wide as of 2026-07-03 (the last 3 warnings were
   fixed then) — keep it that way; still lint touched files before pushing rather than
   relying on this staying true implicitly.

@@ -448,6 +448,28 @@ practice: on projects with new-style API keys the Edge runtime's
 cron sends as its bearer — every run 403'd in both envs until migration
 `20260708191920` added the header (observed live 2026-07-08).
 
+## Data backups (since 2026-07-11)
+
+`node scripts/backup-db.mjs` dumps every row of every `public`/`auth`/`storage`
+table (both envs) to gzipped JSON in the Dropbox-synced folder
+`C:\Users\nssha\Steinsharpe Dropbox\Nate Sharpe\ucg-db-backups\` (offsite via
+Dropbox), keeping the newest 14 per env. A Windows scheduled task
+(**"UCG DB Backup"**, daily 03:00, runs only while Nate is logged in;
+`schtasks /query /tn "UCG DB Backup"`) runs it automatically.
+
+- **Scope:** data only — schema is recreated from `supabase/migrations/`;
+  Storage bucket **file bytes** are NOT included (only `storage.objects`
+  metadata). Brand fonts have their Dropbox source; `event-files` uploads
+  (insurance certs) would need re-upload after a total loss.
+- **Creds:** direct-connection passwords in `.env.local` — `STAGING_DB_PASSWORD`
+  (present) and `PROD_DB_PASSWORD` (add it or prod is skipped with a warning).
+- **TLS:** fully verified when `scripts/supabase-prod-ca-2021.crt` exists
+  (download from https://supabase.com/downloads/prod-ca-2021.crt); otherwise the
+  script warns and connects encrypted-but-unverified.
+- This is interim insurance for the dev/test phase only — **Supabase Pro
+  backups/PITR remain the hard pre-flight gate before real money** (go-live
+  checklist).
+
 ## Observability
 
 - `comm_log` — every Communicate send; surfaced in Communicate → "Communication history".
