@@ -33,7 +33,11 @@ create table refund_requests (
   kind                text not null check (kind in ('registration', 'addon')),
   reg_id              text references registrations (id) on delete set null,
   invoice_item_id     text references invoice_items (id) on delete set null,
-  payment_id          text references payments (id) on delete set null,
+  -- uuid, NOT text: payments.id is the one uuid PK in the schema
+  -- (20260625231808 `gen_random_uuid()`), unlike every other app-generated
+  -- text id. Serializes as a string through PostgREST, so the TS layer is
+  -- unaffected.
+  payment_id          uuid references payments (id) on delete set null,
   reason              text not null check (reason in ('injury', 'illness', 'bereavement', 'other')),
   reason_detail       text,
   status              text not null default 'pending' check (status in ('pending', 'approved', 'rejected')),
