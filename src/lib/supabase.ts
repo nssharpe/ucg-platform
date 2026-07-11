@@ -1364,6 +1364,23 @@ export async function requestRefund(args: {
   return data as { ok: boolean; requestId?: string; error?: string };
 }
 
+/** Approve or reject a pending refund request (event-mgmt v2 Phase 3, spec §H,
+ *  T6). Refund-manager/admin only, enforced server-side. Approve computes the
+ *  refund (100%/75% by the event's `lastDateToEdit`, capped at what's left on
+ *  the payment), calls Stripe, and applies the item/registration state change;
+ *  reject just declines with no item/registration change (beyond clearing
+ *  `refund_requested`). Caller should `syncFromSupabase()` afterward to pick
+ *  up the new `refund_requests`/registrations/invoice_items state. */
+export async function processRefund(
+  requestId: string,
+  action: 'approve' | 'reject',
+): Promise<{ ok: boolean; refundAmountCents?: number; stripeRefundId?: string | null; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('process-refund', { body: { requestId, action } });
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  return data as { ok: boolean; refundAmountCents?: number; stripeRefundId?: string | null; error?: string };
+}
+
 /** Token lookup for the guardian signing page via SECURITY DEFINER RPC
  *  (the table itself is not publicly readable). */
 export async function fetchSignRequest(token: string): Promise<FnReturns<'get_waiver_sign_request'>[number] | null> {

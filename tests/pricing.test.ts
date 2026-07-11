@@ -23,6 +23,7 @@ import {
   campSurveyToStored,
   campSurveySummary,
   refundAmountCents,
+  capRefundCents,
 } from '../src/lib/pricing';
 import type { AddonPricingEvent, AddonDraftEvent, ClubAddonDraftEvent, PartnerReg, RegFeeEvent, SynchroReg } from '../src/lib/pricing';
 import type { Coupon, Membership, Season } from '../src/lib/types';
@@ -574,5 +575,23 @@ describe('refundAmountCents', () => {
   it('never refunds the service fee — caller is responsible for excluding it from itemAmountCents', () => {
     // Documents the contract: this function only ever scales the amount it is given.
     expect(refundAmountCents(0, null, '2026-08-01T00:00:00Z')).toBe(0);
+  });
+});
+
+describe('capRefundCents', () => {
+  it('passes the computed amount through when there is plenty left available', () => {
+    expect(capRefundCents(5000, 10000)).toBe(5000);
+  });
+  it('caps at what is left when a coupon meant less was actually paid', () => {
+    expect(capRefundCents(5000, 2000)).toBe(2000);
+  });
+  it('caps at 0 for a free ($0-total) order — no Stripe call, but a valid $0 approval', () => {
+    expect(capRefundCents(5000, 0)).toBe(0);
+  });
+  it('never goes negative even if available is negative (over-refunded already)', () => {
+    expect(capRefundCents(5000, -100)).toBe(0);
+  });
+  it('caps at exactly the available amount on the boundary', () => {
+    expect(capRefundCents(5000, 5000)).toBe(5000);
   });
 });

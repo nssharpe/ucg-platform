@@ -989,3 +989,16 @@ export function refundAmountCents(
   const onTime = !lastDateToEdit || new Date(approvedAt).getTime() <= new Date(lastDateToEdit).getTime();
   return onTime ? itemAmountCents : Math.round(itemAmountCents * 0.75);
 }
+
+/**
+ * Cap a computed refund at what's actually left to refund on the payment
+ * (T6, spec §H). `invoice_items.amount` is the PRE-coupon server price, but
+ * the payer may have paid less (a coupon) or nothing at all (the $0-total
+ * free-order path — `payments.amount_subtotal` 0, no Stripe payment intent).
+ * `availableCents` is the caller-computed `payment.amount_subtotal` minus the
+ * sum of `refund_amount_cents` already approved against the SAME payment
+ * (other lines refunded earlier). Never negative, never more than what's left.
+ * Mirrored in `supabase/functions/process-refund/index.ts`. */
+export function capRefundCents(computedCents: number, availableCents: number): number {
+  return Math.min(computedCents, Math.max(0, availableCents));
+}
