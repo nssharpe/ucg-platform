@@ -355,7 +355,10 @@ Deno.serve(async (req) => {
   // (per the promo-code feature) this line falls under, so a coupon can be
   // scoped to e.g. just athlete memberships or just one specific event.
   type CouponScope = 'athlete-membership' | 'club-membership' | 'coach-membership' | 'meet-entry';
-  type Line = { label: string; cents: number; scope?: CouponScope; eventId?: string };
+  // `itemId` ties each Stripe line back to its cart item so the POST-discount
+  // per-line amount (the coupon allocation below mutates `cents` in place) can
+  // be frozen onto the snapshot as `paid_cents` — the refund base (T6).
+  type Line = { itemId: string; label: string; cents: number; scope?: CouponScope; eventId?: string };
   const lines: Line[] = [];
   let subtotalCents = 0;
   // Per-cart-item server-priced cents (PRE-discount), for the fulfillment
@@ -367,7 +370,7 @@ Deno.serve(async (req) => {
     const cents = toCents(dollars);
     subtotalCents += cents;
     serverCentsByItem.set(itemId, cents);
-    if (cents > 0) lines.push({ label, cents, scope, eventId });
+    if (cents > 0) lines.push({ itemId, label, cents, scope, eventId });
   };
 
   // Membership athlete/coach lines are priced per (targetPerson, season) GROUP so
@@ -402,7 +405,7 @@ Deno.serve(async (req) => {
       consumed.add(item.id);
       const cents = t === dearest ? combinedCents : 0;
       serverCentsByItem.set(item.id, cents);
-      if (cents > 0) lines.push({ label: item.label, cents, scope: t === 'athlete' ? 'athlete-membership' : 'coach-membership' });
+      if (cents > 0) lines.push({ itemId: item.id, label: item.label, cents, scope: t === 'athlete' ? 'athlete-membership' : 'coach-membership' });
     }
   }
 
@@ -595,6 +598,18 @@ Deno.serve(async (req) => {
   // matching can key on it (vestigial); multi-item ones rely on cart_item_ids.
   const single = items.length === 1 && items[0].kind === 'membership' ? items[0] : null;
 
+  // Per-cart-item POST-discount cents: after the greedy coupon allocation
+  // above, `lines[].cents` holds what the payer is ACTUALLY charged for each
+  // line (a $0/covered line never entered `lines`, so it falls back to its
+  // pre-discount 0 via serverCentsByItem below). Frozen onto the snapshot as
+  // `paid_cents` — the refund base for `process-refund` (T6): refunding the
+  // PRE-discount `amount_cents` of a partially-couponed line would take other
+  // lines' money with it (e.g. a $135 entry discounted to $85 + a $30 shirt →
+  // amount_subtotal $115; a $135 refund base capped at the payment level still
+  // pays out $115 for an $85 line). `amount_cents` (and invoice_items.amount)
+  // deliberately keeps the list price for receipts/invoices.
+  const paidCentsByItem = new Map<string, number>(lines.map((l) => [l.itemId, l.cents]));
+
   // --- Freeze the validated, server-priced line set onto the payment row -----
   // Fulfillment reads FROM THIS SNAPSHOT, not from live `cart_items` (which
   // stays client-writable until fulfillment — the TOCTOU closed here). One
@@ -602,12 +617,14 @@ Deno.serve(async (req) => {
   // covered) lines so they still get fulfilled. `amount_cents` is the
   // server-computed PRE-discount charge (grouped memberships: dearest carries
   // the combined amount, the rest 0) — used for invoice_items, never trusted
-  // from the client.
+  // from the client. `paid_cents` is the POST-discount charge (same per-line
+  // convention), used only for refund math.
   const linesSnapshot = items.map((i) => ({
     id: i.id,
     kind: i.kind,
     label: i.label,
     amount_cents: serverCentsByItem.get(i.id) ?? 0,
+    paid_cents: paidCentsByItem.get(i.id) ?? serverCentsByItem.get(i.id) ?? 0,
     club_id: i.club_id,
     ref_user_id: i.ref_user_id,
     ref_season_id: i.ref_season_id,

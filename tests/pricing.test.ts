@@ -594,4 +594,17 @@ describe('capRefundCents', () => {
   it('caps at exactly the available amount on the boundary', () => {
     expect(capRefundCents(5000, 5000)).toBe(5000);
   });
+  it('is NOT sufficient alone for a partially-couponed multi-line payment — the base must be paid_cents', () => {
+    // Documented defect scenario (fable review of T6): cart = $135 entry
+    // discounted to $85 by a "$50 off" coupon + a $30 t-shirt ⇒
+    // amount_subtotal $115. With the PRE-discount list price as the base, the
+    // payment-level cap alone still pays out $115 for an item the payer paid
+    // $85 for — taking the shirt's $30 with it:
+    expect(capRefundCents(13500, 11500)).toBe(11500); // wrong money if used as the whole guard
+    // The fix is upstream: create-checkout-session freezes each line's
+    // POST-discount `paid_cents` onto payments.lines_snapshot, and
+    // process-refund uses THAT ($85) as the base; the cap then only guards
+    // against cross-request over-refunds on the same payment:
+    expect(capRefundCents(8500, 11500)).toBe(8500); // correct with the paid_cents base
+  });
 });

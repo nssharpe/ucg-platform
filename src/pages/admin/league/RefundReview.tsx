@@ -108,7 +108,12 @@ export function RefundReview() {
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10, alignItems: 'center' }}>
             {noPayment && <Badge tone="warn">No traceable payment — manual</Badge>}
             {exp && exp.isPastDeadline && <Badge tone="warn">75% — past edit deadline</Badge>}
-            {exp && <span style={{ fontSize: 13, color: 'var(--ink-soft)' }}>Expected refund: {fmtMoney(exp.cents / 100)}</span>}
+            {exp && (
+              <span style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
+                Expected refund: up to {fmtMoney(exp.cents / 100)} — the final amount is computed
+                server-side and may be lower if a coupon was applied to the purchase
+              </span>
+            )}
             {!exp && !noPayment && <Badge tone="info">Item not yet resolved</Badge>}
           </div>
         )}
@@ -196,8 +201,9 @@ function ConfirmDialog({
           </p>
           {expected ? (
             <p style={{ fontSize: 14 }}>
-              <strong>{fmtMoney(expected.cents / 100)}</strong> will be refunded to the original payment method
+              Up to <strong>{fmtMoney(expected.cents / 100)}</strong> will be refunded to the original payment method
               {expected.isPastDeadline ? ' (75% — past the edit deadline; 25% is retained).' : ' (100% — on/before the edit deadline).'}
+              {' '}The exact amount is computed server-side and may be lower if a coupon was applied to the purchase.
             </p>
           ) : !request.paymentId ? (
             <p style={{ fontSize: 14, color: 'var(--coral-700)' }}>

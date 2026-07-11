@@ -992,13 +992,18 @@ export function refundAmountCents(
 
 /**
  * Cap a computed refund at what's actually left to refund on the payment
- * (T6, spec §H). `invoice_items.amount` is the PRE-coupon server price, but
- * the payer may have paid less (a coupon) or nothing at all (the $0-total
- * free-order path — `payments.amount_subtotal` 0, no Stripe payment intent).
- * `availableCents` is the caller-computed `payment.amount_subtotal` minus the
- * sum of `refund_amount_cents` already approved against the SAME payment
- * (other lines refunded earlier). Never negative, never more than what's left.
- * Mirrored in `supabase/functions/process-refund/index.ts`. */
+ * (T6, spec §H). The refund BASE is the snapshot line's POST-discount
+ * `paid_cents` (frozen onto payments.lines_snapshot by create-checkout-session;
+ * legacy payments without it fall back to the PRE-coupon `invoice_items.amount`).
+ * This cap is the FINAL guard on top of that base: it covers cross-request
+ * over-refunds on the same payment and the $0-total free-order path
+ * (`payments.amount_subtotal` 0, no Stripe payment intent). `availableCents`
+ * is the caller-computed `payment.amount_subtotal` minus the sum of
+ * `refund_amount_cents` already approved against the SAME payment. Never
+ * negative, never more than what's left. NOT sufficient alone for a legacy
+ * partially-couponed multi-line payment — see the documenting test in
+ * tests/pricing.test.ts. Mirrored in
+ * `supabase/functions/process-refund/index.ts`. */
 export function capRefundCents(computedCents: number, availableCents: number): number {
   return Math.min(computedCents, Math.max(0, availableCents));
 }

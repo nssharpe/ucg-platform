@@ -186,11 +186,14 @@ async function handleApprove(
   if (!eventRow) return json({ error: 'Event not found.' }, 404);
   const event = eventRow as { id: string; name: string; last_date_to_edit: string | null };
 
-  let payment: { id: string; amount_subtotal: number | null; stripe_payment_intent_id: string | null } | null = null;
+  let payment: {
+    id: string; amount_subtotal: number | null; stripe_payment_intent_id: string | null;
+    lines_snapshot: { label?: string; amount_cents?: number; paid_cents?: number }[] | null;
+  } | null = null;
   if (request.payment_id) {
     const { data: payRow, error: payErr } = await db
       .from('payments')
-      .select('id, amount_subtotal, stripe_payment_intent_id')
+      .select('id, amount_subtotal, stripe_payment_intent_id, lines_snapshot')
       .eq('id', request.payment_id)
       .maybeSingle();
     if (payErr) return json({ error: 'Could not look up the payment.' }, 500);
@@ -206,10 +209,32 @@ async function handleApprove(
 
   // --- c. Compute the refund: mirrors src/lib/pricing.ts refundAmountCents
   //     exactly (100% at-or-before event.last_date_to_edit, else 75%, rounded
-  //     to the nearest cent). The service fee is never part of `item.amount`,
-  //     so it's never refunded either. ---
+  //     to the nearest cent). The service fee is never part of the base, so
+  //     it's never refunded either.
+  //
+  //     Refund BASE: the snapshot line's POST-discount `paid_cents` when the
+  //     payment's lines_snapshot carries it (written by create-checkout-session
+  //     since T6) — `invoice_items.amount` / snapshot `amount_cents` are the
+  //     PRE-coupon list price, and refunding that for a partially-couponed
+  //     line would take other lines' money with it (e.g. a $135 entry
+  //     discounted to $85 + a $30 shirt → amount_subtotal $115; a $135 base
+  //     capped only at the payment level still pays $115 for an $85 line).
+  //     Legacy payments without paid_cents keep the invoice_item amount as
+  //     the base; the payment-level cap in (d) stays the final guard in ALL
+  //     cases. The invoice_item is mapped back to its snapshot line via
+  //     fulfill.ts's deterministic id scheme `ii-${payment.id}-${idx}` (idx =
+  //     snapshot index), validated in-range + label-matched. ---
   const reviewedAt = new Date().toISOString();
-  const baseAmountCents = Math.round(Number(item.amount) * 100);
+  let baseAmountCents = Math.round(Number(item.amount) * 100);
+  const snapshot = payment.lines_snapshot;
+  if (snapshot && item.id.startsWith(`ii-${payment.id}-`)) {
+    const idxStr = item.id.slice(`ii-${payment.id}-`.length);
+    const idx = /^\d+$/.test(idxStr) ? Number(idxStr) : NaN;
+    const line = Number.isInteger(idx) && idx >= 0 && idx < snapshot.length ? snapshot[idx] : null;
+    if (line && line.label === item.label && typeof line.paid_cents === 'number') {
+      baseAmountCents = line.paid_cents;
+    }
+  }
   const onTime = !event.last_date_to_edit || new Date(reviewedAt).getTime() <= new Date(event.last_date_to_edit).getTime();
   const computedRefundCents = onTime ? baseAmountCents : Math.round(baseAmountCents * 0.75);
 
