@@ -185,8 +185,9 @@ export interface EventSession {
    *  Absent ⇒ a normal (single-phase) session. See NationalsConfig. */
   phase?: 'prelim' | 'final';
   /** By-session-mode routine cap per apparatus code, e.g. `{ VT: 12 }`
-   *  (event-mgmt v2 P4). Absent/undefined ⇒ uncapped. Stored only as of P4
-   *  T1 — not enforced yet. */
+   *  (event-mgmt v2 P4). Absent/undefined ⇒ uncapped. Enforced server-side at
+   *  checkout via `src/lib/capacity.ts` (mirrored in
+   *  `supabase/functions/_shared/capacity.ts`); editable in EventWizard. */
   maxRoutines?: Record<string, number>;
 }
 
@@ -289,8 +290,8 @@ export interface Event {
    *  AND camps) — one athlete counts once regardless of how many
    *  disciplines/apparatus they enter. `perDiscipline` (T&T) and `perLevel`
    *  (WAG/MAG) count ROUTINES, i.e. apparatus entries — one athlete entering 4
-   *  apparatus at a level counts as 4 against that level's cap. Stored only as
-   *  of P4 T1 — enforcement lands in a later P4 task. */
+   *  apparatus at a level counts as 4 against that level's cap. Enforced
+   *  server-side at checkout (`src/lib/capacity.ts`). */
   capacity?: {
     total?: number;
     perDiscipline?: Partial<Record<Discipline, number>>;

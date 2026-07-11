@@ -8,7 +8,7 @@ import { toDatetimeLocalValue } from '../lib/events-core';
 import { normalizeExternalUrl } from '../lib/url';
 import { Combo, Field, Modal } from './ui';
 import { useToast } from './ui-hooks';
-import { DISCIPLINES, SHIRT_SIZES, STATE_REGIONS } from '../lib/types';
+import { APPARATUS, DISCIPLINES, SHIRT_SIZES, STATE_REGIONS } from '../lib/types';
 import type { Discipline, Level, Event, EventSession, EventStatus } from '../lib/types';
 
 const TIMEZONES = [
@@ -41,6 +41,8 @@ interface SessionDraft {
   time: string;
   levelIds: string[];
   phase: 'prelim' | 'final';
+  /** Per-apparatus routine cap input values (event-mgmt v2 P4 T4); blank = uncapped. */
+  maxRoutines: Record<string, string>;
 }
 
 const discLabel = (d: Discipline) => (d === 'TNT' ? 'T&T' : d);
@@ -58,6 +60,7 @@ function defaultSessions(allLevels: Level[], d: Discipline, date: string, nextKe
   return groups.map((g, i) => ({
     key: nextKey(), discipline: d, label: sessionLabel(d, g, ls.length),
     date, time: i === 0 ? '09:00' : '14:00', levelIds: g.map((l) => l.id), phase: 'prelim' as const,
+    maxRoutines: {},
   }));
 }
 
@@ -79,6 +82,9 @@ function sessionsTodrafts(sessions: EventSession[]): SessionDraft[] {
       time: s.time,
       levelIds: s.levelIds,
       phase: (s.phase ?? 'prelim') as 'prelim' | 'final',
+      maxRoutines: Object.fromEntries(
+        Object.entries(s.maxRoutines ?? {}).map(([code, n]) => [code, String(n)]),
+      ),
     };
   });
 }
@@ -167,7 +173,8 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
   const [directorName, setDirectorName] = useState(editEvent?.director?.name ?? '');
   const [directorEmail, setDirectorEmail] = useState(editEvent?.director?.email ?? '');
   const [directorCc, setDirectorCc] = useState(editEvent?.director?.ccOnConfirmation ?? false);
-  // Capacity (event-mgmt v2 §A): stored only, NOT enforced yet.
+  // Capacity (event-mgmt v2 §A): enforced server-side at checkout (src/lib/capacity.ts
+  // mirrored in supabase/functions/_shared/capacity.ts).
   const [capacityTotal, setCapacityTotal] = useState(String(editEvent?.capacity?.total ?? ''));
   const [capacityPerDiscipline, setCapacityPerDiscipline] = useState<Partial<Record<Discipline, string>>>(
     () => Object.fromEntries(
@@ -188,6 +195,12 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
   // Disciplines & sessions
   const [disciplines, setDisciplines] = useState<Discipline[]>(editEvent?.disciplines ?? []);
   const [sessions, setSessions] = useState<SessionDraft[]>(initialSessions);
+  // Registration mode (event-mgmt v2 P4 T4): competitions only — camps always
+  // register per-athlete, no session choice.
+  const isCamp = editEvent?.eventType === 'camp';
+  const [registrationMode, setRegistrationMode] = useState<'by-discipline' | 'by-session'>(
+    editEvent?.registrationMode ?? 'by-discipline',
+  );
   // Publication state (B4: Draft/Live only — the real-time phase is derived
   // from regOpens/regCloses/startDate/endDate, not manually set).
   const [status, setStatus] = useState<EventStatus>(editEvent?.status ?? 'live');
@@ -290,19 +303,46 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
         if (!Number.isFinite(n) || n < 0) return setError('Per-level capacity must be a valid number.');
       }
     }
+    for (const s of sessions) {
+      for (const a of APPARATUS[s.discipline]) {
+        const v = s.maxRoutines[a.code];
+        if (v && v.trim()) {
+          const n = Number(v);
+          if (!Number.isInteger(n) || n < 0) {
+            return setError(`${s.label.trim() || 'Session'} — max routines (${a.code}) must be a non-negative whole number.`);
+          }
+        }
+      }
+    }
+    // by-session mode needs sessions to pick from at registration — already
+    // guaranteed by the general "add at least one session" check above, since
+    // every event (any mode) requires at least one session.
     if (hasConfirmationEmail && !confirmationBodyHtml.trim()) return setError('Confirmation email needs a body, or turn the toggle off.');
 
     const nationals = kind === 'nationals';
     if (nationals && !sessions.some((s) => s.phase === 'prelim')) return setError('A Nationals event needs at least one prelim session.');
 
     const eventId = editEvent?.id ?? `meet-${Date.now()}`;
-    const eventSessions: EventSession[] = sessions.map((s, i) => ({
-      id: editEvent?.sessions[i]?.id ?? `${eventId}-s${i + 1}`,
-      name: `Session ${i + 1} — ${s.label.trim()}`,
-      discipline: s.discipline, date: s.date, time: s.time, levelIds: s.levelIds,
-      squads: editEvent?.sessions[i]?.squads ?? [],
-      ...(nationals ? { phase: s.phase } : {}),
-    }));
+    const eventSessions: EventSession[] = sessions.map((s, i) => {
+      // Strip blank/invalid entries — never persist non-finite or null caps
+      // (the capacity engine treats those as "not configured," but a clean
+      // save shouldn't write garbage either).
+      const maxRoutines = Object.entries(s.maxRoutines).reduce<Record<string, number>>((acc, [code, v]) => {
+        if (v.trim()) {
+          const n = Number(v);
+          if (Number.isFinite(n)) acc[code] = n;
+        }
+        return acc;
+      }, {});
+      return {
+        id: editEvent?.sessions[i]?.id ?? `${eventId}-s${i + 1}`,
+        name: `Session ${i + 1} — ${s.label.trim()}`,
+        discipline: s.discipline, date: s.date, time: s.time, levelIds: s.levelIds,
+        squads: editEvent?.sessions[i]?.squads ?? [],
+        ...(nationals ? { phase: s.phase } : {}),
+        ...(Object.keys(maxRoutines).length > 0 ? { maxRoutines } : {}),
+      };
+    });
     const orderedDisciplines = DISCIPLINES.filter((d) => disciplines.includes(d));
     const event: Event = {
       ...(editEvent ?? {}),
@@ -315,6 +355,7 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
       entryFee: fee, secondDisciplineFee: fee2,
       disciplines: orderedDisciplines,
       sessions: eventSessions,
+      ...(isCamp ? {} : { registrationMode }),
       ...(hasBanquet ? { banquet: { name: banquetName.trim(), price: bPrice, ...(banquetLastPurchaseAt ? { lastPurchaseAt: banquetLastPurchaseAt } : {}) } } : { banquet: undefined }),
       ...(hasTshirt ? { tshirtAddon: { price: Number(tshirtPrice), sizes: tshirtSizes, ...(tshirtLastPurchaseAt ? { lastPurchaseAt: tshirtLastPurchaseAt } : {}) } } : { tshirtAddon: undefined }),
       ...(hasBanner ? { bannerAddon: { price: Number(bannerPrice), ...(bannerLastPurchaseAt ? { lastPurchaseAt: bannerLastPurchaseAt } : {}) } } : { bannerAddon: undefined }),
@@ -567,6 +608,31 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
           </label>
         ))}
       </div>
+      {!isCamp && (
+        <div className="card card-pad" style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Registration mode</div>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
+              <input
+                type="radio" name="registrationMode" checked={registrationMode === 'by-discipline'}
+                onChange={() => setRegistrationMode('by-discipline')}
+              />
+              By discipline (default)
+            </label>
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
+              <input
+                type="radio" name="registrationMode" checked={registrationMode === 'by-session'}
+                onChange={() => setRegistrationMode('by-session')}
+              />
+              By session
+            </label>
+          </div>
+          <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '6px 0 0' }}>
+            By-session: athletes pick a pre-created session at registration instead of just a discipline —
+            sessions (below) must be created before registration opens.
+          </p>
+        </div>
+      )}
       {sessions.length === 0 && <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '4px 0' }}>Pick a discipline to load its default session templates — then add, remove, or edit sessions.</p>}
       {sessions.map((s, i) => {
         // Exclude retired levels from the session level pickers
@@ -607,28 +673,46 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
                 </label>
               ))}
             </div>
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink-soft)', marginBottom: 4 }}>
+                Max routines per apparatus (optional — blank = uncapped, counts apparatus entries)
+              </div>
+              <div className="grid cols-3">
+                {APPARATUS[s.discipline].map((a) => (
+                  <Field key={a.code} label={a.name}>
+                    <input
+                      className="input" type="number" min={0} step={1}
+                      value={s.maxRoutines[a.code] ?? ''}
+                      onChange={(e) => updateSession(s.key, { maxRoutines: { ...s.maxRoutines, [a.code]: e.target.value } })}
+                    />
+                  </Field>
+                ))}
+              </div>
+            </div>
           </div>
         );
       })}
       {disciplines.length > 0 && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
           {disciplines.map((d) => (
-            <button key={d} className="btn small ghost" onClick={() => setSessions([...sessions, { key: nextKey(), discipline: d, label: `${discLabel(d)} `, date: startDate, time: '09:00', levelIds: [], phase: 'prelim' }])}>
+            <button key={d} className="btn small ghost" onClick={() => setSessions([...sessions, { key: nextKey(), discipline: d, label: `${discLabel(d)} `, date: startDate, time: '09:00', levelIds: [], phase: 'prelim', maxRoutines: {} }])}>
               + Add {discLabel(d)} session
             </button>
           ))}
         </div>
       )}
 
-      {sectionTitle('Capacity (caps are not enforced yet)')}
+      {sectionTitle('Capacity')}
       <div className="grid cols-3">
-        <Field label="Max total participants">
+        <Field label="Max total participants" hint="Counts athletes — one per person, regardless of how many disciplines they enter.">
           <input className="input" type="number" min={0} step={1} value={capacityTotal} onChange={(e) => setCapacityTotal(e.target.value)} />
         </Field>
       </div>
       {disciplines.length > 0 && (
         <>
-          <div style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '4px 0 6px' }}>Per-discipline caps (optional)</div>
+          <div style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '4px 0 6px' }}>
+            Per-discipline caps (optional) — counts routines (apparatus entries), T&amp;T only
+          </div>
           <div className="grid cols-3" style={{ marginBottom: 8 }}>
             {disciplines.map((d) => (
               <Field key={d} label={`${discLabel(d)} cap`}>
@@ -644,7 +728,9 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
       )}
       {allCompetingLevelIds.length > 0 && (
         <>
-          <div style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '4px 0 6px' }}>Per-level caps (optional)</div>
+          <div style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '4px 0 6px' }}>
+            Per-level caps (optional) — counts routines (apparatus entries), WAG/MAG
+          </div>
           <div className="grid cols-3" style={{ marginBottom: 8 }}>
             {db.levels
               .filter((l) => allCompetingLevelIds.includes(l.id))
