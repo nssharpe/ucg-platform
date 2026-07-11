@@ -1065,9 +1065,13 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   const lateFeeSuffix = (anchor: string | null) =>
     anchor !== null && lateFeeApplies(event, anchor) ? ' (incl. late fee)' : '';
 
-  // All non-refunded regs for this event + club
+  // Regs for this event + club shown in the registered-athletes table below:
+  // active (non-refunded) regs, PLUS refunded-but-kept ones (`keepListed`,
+  // event-mgmt v2 Phase 3 spec §H: "name still appears in event materials"
+  // for a post-edit-deadline refund) — but NOT a refunded row whose refund
+  // deleted it outright (pre-deadline refunds have no row left at all).
   const allRegs = db.registrations.filter(
-    (r) => r.eventId === event.id && r.clubId === clubId && !r.refunded,
+    (r) => r.eventId === event.id && r.clubId === clubId && (!r.refunded || r.keepListed),
   );
 
   const regsFor = (athleteId: string) => allRegs.filter((r) => r.athleteId === athleteId);
@@ -1511,6 +1515,8 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
               {registered.map((a) => {
                 const regs = regsFor(a.id);
                 const anyRefundReq = regs.some((r) => r.refundRequested);
+                const anyRefunded = regs.some((r) => r.refunded);
+                const allRefunded = regs.length > 0 && regs.every((r) => r.refunded);
                 const anyPaidRefundable = refundEligible && regs.some((r) => r.paid === true && !r.refunded && !r.refundRequested);
                 // H7: undefined-safe. `paid` defaults falsy on a new reg but a
                 // strict `=== false` check lets `undefined` slip through and
@@ -1523,14 +1529,17 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
                   <tr key={a.id}>
                     <td><strong>{a.firstName} {a.lastName}</strong></td>
                     <td style={{ fontSize: 13 }}>{summary}</td>
-                    <td>
+                    <td style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                       {anyRefundReq
                         ? <Badge tone="warn">Refund requested</Badge>
-                        : anyUpdatedPending
-                          ? <Badge tone="warn">Updated pending purchase</Badge>
-                          : anyUnpaid
-                            ? <Badge tone="warn">Pending purchase</Badge>
-                            : <Badge tone="ok">Registered</Badge>}
+                        : allRefunded
+                          ? null
+                          : anyUpdatedPending
+                            ? <Badge tone="warn">Updated pending purchase</Badge>
+                            : anyUnpaid
+                              ? <Badge tone="warn">Pending purchase</Badge>
+                              : <Badge tone="ok">Registered</Badge>}
+                      {anyRefunded && <Badge tone="info">Refunded</Badge>}
                     </td>
                     {canManage && (
                       <td style={{ whiteSpace: 'nowrap', display: 'flex', gap: 6 }}>
@@ -1696,6 +1705,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
               const r = findIncomingSynchroPartner(db.registrations, event.id, editingAthlete.id);
               return r ? (r.apparatusLevels?.SY ?? r.levelId) : null;
             })()}
+            isAdmin={caps.isAdmin}
           />
         </Modal>
       )}

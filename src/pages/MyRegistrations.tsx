@@ -58,7 +58,11 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   // this plain filter/group per render is correct and cheap (same precedent
   // as Cart.tsx's un-memoized `cart`).
   const byEvent = (() => {
-    const mine = db.registrations.filter((r) => r.athleteId === personId && !r.refunded);
+    // Include refunded-but-kept regs (`keepListed`, event-mgmt v2 Phase 3 spec
+    // §H) so a post-edit-deadline refund still shows here — with apparatus
+    // locked and a "Refunded" badge — instead of silently vanishing (a
+    // pre-deadline refund deletes the row outright, so it naturally drops out).
+    const mine = db.registrations.filter((r) => r.athleteId === personId && (!r.refunded || r.keepListed));
     const groups = new Map<string, Registration[]>();
     for (const r of mine) {
       const arr = groups.get(r.eventId) ?? [];
@@ -288,8 +292,10 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
     setEditingEventId(null);
   };
 
+  // Feeds RegistrationEditor's `existing` prop — must include keepListed
+  // refunded rows too, or the editor can't show its locked/refunded state.
   const existingForEvent = (event: Event) =>
-    db.registrations.filter((r) => r.eventId === event.id && r.athleteId === personId && !r.refunded);
+    db.registrations.filter((r) => r.eventId === event.id && r.athleteId === personId && (!r.refunded || r.keepListed));
 
   return (
     <div style={{ maxWidth: 820 }}>
@@ -367,7 +373,9 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                               <td>{lvlName(r.levelId)}</td>
                               <td>{evts}</td>
                               <td style={{ textAlign: 'right' }}>
-                                {r.refundRequested ? (
+                                {r.refunded ? (
+                                  <Badge tone="info">Refunded</Badge>
+                                ) : r.refundRequested ? (
                                   <Badge tone="warn">Refund requested</Badge>
                                 ) : canRequestRefund ? (
                                   <button
@@ -464,6 +472,7 @@ function EditRegistrationModal({
 }) {
   const [clubId, setClubId] = useState<string>(currentClubId);
   const toast = useToast();
+  const caps = useCapabilities();
 
   // Camp overnight-accommodations survey (event-mgmt v2 §G): editable any
   // time up to the event's edit deadline (this whole modal is only reachable
@@ -517,6 +526,7 @@ function EditRegistrationModal({
         changeFeeApplies={changeFeeApplies}
         onSave={(regs) => onSave(clubId, regs)}
         onCancel={onClose}
+        isAdmin={caps.isAdmin}
       />
 
       {surveyRequired && (

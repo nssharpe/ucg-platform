@@ -4,6 +4,27 @@ import type { CartItem, Invoice } from './types';
 import { fmtMoney } from './scoring';
 import { processingFee } from './pricing';
 
+/** Data a refund receipt is built from — deliberately a plain data shape (not
+ *  `RefundRequest` directly) so `refundReceiptNumber`/`downloadRefundReceipt`
+ *  stay easy to unit test without constructing a full DB. */
+export interface RefundReceiptData {
+  requestId: string;
+  /** When the refund was approved (ISO timestamp). */
+  reviewedAt: string;
+  itemLabel: string;
+  eventName?: string | null;
+  refundAmountCents: number;
+  /** The original purchase's receipt number, when resolvable from the invoice
+   *  the refunded item lived on. */
+  originalInvoiceNumber?: string | null;
+}
+
+/** Pure: the refund receipt number shown on the PDF, derived from the
+ *  `refund_requests` row id so it's stable and traceable back to the request. */
+export function refundReceiptNumber(requestId: string): string {
+  return `RF-${requestId}`;
+}
+
 /** Net total of an invoice (refunded items don't count). */
 export function invoiceTotal(inv: Invoice): number {
   return inv.items.reduce((sum, i) => sum + (i.refunded ? 0 : i.amount), 0);
@@ -160,4 +181,63 @@ export function downloadCartInvoice(items: CartItem[], forName: string, title: s
 
   const filenameSafe = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'cart';
   doc.save(`cart-estimate-${filenameSafe}.pdf`);
+}
+
+/** Generate and download a PDF refund receipt for one APPROVED refund request
+ *  (event-mgmt v2 Phase 3, spec §H). Mirrors `downloadReceipt`'s branding/
+ *  layout but is deliberately a SEPARATE document — refunding an item must
+ *  never rewrite the original purchase receipt (spec: "individual item
+ *  refunds don't disturb the original receipt"), so this never touches
+ *  `downloadReceipt`/`invoiceTotal`. */
+export function downloadRefundReceipt(data: RefundReceiptData, forName: string): void {
+  const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+  const margin = 56;
+  const pageW = doc.internal.pageSize.getWidth();
+  const width = pageW - margin * 2;
+  const bottom = doc.internal.pageSize.getHeight() - margin;
+  let y = margin;
+  const ensure = (h: number) => { if (y + h > bottom) { doc.addPage(); y = margin; } };
+
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(17); doc.setTextColor(30, 43, 56);
+  doc.text('United Club Gymnastics', margin, y);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(120);
+  doc.text('Refund receipt', margin, y + 16);
+  const receiptNumber = refundReceiptNumber(data.requestId);
+  doc.text(`Receipt ${receiptNumber}`, pageW - margin, y, { align: 'right' });
+  const reviewed = new Date(data.reviewedAt);
+  const dateStr = Number.isNaN(reviewed.getTime()) ? data.reviewedAt
+    : reviewed.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  doc.text(dateStr, pageW - margin, y + 16, { align: 'right' });
+  doc.text('Refunded', pageW - margin, y + 30, { align: 'right' });
+  y += 44;
+  doc.setDrawColor(30, 43, 56); doc.line(margin, y, pageW - margin, y); y += 18;
+
+  doc.setTextColor(90); doc.setFontSize(10);
+  doc.text(`Refunded to: ${forName}`, margin, y); y += 16;
+  if (data.originalInvoiceNumber) {
+    doc.text(`Original receipt: ${data.originalInvoiceNumber}`, margin, y); y += 16;
+  }
+  y += 4;
+
+  doc.setFontSize(10.5);
+  ensure(16);
+  doc.setTextColor(30, 43, 56);
+  const label = data.eventName ? `${data.itemLabel} — ${data.eventName}` : data.itemLabel;
+  const lines = doc.splitTextToSize(label, width - 110);
+  doc.text(lines, margin, y);
+  doc.text(`−${fmtMoney(data.refundAmountCents / 100)}`, pageW - margin, y, { align: 'right' });
+  y += Math.max(16, lines.length * 13) + 6;
+
+  ensure(24);
+  doc.setDrawColor(30, 43, 56); doc.line(margin, y, pageW - margin, y); y += 18;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(30, 43, 56);
+  doc.text('Total refunded', margin, y);
+  doc.text(`−${fmtMoney(data.refundAmountCents / 100)}`, pageW - margin, y, { align: 'right' });
+  y += 28;
+
+  doc.setFont('helvetica', 'italic'); doc.setFontSize(9.5); doc.setTextColor(140);
+  ensure(14);
+  doc.text('Refunded to the original payment method.', margin, y);
+
+  doc.save(`refund-receipt-${receiptNumber}.pdf`);
 }

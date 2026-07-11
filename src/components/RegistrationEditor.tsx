@@ -48,6 +48,12 @@ interface DiscSectionProps {
   incomingPartnerId?: string | null;
   /** That athlete's own SY level, if known (B4.4). */
   incomingPartnerSyLevel?: string | null;
+  /** True when this discipline's only registration row is a refunded (kept,
+   *  blanked) one — event-mgmt v2 Phase 3 spec §H: "all apparatus unchecked
+   *  and un-recheckable except by league admins". */
+  refunded: boolean;
+  /** League admins may re-enable a refunded discipline, behind a confirm. */
+  isAdmin: boolean;
 }
 
 /** Draft shape for one discipline */
@@ -58,9 +64,13 @@ export interface DraftReg {
   apparatusLevels: Record<string, string>; // T&T per-apparatus levels
   partnerAthleteId: string | null; // synchro
   partnerUnknown: boolean;
+  /** True once an admin has confirmed re-enabling a refunded discipline in
+   *  this editing session — unlocks the apparatus checkboxes and tells
+   *  `handleSave` to reuse (and un-refund) the original registration row. */
+  refundOverridden?: boolean;
 }
 
-function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, season, incomingPartnerId, incomingPartnerSyLevel }: DiscSectionProps) {
+function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, season, incomingPartnerId, incomingPartnerSyLevel, refunded, isAdmin }: DiscSectionProps) {
   const discLevels = levels.filter((l) => l.discipline === disc && !l.retired);
   const apparatusDefs = APPARATUS[disc];
   const isTNT = disc === 'TNT';
@@ -75,7 +85,7 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
       .map((a) => ({ value: a.id, label: `${a.firstName} ${a.lastName}`, sub: a.email }));
   }, [allAthletes, athlete.id, season.id]);
 
-  const toggleEvent = (code: string) => {
+  const toggleEvent = (code: string): DraftReg => {
     const next = draft.apparatus.includes(code)
       ? draft.apparatus.filter((e) => e !== code)
       : [...draft.apparatus, code];
@@ -101,10 +111,10 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
       partnerUnknown = false;
       if (incomingPartnerSyLevel) nextEventLevels.SY = incomingPartnerSyLevel;
     }
-    onChange({ ...draft, apparatus: next, apparatusLevels: nextEventLevels, partnerAthleteId, partnerUnknown });
+    return { ...draft, apparatus: next, apparatusLevels: nextEventLevels, partnerAthleteId, partnerUnknown };
   };
 
-  const selectAllAround = () => {
+  const selectAllAround = (): DraftReg => {
     const allCodes = apparatusDefs.map((e) => e.code);
     const nextEventLevels: Record<string, string> = {};
     if (isTNT) {
@@ -115,11 +125,27 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
     const autoLinking = allCodes.includes('SY') && !draft.partnerAthleteId && incomingPartnerId;
     const partnerAthleteId = autoLinking ? incomingPartnerId : draft.partnerAthleteId;
     if (autoLinking && incomingPartnerSyLevel) nextEventLevels.SY = incomingPartnerSyLevel;
-    onChange({ ...draft, apparatus: allCodes, apparatusLevels: nextEventLevels, partnerAthleteId });
+    return { ...draft, apparatus: allCodes, apparatusLevels: nextEventLevels, partnerAthleteId };
   };
 
-  const clearAll = () => {
-    onChange({ ...draft, apparatus: [], apparatusLevels: {} });
+  const clearAll = (): DraftReg => ({ ...draft, apparatus: [], apparatusLevels: {} });
+
+  // Guard apparatus-mutating actions when this discipline's registration was
+  // refunded (spec §H: unchecked and un-recheckable except by league admins,
+  // behind a confirm). Non-admins never reach the confirm — their checkboxes
+  // are rendered `disabled` below, but this guard also covers the
+  // select-all/clear-all buttons which aren't individually disabled.
+  const applyChange = (nextDraft: DraftReg) => {
+    if (refunded && !draft.refundOverridden) {
+      if (!isAdmin) return;
+      const ok = window.confirm(
+        'This registration was refunded and the athlete cannot participate. Re-enable anyway?',
+      );
+      if (!ok) return;
+      onChange({ ...nextDraft, refundOverridden: true });
+      return;
+    }
+    onChange(nextDraft);
   };
 
   const isAA = draft.apparatus.length === apparatusDefs.length && apparatusDefs.every((e) => draft.apparatus.includes(e.code));
@@ -166,6 +192,21 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
             </Field>
           </div>
 
+          {/* Refunded-registration warning (spec §H): shown while the discipline's
+              apparatus is locked (no admin override yet in this session). */}
+          {refunded && !draft.refundOverridden && (
+            <p
+              role="alert"
+              style={{
+                fontSize: 13, color: 'var(--coral-700)', background: 'var(--coral-100)',
+                borderRadius: 6, padding: '8px 10px', marginBottom: 10,
+              }}
+            >
+              This registration was refunded — the athlete cannot participate.
+              {isAdmin ? ' As a league admin, you can re-enable it below.' : ''}
+            </p>
+          )}
+
           {/* Apparatus checkboxes */}
           <div style={{ marginBottom: 8 }}>
             <div style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 6 }}>
@@ -174,7 +215,7 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
                 type="button"
                 className="btn ghost small"
                 style={{ marginLeft: 8 }}
-                onClick={isAA ? clearAll : selectAllAround}
+                onClick={() => applyChange(isAA ? clearAll() : selectAllAround())}
               >
                 {isAA ? 'Clear all' : (isTNT ? 'All Apparatuses' : 'All-Around')}
               </button>
@@ -185,7 +226,8 @@ function DiscSection({ disc, athlete, levels, draft, onChange, allAthletes, seas
                   <input
                     type="checkbox"
                     checked={draft.apparatus.includes(ev.code)}
-                    onChange={() => toggleEvent(ev.code)}
+                    disabled={refunded && !isAdmin && !draft.refundOverridden}
+                    onChange={() => applyChange(toggleEvent(ev.code))}
                   />
                   <span title={ev.name}>{ev.code} — {ev.name}</span>
                 </label>
@@ -285,6 +327,9 @@ export interface RegistrationEditorProps {
    *  sets the level for both — a fresh SY registration auto-linked to them
    *  should default to THEIR level, not an arbitrary one). */
   incomingPartnerSyLevel?: string | null;
+  /** League admin viewing/editing (capabilities.isAdmin) — the only role that
+   *  can re-enable a refunded, kept-but-blanked registration (spec §H). */
+  isAdmin?: boolean;
 }
 
 export function RegistrationEditor({
@@ -301,12 +346,22 @@ export function RegistrationEditor({
   changeFeeApplies = false,
   incomingPartnerId = null,
   incomingPartnerSyLevel = null,
+  isAdmin = false,
 }: RegistrationEditorProps) {
+  // A discipline whose ONLY registration row is refunded-but-kept (post-
+  // edit-deadline refund: refunded:true, keepListed:true, apparatus blanked)
+  // — shown visible-but-locked rather than as "no registration" (spec §H).
+  const refundedRegFor = (disc: Discipline) =>
+    existing.find((r) => r.discipline === disc && !r.refunded) === undefined
+      ? existing.find((r) => r.discipline === disc && r.refunded)
+      : undefined;
+
   // Build initial draft state from existing regs (or defaults from athlete.levels)
   const initDrafts = (): Record<Discipline, DraftReg> => {
     const out = {} as Record<Discipline, DraftReg>;
     for (const disc of event.disciplines as Discipline[]) {
       const reg = existing.find((r) => r.discipline === disc && !r.refunded);
+      const refundedReg = refundedRegFor(disc);
       const discLevels = levels.filter((l) => l.discipline === disc && !l.retired);
       const defaultLevelId = athlete.levels[disc] ?? discLevels[0]?.id ?? '';
       if (reg) {
@@ -317,6 +372,16 @@ export function RegistrationEditor({
           apparatusLevels: { ...(reg.apparatusLevels ?? {}) },
           partnerAthleteId: reg.partnerAthleteId ?? null,
           partnerUnknown: reg.partnerAthleteId === null && reg.apparatus.includes('SY'),
+        };
+      } else if (refundedReg) {
+        out[disc] = {
+          enabled: true,
+          levelId: refundedReg.levelId,
+          apparatus: [...refundedReg.apparatus], // blanked ([]) by the refund
+          apparatusLevels: { ...(refundedReg.apparatusLevels ?? {}) },
+          partnerAthleteId: refundedReg.partnerAthleteId ?? null,
+          partnerUnknown: false,
+          refundOverridden: false,
         };
       } else {
         out[disc] = {
@@ -358,7 +423,11 @@ export function RegistrationEditor({
     for (const disc of event.disciplines as Discipline[]) {
       const d = drafts[disc];
       if (!d.enabled || d.apparatus.length === 0) continue;
-      const existing_ = existing.find((r) => r.discipline === disc && !r.refunded);
+      const activeExisting = existing.find((r) => r.discipline === disc && !r.refunded);
+      // An admin-confirmed re-enable of a refunded discipline reuses (and
+      // un-refunds) the ORIGINAL row instead of creating a parallel one, so
+      // the reg stays linked to its original invoice/refund-request history.
+      const existing_ = activeExisting ?? (d.refundOverridden ? refundedRegFor(disc) : undefined);
       const session = event.sessions.find((s) => s.discipline === disc && s.levelIds.includes(d.levelId))
         ?? event.sessions.find((s) => s.discipline === disc);
 
@@ -373,9 +442,11 @@ export function RegistrationEditor({
         sessionId: existing_?.sessionId ?? session?.id ?? null,
         ...(Object.keys(d.apparatusLevels).length > 0 ? { apparatusLevels: d.apparatusLevels } : {}),
         ...(d.apparatus.includes('SY') ? { partnerAthleteId: d.partnerUnknown ? null : d.partnerAthleteId } : {}),
-        ...(existing_?.refunded !== undefined ? { refunded: existing_.refunded } : {}),
+        // A confirmed admin override clears the refunded/keepListed flags on
+        // the reused row — that IS the "re-enable" (spec §H).
+        ...(existing_?.refunded !== undefined ? { refunded: d.refundOverridden ? false : existing_.refunded } : {}),
         ...(existing_?.refundRequested !== undefined ? { refundRequested: existing_.refundRequested } : {}),
-        ...(existing_?.keepListed !== undefined ? { keepListed: existing_.keepListed } : {}),
+        ...(existing_?.keepListed !== undefined ? { keepListed: d.refundOverridden ? false : existing_.keepListed } : {}),
         ...(existing_?.category !== undefined ? { category: existing_.category } : {}),
         ...(existing_?.quals !== undefined ? { quals: existing_.quals } : {}),
       };
@@ -486,6 +557,8 @@ export function RegistrationEditor({
           season={season}
           incomingPartnerId={disc === 'TNT' ? incomingPartnerId : null}
           incomingPartnerSyLevel={disc === 'TNT' ? incomingPartnerSyLevel : null}
+          refunded={!!refundedRegFor(disc) && !(drafts[disc]?.refundOverridden)}
+          isAdmin={isAdmin}
         />
       ))}
 

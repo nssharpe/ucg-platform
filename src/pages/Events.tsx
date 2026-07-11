@@ -1927,9 +1927,12 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
 // ---------------------------------------------------------------------------
 
 function exportCsv(db: ReturnType<typeof useDB>, event: Event) {
-  // Spec: "just export all the things and let the user trim"
+  // Spec: "just export all the things and let the user trim". Includes
+  // refunded-but-kept regs (`keepListed`, event-mgmt v2 Phase 3 spec §H —
+  // "name still appears in event materials" for a post-edit-deadline refund);
+  // a pre-deadline refund deletes its row outright and is naturally absent.
   const rows = [['Athlete', 'Club', 'Discipline', 'Level', 'Session', 'Events', 'Shirt', 'Dietary', 'Email', 'Phone', 'Emergency contact', 'Student', 'Region']];
-  for (const r of db.registrations.filter((x) => x.eventId === event.id && !x.refunded)) {
+  for (const r of db.registrations.filter((x) => x.eventId === event.id && (!x.refunded || x.keepListed))) {
     const a = db.people.find((p) => p.id === r.athleteId)!;
     const club = db.clubs.find((c) => c.id === r.clubId)!;
     rows.push([
