@@ -73,6 +73,20 @@ export function regRoutines(reg: RegRow): Routine[] {
   }));
 }
 
+/** A cap value read from jsonb config is only a cap if it's a finite number —
+ *  a config UI clearing a field can persist explicit nulls (`{"total": null}`,
+ *  a per-level map with null values), which must read as "not configured",
+ *  never as a live cap (`combined > null` coerces to `> 0` and would 409
+ *  every checkout for the event). */
+function capOf(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+}
+
+/** True if any value in a cap map is a real (finite-number) cap. */
+function hasAnyCap(map: Record<string, unknown> | null | undefined): boolean {
+  return !!map && Object.values(map).some((v) => capOf(v) !== undefined);
+}
+
 function parseTime(value: string | null | undefined): number | null {
   if (!value) return null;
   const t = new Date(value).getTime();
@@ -174,10 +188,10 @@ export function capacityUsage(
 /** True if the event has ANY capacity configuration set — drives whether
  *  holds/countdowns are needed at all. */
 export function hasCapacityConfig(event: CapacityEventRow, sessions: SessionRow[]): boolean {
-  if (event.capacity?.total !== undefined) return true;
-  if (event.capacity?.perLevel && Object.keys(event.capacity.perLevel).length > 0) return true;
-  if (event.capacity?.perDiscipline && Object.keys(event.capacity.perDiscipline).length > 0) return true;
-  return sessions.some((s) => s.max_routines && Object.keys(s.max_routines).length > 0);
+  if (capOf(event.capacity?.total) !== undefined) return true;
+  if (hasAnyCap(event.capacity?.perLevel)) return true;
+  if (hasAnyCap(event.capacity?.perDiscipline)) return true;
+  return sessions.some((s) => hasAnyCap(s.max_routines));
 }
 
 export type CapacityViolationScope = 'total' | 'level' | 'discipline' | 'session';
@@ -237,7 +251,7 @@ export function checkCapacity(
   const combinedUsage = tallyUsage(event.id, [...baseline, ...incoming], combinedPredicate);
 
   // Total (athletes).
-  const totalCap = event.capacity?.total;
+  const totalCap = capOf(event.capacity?.total);
   if (totalCap !== undefined) {
     const used = baselineUsage.totalAthletes;
     const requested = combinedUsage.totalAthletes - baselineUsage.totalAthletes;
@@ -254,7 +268,9 @@ export function checkCapacity(
 
   // Per-level (routines).
   const perLevelCap = event.capacity?.perLevel ?? {};
-  for (const [levelId, cap] of Object.entries(perLevelCap)) {
+  for (const [levelId, rawCap] of Object.entries(perLevelCap)) {
+    const cap = capOf(rawCap);
+    if (cap === undefined) continue;
     const used = baselineUsage.perLevel[levelId] ?? 0;
     const combined = combinedUsage.perLevel[levelId] ?? 0;
     const requested = combined - used;
@@ -272,7 +288,9 @@ export function checkCapacity(
 
   // Per-discipline (routines; T&T).
   const perDisciplineCap = event.capacity?.perDiscipline ?? {};
-  for (const [discipline, cap] of Object.entries(perDisciplineCap)) {
+  for (const [discipline, rawCap] of Object.entries(perDisciplineCap)) {
+    const cap = capOf(rawCap);
+    if (cap === undefined) continue;
     const used = baselineUsage.perDiscipline[discipline] ?? 0;
     const combined = combinedUsage.perDiscipline[discipline] ?? 0;
     const requested = combined - used;
@@ -291,7 +309,9 @@ export function checkCapacity(
   // Per-session per-apparatus (by-session mode).
   for (const session of sessions) {
     const maxRoutines = session.max_routines ?? {};
-    for (const [apparatus, cap] of Object.entries(maxRoutines)) {
+    for (const [apparatus, rawCap] of Object.entries(maxRoutines)) {
+      const cap = capOf(rawCap);
+      if (cap === undefined) continue;
       const used = baselineUsage.perSession[session.id]?.[apparatus] ?? 0;
       const combined = combinedUsage.perSession[session.id]?.[apparatus] ?? 0;
       const requested = combined - used;

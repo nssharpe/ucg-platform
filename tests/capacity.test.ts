@@ -213,6 +213,31 @@ describe('hasCapacityConfig', () => {
     };
     expect(hasCapacityConfig(event, [session])).toBe(true);
   });
+
+  // jsonb from Postgres can carry explicit nulls (a config UI clearing a
+  // field) — null-only configs must read as NOT configured.
+  it('false when every cap value is an explicit null', () => {
+    const event = baseEvent({
+      capacity: {
+        total: null,
+        perLevel: { 'lvl-silver': null },
+        perDiscipline: { WAG: null },
+      } as unknown as Event['capacity'],
+    });
+    const session: EventSession = {
+      id: 's1', name: 'Session 1', discipline: 'WAG', date: '2026-08-15', time: '09:00',
+      levelIds: ['lvl-silver'], squads: [],
+      maxRoutines: { VT: null } as unknown as Record<string, number>,
+    };
+    expect(hasCapacityConfig(event, [session])).toBe(false);
+  });
+
+  it('true when a real cap sits alongside null values', () => {
+    const event = baseEvent({
+      capacity: { total: null, perLevel: { 'lvl-gold': 3 } } as unknown as Event['capacity'],
+    });
+    expect(hasCapacityConfig(event, [])).toBe(true);
+  });
 });
 
 describe('checkCapacity', () => {
@@ -275,6 +300,47 @@ describe('checkCapacity', () => {
       baseReg({ id: `r${i}`, athleteId: `a${i}` }));
     const incoming = [baseReg({ id: 'rNew', athleteId: 'aNew', paid: false, holdExpiresAt: FUTURE })];
     expect(checkCapacity(event, [], existing, incoming, noGroups, NOW)).toEqual([]);
+  });
+
+  // Explicit nulls from jsonb must never behave as a 0 cap (`combined > null`
+  // coerces to `> 0` and would 409 every checkout for the event).
+  it('an explicit null total cap is ignored (no violations)', () => {
+    const event = baseEvent({ capacity: { total: null } as unknown as Event['capacity'] });
+    const existing = [baseReg({ id: 'r1', athleteId: 'a1' })];
+    const incoming = [baseReg({ id: 'r2', athleteId: 'a2', paid: false, holdExpiresAt: FUTURE })];
+    expect(checkCapacity(event, [], existing, incoming, noGroups, NOW)).toEqual([]);
+  });
+
+  it('null perLevel entries are skipped while numeric siblings stay enforced', () => {
+    const event = baseEvent({
+      capacity: { perLevel: { 'lvl-silver': null, 'lvl-gold': 3 } } as unknown as Event['capacity'],
+    });
+    // 4 silver routines (would exceed any real silver cap) + 4 gold routines vs cap 3.
+    const incoming = [
+      baseReg({ id: 'r1', athleteId: 'a1', paid: false, holdExpiresAt: FUTURE }),
+      baseReg({ id: 'r2', athleteId: 'a2', levelId: 'lvl-gold', paid: false, holdExpiresAt: FUTURE }),
+    ];
+    const violations = checkCapacity(event, [], [], incoming, noGroups, NOW);
+    expect(violations).toEqual([
+      { scope: 'level', levelId: 'lvl-gold', cap: 3, used: 0, requested: 4, remaining: 3 },
+    ]);
+  });
+
+  it('null maxRoutines entries are skipped while numeric siblings stay enforced', () => {
+    const event = baseEvent();
+    const session: EventSession = {
+      id: 's1', name: 'Session 1', discipline: 'WAG', date: '2026-08-15', time: '09:00',
+      levelIds: ['lvl-silver'], squads: [],
+      maxRoutines: { VT: null, UB: 1 } as unknown as Record<string, number>,
+    };
+    const incoming = [
+      baseReg({ id: 'r1', athleteId: 'a1', sessionId: 's1', apparatus: ['VT', 'UB'], paid: false, holdExpiresAt: FUTURE }),
+      baseReg({ id: 'r2', athleteId: 'a2', sessionId: 's1', apparatus: ['VT', 'UB'], paid: false, holdExpiresAt: FUTURE }),
+    ];
+    const violations = checkCapacity(event, [session], [], incoming, noGroups, NOW);
+    expect(violations).toEqual([
+      { scope: 'session', sessionId: 's1', apparatus: 'UB', cap: 1, used: 0, requested: 2, remaining: 1 },
+    ]);
   });
 
   it('incoming unpaid reg with an EXPIRED hold still counts (server re-check at checkout must not oversell)', () => {
