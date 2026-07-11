@@ -89,6 +89,9 @@ here — update THIS list when priorities change, not rival copies.
 1. 👤 **Supabase Pro + backups/PITR** — **DEFERRED (decided 2026-07-04)** to later in
    development; recorded as a hard pre-flight gate in the
    [go-live checklist](stripe-go-live-checklist.md) so it can't be missed before real money.
+   Interim insurance since 2026-07-11: daily data dumps to Dropbox via
+   `scripts/backup-db.mjs` (runbook: [supabase/README](../supabase/README.md) "Data
+   backups"; prod dump needs `PROD_DB_PASSWORD` in `.env.local`).
 2. 👤 ~~Uptime monitor + alerting~~ **done 2026-07-04** (UptimeRobot, 5-min checks,
    email alerts: live site + Supabase auth health) · 🤖 still open: a daily digest
    of new `error_logs` / stuck `pending` payments (scheduled function).
