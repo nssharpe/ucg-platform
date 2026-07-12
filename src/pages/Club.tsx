@@ -22,7 +22,7 @@ import {
   deleteRegistration, pushCart, pushClub, pushClubManager,
   pushRegistration, requestManagerAccess, sendClubInvite,
   inviteAccount, pushClubMembership, deleteClubMembership,
-  syncSynchroPartnerLevelRemote,
+  syncSynchroPartnerLevelRemote, cancelWaitlistGroup,
 } from '../lib/supabase';
 import { cleanupCrossClubCart } from '../lib/cart-sync';
 import type { ClubMembership } from '../lib/types';
@@ -1099,6 +1099,35 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
     return regs.map((r) => `${r.discipline === 'TNT' ? 'T&T' : r.discipline} – ${lvlName(r.levelId)} – ${eventsText(r, nameOf)}`).join(' / ');
   };
 
+  // Leave waitlist (event-mgmt v2 P4 T6, club-manager side): cancels every
+  // waitlist group this athlete's waitlisted regs at THIS event belong to
+  // (status → 'cancelled', the only client-writable transition — there is no
+  // client DELETE policy on waitlist_groups by design) and hard-deletes the
+  // waitlisted regs themselves. Unlike the member-side ✕/refund rules
+  // (never delete a PAID reg), a waitlisted reg was never paid — it's a
+  // placeholder with no cart line, so deleting it is the correct undo, same
+  // as `removeCartItemWithSync`'s 'delete-registration' action for a
+  // brand-new unpaid entry.
+  const leaveWaitlist = (athleteId: string) => {
+    const regs = regsFor(athleteId).filter((r) => r.waitlisted);
+    if (regs.length === 0) return;
+    if (!window.confirm(`Remove ${nameOf(athleteId)} from the waitlist for ${event.name}?`)) return;
+    const groupIds = [...new Set(regs.map((r) => r.waitlistGroupId).filter((id): id is string => !!id))];
+    mutate((d) => {
+      for (const gid of groupIds) {
+        const idx = (d.waitlistGroups ?? []).findIndex((g) => g.id === gid);
+        if (idx >= 0 && d.waitlistGroups) {
+          d.waitlistGroups[idx] = { ...d.waitlistGroups[idx], status: 'cancelled' as const };
+          cancelWaitlistGroup(gid);
+        }
+      }
+      const ids = new Set(regs.map((r) => r.id));
+      d.registrations = d.registrations.filter((r) => !ids.has(r.id));
+      for (const id of ids) deleteRegistration(id);
+    });
+    toast('Removed from the waitlist.');
+  };
+
   // Cross-club lock (3d): the OTHER club this athlete is already PAID-registered
   // with for this event. Non-null ⇒ not selectable here. shortName for the note.
   const lockedToClubShortName = (athleteId: string): string | null => {
@@ -1550,6 +1579,11 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
                 // ever stamped paid — treat anything that isn't `true` as unpaid.
                 const anyUnpaid = regs.some((r) => r.paid !== true);
                 const anyUpdatedPending = regs.some((r) => r.paid !== true && r.updatedPending);
+                // Waitlisted regs (event-mgmt v2 P4 T6): no cart line, not yet
+                // occupying a spot — distinct from "Pending purchase" (which
+                // implies a cart line is waiting to be paid).
+                const anyWaitlisted = regs.some((r) => r.waitlisted);
+                const allWaitlisted = regs.length > 0 && regs.every((r) => r.waitlisted || r.refunded);
                 const summary = regSummary(a.id);
                 return (
                   <tr key={a.id}>
@@ -1560,11 +1594,14 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
                         ? <Badge tone="warn">Refund requested</Badge>
                         : allRefunded
                           ? null
-                          : anyUpdatedPending
-                            ? <Badge tone="warn">Updated pending purchase</Badge>
-                            : anyUnpaid
-                              ? <Badge tone="warn">Pending purchase</Badge>
-                              : <Badge tone="ok">Registered</Badge>}
+                          : allWaitlisted
+                            ? <Badge tone="info">Waitlisted</Badge>
+                            : anyUpdatedPending
+                              ? <Badge tone="warn">Updated pending purchase</Badge>
+                              : anyUnpaid
+                                ? <Badge tone="warn">Pending purchase</Badge>
+                                : <Badge tone="ok">Registered</Badge>}
+                      {!allWaitlisted && anyWaitlisted && <Badge tone="info">Partly waitlisted</Badge>}
                       {anyRefunded && <Badge tone="info">Refunded</Badge>}
                     </td>
                     {canManage && (
@@ -1592,6 +1629,15 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
                             onClick={() => openRefundDialog(a.id)}
                           >
                             Request refund
+                          </button>
+                        )}
+                        {anyWaitlisted && (
+                          <button
+                            className="btn small ghost"
+                            style={{ color: 'var(--coral-500)' }}
+                            onClick={() => leaveWaitlist(a.id)}
+                          >
+                            Leave waitlist
                           </button>
                         )}
                       </td>

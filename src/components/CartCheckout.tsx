@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { fmtMoney } from '../lib/scoring';
-import { createCheckoutSession, fetchPaymentStatus } from '../lib/supabase';
+import { createCheckoutSession, fetchPaymentStatus, type CheckoutCapacityError, type CheckoutSessionRequiredError } from '../lib/supabase';
 import { StripeCheckout } from './StripeCheckout';
 import type { CartItem } from '../lib/types';
 
@@ -41,11 +41,20 @@ export function CartCheckout({
   title,
   onPaid,
   onError,
+  onCapacityConflict,
+  onSessionRequired,
 }: {
   items: CartItem[];
   title: string;
   onPaid: () => void;
   onError?: (msg: string) => void;
+  /** event-mgmt v2 P4 T6: a 409 capacity-exceeded rejection. When provided,
+   *  this is called INSTEAD of showing the generic error stage — the caller
+   *  (Cart.tsx) owns the resolution dialog and should dismiss this checkout
+   *  view back to the cart. */
+  onCapacityConflict?: (err: CheckoutCapacityError) => void;
+  /** A 400 session-required rejection (by-session event, missing session pick). */
+  onSessionRequired?: (err: CheckoutSessionRequiredError) => void;
 }) {
   const [stage, setStage] = useState<Stage>({ kind: 'loading' });
   const [couponInput, setCouponInput] = useState('');
@@ -70,6 +79,10 @@ export function CartCheckout({
             amountSubtotal: r.amountSubtotal, discountAmount: r.discountAmount ?? 0,
             serviceFee: r.serviceFee, couponCode,
           });
+        } else if (r.capacityError && onCapacityConflict) {
+          onCapacityConflict(r.capacityError);
+        } else if (r.sessionRequiredError && onSessionRequired) {
+          onSessionRequired(r.sessionRequiredError);
         } else {
           const msg = r.error ?? 'Could not start checkout. Please try again.';
           setStage({ kind: 'error', message: msg });

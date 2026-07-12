@@ -3,7 +3,7 @@ import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { Badge, Combo, Field, Modal, Tabs } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
-import { pushRegistration, pushCart, syncSynchroPartnerLevelRemote } from '../lib/supabase';
+import { pushRegistration, pushCart, syncSynchroPartnerLevelRemote, cancelWaitlistGroup, deleteRegistration } from '../lib/supabase';
 import { RegistrationEditor } from '../components/RegistrationEditor';
 import {
   newRegistrationEntryTotal, registrationChangeFee, changeIsEligible, syncSynchroPartnerLevel, lateFeeApplies, lateFeeAnchor,
@@ -99,6 +99,29 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   const changeFeePending = (event: Event) => !!changeFeePendingItem(event);
 
   const season = db.seasons.find((s) => s.current)!;
+
+  // Leave waitlist (event-mgmt v2 P4 T6, self-serve): cancels the reg's
+  // waitlist group (status → 'cancelled' — the only client-writable
+  // transition; there is no client DELETE policy on waitlist_groups) and
+  // hard-deletes the waitlisted reg itself. This is the one case where the
+  // member side DOES delete a registration (unlike the retain-and-blank rule
+  // in saveRegs above) — a waitlisted reg was never paid, so it's just a
+  // placeholder, same as a brand-new unpaid entry line's ✕ removal.
+  const leaveWaitlist = (reg: Registration) => {
+    if (!window.confirm('Leave the waitlist for this event?')) return;
+    mutate((d) => {
+      if (reg.waitlistGroupId) {
+        const idx = (d.waitlistGroups ?? []).findIndex((g) => g.id === reg.waitlistGroupId);
+        if (idx >= 0 && d.waitlistGroups) {
+          d.waitlistGroups[idx] = { ...d.waitlistGroups[idx], status: 'cancelled' as const };
+          cancelWaitlistGroup(reg.waitlistGroupId);
+        }
+      }
+      d.registrations = d.registrations.filter((r) => r.id !== reg.id);
+      deleteRegistration(reg.id);
+    });
+    toast('Removed from the waitlist.');
+  };
 
   // Persist the member's own registration edits (6a). Modeled on Club.tsx
   // saveRegs + addToCart, but TARGETS THE MEMBER'S OWN CART (carts[personId],
@@ -387,6 +410,17 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                                   <Badge tone="info">Refunded</Badge>
                                 ) : r.refundRequested ? (
                                   <Badge tone="warn">Refund requested</Badge>
+                                ) : r.waitlisted ? (
+                                  <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+                                    <Badge tone="info">Waitlisted</Badge>
+                                    <button
+                                      className="btn ghost small"
+                                      style={{ color: 'var(--coral-500)' }}
+                                      onClick={() => leaveWaitlist(r)}
+                                    >
+                                      Leave waitlist
+                                    </button>
+                                  </span>
                                 ) : canRequestRefund ? (
                                   <button
                                     className="btn ghost small"

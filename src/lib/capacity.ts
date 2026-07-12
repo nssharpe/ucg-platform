@@ -335,3 +335,72 @@ export function splitFit(
 
   return { fits, overflow };
 }
+
+// ---- Checkout-rejection → waitlist helpers (event-mgmt v2 P4 T6) ----------
+// A checkout-time 409 (`capacity-exceeded`) names the violated caps; these
+// pure helpers translate that into WHICH of the checkout's own registrations
+// are implicated, and how to group them into the same (discipline, level,
+// session) cohorts `WaitlistGroup` rows key on (a `WaitlistGroup` is a whole
+// cohort queuing together — see its doc comment in ./types).
+
+/** The (discipline, levelId, sessionId) key a registration's waitlist group
+ *  would key on — mirrors `WaitlistGroup`'s own grouping columns exactly. */
+export interface WaitlistGroupKey {
+  discipline: Discipline;
+  levelId: string | null;
+  sessionId: string | null;
+}
+
+export function waitlistGroupKeyFor(reg: Registration): WaitlistGroupKey {
+  // `||`, not `??`: `rowToRegistration` (supabase.ts) maps a null DB
+  // `session_id` to `''` (empty string), not `null` — a `??` here would ship
+  // `sessionId: ''` into a new `WaitlistGroup` row, which then fails
+  // `waitlist_groups_session_id_fkey` (empty string isn't a valid FK target
+  // and isn't NULL either) — caught live via a staging capacity-conflict
+  // dry run (event-mgmt v2 P4 T6). `registrationToRow`'s own
+  // `r.sessionId || null` is the same falsy-coalescing idiom.
+  return { discipline: reg.discipline, levelId: reg.levelId || null, sessionId: reg.sessionId || null };
+}
+
+/** True if `reg` contributes at least one routine counted toward `violation`
+ *  (i.e. reverting/waitlisting `reg` would help relieve that specific cap). A
+ *  refunded reg never counts. `total` violations implicate every reg at the
+ *  event (the whole-event athlete cap has no finer attribution). */
+function regTouchesViolation(reg: Registration, violation: CapacityViolation): boolean {
+  if (reg.refunded) return false;
+  if (violation.scope === 'total') return true;
+  const routines = regRoutines(reg);
+  if (violation.scope === 'level') return routines.some((r) => r.levelId === violation.levelId);
+  if (violation.scope === 'discipline') return reg.discipline === violation.discipline;
+  // 'session'
+  return reg.sessionId === violation.sessionId && routines.some((r) => r.apparatus === violation.apparatus);
+}
+
+/** Every `reg` (from the checkout's own registrations at the violated event)
+ *  that touches at least one of `violations` — the set a "waitlist the whole
+ *  group" resolution must act on. Order-preserving, no dedup needed (callers
+ *  pass a reg list with unique ids). */
+export function regsAffectedByViolations(
+  regs: Registration[],
+  violations: CapacityViolation[],
+): Registration[] {
+  return regs.filter((reg) => violations.some((v) => regTouchesViolation(reg, v)));
+}
+
+/** Partitions `regs` into cohorts sharing a `waitlistGroupKeyFor` key — one
+ *  `WaitlistGroup` row per cohort. Insertion-ordered (first reg seen for a key
+ *  determines that cohort's position). */
+export function groupRegsByWaitlistKey(
+  regs: Registration[],
+): { key: WaitlistGroupKey; regs: Registration[] }[] {
+  const order: string[] = [];
+  const byKey = new Map<string, { key: WaitlistGroupKey; regs: Registration[] }>();
+  for (const reg of regs) {
+    const key = waitlistGroupKeyFor(reg);
+    const k = `${key.discipline}|${key.levelId ?? ''}|${key.sessionId ?? ''}`;
+    let entry = byKey.get(k);
+    if (!entry) { entry = { key, regs: [] }; byKey.set(k, entry); order.push(k); }
+    entry.regs.push(reg);
+  }
+  return order.map((k) => byKey.get(k)!);
+}

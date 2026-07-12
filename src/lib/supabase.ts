@@ -12,6 +12,7 @@ import type {
 } from './types';
 import { writeQueue, type WriteOp, type ExecResult } from './write-queue';
 import type { Database } from './database.types';
+import type { CapacityViolation } from './capacity';
 
 /** A table's Row type — the shape Supabase returns, used to type the DB→app
  *  row mappers so a schema change (renamed/dropped column) fails the build. */
@@ -87,6 +88,12 @@ async function executeWriteOp(op: WriteOp): Promise<ExecResult> {
     const { error } = await supabase.rpc(op.fn, op.args);
     return { error };
   }
+  if (op.kind === 'update') {
+    let upd = supabase.from(op.table).update(op.patch);
+    for (const [k, v] of Object.entries(op.match)) upd = upd.eq(k, v);
+    const { error } = await upd;
+    return { error };
+  }
   // replace: delete the matched set, then insert the new rows.
   let del = supabase.from(op.table).delete();
   for (const [k, v] of Object.entries(op.match)) del = del.eq(k, v);
@@ -116,6 +123,13 @@ function remoteDeleteWhere(table: string, match: Record<string, unknown>) {
 /** Queue a delete by primary key. */
 function remoteDelete(table: string, id: string, column = 'id') {
   remoteDeleteWhere(table, { [column]: id });
+}
+
+/** Queue a targeted column UPDATE by primary key (not a full-row upsert) —
+ *  for rows where RLS grants UPDATE on only specific columns. */
+function remoteUpdate(table: string, id: string, patch: Record<string, unknown>, column = 'id') {
+  if (!supabase) return;
+  writeQueue.enqueue({ kind: 'update', table, match: { [column]: id }, patch }, table);
 }
 
 /** Queue a delete-all-then-insert for a small child collection. */
@@ -439,6 +453,13 @@ export function deleteClubMembership(id: string) { remoteDelete('club_membership
  *  all other transitions are service-role. No client DELETE policy exists.
  *  Later P4 tasks add the actual queue-join/cancel call sites. */
 export function pushWaitlistGroup(g: WaitlistGroup) { remoteUpsert('waitlist_groups', [waitlistGroupToRow(g)]); }
+/** Cancel a waitlist group (event-mgmt v2 P4 T6 "Leave waitlist" — self or
+ *  club-manager): the only client-writable status transition on an EXISTING
+ *  row. Must go through the targeted `remoteUpdate` column-update, NOT
+ *  `pushWaitlistGroup`'s upsert — RLS grants UPDATE on `status` alone, and an
+ *  upsert's ON CONFLICT DO UPDATE path writes every column, so it's denied
+ *  for a row that already exists. */
+export function cancelWaitlistGroup(id: string) { remoteUpdate('waitlist_groups', id, { status: 'cancelled' }); }
 /** No client DELETE RLS policy exists on waitlist_groups (rows are
  *  cancelled via status update, never deleted, by design); this exists only
  *  for admin-tooling/service-role symmetry with the other delete* helpers. */
@@ -1045,6 +1066,23 @@ async function edgeErrorMessage(error: { message: string }): Promise<string> {
   return msg;
 }
 
+/** Like `edgeErrorMessage`, but also returns the parsed JSON body (if any) so
+ *  a caller that cares about a structured `code` field (event-mgmt v2 P4 T6:
+ *  `create-checkout-session`'s `capacity-exceeded`/`session-required`
+ *  rejections) can branch on it instead of string-matching `error`. */
+async function edgeErrorBody(error: { message: string }): Promise<{ message: string; body?: Record<string, unknown> }> {
+  let msg = error.message;
+  let body: Record<string, unknown> | undefined;
+  try {
+    const ctx = (error as { context?: Response }).context;
+    if (ctx && typeof ctx.json === 'function') {
+      body = await ctx.json();
+      if (body?.error) msg = String(body.error);
+    }
+  } catch { /* fall back to error.message */ }
+  return { message: msg, body };
+}
+
 /** Notify a club's managers that items were pushed to their cart. Fire-and-forget
  *  from the caller's perspective — failures are non-fatal (the cart item still
  *  exists and shows on the managers' dashboard). Returns the function result. */
@@ -1087,16 +1125,61 @@ export async function sendMembershipWelcome(
  *  no `clientSecret` — the caller must check `free` and skip mounting Stripe
  *  entirely (see `CartCheckout.tsx`). The payment row is already `paid` by
  *  the time this resolves. */
+/** A rejected checkout because the cart's own registrations would blow a
+ *  configured capacity cap at `eventId` (event-mgmt v2 P4 T6). `violations`
+ *  names exactly which caps and by how much — see `CapacityViolation`. */
+export interface CheckoutCapacityError {
+  code: 'capacity-exceeded';
+  eventId: string;
+  eventName: string;
+  violations: CapacityViolation[];
+}
+
+/** A rejected checkout because a by-session event has an entry with no (or an
+ *  invalid) session picked — a structural error, not a capacity overage. */
+export interface CheckoutSessionRequiredError {
+  code: 'session-required';
+  eventId: string;
+  eventName: string;
+  regIds: string[];
+}
+
 export async function createCheckoutSession(args: {
   cartItemIds: string[];
   couponCode?: string;
 }): Promise<{
   ok: boolean; clientSecret?: string; sessionId?: string; paymentId?: string; free?: boolean;
   amountSubtotal?: number; discountAmount?: number; serviceFee?: number; error?: string;
+  capacityError?: CheckoutCapacityError; sessionRequiredError?: CheckoutSessionRequiredError;
 }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('create-checkout-session', { body: args });
-  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  if (error) {
+    const { message, body } = await edgeErrorBody(error);
+    if (body?.code === 'capacity-exceeded') {
+      return {
+        ok: false, error: message,
+        capacityError: {
+          code: 'capacity-exceeded',
+          eventId: body.eventId as string,
+          eventName: body.eventName as string,
+          violations: (body.violations as CapacityViolation[]) ?? [],
+        },
+      };
+    }
+    if (body?.code === 'session-required') {
+      return {
+        ok: false, error: message,
+        sessionRequiredError: {
+          code: 'session-required',
+          eventId: body.eventId as string,
+          eventName: body.eventName as string,
+          regIds: (body.regIds as string[]) ?? [],
+        },
+      };
+    }
+    return { ok: false, error: message };
+  }
   return data as {
     ok: boolean; clientSecret?: string; sessionId?: string; paymentId?: string; free?: boolean;
     amountSubtotal?: number; discountAmount?: number; serviceFee?: number;

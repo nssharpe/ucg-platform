@@ -9,6 +9,10 @@ import {
   holdStamp,
   CART_HOLD_MINUTES,
   PROMOTION_HOLD_HOURS,
+  waitlistGroupKeyFor,
+  regsAffectedByViolations,
+  groupRegsByWaitlistKey,
+  type CapacityViolation,
 } from '../src/lib/capacity';
 import type { Event, EventSession, Registration, WaitlistGroup } from '../src/lib/types';
 
@@ -487,5 +491,65 @@ describe('exported constants', () => {
   it('CART_HOLD_MINUTES and PROMOTION_HOLD_HOURS have the documented values', () => {
     expect(CART_HOLD_MINUTES).toBe(30);
     expect(PROMOTION_HOLD_HOURS).toBe(24);
+  });
+});
+
+describe('waitlistGroupKeyFor', () => {
+  it('mirrors discipline/levelId/sessionId, nulling absent session', () => {
+    const reg = baseReg({ sessionId: null });
+    expect(waitlistGroupKeyFor(reg)).toEqual({ discipline: 'WAG', levelId: 'lvl-silver', sessionId: null });
+  });
+
+  it('nulls an empty-string sessionId, not just null/undefined (regression: rowToRegistration maps a null DB session_id to \'\', not null — a bare ?? would ship sessionId:\'\' into a new WaitlistGroup row and fail waitlist_groups_session_id_fkey; caught live on staging)', () => {
+    const reg = baseReg({ sessionId: '' as unknown as null });
+    expect(waitlistGroupKeyFor(reg)).toEqual({ discipline: 'WAG', levelId: 'lvl-silver', sessionId: null });
+  });
+});
+
+describe('regsAffectedByViolations', () => {
+  it('total violation implicates every non-refunded reg', () => {
+    const regs = [
+      baseReg({ id: 'r1' }),
+      baseReg({ id: 'r2', levelId: 'other' }),
+      baseReg({ id: 'r3', refunded: true }),
+    ];
+    const violations: CapacityViolation[] = [{ scope: 'total', cap: 2, used: 2, requested: 1, remaining: 0 }];
+    expect(regsAffectedByViolations(regs, violations).map((r) => r.id)).toEqual(['r1', 'r2']);
+  });
+
+  it('level violation only implicates regs with a routine at that level', () => {
+    const regs = [
+      baseReg({ id: 'r1', levelId: 'lvl-gold' }),
+      baseReg({ id: 'r2', levelId: 'lvl-silver' }),
+    ];
+    const violations: CapacityViolation[] = [{ scope: 'level', levelId: 'lvl-gold', cap: 4, used: 4, requested: 4, remaining: 0 }];
+    expect(regsAffectedByViolations(regs, violations).map((r) => r.id)).toEqual(['r1']);
+  });
+
+  it('session violation requires matching sessionId AND apparatus', () => {
+    const regs = [
+      baseReg({ id: 'r1', sessionId: 's1', apparatus: ['VT'] }),
+      baseReg({ id: 'r2', sessionId: 's1', apparatus: ['UB'] }),
+      baseReg({ id: 'r3', sessionId: 's2', apparatus: ['VT'] }),
+    ];
+    const violations: CapacityViolation[] = [
+      { scope: 'session', sessionId: 's1', apparatus: 'VT', cap: 1, used: 1, requested: 1, remaining: 0 },
+    ];
+    expect(regsAffectedByViolations(regs, violations).map((r) => r.id)).toEqual(['r1']);
+  });
+});
+
+describe('groupRegsByWaitlistKey', () => {
+  it('partitions regs sharing discipline/levelId/sessionId into one cohort each', () => {
+    const regs = [
+      baseReg({ id: 'r1', levelId: 'lvl-gold' }),
+      baseReg({ id: 'r2', levelId: 'lvl-gold' }),
+      baseReg({ id: 'r3', levelId: 'lvl-silver' }),
+    ];
+    const groups = groupRegsByWaitlistKey(regs);
+    expect(groups).toHaveLength(2);
+    expect(groups[0].key).toEqual({ discipline: 'WAG', levelId: 'lvl-gold', sessionId: null });
+    expect(groups[0].regs.map((r) => r.id)).toEqual(['r1', 'r2']);
+    expect(groups[1].regs.map((r) => r.id)).toEqual(['r3']);
   });
 });

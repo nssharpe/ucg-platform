@@ -987,6 +987,32 @@ export function resolveRegRemoval(
 }
 
 /**
+ * Given a set of registration ids that just got waitlisted (event-mgmt v2 P4
+ * T6 checkout-conflict resolution — NOT the ✕ removal path above, which
+ * deletes/reverts regs; here the regs SURVIVE as waitlist placeholders and
+ * only the cart line covering them needs to go away), returns the cart with
+ * every affected line's `refRegIds` shrunk to just the unaffected remainder.
+ * A line left with zero remaining refRegIds is dropped entirely (nothing left
+ * for it to charge); a line untouched by `waitlistedRegIds` passes through
+ * unchanged (same object reference, so callers can cheaply detect no-ops).
+ * Pure: no store/DB access, no id generation.
+ */
+export function shrinkOrDropCartLines(
+  cart: CartItem[],
+  waitlistedRegIds: Set<string>,
+): CartItem[] {
+  const next: CartItem[] = [];
+  for (const item of cart) {
+    if (!item.refRegIds || item.refRegIds.length === 0) { next.push(item); continue; }
+    const remaining = item.refRegIds.filter((id) => !waitlistedRegIds.has(id));
+    if (remaining.length === item.refRegIds.length) { next.push(item); continue; }
+    if (remaining.length === 0) continue; // fully covered by the waitlist — drop the line
+    next.push({ ...item, refRegIds: remaining });
+  }
+  return next;
+}
+
+/**
  * Refund amount for one item (event-mgmt v2 Phase 3, spec §H — Nate decision
  * 2026-07-10): the SERVICE FEE IS NEVER REFUNDED — this takes only the item's
  * own price (entry fee or add-on price), already excluding the service fee.
