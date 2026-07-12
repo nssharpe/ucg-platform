@@ -431,4 +431,9 @@ update it there; don't grow a rival list here. Operative notes only:
   `docs/reference/` (every "NAIGC" there reads as UCG — Nate 2026-07-06). Phasing
   V2-P0…P6 approved + all §N7 questions answered by Julia 2026-07-06. P0–P3 shipped
   (P2 = per-unit add-ons + camps, 2026-07-10; P3 = in-app refunds, 2026-07-11 — decisions
-  in spec §E3/§G/§H); next is P4 capacity & sessions (waitlists, by-session registration).
+  in spec §E3/§G/§H). **P4 capacity & sessions** (waitlists, by-session registration,
+  branch `feat/emv2-p4`) T1–T6 done: capacity/session engine + DB plumbing, event config
+  UI, checkout enforcement + hold stamping, by-session reg picker, cart hold countdown +
+  capacity-conflict dialog (waitlist-whole-group / pick-a-different-session / deliberate
+  split) + waitlist visibility (2026-07-12). **T7 (admin waitlist queue + promotion) is
+  the only P4 task left.**
