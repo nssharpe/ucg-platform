@@ -106,9 +106,17 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   // hard-deletes the waitlisted reg itself. This is the one case where the
   // member side DOES delete a registration (unlike the retain-and-blank rule
   // in saveRegs above) — a waitlisted reg was never paid, so it's just a
-  // placeholder, same as a brand-new unpaid entry line's ✕ removal.
+  // placeholder, same as a brand-new unpaid entry line's ✕ removal —
+  // EXCEPT a reg with paid history (see the guard below).
   const leaveWaitlist = (reg: Registration) => {
     if (!window.confirm('Leave the waitlist for this event?')) return;
+    // Belt-and-braces money guard (fable review of T6): NEVER hard-delete a
+    // reg with paid history (`updatedPending:true` — the paid→change-pending
+    // state). The capacity dialog's `isWaitlistable` gate should make this
+    // unreachable, but if any other/historical path waitlisted such a reg,
+    // deleting it would destroy a purchased registration — that's a refund
+    // action only. Cancel the group but keep the reg.
+    const keepPaidHistory = reg.updatedPending === true;
     mutate((d) => {
       if (reg.waitlistGroupId) {
         const idx = (d.waitlistGroups ?? []).findIndex((g) => g.id === reg.waitlistGroupId);
@@ -117,10 +125,28 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
           cancelWaitlistGroup(reg.waitlistGroupId);
         }
       }
-      d.registrations = d.registrations.filter((r) => r.id !== reg.id);
-      deleteRegistration(reg.id);
+      if (keepPaidHistory) {
+        const idx = d.registrations.findIndex((r) => r.id === reg.id);
+        if (idx >= 0) {
+          const next = { ...d.registrations[idx], waitlisted: false, waitlistGroupId: null };
+          d.registrations[idx] = next;
+          pushRegistration(next);
+        }
+      } else {
+        d.registrations = d.registrations.filter((r) => r.id !== reg.id);
+        deleteRegistration(reg.id);
+      }
     });
-    toast('Removed from the waitlist.');
+    if (keepPaidHistory) {
+      toast(
+        'Left the waitlist, but your registration was kept (it was an update to a paid registration, not '
+        + 'a new one). To undo the update, remove its change line from the cart; to cancel the registration '
+        + 'entirely, request a refund.',
+        { variant: 'error' },
+      );
+    } else {
+      toast('Removed from the waitlist.');
+    }
   };
 
   // Persist the member's own registration edits (6a). Modeled on Club.tsx

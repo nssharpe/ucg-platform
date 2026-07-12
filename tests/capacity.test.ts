@@ -12,6 +12,7 @@ import {
   waitlistGroupKeyFor,
   regsAffectedByViolations,
   groupRegsByWaitlistKey,
+  isWaitlistable,
   type CapacityViolation,
 } from '../src/lib/capacity';
 import type { Event, EventSession, Registration, WaitlistGroup } from '../src/lib/types';
@@ -551,5 +552,27 @@ describe('groupRegsByWaitlistKey', () => {
     expect(groups[0].key).toEqual({ discipline: 'WAG', levelId: 'lvl-gold', sessionId: null });
     expect(groups[0].regs.map((r) => r.id)).toEqual(['r1', 'r2']);
     expect(groups[1].regs.map((r) => r.id)).toEqual(['r3']);
+  });
+});
+
+describe('isWaitlistable (money-invariant gate, fable review of T6)', () => {
+  it('a never-paid pending reg (paid:false, no updatedPending) IS waitlistable', () => {
+    expect(isWaitlistable(baseReg({ paid: false }))).toBe(true);
+  });
+
+  it('paid undefined (never stamped) counts as unpaid — waitlistable', () => {
+    expect(isWaitlistable(baseReg({ paid: undefined }))).toBe(true);
+  });
+
+  it('a PAID reg is never waitlistable', () => {
+    expect(isWaitlistable(baseReg({ paid: true }))).toBe(false);
+  });
+
+  it('the updatedPending trap: a paid reg mid-change reads paid:false but still holds its purchased spot — NOT waitlistable', () => {
+    expect(isWaitlistable(baseReg({ paid: false, updatedPending: true }))).toBe(false);
+  });
+
+  it('a refunded reg is not waitlistable (nothing to waitlist)', () => {
+    expect(isWaitlistable(baseReg({ paid: false, refunded: true }))).toBe(false);
   });
 });

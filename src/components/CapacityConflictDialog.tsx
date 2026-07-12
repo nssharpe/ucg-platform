@@ -11,7 +11,7 @@
 import { useMemo, useState } from 'react';
 import { useDB, mutate } from '../lib/store';
 import { Modal } from './ui';
-import { groupRegsByWaitlistKey, regsAffectedByViolations, splitFit, type CapacityViolation } from '../lib/capacity';
+import { groupRegsByWaitlistKey, isWaitlistable, regsAffectedByViolations, splitFit, type CapacityViolation } from '../lib/capacity';
 import { shrinkOrDropCartLines } from '../lib/pricing';
 import { pushCart, pushRegistration, pushWaitlistGroup } from '../lib/supabase';
 import type { Registration, WaitlistGroup } from '../lib/types';
@@ -73,8 +73,12 @@ function waitlistGroups(
         waitlistedIds.add(reg.id);
         const idx = d.registrations.findIndex((r) => r.id === reg.id);
         if (idx >= 0) {
+          // NO `paid: false` here: callers only ever pass `isWaitlistable`
+          // regs (paid !== true already), and blindly clearing `paid` on
+          // anything else is exactly the paid-spot-release bug class the
+          // predicate exists to prevent — keep the write shape honest.
           const next: Registration = {
-            ...d.registrations[idx], waitlisted: true, waitlistGroupId: wg.id, holdExpiresAt: null, paid: false,
+            ...d.registrations[idx], waitlisted: true, waitlistGroupId: wg.id, holdExpiresAt: null,
           };
           d.registrations[idx] = next;
           pushRegistration(next);
@@ -108,6 +112,16 @@ export function CapacityConflictDialog({
 
   const affected = useMemo(() => regsAffectedByViolations(checkoutRegs, violations), [checkoutRegs, violations]);
 
+  // Money-invariant partition (fable review of T6): only never-paid regs may
+  // be flipped to waitlist placeholders. A paid reg mid-change
+  // (`updatedPending:true`) still holds its purchased spot — waitlisting it
+  // would release that spot, and "Leave waitlist" would then hard-delete a
+  // paid-history reg (deletion of paid regs is a refund action ONLY). Those
+  // regs are NEVER acted on here; the guidance below tells the payer the
+  // real alternative (✕ the change line to revert to the prior paid state).
+  const waitlistableAffected = useMemo(() => affected.filter(isWaitlistable), [affected]);
+  const blockedAffected = useMemo(() => affected.filter((r) => !isWaitlistable(r)), [affected]);
+
   const nameOf = (athleteId: string) => {
     const p = db.people.find((x) => x.id === athleteId);
     return p ? `${p.firstName} ${p.lastName}` : 'athlete';
@@ -129,11 +143,16 @@ export function CapacityConflictDialog({
 
   const canPickSession = event?.registrationMode === 'by-session' && violations.every((v) => v.scope === 'session');
 
+  const blockedNote = blockedAffected.length > 0
+    ? ` (${blockedAffected.map((r) => nameOf(r.athleteId)).join(', ')} kept their updated registration${blockedAffected.length === 1 ? '' : 's'} — remove the change from your cart to revert instead.)`
+    : '';
+
   const doWaitlistAll = () => {
-    const groups = groupRegsByWaitlistKey(affected);
+    if (waitlistableAffected.length === 0) return;
+    const groups = groupRegsByWaitlistKey(waitlistableAffected);
     waitlistGroups(groups, eventId, ownerKey, isClub);
-    const n = affected.length;
-    onResolved(`${n} ${n === 1 ? 'athlete was' : 'athletes were'} added to the waitlist for ${eventName}. We'll email you if a spot opens up.`);
+    const n = waitlistableAffected.length;
+    onResolved(`${n} ${n === 1 ? 'athlete was' : 'athletes were'} added to the waitlist for ${eventName}. We'll email you if a spot opens up.${blockedNote}`);
     onClose();
   };
 
@@ -144,18 +163,26 @@ export function CapacityConflictDialog({
     setSplitPreview({ fits, overflow });
   };
 
+  // Split preview partition: splitFit computes overflow purely on capacity —
+  // it may include non-waitlistable regs (a paid reg mid-change), which must
+  // stay in the cart untouched, never flipped. Only the waitlistable subset
+  // of the overflow is acted on.
+  const splitWaitlistable = splitPreview ? splitPreview.overflow.filter(isWaitlistable) : [];
+  const splitBlocked = splitPreview ? splitPreview.overflow.filter((r) => !isWaitlistable(r)) : [];
+
   const confirmSplit = () => {
-    if (!splitPreview) return;
-    // splitFit already computed exactly which regs overflow every configured
-    // cap — no further filtering needed, unlike the (a) path which must
-    // derive "affected" from the violations list.
-    const groups = groupRegsByWaitlistKey(splitPreview.overflow);
+    if (!splitPreview || splitWaitlistable.length === 0) return;
+    const groups = groupRegsByWaitlistKey(splitWaitlistable);
     waitlistGroups(groups, eventId, ownerKey, isClub);
-    const n = splitPreview.overflow.length;
+    const n = splitWaitlistable.length;
     const m = splitPreview.fits.length;
+    const keptNote = splitBlocked.length > 0
+      ? ` ${splitBlocked.map((r) => nameOf(r.athleteId)).join(', ')} kept their updated registration${splitBlocked.length === 1 ? '' : 's'} (still in your cart) — remove the change line to revert instead.`
+      : '';
     onResolved(
       `Registered ${m} ${m === 1 ? 'athlete' : 'athletes'}, waitlisted ${n} ${n === 1 ? 'athlete' : 'athletes'} for ${eventName}. `
-      + 'Retry checkout to pay for the athletes still in your cart.',
+      + 'Retry checkout to pay for the athletes still in your cart.'
+      + keptNote,
     );
     onClose();
   };
@@ -174,14 +201,22 @@ export function CapacityConflictDialog({
             </span>
           </div>
           <div>
-            <strong style={{ fontSize: 13 }}>Waitlist ({splitPreview.overflow.length}):</strong>{' '}
+            <strong style={{ fontSize: 13 }}>Waitlist ({splitWaitlistable.length}):</strong>{' '}
             <span style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
-              {splitPreview.overflow.length ? splitPreview.overflow.map((r) => nameOf(r.athleteId)).join(', ') : 'none'}
+              {splitWaitlistable.length ? splitWaitlistable.map((r) => nameOf(r.athleteId)).join(', ') : 'none'}
             </span>
           </div>
+          {splitBlocked.length > 0 && (
+            <div style={{ fontSize: 13, color: 'var(--coral-600)' }}>
+              {splitBlocked.map((r) => nameOf(r.athleteId)).join(', ')}
+              {splitBlocked.length === 1 ? "'s updated registration can't" : "' updated registrations can't"} be
+              waitlisted — they already hold a purchased spot. To undo the change, remove the change line
+              from your cart (✕) and their previous registration is restored.
+            </div>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
-          <button className="btn primary small" onClick={confirmSplit} disabled={splitPreview.overflow.length === 0}>
+          <button className="btn primary small" onClick={confirmSplit} disabled={splitWaitlistable.length === 0}>
             Confirm split
           </button>
           <button className="btn ghost small" onClick={() => setSplitPreview(null)}>← Back</button>
@@ -198,16 +233,24 @@ export function CapacityConflictDialog({
       <p style={{ fontSize: 13.5, marginBottom: 14 }}>
         Choose how to proceed — nothing has changed yet.
       </p>
+      {blockedAffected.length > 0 && (
+        <p style={{ fontSize: 13, color: 'var(--coral-600)', marginBottom: 14 }}>
+          {blockedAffected.map((r) => nameOf(r.athleteId)).join(', ')}
+          {blockedAffected.length === 1 ? "'s updated registration can't" : "' updated registrations can't"} be
+          waitlisted — they already hold a purchased spot for this event. To undo the change, remove the
+          change line from your cart (✕) and their previous registration is restored.
+        </p>
+      )}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <button className="btn primary small" onClick={doWaitlistAll}>
-          Waitlist the whole group ({affected.length})
+        <button className="btn primary small" onClick={doWaitlistAll} disabled={waitlistableAffected.length === 0}>
+          Waitlist the whole group ({waitlistableAffected.length})
         </button>
         {canPickSession && (
           <button className="btn ghost small" onClick={() => { onClose(); onPickSession(eventId); }}>
             Pick a different session
           </button>
         )}
-        <button className="btn ghost small" onClick={computeSplit} disabled={!event}>
+        <button className="btn ghost small" onClick={computeSplit} disabled={!event || waitlistableAffected.length === 0}>
           Register who fits, waitlist the rest
         </button>
         <button className="btn ghost small" onClick={onClose}>Cancel — back to cart</button>

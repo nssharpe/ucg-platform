@@ -343,6 +343,24 @@ export function splitFit(
 // session) cohorts `WaitlistGroup` rows key on (a `WaitlistGroup` is a whole
 // cohort queuing together — see its doc comment in ./types).
 
+/**
+ * True if a registration may be flipped to a waitlist placeholder. ONLY a
+ * never-paid registration qualifies: `paid !== true && updatedPending !==
+ * true` (and not refunded). The `updatedPending` half is the money-invariant
+ * trap this exists to close: an already-PAID reg edited into a chargeable
+ * change reads `paid:false, updatedPending:true` while its change fee sits
+ * in the cart — but the athlete still HOLDS their purchased spot
+ * (`isOccupying` counts updatedPending as occupying). Waitlisting it would
+ * silently release a paid-for spot, and "Leave waitlist" hard-deletes
+ * waitlisted regs — for a paid-history reg, deletion is a REFUND action
+ * only, never a cart-flow side effect. The correct resolution for a
+ * non-waitlistable conflicted reg is removing the change line from the cart
+ * (✕), which reverts the reg to its prior paid state.
+ */
+export function isWaitlistable(reg: Registration): boolean {
+  return reg.paid !== true && reg.updatedPending !== true && !reg.refunded;
+}
+
 /** The (discipline, levelId, sessionId) key a registration's waitlist group
  *  would key on — mirrors `WaitlistGroup`'s own grouping columns exactly. */
 export interface WaitlistGroupKey {

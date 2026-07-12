@@ -1103,16 +1103,24 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   // waitlist group this athlete's waitlisted regs at THIS event belong to
   // (status → 'cancelled', the only client-writable transition — there is no
   // client DELETE policy on waitlist_groups by design) and hard-deletes the
-  // waitlisted regs themselves. Unlike the member-side ✕/refund rules
-  // (never delete a PAID reg), a waitlisted reg was never paid — it's a
-  // placeholder with no cart line, so deleting it is the correct undo, same
-  // as `removeCartItemWithSync`'s 'delete-registration' action for a
-  // brand-new unpaid entry.
+  // never-paid waitlisted regs. A waitlisted reg is normally a placeholder
+  // with no cart line, so deleting it is the correct undo, same as
+  // `removeCartItemWithSync`'s 'delete-registration' action for a brand-new
+  // unpaid entry — EXCEPT any reg with paid history (see guard below).
   const leaveWaitlist = (athleteId: string) => {
-    const regs = regsFor(athleteId).filter((r) => r.waitlisted);
-    if (regs.length === 0) return;
+    const allWl = regsFor(athleteId).filter((r) => r.waitlisted);
+    if (allWl.length === 0) return;
     if (!window.confirm(`Remove ${nameOf(athleteId)} from the waitlist for ${event.name}?`)) return;
-    const groupIds = [...new Set(regs.map((r) => r.waitlistGroupId).filter((id): id is string => !!id))];
+    // Belt-and-braces money guard (fable review of T6): NEVER hard-delete a
+    // reg with paid history (`updatedPending:true` — the paid→change-pending
+    // state). The dialog's `isWaitlistable` gate should make this
+    // unreachable, but if any other/historical path waitlisted such a reg,
+    // deleting it here would destroy a purchased registration — deletion of
+    // a paid reg is a refund action only. Cancel the group but keep those
+    // regs (waitlisted flag cleared so they stop reading as placeholders).
+    const deletable = allWl.filter((r) => r.updatedPending !== true);
+    const kept = allWl.filter((r) => r.updatedPending === true);
+    const groupIds = [...new Set(allWl.map((r) => r.waitlistGroupId).filter((id): id is string => !!id))];
     mutate((d) => {
       for (const gid of groupIds) {
         const idx = (d.waitlistGroups ?? []).findIndex((g) => g.id === gid);
@@ -1121,11 +1129,28 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
           cancelWaitlistGroup(gid);
         }
       }
-      const ids = new Set(regs.map((r) => r.id));
+      const ids = new Set(deletable.map((r) => r.id));
       d.registrations = d.registrations.filter((r) => !ids.has(r.id));
       for (const id of ids) deleteRegistration(id);
+      for (const reg of kept) {
+        const idx = d.registrations.findIndex((r) => r.id === reg.id);
+        if (idx >= 0) {
+          const next = { ...d.registrations[idx], waitlisted: false, waitlistGroupId: null };
+          d.registrations[idx] = next;
+          pushRegistration(next);
+        }
+      }
     });
-    toast('Removed from the waitlist.');
+    if (kept.length > 0) {
+      toast(
+        'Left the waitlist, but a previously-purchased registration was kept (it was an update to a paid '
+        + 'registration, not a new one). To undo the update, remove its change line from the cart; to cancel '
+        + 'the registration entirely, request a refund.',
+        { variant: 'error' },
+      );
+    } else {
+      toast('Removed from the waitlist.');
+    }
   };
 
   // Cross-club lock (3d): the OTHER club this athlete is already PAID-registered
