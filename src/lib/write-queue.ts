@@ -19,6 +19,13 @@ export type WriteOp =
   | { kind: 'upsert'; table: string; rows: Record<string, unknown>[]; onConflict?: string }
   | { kind: 'delete'; table: string; match: Record<string, unknown> }
   | { kind: 'replace'; table: string; match: Record<string, unknown>; rows: Record<string, unknown>[] }
+  // A targeted column UPDATE (not a full-row upsert) — needed when RLS grants
+  // UPDATE on only specific columns of an existing row (e.g. waitlist_groups'
+  // client-cancel path, which may touch ONLY `status`); an upsert's ON
+  // CONFLICT DO UPDATE would fail there since Postgres builds the full INSERT
+  // tuple (including NOT NULL columns absent from `patch`) before the conflict
+  // is even resolved.
+  | { kind: 'update'; table: string; match: Record<string, unknown>; patch: Record<string, unknown> }
   // A security-definer RPC that performs its own delete+insert atomically,
   // server-side, with an authorization check made ONCE up front — for
   // replace-style writes where a plain client-side delete-then-insert under

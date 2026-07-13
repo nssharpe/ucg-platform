@@ -626,6 +626,15 @@ export type RegDisciplineEntry = {
   apparatus: string[];
   /** Per-event level overrides (event code → levelId); T&T uses this. */
   apparatusLevels?: Record<string, string>;
+  /** By-session-mode session pick (event-mgmt v2 P4). Absent/null are
+   *  equivalent (by-discipline events, or no session assigned yet) — compared
+   *  as `?? null` below so an unset-vs-unset pair never registers as a
+   *  "change". Callers building the BEFORE side of a brand-new registration
+   *  never pass one through `changeIsEligible` at all (a new reg has no
+   *  `existing` row, so `isEditingExisting` is false and the eligibility
+   *  check is skipped entirely) — so a first-time by-session assignment is
+   *  never mistaken for a chargeable session move. */
+  sessionId?: string | null;
 };
 
 /** Normalized before/after snapshot of an athlete's whole registration. */
@@ -653,10 +662,15 @@ function apparatusLevelsDiffer(
 /**
  * Is the change from `before` → `after` ELIGIBLE for a chargeable change?
  * Returns true if ANY of: a discipline was ADDED; a discipline-level (`levelId`)
- * or T&T apparatus-level (`apparatusLevels`) changed for a discipline in both; the
- * club changed; or the athlete was swapped. Adding/removing apparatus WITHIN an
- * already-registered discipline, REMOVING a discipline, or no change at all are
- * NOT (on their own) eligible.
+ * or T&T apparatus-level (`apparatusLevels`) changed for a discipline in both;
+ * a SESSION move (by-session events, emv2 P4 — see `RegDisciplineEntry.sessionId`)
+ * for a discipline in both; the club changed; or the athlete was swapped.
+ * Adding/removing apparatus WITHIN an already-registered discipline, REMOVING
+ * a discipline, or no change at all are NOT (on their own) eligible.
+ *
+ * A level change that ALSO forces a session move (the new level no longer
+ * fits the old session) still returns true only once — the level branch below
+ * already caught it, so callers charge exactly one change fee, never two.
  */
 export function changeIsEligible(before: RegChangeState, after: RegChangeState): boolean {
   // Change club or swap athlete.
@@ -671,12 +685,13 @@ export function changeIsEligible(before: RegChangeState, after: RegChangeState):
     if (!beforeMap.has(disc)) return true;
   }
 
-  // Level change (discipline-level or T&T apparatus-level) for a shared discipline.
+  // Level / session change for a shared discipline.
   for (const [disc, a] of afterMap) {
     const b = beforeMap.get(disc);
     if (!b) continue;
     if (a.levelId !== b.levelId) return true;
     if (apparatusLevelsDiffer(a.apparatusLevels, b.apparatusLevels)) return true;
+    if ((a.sessionId ?? null) !== (b.sessionId ?? null)) return true;
   }
 
   // Note: a REMOVED discipline, or apparatus add/remove within an existing
@@ -706,6 +721,7 @@ export function regChangeHasDiff(before: RegChangeState, after: RegChangeState):
     if (!b || !a) return true; // added or removed discipline
     if (a.levelId !== b.levelId) return true;
     if (apparatusLevelsDiffer(a.apparatusLevels, b.apparatusLevels)) return true;
+    if ((a.sessionId ?? null) !== (b.sessionId ?? null)) return true;
     const aSet = new Set(a.apparatus);
     const bSet = new Set(b.apparatus);
     if (aSet.size !== bSet.size) return true;
@@ -968,6 +984,32 @@ export function resolveRegRemoval(
   }
 
   return { toDelete, toRevert, kept };
+}
+
+/**
+ * Given a set of registration ids that just got waitlisted (event-mgmt v2 P4
+ * T6 checkout-conflict resolution — NOT the ✕ removal path above, which
+ * deletes/reverts regs; here the regs SURVIVE as waitlist placeholders and
+ * only the cart line covering them needs to go away), returns the cart with
+ * every affected line's `refRegIds` shrunk to just the unaffected remainder.
+ * A line left with zero remaining refRegIds is dropped entirely (nothing left
+ * for it to charge); a line untouched by `waitlistedRegIds` passes through
+ * unchanged (same object reference, so callers can cheaply detect no-ops).
+ * Pure: no store/DB access, no id generation.
+ */
+export function shrinkOrDropCartLines(
+  cart: CartItem[],
+  waitlistedRegIds: Set<string>,
+): CartItem[] {
+  const next: CartItem[] = [];
+  for (const item of cart) {
+    if (!item.refRegIds || item.refRegIds.length === 0) { next.push(item); continue; }
+    const remaining = item.refRegIds.filter((id) => !waitlistedRegIds.has(id));
+    if (remaining.length === item.refRegIds.length) { next.push(item); continue; }
+    if (remaining.length === 0) continue; // fully covered by the waitlist — drop the line
+    next.push({ ...item, refRegIds: remaining });
+  }
+  return next;
 }
 
 /**

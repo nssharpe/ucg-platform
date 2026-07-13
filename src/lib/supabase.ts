@@ -8,10 +8,11 @@
 import { createClient, type SupabaseClient, type RealtimePostgresChangesPayload, type PostgrestError } from '@supabase/supabase-js';
 import type {
   AccountInvite, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, EventAdmin, Invoice, Level, Event, Membership, MembershipType, Payment, Region, Registration, RefundRequest, SanctionRequest, SanctionVote, Score, Season,
-  WaiverDocument, WaiverSignature,
+  WaiverDocument, WaiverSignature, WaitlistGroup,
 } from './types';
 import { writeQueue, type WriteOp, type ExecResult } from './write-queue';
 import type { Database } from './database.types';
+import type { CapacityViolation } from './capacity';
 
 /** A table's Row type — the shape Supabase returns, used to type the DB→app
  *  row mappers so a schema change (renamed/dropped column) fails the build. */
@@ -87,6 +88,12 @@ async function executeWriteOp(op: WriteOp): Promise<ExecResult> {
     const { error } = await supabase.rpc(op.fn, op.args);
     return { error };
   }
+  if (op.kind === 'update') {
+    let upd = supabase.from(op.table).update(op.patch);
+    for (const [k, v] of Object.entries(op.match)) upd = upd.eq(k, v);
+    const { error } = await upd;
+    return { error };
+  }
   // replace: delete the matched set, then insert the new rows.
   let del = supabase.from(op.table).delete();
   for (const [k, v] of Object.entries(op.match)) del = del.eq(k, v);
@@ -116,6 +123,13 @@ function remoteDeleteWhere(table: string, match: Record<string, unknown>) {
 /** Queue a delete by primary key. */
 function remoteDelete(table: string, id: string, column = 'id') {
   remoteDeleteWhere(table, { [column]: id });
+}
+
+/** Queue a targeted column UPDATE by primary key (not a full-row upsert) —
+ *  for rows where RLS grants UPDATE on only specific columns. */
+function remoteUpdate(table: string, id: string, patch: Record<string, unknown>, column = 'id') {
+  if (!supabase) return;
+  writeQueue.enqueue({ kind: 'update', table, match: { [column]: id }, patch }, table);
 }
 
 /** Queue a delete-all-then-insert for a small child collection. */
@@ -231,12 +245,13 @@ const eventToRow = (m: Event) => ({
   late_reg: m.lateReg ?? null, director: m.director ?? null, capacity: m.capacity ?? null,
   confirmation_email: m.confirmationEmail ?? null,
   owner: m.owner ?? null, owner_checklist: m.ownerChecklist ?? null,
+  registration_mode: m.registrationMode ?? 'by-discipline',
 });
 
 const sessionToRow = (eventId: string, s: Event['sessions'][number]) => ({
   id: s.id, event_id: eventId, name: s.name, discipline: s.discipline,
   date: s.date || null, time: s.time || null, level_ids: s.levelIds,
-  phase: s.phase ?? null,
+  phase: s.phase ?? null, max_routines: s.maxRoutines ?? null,
 });
 
 const squadToRow = (sessionId: string, q: Event['sessions'][number]['squads'][number], i: number) => ({
@@ -252,6 +267,8 @@ const registrationToRow = (r: Registration, squadId: string | null = null) => ({
   partner_athlete_id: r.partnerAthleteId ?? null, apparatus_levels: r.apparatusLevels ?? null,
   paid: r.paid ?? false, updated_pending: r.updatedPending ?? false,
   camp_survey: r.campSurvey ?? null,
+  waitlisted: r.waitlisted ?? false, waitlist_group_id: r.waitlistGroupId ?? null,
+  hold_expires_at: r.holdExpiresAt ?? null,
 });
 
 /** squad_id for every registration, derived from session.squads[].athleteRegIds. */
@@ -270,6 +287,9 @@ const rowToRegistration = (r: Row<'registrations'>): Registration => ({
   ...(r.partner_athlete_id ? { partnerAthleteId: r.partner_athlete_id } : {}),
   ...(r.apparatus_levels ? { apparatusLevels: r.apparatus_levels as Registration['apparatusLevels'] } : {}),
   ...(r.camp_survey ? { campSurvey: r.camp_survey as Registration['campSurvey'] } : {}),
+  ...((r as { waitlisted?: boolean | null }).waitlisted ? { waitlisted: true } : {}),
+  ...((r as { waitlist_group_id?: string | null }).waitlist_group_id ? { waitlistGroupId: (r as { waitlist_group_id?: string | null }).waitlist_group_id } : {}),
+  ...((r as { hold_expires_at?: string | null }).hold_expires_at ? { holdExpiresAt: (r as { hold_expires_at?: string | null }).hold_expires_at } : {}),
   // READ-ONLY: never included in registrationToRow's push mapping (see Registration.createdAt).
   ...(r.created_at ? { createdAt: r.created_at } : {}),
 });
@@ -383,6 +403,27 @@ const rowToRefundRequest = (r: {
   status: r.status as RefundRequest['status'], reviewedBy: r.reviewed_by, reviewedAt: r.reviewed_at,
   refundAmountCents: r.refund_amount_cents, stripeRefundId: r.stripe_refund_id,
 });
+// waitlist_groups is not yet in the generated database.types.ts (this
+// migration hasn't been applied/regenerated against at write time) — inline
+// row type like rowToPayment/rowToEventAdmin/rowToRefundRequest. Unlike
+// refund_requests, clients DO write this table directly (self/manager
+// queue-join + cancel), so both directions are implemented here.
+const waitlistGroupToRow = (g: WaitlistGroup) => ({
+  id: g.id, event_id: g.eventId, club_id: g.clubId ?? null, person_id: g.personId ?? null,
+  discipline: g.discipline, level_id: g.levelId ?? null, session_id: g.sessionId ?? null,
+  status: g.status, queued_at: g.queuedAt, notified_at: g.notifiedAt ?? null,
+  hold_expires_at: g.holdExpiresAt ?? null,
+});
+const rowToWaitlistGroup = (r: {
+  id: string; event_id: string; club_id: string | null; person_id: string | null;
+  discipline: string; level_id: string | null; session_id: string | null; status: string;
+  queued_at: string; notified_at: string | null; hold_expires_at: string | null; created_at: string;
+}): WaitlistGroup => ({
+  id: r.id, eventId: r.event_id, clubId: r.club_id, personId: r.person_id,
+  discipline: r.discipline as WaitlistGroup['discipline'], levelId: r.level_id, sessionId: r.session_id,
+  status: r.status as WaitlistGroup['status'], queuedAt: r.queued_at, notifiedAt: r.notified_at,
+  holdExpiresAt: r.hold_expires_at, createdAt: r.created_at,
+});
 const rowToWaiverSignature = (r: Row<'waiver_signatures'>): WaiverSignature => ({
   id: r.id, personId: r.person_id, seasonId: r.season_id, waiverType: r.waiver_type as WaiverSignature['waiverType'],
   waiverDocumentId: r.waiver_document_id, contentHash: r.content_hash,
@@ -403,6 +444,26 @@ export function pushClubMembership(cm: ClubMembership) {
   remoteUpsert('club_memberships', [{ id: cm.id, club_id: cm.clubId, season_id: cm.seasonId, status: cm.status, granted_by_admin: cm.grantedByAdmin }]);
 }
 export function deleteClubMembership(id: string) { remoteDelete('club_memberships', id, 'id'); }
+/** Insert a waitlist group (event-mgmt v2 P4 T1): a person queuing themselves
+ *  or a manager queuing their own club's cohort. RLS pins status='waiting' on
+ *  insert. NOTE: effectively insert-only for clients — `authenticated` holds a
+ *  column-level UPDATE grant on `status` ONLY, so this upsert's conflict-update
+ *  path (which writes every column) is denied for an existing row. Cancel is a
+ *  targeted UPDATE to status='cancelled' (the only client-writable transition);
+ *  all other transitions are service-role. No client DELETE policy exists.
+ *  Later P4 tasks add the actual queue-join/cancel call sites. */
+export function pushWaitlistGroup(g: WaitlistGroup) { remoteUpsert('waitlist_groups', [waitlistGroupToRow(g)]); }
+/** Cancel a waitlist group (event-mgmt v2 P4 T6 "Leave waitlist" — self or
+ *  club-manager): the only client-writable status transition on an EXISTING
+ *  row. Must go through the targeted `remoteUpdate` column-update, NOT
+ *  `pushWaitlistGroup`'s upsert — RLS grants UPDATE on `status` alone, and an
+ *  upsert's ON CONFLICT DO UPDATE path writes every column, so it's denied
+ *  for a row that already exists. */
+export function cancelWaitlistGroup(id: string) { remoteUpdate('waitlist_groups', id, { status: 'cancelled' }); }
+/** No client DELETE RLS policy exists on waitlist_groups (rows are
+ *  cancelled via status update, never deleted, by design); this exists only
+ *  for admin-tooling/service-role symmetry with the other delete* helpers. */
+export function deleteWaitlistGroup(id: string) { remoteDelete('waitlist_groups', id, 'id'); }
 /** Upsert a Stripe payment record. In practice the service-role Edge Functions
  *  write these (clients only read own rows via RLS); this exists for symmetry +
  *  any admin tooling. Money fields are CENTS. */
@@ -1005,6 +1066,23 @@ async function edgeErrorMessage(error: { message: string }): Promise<string> {
   return msg;
 }
 
+/** Like `edgeErrorMessage`, but also returns the parsed JSON body (if any) so
+ *  a caller that cares about a structured `code` field (event-mgmt v2 P4 T6:
+ *  `create-checkout-session`'s `capacity-exceeded`/`session-required`
+ *  rejections) can branch on it instead of string-matching `error`. */
+async function edgeErrorBody(error: { message: string }): Promise<{ message: string; body?: Record<string, unknown> }> {
+  let msg = error.message;
+  let body: Record<string, unknown> | undefined;
+  try {
+    const ctx = (error as { context?: Response }).context;
+    if (ctx && typeof ctx.json === 'function') {
+      body = await ctx.json();
+      if (body?.error) msg = String(body.error);
+    }
+  } catch { /* fall back to error.message */ }
+  return { message: msg, body };
+}
+
 /** Notify a club's managers that items were pushed to their cart. Fire-and-forget
  *  from the caller's perspective — failures are non-fatal (the cart item still
  *  exists and shows on the managers' dashboard). Returns the function result. */
@@ -1047,16 +1125,61 @@ export async function sendMembershipWelcome(
  *  no `clientSecret` — the caller must check `free` and skip mounting Stripe
  *  entirely (see `CartCheckout.tsx`). The payment row is already `paid` by
  *  the time this resolves. */
+/** A rejected checkout because the cart's own registrations would blow a
+ *  configured capacity cap at `eventId` (event-mgmt v2 P4 T6). `violations`
+ *  names exactly which caps and by how much — see `CapacityViolation`. */
+export interface CheckoutCapacityError {
+  code: 'capacity-exceeded';
+  eventId: string;
+  eventName: string;
+  violations: CapacityViolation[];
+}
+
+/** A rejected checkout because a by-session event has an entry with no (or an
+ *  invalid) session picked — a structural error, not a capacity overage. */
+export interface CheckoutSessionRequiredError {
+  code: 'session-required';
+  eventId: string;
+  eventName: string;
+  regIds: string[];
+}
+
 export async function createCheckoutSession(args: {
   cartItemIds: string[];
   couponCode?: string;
 }): Promise<{
   ok: boolean; clientSecret?: string; sessionId?: string; paymentId?: string; free?: boolean;
   amountSubtotal?: number; discountAmount?: number; serviceFee?: number; error?: string;
+  capacityError?: CheckoutCapacityError; sessionRequiredError?: CheckoutSessionRequiredError;
 }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('create-checkout-session', { body: args });
-  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  if (error) {
+    const { message, body } = await edgeErrorBody(error);
+    if (body?.code === 'capacity-exceeded') {
+      return {
+        ok: false, error: message,
+        capacityError: {
+          code: 'capacity-exceeded',
+          eventId: body.eventId as string,
+          eventName: body.eventName as string,
+          violations: (body.violations as CapacityViolation[]) ?? [],
+        },
+      };
+    }
+    if (body?.code === 'session-required') {
+      return {
+        ok: false, error: message,
+        sessionRequiredError: {
+          code: 'session-required',
+          eventId: body.eventId as string,
+          eventName: body.eventName as string,
+          regIds: (body.regIds as string[]) ?? [],
+        },
+      };
+    }
+    return { ok: false, error: message };
+  }
   return data as {
     ok: boolean; clientSecret?: string; sessionId?: string; paymentId?: string; free?: boolean;
     amountSubtotal?: number; discountAmount?: number; serviceFee?: number;
@@ -1381,6 +1504,54 @@ export async function processRefund(
   return data as { ok: boolean; refundAmountCents?: number; stripeRefundId?: string | null; error?: string };
 }
 
+/** Admin/sanctioning-only waitlist override (event-mgmt v2 P4 T7): 'promote'
+ *  force-notifies a 'waiting' group right now, IGNORING capacity; 'requeue'
+ *  forces a 'notified' group back to 'waiting' at the back of the queue.
+ *  Server-side authz + the actual DB writes (waitlist_groups' RLS only lets a
+ *  client cancel its OWN group) — this is the one legitimate override path. */
+export async function manageWaitlist(
+  groupId: string,
+  action: 'promote' | 'requeue',
+): Promise<{ ok: boolean; status?: string; holdExpiresAt?: string; queuedAt?: string; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('manage-waitlist', { body: { groupId, action } });
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  return data as { ok: boolean; status?: string; holdExpiresAt?: string; queuedAt?: string; error?: string };
+}
+
+/** One row of the event waitlist queue as returned by manage-waitlist's
+ *  read-only 'list' action (names/counts resolved server-side). */
+export interface WaitlistQueueRow {
+  id: string;
+  clubId: string | null;
+  personId: string | null;
+  name: string;
+  discipline: string;
+  levelId: string | null;
+  sessionId: string | null;
+  status: 'waiting' | 'notified';
+  queuedAt: string;
+  notifiedAt: string | null;
+  holdExpiresAt: string | null;
+  regCount: number;
+}
+
+/** Event waitlist queue (event-mgmt v2 P4 T7), served by the manage-waitlist
+ *  edge function's 'list' action rather than a client waitlist_groups read —
+ *  the table's RLS deliberately only exposes a group to its OWN club/person
+ *  (plus admins), so hosts/sanctioning get visibility through this
+ *  server-side-authorized read (admin/sanctioning/host manager/event-admin
+ *  grantee) instead of an RLS relaxation. `canManage` reports whether the
+ *  caller may promote/requeue (admin/sanctioning). */
+export async function fetchEventWaitlist(
+  eventId: string,
+): Promise<{ ok: boolean; canManage?: boolean; groups?: WaitlistQueueRow[]; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('manage-waitlist', { body: { action: 'list', eventId } });
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  return data as { ok: boolean; canManage?: boolean; groups?: WaitlistQueueRow[]; error?: string };
+}
+
 /** Token lookup for the guardian signing page via SECURITY DEFINER RPC
  *  (the table itself is not publicly readable). */
 export async function fetchSignRequest(token: string): Promise<FnReturns<'get_waiver_sign_request'>[number] | null> {
@@ -1410,7 +1581,7 @@ export async function loadAll(): Promise<DB | null> {
       seasonsR, levelsR, clubsR, clubManagersR, peopleR, altClubsR, membershipsR,
       eventsR, sessionsR, squadsR, registrationsR, scoresR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
       clubRequestsR, appSettingsR, accountInvitesR, sanctionRequestsR, sanctionVotesR,
-      waiverDocsR, waiverSigsR, clubMembershipsR, paymentsR, eventAdminsR, refundRequestsR,
+      waiverDocsR, waiverSigsR, clubMembershipsR, paymentsR, eventAdminsR, refundRequestsR, waitlistGroupsR,
     ] = await Promise.all([
       supabase.from('seasons').select('*'),
       supabase.from('levels').select('*'),
@@ -1439,6 +1610,7 @@ export async function loadAll(): Promise<DB | null> {
       supabase.from('payments').select('*'),            // S1; tolerated if absent
       supabase.from('event_admins').select('*'),        // emv2 P1 T3; tolerated if absent
       supabase.from('refund_requests').select('*'),     // emv2 P3 T4; tolerated if absent
+      supabase.from('waitlist_groups').select('*'),     // emv2 P4 T1; tolerated if absent
     ]);
 
     // club_requests may not exist on a pre-0005 DB — tolerate its error, fail on the rest.
@@ -1506,6 +1678,9 @@ export async function loadAll(): Promise<DB | null> {
         id: r.id, name: r.name, discipline: r.discipline, date: r.date ?? '', time: r.time ?? '',
         levelIds: r.level_ids ?? [], squads: squadsBySession.get(r.id) ?? [],
         ...(r.phase ? { phase: r.phase } : {}),
+        ...((r as { max_routines?: Record<string, number> | null }).max_routines
+          ? { maxRoutines: (r as { max_routines?: Record<string, number> | null }).max_routines as Record<string, number> }
+          : {}),
       });
       sessionsByEvent.set(r.event_id, arr);
     }
@@ -1539,6 +1714,9 @@ export async function loadAll(): Promise<DB | null> {
       ...(r.created_at ? { createdAt: r.created_at } : {}),
       ...(r.owner ? { owner: r.owner as Event['owner'] } : {}),
       ...(r.owner_checklist ? { ownerChecklist: r.owner_checklist as Event['ownerChecklist'] } : {}),
+      ...((r as { registration_mode?: string | null }).registration_mode === 'by-session'
+        ? { registrationMode: 'by-session' as const }
+        : {}),
     }));
 
     const registrations: Registration[] = (registrationsR.data ?? []).map(rowToRegistration);
@@ -1619,6 +1797,8 @@ export async function loadAll(): Promise<DB | null> {
       .map(rowToEventAdmin);
     const refundRequests: RefundRequest[] = (refundRequestsR.error ? [] : refundRequestsR.data ?? [])
       .map(rowToRefundRequest);
+    const waitlistGroups: WaitlistGroup[] = (waitlistGroupsR.error ? [] : waitlistGroupsR.data ?? [])
+      .map(rowToWaitlistGroup);
 
     return {
       seasons, levels, clubs, people, events, registrations, scores, invoices, coupons,
@@ -1633,6 +1813,7 @@ export async function loadAll(): Promise<DB | null> {
       ...(payments.length ? { payments } : {}),
       ...(eventAdmins.length ? { eventAdmins } : {}),
       ...(refundRequests.length ? { refundRequests } : {}),
+      ...(waitlistGroups.length ? { waitlistGroups } : {}),
     };
   } catch (e) {
     console.error('[supabase] loadAll threw:', e);

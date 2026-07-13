@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useDB, syncFromSupabase } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { useToast, useFmtDate } from '../components/ui-hooks';
@@ -8,23 +8,27 @@ import { fmtMoney } from '../lib/scoring';
 import { removeCartItemWithSync, cleanupCrossClubCart } from '../lib/cart-sync';
 import { downloadCartInvoice, downloadReceipt, invoiceTotal } from '../lib/receipt';
 import { CartCheckout } from '../components/CartCheckout';
+import { CapacityConflictDialog } from '../components/CapacityConflictDialog';
+import { hasCapacityConfig } from '../lib/capacity';
+import type { CheckoutCapacityError } from '../lib/supabase';
 import type { CartItem, Club, DB, Invoice } from '../lib/types';
 
 const sum = (items: CartItem[]) => items.reduce((s, i) => s + i.amount, 0);
 
 /** Group a cart's items the same way everywhere: a "Memberships" bucket, a
- *  bucket per event (matched by name appearing in the label), and an "Other"
- *  bucket for anything left over. Shared by the personal cart and every
- *  managed-club section so grouping logic isn't duplicated/drifted. */
+ *  bucket per event (matched by name appearing in the label, carrying the
+ *  event's id for capacity-hold lookups), and an "Other" bucket for anything
+ *  left over. Shared by the personal cart and every managed-club section so
+ *  grouping logic isn't duplicated/drifted. */
 function groupCartItems(cart: CartItem[], db: DB) {
   const membership: CartItem[] = [];
-  const byEvent = new Map<string, { eventName: string; slug: string | null; items: CartItem[] }>();
+  const byEvent = new Map<string, { eventId: string; eventName: string; slug: string | null; items: CartItem[] }>();
   const other: CartItem[] = [];
   for (const item of cart) {
     if (item.kind === 'membership') { membership.push(item); continue; }
     const event = db.events.find((m) => item.label.includes(m.name));
     if (event) {
-      const g = byEvent.get(event.id) ?? { eventName: event.name, slug: event.slug, items: [] };
+      const g = byEvent.get(event.id) ?? { eventId: event.id, eventName: event.name, slug: event.slug, items: [] };
       g.items.push(item);
       byEvent.set(event.id, g);
     } else {
@@ -34,9 +38,65 @@ function groupCartItems(cart: CartItem[], db: DB) {
   return { membership, events: [...byEvent.values()], other };
 }
 
-function CartCard({ title, items, returnTo, returnLabel, onCheckout, onRemove, onPrintInvoice }: {
+/** Earliest live (not-yet-expired-in-the-past... this returns it regardless of
+ *  expiry — the caller decides "live" vs "expired") `holdExpiresAt` among the
+ *  registrations a group of cart lines reference, epoch ms, or `null` if none
+ *  hold a spot at all (uncapped event, or nothing hold-stamped yet). */
+function earliestHoldMs(items: CartItem[], db: DB): number | null {
+  let earliest: number | null = null;
+  for (const item of items) {
+    for (const regId of item.refRegIds ?? []) {
+      const reg = db.registrations.find((r) => r.id === regId);
+      if (!reg?.holdExpiresAt) continue;
+      const t = new Date(reg.holdExpiresAt).getTime();
+      if (Number.isNaN(t)) continue;
+      if (earliest === null || t < earliest) earliest = t;
+    }
+  }
+  return earliest;
+}
+
+function fmtCountdown(msLeft: number): string {
+  const totalSec = Math.max(0, Math.ceil(msLeft / 1000));
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+/** Ticketing-site-style cart hold countdown (event-mgmt v2 P4 T6): shown on a
+ *  capacity-configured event's cart card when at least one referenced
+ *  registration carries a live soft hold. Ticks every second; once the
+ *  earliest hold expires it swaps to a plain-language warning instead of
+ *  disappearing — items are NEVER auto-removed, they're just re-checked for
+ *  real at checkout. Module-scope component (never nested in a render body —
+ *  ESLint's react-refresh rule). */
+function HoldCountdown({ expiresAtMs }: { expiresAtMs: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const msLeft = expiresAtMs - now;
+  if (msLeft <= 0) {
+    return (
+      <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--coral-600)' }}>
+        Hold expired — spots are no longer guaranteed; they're re-checked at checkout.
+      </p>
+    );
+  }
+  return (
+    <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--navy-700)' }}>
+      Spots held — cart expires in {fmtCountdown(msLeft)}
+    </p>
+  );
+}
+
+function CartCard({ title, items, returnTo, returnLabel, onCheckout, onRemove, onPrintInvoice, holdExpiresAtMs }: {
   title: string; items: CartItem[]; returnTo: string; returnLabel: string; onCheckout: () => void;
   onRemove: (item: CartItem) => void; onPrintInvoice: () => void;
+  /** event-mgmt v2 P4 T6: earliest live cart-add hold among this card's
+   *  registrations, epoch ms — only set for capacity-configured events. */
+  holdExpiresAtMs?: number | null;
 }) {
   return (
     <div className="card card-pad">
@@ -44,6 +104,7 @@ function CartCard({ title, items, returnTo, returnLabel, onCheckout, onRemove, o
         <h3 className="card-title" style={{ margin: 0 }}>{title}</h3>
         <Link to={returnTo} style={{ marginLeft: 'auto', fontSize: 13 }}>{returnLabel} →</Link>
       </div>
+      {holdExpiresAtMs != null && <HoldCountdown expiresAtMs={holdExpiresAtMs} />}
       <ul style={{ margin: '10px 0', paddingLeft: 18, fontSize: 14 }}>
         {items.map((i) => (
           <li key={i.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
@@ -101,9 +162,22 @@ function CartScope({
 }) {
   const db = useDB();
   const toast = useToast();
+  const navigate = useNavigate();
   const [checkout, setCheckout] = useState<{ items: CartItem[]; title: string } | null>(null);
+  const [capacityConflict, setCapacityConflict] = useState<CheckoutCapacityError | null>(null);
 
   const groups = useMemo(() => groupCartItems(cart, db), [cart, db]);
+
+  // (b) "Pick a different session" / the 400 session-required path both land
+  // here: no clean deep-link into the registration editor exists from the
+  // /cart page (that state lives in Club.tsx/MyRegistrations.tsx), so this
+  // is the documented minimal hook — toast + navigate to the reg page, same
+  // as the brief allows.
+  const goPickSession = (eventId: string) => {
+    const event = db.events.find((e) => e.id === eventId);
+    toast(`Pick a session for each entry at ${event?.name ?? 'this event'}, then re-add it to your cart.`, { variant: 'error' });
+    navigate(isClub ? `/club/${ownerKey}/registrations` : '/me/registrations');
+  };
 
   // Syncs the underlying registration(s)/membership via removeCartItemWithSync
   // (unified-cart-b2 Task A; extended for H5/H6 2026-07-02): a brand-new unpaid
@@ -170,13 +244,33 @@ function CartScope({
           title={checkout.title}
           onPaid={onPaid}
           onError={(msg) => toast(msg, { variant: 'error' })}
+          onCapacityConflict={(err) => { setCheckout(null); setCapacityConflict(err); }}
+          onSessionRequired={(err) => { setCheckout(null); goPickSession(err.eventId); }}
         />
       </div>
     );
   }
 
+  // Rendered as an overlay ON TOP of whatever's below (Modal is its own
+  // fixed-position veil) rather than replacing the cart body — same
+  // ReceiptsSection-detail-modal idiom used elsewhere in this file — so
+  // dismissing it (or resolving it) lands back on a live cart, not a blank
+  // page.
+  const conflictDialog = capacityConflict && (
+    <CapacityConflictDialog
+      eventId={capacityConflict.eventId}
+      eventName={capacityConflict.eventName}
+      violations={capacityConflict.violations}
+      ownerKey={ownerKey}
+      isClub={isClub}
+      onClose={() => setCapacityConflict(null)}
+      onResolved={(msg) => toast(msg)}
+      onPickSession={goPickSession}
+    />
+  );
+
   if (cart.length === 0) {
-    return <p style={{ color: 'var(--ink-soft)' }}>Cart is empty.</p>;
+    return <>{conflictDialog}<p style={{ color: 'var(--ink-soft)' }}>Cart is empty.</p></>;
   }
 
   const checkoutAllButton = (
@@ -192,6 +286,7 @@ function CartScope({
 
   return (
     <div>
+      {conflictDialog}
       {/* Checkout-All at the TOP, duplicated at the bottom below the cards. */}
       <div className="card card-pad" style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <strong style={{ fontSize: 16, marginRight: 'auto' }}>Total: {fmtMoney(sum(cart))}</strong>
@@ -206,13 +301,19 @@ function CartScope({
             onRemove={removeItem}
             onPrintInvoice={() => downloadCartInvoice(groups.membership, name, 'Memberships')} />
         )}
-        {groups.events.map((g) => (
-          <CartCard key={g.eventName} title={g.eventName} items={g.items}
-            returnTo={registrationsReturnTo(g.slug)} returnLabel="Return to registration"
-            onCheckout={() => setCheckout({ items: g.items, title: g.eventName })}
-            onRemove={removeItem}
-            onPrintInvoice={() => downloadCartInvoice(g.items, name, g.eventName)} />
-        ))}
+        {groups.events.map((g) => {
+          const event = db.events.find((e) => e.id === g.eventId);
+          const configured = !!event && hasCapacityConfig(event, event.sessions);
+          const holdMs = configured ? earliestHoldMs(g.items, db) : null;
+          return (
+            <CartCard key={g.eventId} title={g.eventName} items={g.items}
+              returnTo={registrationsReturnTo(g.slug)} returnLabel="Return to registration"
+              onCheckout={() => setCheckout({ items: g.items, title: g.eventName })}
+              onRemove={removeItem}
+              onPrintInvoice={() => downloadCartInvoice(g.items, name, g.eventName)}
+              holdExpiresAtMs={holdMs} />
+          );
+        })}
         {groups.other.length > 0 && (
           <CartCard title="Other" items={groups.other} returnTo={otherReturnTo} returnLabel="Browse"
             onCheckout={() => setCheckout({ items: groups.other, title: 'Other' })}

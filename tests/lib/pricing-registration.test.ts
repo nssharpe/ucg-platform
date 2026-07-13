@@ -361,6 +361,41 @@ describe('changeIsEligible (3h)', () => {
     const after = state({ disciplines: [disc({ apparatus: ['PH', 'FX'] })] });
     expect(changeIsEligible(state(), after)).toBe(false);
   });
+
+  // --- emv2 P4: session moves (by-session events) ---------------------------
+
+  it('session change alone (same level/apparatus) → eligible', () => {
+    const before = state({ disciplines: [disc({ sessionId: 'sess-1' })] });
+    const after = state({ disciplines: [disc({ sessionId: 'sess-2' })] });
+    expect(changeIsEligible(before, after)).toBe(true);
+  });
+
+  it('session change + level change → still eligible (one fee, not double-charged)', () => {
+    const before = state({ disciplines: [disc({ levelId: 'L5', sessionId: 'sess-1' })] });
+    const after = state({ disciplines: [disc({ levelId: 'L6', sessionId: 'sess-2' })] });
+    // The level branch alone already returns true; this asserts the combo
+    // doesn't throw or behave differently — callers charge the fee exactly
+    // once regardless of which branch matched.
+    expect(changeIsEligible(before, after)).toBe(true);
+  });
+
+  it('both sides unset (by-discipline event, or session not assigned yet) → NOT eligible on its own', () => {
+    const before = state({ disciplines: [disc()] }); // no sessionId key
+    const after = state({ disciplines: [disc({ sessionId: null })] });
+    expect(changeIsEligible(before, after)).toBe(false);
+  });
+
+  it('same session on both sides → NOT eligible on its own', () => {
+    const before = state({ disciplines: [disc({ sessionId: 'sess-1' })] });
+    const after = state({ disciplines: [disc({ sessionId: 'sess-1' })] });
+    expect(changeIsEligible(before, after)).toBe(false);
+  });
+
+  // Note: a brand-new registration's `existing` is empty, so its caller
+  // (RegistrationEditor) never even calls changeIsEligible — `isEditingExisting`
+  // is false and eligibility defaults to true without a before/after diff. A
+  // first-time by-session assignment (undefined/null → a real session id) is
+  // therefore never evaluated by this predicate at all, let alone flagged.
 });
 
 // --- B8: regChangeHasDiff (gates the free "Save" button) --------------------
@@ -411,12 +446,22 @@ describe('regChangeHasDiff (B8)', () => {
     expect(regChangeHasDiff(state(), state({ athleteId: 'ath-2' }))).toBe(true);
   });
 
+  it('session change alone → diff', () => {
+    const before = state({ disciplines: [disc({ sessionId: 'sess-1' })] });
+    const after = state({ disciplines: [disc({ sessionId: 'sess-2' })] });
+    expect(regChangeHasDiff(before, after)).toBe(true);
+  });
+
   it('every case eligible per changeIsEligible also has a diff (hasChange is a superset)', () => {
     const cases: [RegChangeState, RegChangeState][] = [
       [state(), state({ disciplines: [disc(), disc({ discipline: 'WAG', levelId: 'L4' })] })],
       [state(), state({ disciplines: [disc({ levelId: 'L6' })] })],
       [state(), state({ clubId: 'club-b' })],
       [state(), state({ athleteId: 'ath-2' })],
+      [
+        state({ disciplines: [disc({ sessionId: 'sess-1' })] }),
+        state({ disciplines: [disc({ sessionId: 'sess-2' })] }),
+      ],
     ];
     for (const [before, after] of cases) {
       expect(changeIsEligible(before, after)).toBe(true);

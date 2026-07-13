@@ -8,7 +8,7 @@ import { Badge, Combo, Field, Modal } from '../components/ui';
 import { RefundRequestDialog, type RefundRequestItem } from '../components/RefundRequestDialog';
 import { useToast, useFmtDate } from '../components/ui-hooks';
 import { STATE_REGIONS, SHIRT_SIZES } from '../lib/types';
-import type { Athlete, CartItem, Club, Event, Registration, Season } from '../lib/types';
+import type { Athlete, CartItem, Club, Event, Registration, Season, WaitlistGroup } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
 import {
   newRegistrationEntryTotal, reassignPartners, registrationChangeFee, changeIsEligible,
@@ -16,12 +16,13 @@ import {
   addonPurchaseOpen, initialClubAddonDraft, buildClubAddonCartItems,
 } from '../lib/pricing';
 import type { RegChangeState, ClubAddonDraft } from '../lib/pricing';
+import { holdStamp, waitlistPosition } from '../lib/capacity';
 import { SizedAddonPicker } from '../components/AddonPickers';
 import {
   deleteRegistration, pushCart, pushClub, pushClubManager,
   pushRegistration, requestManagerAccess, sendClubInvite,
   inviteAccount, pushClubMembership, deleteClubMembership,
-  syncSynchroPartnerLevelRemote,
+  syncSynchroPartnerLevelRemote, cancelWaitlistGroup,
 } from '../lib/supabase';
 import { cleanupCrossClubCart } from '../lib/cart-sync';
 import type { ClubMembership } from '../lib/types';
@@ -974,6 +975,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   const db = useDB();
   const caps = useCapabilities();
   const toast = useToast();
+  const navigate = useNavigate();
   const openEvents = db.events.filter((m) => eventIsInPhase(m, 'reg-open') || eventIsInPhase(m, 'reg-closed'));
   const [eventId, setEventId] = useState(openEvents.find((m) => eventIsInPhase(m, 'reg-open'))?.id ?? openEvents[0]?.id);
   const event = db.events.find((m) => m.id === eventId);
@@ -1098,6 +1100,128 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
     return regs.map((r) => `${r.discipline === 'TNT' ? 'T&T' : r.discipline} – ${lvlName(r.levelId)} – ${eventsText(r, nameOf)}`).join(' / ');
   };
 
+  // Leave waitlist (event-mgmt v2 P4 T6, club-manager side): cancels every
+  // waitlist group this athlete's waitlisted regs at THIS event belong to
+  // (status → 'cancelled', the only client-writable transition — there is no
+  // client DELETE policy on waitlist_groups by design) and hard-deletes the
+  // never-paid waitlisted regs. A waitlisted reg is normally a placeholder
+  // with no cart line, so deleting it is the correct undo, same as
+  // `removeCartItemWithSync`'s 'delete-registration' action for a brand-new
+  // unpaid entry — EXCEPT any reg with paid history (see guard below).
+  const leaveWaitlist = (athleteId: string) => {
+    const allWl = regsFor(athleteId).filter((r) => r.waitlisted);
+    if (allWl.length === 0) return;
+    if (!window.confirm(`Remove ${nameOf(athleteId)} from the waitlist for ${event.name}?`)) return;
+    // Belt-and-braces money guard (fable review of T6): NEVER hard-delete a
+    // reg with paid history (`updatedPending:true` — the paid→change-pending
+    // state). The dialog's `isWaitlistable` gate should make this
+    // unreachable, but if any other/historical path waitlisted such a reg,
+    // deleting it here would destroy a purchased registration — deletion of
+    // a paid reg is a refund action only. Cancel the group but keep those
+    // regs (waitlisted flag cleared so they stop reading as placeholders).
+    const deletable = allWl.filter((r) => r.updatedPending !== true);
+    const kept = allWl.filter((r) => r.updatedPending === true);
+    const groupIds = [...new Set(allWl.map((r) => r.waitlistGroupId).filter((id): id is string => !!id))];
+    mutate((d) => {
+      for (const gid of groupIds) {
+        const idx = (d.waitlistGroups ?? []).findIndex((g) => g.id === gid);
+        if (idx >= 0 && d.waitlistGroups) {
+          d.waitlistGroups[idx] = { ...d.waitlistGroups[idx], status: 'cancelled' as const };
+          cancelWaitlistGroup(gid);
+        }
+      }
+      const ids = new Set(deletable.map((r) => r.id));
+      d.registrations = d.registrations.filter((r) => !ids.has(r.id));
+      for (const id of ids) deleteRegistration(id);
+      for (const reg of kept) {
+        const idx = d.registrations.findIndex((r) => r.id === reg.id);
+        if (idx >= 0) {
+          const next = { ...d.registrations[idx], waitlisted: false, waitlistGroupId: null };
+          d.registrations[idx] = next;
+          pushRegistration(next);
+        }
+      }
+    });
+    if (kept.length > 0) {
+      toast(
+        'Left the waitlist, but a previously-purchased registration was kept (it was an update to a paid '
+        + 'registration, not a new one). To undo the update, remove its change line from the cart; to cancel '
+        + 'the registration entirely, request a refund.',
+        { variant: 'error' },
+      );
+    } else {
+      toast('Removed from the waitlist.');
+    }
+  };
+
+  // Complete checkout for a promoted ('notified') waitlist group (event-mgmt
+  // v2 P4 T7): flips the group's regs off the waitlist placeholder state
+  // (waitlisted:false; waitlistGroupId KEPT for audit — the sweep's pass 1
+  // marks the group 'promoted' once no reg is still waitlisted), stamps a
+  // fresh 30-min cart hold, and queues the normal ENTRY-fee cart line(s) —
+  // one per athlete, exactly the addToCart idiom (same label/refRegIds
+  // shape). Never a change fee: promotion is claiming the original entry,
+  // not an edit, so it deliberately never passes through changeIsEligible.
+  const completeWaitlistCheckout = (group: WaitlistGroup) => {
+    if (clubMembershipBlocked()) return;
+    const groupRegs = db.registrations.filter((r) => r.waitlistGroupId === group.id && r.waitlisted);
+    if (groupRegs.length === 0) return;
+    const byAthlete = new Map<string, Registration[]>();
+    for (const r of groupRegs) {
+      const arr = byAthlete.get(r.athleteId) ?? [];
+      arr.push(r);
+      byAthlete.set(r.athleteId, arr);
+    }
+    mutate((d) => {
+      const cart = d.carts[clubId] ?? (d.carts[clubId] = []);
+      for (const [athleteId, regs] of byAthlete) {
+        // Prior (non-waitlisted, non-refunded) regs the athlete already holds
+        // at this event+club — drives second-discipline pricing + late anchor,
+        // mirroring addToCart's own computation.
+        const priorRegs = d.registrations.filter(
+          (r) => r.eventId === event.id && r.athleteId === athleteId && r.clubId === clubId
+            && !r.refunded && !regs.some((g) => g.id === r.id) && !r.waitlisted,
+        );
+        const lineAnchor = lateAnchorFor(regs, priorRegs);
+        const entryTotal = newRegistrationEntryTotal(event, {
+          competingClubId: clubId,
+          priorDisciplineCount: priorRegs.length,
+          newDisciplineCount: regs.length,
+          late: lineAnchor ? { earliestCreatedAtISO: lineAnchor } : undefined,
+        });
+        for (const reg of regs) {
+          const idx = d.registrations.findIndex((r) => r.id === reg.id);
+          if (idx < 0) continue;
+          const next: Registration = {
+            ...d.registrations[idx],
+            waitlisted: false, // waitlistGroupId kept — audit trail + sweep pass-1 signal
+            paid: entryTotal === 0, // host-club $0 (shouldn't normally be waitlisted, but stay consistent)
+            updatedPending: false,
+            holdExpiresAt: entryTotal > 0 ? holdStamp(event, event.sessions, Date.now()) : undefined,
+          };
+          d.registrations[idx] = next;
+          pushRegistration(next);
+        }
+        if (entryTotal > 0) {
+          const athlete = d.people.find((p) => p.id === athleteId);
+          cart.push({
+            id: `ci-${Date.now()}-${athleteId}`,
+            label: `${event.name} entry — ${athlete?.firstName ?? ''} ${athlete?.lastName ?? ''} (${regs.map((r) => r.discipline).join('+')})${lateFeeSuffix(lineAnchor)}`,
+            amount: entryTotal,
+            kind: 'meet-entry',
+            refUserId: athleteId,
+            refRegIds: regs.map((r) => r.id),
+            refEventId: event.id,
+            refLineType: 'entry',
+          });
+        }
+      }
+      pushCart(clubId, cart, true);
+    });
+    toast('Entry added to the club cart — complete checkout before the hold expires.');
+    navigate('/cart');
+  };
+
   // Cross-club lock (3d): the OTHER club this athlete is already PAID-registered
   // with for this event. Non-null ⇒ not selectable here. shortName for the note.
   const lockedToClubShortName = (athleteId: string): string | null => {
@@ -1181,6 +1305,17 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
           })
         : 0;
 
+      // Which regs get a cart-add capacity hold stamped (event-mgmt v2 P4):
+      // exactly the regs that end up referenced by a cart line pushed below —
+      // mirrors the change-fee/entry-fee branch conditions further down so
+      // the two stay in lockstep. A free edit (no cart line) never stamps.
+      const cartLinkedIds = new Set<string>();
+      if (changeFee > 0 && event.changeFee) {
+        for (const r of newRegs) cartLinkedIds.add(r.id);
+      } else if (!changeFeeApplies && entryTotal > 0) {
+        for (const r of newOnlyRegs) cartLinkedIds.add(r.id);
+      }
+
       // Upsert each new reg. A chargeable edit flips a previously-PAID reg back
       // to "Updated pending purchase"; otherwise preserve its payment state.
       // A reg with NO prior (freshly added discipline): paid only when nothing
@@ -1201,6 +1336,9 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
           // saveRegs with skipEntryFeeLine — don't overwrite that here.
           reg.paid = entryTotal === 0;
           reg.updatedPending = false;
+        }
+        if (cartLinkedIds.has(reg.id)) {
+          reg.holdExpiresAt = holdStamp(event, event.sessions, Date.now());
         }
         const idx = d.registrations.findIndex((r) => r.id === reg.id);
         if (idx >= 0) {
@@ -1328,10 +1466,15 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
         late: addAnchor ? { earliestCreatedAtISO: addAnchor } : undefined,
       });
       hostFree = entryTotal === 0;
-      // Stamp paid status on the new regs (saveRegs upserts them below).
+      // Stamp paid status on the new regs (saveRegs upserts them below). A
+      // non-host entry always gets its own cart line below, so stamp a fresh
+      // capacity hold too (event-mgmt v2 P4) — saveRegs is called with
+      // skipEntryFeeLine below and won't touch holdExpiresAt itself, so this
+      // is the ONE place that must do it for this path.
       for (const reg of regs) {
         reg.paid = hostFree;
         reg.updatedPending = false;
+        if (!hostFree) reg.holdExpiresAt = holdStamp(event, event.sessions, Date.now());
       }
     });
 
@@ -1421,6 +1564,12 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
             r.paid = false;
             r.updatedPending = true;
           }
+          // A chargeable swap adds a change-fee cart line below referencing
+          // every swapped reg — stamp a fresh capacity hold on all of them
+          // (event-mgmt v2 P4), matching that line's condition exactly.
+          if (swapFee > 0 && event.changeFee) {
+            r.holdExpiresAt = holdStamp(event, event.sessions, Date.now());
+          }
           swappedRegIds.push(r.id);
           pushRegistration(r, r.sessionId);
         }
@@ -1497,6 +1646,30 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
       <ClubAddonsCard key={event.id} event={event} clubId={clubId} canManage={canManage} />
 
       {/* Card 1: Already registered */}
+      {/* Promoted waitlist groups (event-mgmt v2 P4 T7): a 'notified' group
+          holds reserved spots until its deadline — surface it prominently
+          with the Complete-checkout action. */}
+      {canManage && (db.waitlistGroups ?? [])
+        .filter((g) => g.eventId === event.id && g.clubId === clubId && g.status === 'notified')
+        .map((g) => {
+          const groupRegs = db.registrations.filter((r) => r.waitlistGroupId === g.id && r.waitlisted);
+          if (groupRegs.length === 0) return null;
+          const names = [...new Set(groupRegs.map((r) => nameOf(r.athleteId)))].join(', ');
+          return (
+            <div key={g.id} className="card card-pad" style={{ marginBottom: 18, borderLeft: '4px solid var(--coral-500)' }}>
+              <h3 className="card-title">Waitlist spots opened!</h3>
+              <p style={{ margin: '0 0 10px', fontSize: 14 }}>
+                Spots are being held for <strong>{names}</strong>
+                {g.holdExpiresAt && <> until <strong>{new Date(g.holdExpiresAt).toLocaleString()}</strong></>}.
+                Complete checkout before then or the group returns to the end of the waitlist.
+              </p>
+              <button className="btn primary small" onClick={() => completeWaitlistCheckout(g)}>
+                Complete checkout →
+              </button>
+            </div>
+          );
+        })}
+
       <div className="card card-pad" style={{ marginBottom: 18 }}>
         <h3 className="card-title">Registered ({registered.length})</h3>
         {registered.length === 0 ? (
@@ -1524,6 +1697,15 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
                 // ever stamped paid — treat anything that isn't `true` as unpaid.
                 const anyUnpaid = regs.some((r) => r.paid !== true);
                 const anyUpdatedPending = regs.some((r) => r.paid !== true && r.updatedPending);
+                // Waitlisted regs (event-mgmt v2 P4 T6): no cart line, not yet
+                // occupying a spot — distinct from "Pending purchase" (which
+                // implies a cart line is waiting to be paid).
+                const anyWaitlisted = regs.some((r) => r.waitlisted);
+                const allWaitlisted = regs.length > 0 && regs.every((r) => r.waitlisted || r.refunded);
+                // Queue position (T7): 1-based rank among this event's
+                // 'waiting' groups — undefined once notified/promoted.
+                const wlGroupId = regs.find((r) => r.waitlisted)?.waitlistGroupId ?? undefined;
+                const wlPos = wlGroupId ? waitlistPosition(wlGroupId, db.waitlistGroups ?? []) : undefined;
                 const summary = regSummary(a.id);
                 return (
                   <tr key={a.id}>
@@ -1534,11 +1716,17 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
                         ? <Badge tone="warn">Refund requested</Badge>
                         : allRefunded
                           ? null
-                          : anyUpdatedPending
-                            ? <Badge tone="warn">Updated pending purchase</Badge>
-                            : anyUnpaid
-                              ? <Badge tone="warn">Pending purchase</Badge>
-                              : <Badge tone="ok">Registered</Badge>}
+                          : allWaitlisted
+                            ? <Badge tone="info">Waitlisted</Badge>
+                            : anyUpdatedPending
+                              ? <Badge tone="warn">Updated pending purchase</Badge>
+                              : anyUnpaid
+                                ? <Badge tone="warn">Pending purchase</Badge>
+                                : <Badge tone="ok">Registered</Badge>}
+                      {!allWaitlisted && anyWaitlisted && <Badge tone="info">Partly waitlisted</Badge>}
+                      {anyWaitlisted && wlPos !== undefined && (
+                        <span style={{ fontSize: 12, color: 'var(--ink-soft)', alignSelf: 'center' }}>#{wlPos} in line</span>
+                      )}
                       {anyRefunded && <Badge tone="info">Refunded</Badge>}
                     </td>
                     {canManage && (
@@ -1566,6 +1754,15 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
                             onClick={() => openRefundDialog(a.id)}
                           >
                             Request refund
+                          </button>
+                        )}
+                        {anyWaitlisted && (
+                          <button
+                            className="btn small ghost"
+                            style={{ color: 'var(--coral-500)' }}
+                            onClick={() => leaveWaitlist(a.id)}
+                          >
+                            Leave waitlist
                           </button>
                         )}
                       </td>
@@ -1706,6 +1903,8 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
               return r ? (r.apparatusLevels?.SY ?? r.levelId) : null;
             })()}
             isAdmin={caps.isAdmin}
+            allEventRegs={db.registrations.filter((r) => r.eventId === event.id && !r.refunded)}
+            waitlistGroups={db.waitlistGroups?.filter((g) => g.eventId === event.id) ?? []}
           />
         </Modal>
       )}
@@ -1731,6 +1930,8 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
               const r = findIncomingSynchroPartner(db.registrations, event.id, registerAthlete.id);
               return r ? (r.apparatusLevels?.SY ?? r.levelId) : null;
             })()}
+            allEventRegs={db.registrations.filter((r) => r.eventId === event.id && !r.refunded)}
+            waitlistGroups={db.waitlistGroups?.filter((g) => g.eventId === event.id) ?? []}
           />
         </Modal>
       )}

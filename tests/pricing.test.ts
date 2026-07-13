@@ -24,9 +24,10 @@ import {
   campSurveySummary,
   refundAmountCents,
   capRefundCents,
+  shrinkOrDropCartLines,
 } from '../src/lib/pricing';
 import type { AddonPricingEvent, AddonDraftEvent, ClubAddonDraftEvent, PartnerReg, RegFeeEvent, SynchroReg } from '../src/lib/pricing';
-import type { Coupon, Membership, Season } from '../src/lib/types';
+import type { CartItem, Coupon, Membership, Season } from '../src/lib/types';
 
 const season: Season = {
   id: 's26', name: '2025–26', startsOn: '2025-07-01', endsOn: '2026-06-30',
@@ -606,5 +607,38 @@ describe('capRefundCents', () => {
     // process-refund uses THAT ($85) as the base; the cap then only guards
     // against cross-request over-refunds on the same payment:
     expect(capRefundCents(8500, 11500)).toBe(8500); // correct with the paid_cents base
+  });
+});
+
+describe('shrinkOrDropCartLines (emv2 P4 T6 — waitlist checkout-conflict resolution)', () => {
+  const item = (overrides: Partial<CartItem> = {}): CartItem => ({
+    id: 'ci1', label: 'Entry', amount: 5000, kind: 'meet-entry', refRegIds: ['r1', 'r2'], ...overrides,
+  });
+
+  it('passes through a line untouched by the waitlisted set (same reference)', () => {
+    const cart = [item({ refRegIds: ['r1'] })];
+    const next = shrinkOrDropCartLines(cart, new Set(['r9']));
+    expect(next).toHaveLength(1);
+    expect(next[0]).toBe(cart[0]);
+  });
+
+  it('shrinks refRegIds to the unaffected remainder when only some regs are waitlisted', () => {
+    const cart = [item({ id: 'ci1', refRegIds: ['r1', 'r2', 'r3'] })];
+    const next = shrinkOrDropCartLines(cart, new Set(['r2']));
+    expect(next).toHaveLength(1);
+    expect(next[0].refRegIds).toEqual(['r1', 'r3']);
+    expect(next[0]).not.toBe(cart[0]); // a new object, not mutated in place
+  });
+
+  it('drops a line entirely when every referenced reg is waitlisted', () => {
+    const cart = [item({ id: 'ci1', refRegIds: ['r1', 'r2'] }), item({ id: 'ci2', refRegIds: ['r3'] })];
+    const next = shrinkOrDropCartLines(cart, new Set(['r1', 'r2']));
+    expect(next.map((i) => i.id)).toEqual(['ci2']);
+  });
+
+  it('leaves lines with no refRegIds (memberships/addons) untouched', () => {
+    const cart = [item({ id: 'ci1', kind: 'membership', refRegIds: undefined })];
+    const next = shrinkOrDropCartLines(cart, new Set(['r1']));
+    expect(next).toEqual(cart);
   });
 });

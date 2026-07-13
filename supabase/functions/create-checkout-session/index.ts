@@ -42,6 +42,14 @@ import {
   type SeasonFees,
 } from '../_shared/stripe.ts';
 import { fulfillPayment, type PaymentRow } from '../_shared/fulfill.ts';
+import {
+  CART_HOLD_MINUTES,
+  checkCapacity,
+  hasCapacityConfig,
+  type CapacityEventRow,
+  type GroupRow,
+  type SessionRow,
+} from '../_shared/capacity.ts';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -68,6 +76,9 @@ interface CartItemRow {
   addon_assignee: string | null;
 }
 
+// Widened to also carry the columns the capacity engine (`_shared/capacity.ts`)
+// needs — this row shape is reused as-is for both the H4 ownership checks
+// above and the capacity checks below, so the reg queries need only run once.
 interface RegRow {
   id: string;
   event_id: string;
@@ -77,6 +88,14 @@ interface RegRow {
   paid: boolean | null;
   updated_pending: boolean | null;
   created_at?: string;
+  discipline: string;
+  level_id: string | null;
+  apparatus: string[] | null;
+  apparatus_levels: Record<string, string> | null;
+  session_id: string | null;
+  waitlisted: boolean | null;
+  waitlist_group_id: string | null;
+  hold_expires_at: string | null;
 }
 
 Deno.serve(async (req) => {
@@ -152,7 +171,8 @@ Deno.serve(async (req) => {
   if (allRefRegIds.length) {
     const { data: rr, error: rrErr } = await db
       .from('registrations')
-      .select('id, event_id, athlete_id, club_id, refunded, paid, updated_pending, created_at')
+      .select('id, event_id, athlete_id, club_id, refunded, paid, updated_pending, created_at, ' +
+        'discipline, level_id, apparatus, apparatus_levels, session_id, waitlisted, waitlist_group_id, hold_expires_at')
       .in('id', allRefRegIds);
     if (rrErr) return json({ ok: false, error: rrErr.message }, 500);
     regsByLine = (rr ?? []) as RegRow[];
@@ -196,7 +216,9 @@ Deno.serve(async (req) => {
     events = new Map((mr ?? []).map((m) => [m.id as string, m as unknown as RegFeeEvent]));
     const { data: amr, error: amErr } = await db
       .from('registrations')
-      .select('id, event_id, athlete_id, club_id, refunded, created_at')
+      .select('id, event_id, athlete_id, club_id, refunded, created_at, ' +
+        'discipline, level_id, apparatus, apparatus_levels, session_id, paid, updated_pending, ' +
+        'waitlisted, waitlist_group_id, hold_expires_at')
       .in('event_id', eventIds)
       .eq('refunded', false);
     if (amErr) return json({ ok: false, error: amErr.message }, 500);
@@ -345,6 +367,110 @@ Deno.serve(async (req) => {
         if (count > 1) {
           return json({ ok: false, error:
             `More than one banquet ticket is assigned to the same person (${assignee}) for this event — each person may have at most one assigned ticket.` }, 400);
+        }
+      }
+    }
+  }
+
+  // --- Capacity & sessions enforcement (event-mgmt v2 P4 T3) -----------------
+  // Gates BOTH the Stripe path and the $0 free-order path below — must run
+  // before either. Scoped to the events actually referenced via ref_reg_ids
+  // (entry/change lines) — `regsByLine` and `allEventRegs`, both already
+  // loaded above for the H4 ownership checks, are reused as-is (no re-query).
+  {
+    const capacityEventIds = Array.from(new Set(regsByLine.map((r) => r.event_id)));
+    if (capacityEventIds.length) {
+      const { data: capEventRows, error: capEvErr } = await db
+        .from('events')
+        .select('id, name, capacity, registration_mode')
+        .in('id', capacityEventIds);
+      if (capEvErr) return json({ ok: false, error: capEvErr.message }, 500);
+      const capEventsById = new Map(
+        (capEventRows ?? []).map((e) => [e.id as string, e as unknown as CapacityEventRow & { name: string; registration_mode: string }]),
+      );
+
+      const { data: sessionRows, error: sessErr } = await db
+        .from('event_sessions')
+        .select('id, event_id, max_routines')
+        .in('event_id', capacityEventIds);
+      if (sessErr) return json({ ok: false, error: sessErr.message }, 500);
+      const sessionsByEvent = new Map<string, SessionRow[]>();
+      for (const s of (sessionRows ?? []) as (SessionRow & { event_id: string })[]) {
+        const list = sessionsByEvent.get(s.event_id) ?? [];
+        list.push(s);
+        sessionsByEvent.set(s.event_id, list);
+      }
+
+      const { data: groupRows, error: groupErr } = await db
+        .from('waitlist_groups')
+        .select('id, event_id, status, hold_expires_at')
+        .in('event_id', capacityEventIds)
+        .eq('status', 'notified');
+      if (groupErr) return json({ ok: false, error: groupErr.message }, 500);
+      const groupsById: Record<string, GroupRow> = {};
+      for (const g of (groupRows ?? []) as (GroupRow & { event_id: string })[]) groupsById[g.id] = g;
+
+      const nowMs = Date.now();
+      const holdExpiresAtIso = new Date(nowMs + CART_HOLD_MINUTES * 60_000).toISOString();
+
+      for (const [eventId, capEvent] of capEventsById) {
+        const sessions = sessionsByEvent.get(eventId) ?? [];
+        const mode = capEvent.registration_mode ?? 'by-discipline';
+        if (!hasCapacityConfig(capEvent, sessions) && mode === 'by-discipline') continue;
+
+        const incomingForEvent = regsByLine.filter((r) => r.event_id === eventId);
+        if (incomingForEvent.length === 0) continue;
+
+        // By-session mode: every incoming reg must name one of the event's
+        // own sessions — a missing/foreign session_id is a structural error,
+        // not a capacity overage, so it's reported separately (400, not 409).
+        if (mode === 'by-session') {
+          const sessionIds = new Set(sessions.map((s) => s.id));
+          const offending = incomingForEvent.filter((r) => !r.session_id || !sessionIds.has(r.session_id));
+          if (offending.length) {
+            return json({
+              ok: false,
+              error: `"${capEvent.name}" requires selecting a session for each entry — missing or invalid for ${offending.length} registration(s).`,
+              code: 'session-required',
+              eventId,
+              eventName: capEvent.name,
+              regIds: offending.map((r) => r.id),
+            }, 400);
+          }
+        }
+
+        // Refresh the 30-min soft hold on checkout start (CLAUDE.md: "checkout
+        // start refreshes the hold"). Client-writable `hold_expires_at` is
+        // clamped server-side to this same 30-min ceiling by a DB trigger
+        // (migration emv2_p4_hold_clamp) — this write and that clamp agree.
+        const { error: holdErr } = await db
+          .from('registrations')
+          .update({ hold_expires_at: holdExpiresAtIso })
+          .in('id', incomingForEvent.map((r) => r.id));
+        if (holdErr) return json({ ok: false, error: holdErr.message }, 500);
+
+        const violations = checkCapacity(capEvent, sessions, allEventRegs, incomingForEvent, groupsById, nowMs);
+        if (violations.length) {
+          const describe = (v: (typeof violations)[number]) => {
+            if (v.scope === 'total') {
+              return `"${capEvent.name}" is at capacity: ${v.remaining} of ${v.cap} spot(s) remain (this order needs ${v.requested}).`;
+            }
+            if (v.scope === 'level') {
+              return `Level ${v.levelId} at "${capEvent.name}" is over its routine cap: ${v.remaining} of ${v.cap} spot(s) remain (this order needs ${v.requested}).`;
+            }
+            if (v.scope === 'discipline') {
+              return `${v.discipline} at "${capEvent.name}" is over its routine cap: ${v.remaining} of ${v.cap} spot(s) remain (this order needs ${v.requested}).`;
+            }
+            return `Apparatus ${v.apparatus} in session ${v.sessionId} at "${capEvent.name}" is over its routine cap: ${v.remaining} of ${v.cap} spot(s) remain (this order needs ${v.requested}).`;
+          };
+          return json({
+            ok: false,
+            error: violations.map(describe).join(' '),
+            code: 'capacity-exceeded',
+            eventId,
+            eventName: capEvent.name,
+            violations,
+          }, 409);
         }
       }
     }

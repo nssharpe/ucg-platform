@@ -44,7 +44,7 @@ Live build/tooling notes live in [`../CLAUDE.md`](../CLAUDE.md); open work is th
 | [dev-test-auth](specs/2026-06-25-dev-test-auth.md) | Dev-only real auto-login of a seeded Supabase test user (`.env.local`-gated) so authenticated UI is exercisable locally | ✅ shipped |
 | [stripe-integration](specs/2026-06-25-stripe-integration.md) | Stripe Embedded Checkout architecture (S1–S5) | ✅ shipped |
 | [security-review-findings (7/02)](specs/2026-07-02-security-review-findings.md) | Deep review of the money paths: RLS, edge functions, cart state machine — verified findings by severity | 🟡 findings logged; fixes planned |
-| [event-management-v2-requirements](specs/2026-07-06-event-management-v2-requirements.md) | Julia's full event-management requirements (7/06) digested + gap-mapped: host dashboard, refunds, capacity/waitlists, add-ons v2, nationals ops, finance dashboards — phasing V2-P0…P6 | 🟡 validated (phasing approved, §N7 answered); **P0–P3 shipped** (P0 foundations/scheduler, P1 host experience, P2 add-ons & camps, P3 in-app refunds — 2026-07-11); **P4 (capacity/waitlists & by-session reg) next** |
+| [event-management-v2-requirements](specs/2026-07-06-event-management-v2-requirements.md) | Julia's full event-management requirements (7/06) digested + gap-mapped: host dashboard, refunds, capacity/waitlists, add-ons v2, nationals ops, finance dashboards — phasing V2-P0…P6 | 🟡 validated (phasing approved, §N7 answered); **P0–P3 shipped** (P0 foundations/scheduler, P1 host experience, P2 add-ons & camps, P3 in-app refunds — 2026-07-11); **P4 (capacity/waitlists & by-session reg, branch `feat/emv2-p4`) T1–T6 shipped on branch** (engine + DB, event config UI, checkout enforcement, by-session picker, cart hold countdown + capacity-conflict dialog + waitlist visibility — 2026-07-12); **T7 shipped on branch 2026-07-13** (promotion sweep in scheduled-dispatch, manage-waitlist edge fn, admin queue card, Complete-checkout flow) — **staging-verified; prod deploy of the two functions + merge is the remaining step** |
 
 ## Plans (`plans/`) — step-by-step implementation records
 
@@ -200,7 +200,10 @@ here — update THIS list when priorities change, not rival copies.
   admin with a confirm). Refund receipts (jsPDF) appear in Purchase History. A hotfix
   migration (`20260711023234`) closed an RLS policy-recursion regression (42P17) the
   review-reads migration introduced, which briefly broke all `invoice_items` reads.
-  **P4 (capacity & sessions — waitlists, by-session registration) is next.**
+  **P4 (capacity & sessions — waitlists, by-session registration) SHIPPED 2026-07-13:**
+  merged to main; migrations applied staging+prod; `create-checkout-session`,
+  `scheduled-dispatch`, `manage-waitlist` deployed to prod (verify_jwt true; the
+  no-verify-jwt trio re-checked). Next: V2-P5 nationals ops (§L, §E6–7).
   **P0 Task 1 shipped:** pg_cron/pg_net scheduler infra (`notification_log` +
   `scheduled-dispatch-15min` job + `scheduled-dispatch` Edge Function, service-role-only
   auth) with its first consumer — 3d/1d/closed sanction-vote reminder emails, idempotent

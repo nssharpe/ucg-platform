@@ -1,17 +1,19 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { Badge, Combo, Field, Modal, Tabs } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
-import { pushRegistration, pushCart, syncSynchroPartnerLevelRemote } from '../lib/supabase';
+import { pushRegistration, pushCart, syncSynchroPartnerLevelRemote, cancelWaitlistGroup, deleteRegistration } from '../lib/supabase';
 import { RegistrationEditor } from '../components/RegistrationEditor';
 import {
   newRegistrationEntryTotal, registrationChangeFee, changeIsEligible, syncSynchroPartnerLevel, lateFeeApplies, lateFeeAnchor,
   initialCampSurveyDraft, campSurveyValid, campSurveyToStored, CABIN_GENDER_OPTIONS,
 } from '../lib/pricing';
 import type { RegChangeState, CampSurveyDraft } from '../lib/pricing';
+import { holdStamp, waitlistPosition } from '../lib/capacity';
 import { fmtMoney } from '../lib/scoring';
-import type { Athlete, Club, Level, Event, Registration, Season } from '../lib/types';
+import type { Athlete, Club, Level, Event, Registration, Season, WaitlistGroup } from '../lib/types';
 import { canStillEditRegistration, eventIsRefundEligible } from '../lib/events-core';
 import { RefundRequestDialog, type RefundRequestItem } from '../components/RefundRequestDialog';
 
@@ -36,6 +38,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   const db = useDB();
   const caps = useCapabilities();
   const toast = useToast();
+  const navigate = useNavigate();
   const [tab, setTab] = useState<'upcoming' | 'past'>('upcoming');
   const [q, setQ] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -98,6 +101,113 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   const changeFeePending = (event: Event) => !!changeFeePendingItem(event);
 
   const season = db.seasons.find((s) => s.current)!;
+
+  // Leave waitlist (event-mgmt v2 P4 T6, self-serve): cancels the reg's
+  // waitlist group (status → 'cancelled' — the only client-writable
+  // transition; there is no client DELETE policy on waitlist_groups) and
+  // hard-deletes the waitlisted reg itself. This is the one case where the
+  // member side DOES delete a registration (unlike the retain-and-blank rule
+  // in saveRegs above) — a waitlisted reg was never paid, so it's just a
+  // placeholder, same as a brand-new unpaid entry line's ✕ removal —
+  // EXCEPT a reg with paid history (see the guard below).
+  const leaveWaitlist = (reg: Registration) => {
+    if (!window.confirm('Leave the waitlist for this event?')) return;
+    // Belt-and-braces money guard (fable review of T6): NEVER hard-delete a
+    // reg with paid history (`updatedPending:true` — the paid→change-pending
+    // state). The capacity dialog's `isWaitlistable` gate should make this
+    // unreachable, but if any other/historical path waitlisted such a reg,
+    // deleting it would destroy a purchased registration — that's a refund
+    // action only. Cancel the group but keep the reg.
+    const keepPaidHistory = reg.updatedPending === true;
+    mutate((d) => {
+      if (reg.waitlistGroupId) {
+        const idx = (d.waitlistGroups ?? []).findIndex((g) => g.id === reg.waitlistGroupId);
+        if (idx >= 0 && d.waitlistGroups) {
+          d.waitlistGroups[idx] = { ...d.waitlistGroups[idx], status: 'cancelled' as const };
+          cancelWaitlistGroup(reg.waitlistGroupId);
+        }
+      }
+      if (keepPaidHistory) {
+        const idx = d.registrations.findIndex((r) => r.id === reg.id);
+        if (idx >= 0) {
+          const next = { ...d.registrations[idx], waitlisted: false, waitlistGroupId: null };
+          d.registrations[idx] = next;
+          pushRegistration(next);
+        }
+      } else {
+        d.registrations = d.registrations.filter((r) => r.id !== reg.id);
+        deleteRegistration(reg.id);
+      }
+    });
+    if (keepPaidHistory) {
+      toast(
+        'Left the waitlist, but your registration was kept (it was an update to a paid registration, not '
+        + 'a new one). To undo the update, remove its change line from the cart; to cancel the registration '
+        + 'entirely, request a refund.',
+        { variant: 'error' },
+      );
+    } else {
+      toast('Removed from the waitlist.');
+    }
+  };
+
+  // Complete checkout for a promoted ('notified') waitlist group (event-mgmt
+  // v2 P4 T7, self-serve): flips this group's regs off the waitlist
+  // placeholder state (waitlisted:false; waitlistGroupId KEPT for audit —
+  // scheduled-dispatch's pass 1 marks the group 'promoted' once no reg is
+  // still waitlisted), stamps a fresh 30-min cart hold, and queues the normal
+  // ENTRY-fee line in the member's OWN cart — the same label/refRegIds shape
+  // SelfRegModal's entry line uses. Never a change fee: claiming a promoted
+  // spot is the original entry purchase, not an edit, so it deliberately
+  // never passes through changeIsEligible.
+  const completeWaitlistCheckout = (event: Event, group: WaitlistGroup) => {
+    const groupRegs = db.registrations.filter((r) => r.waitlistGroupId === group.id && r.waitlisted && r.athleteId === personId);
+    if (groupRegs.length === 0) return;
+    mutate((d) => {
+      const priorRegs = d.registrations.filter(
+        (r) => r.eventId === event.id && r.athleteId === personId
+          && !r.refunded && !groupRegs.some((g) => g.id === r.id) && !r.waitlisted,
+      );
+      const competingClubId = groupRegs[0].clubId;
+      const lineAnchor = lateFeeAnchor(groupRegs, priorRegs, new Date().toISOString());
+      const entryTotal = newRegistrationEntryTotal(event, {
+        competingClubId,
+        priorDisciplineCount: priorRegs.length,
+        newDisciplineCount: groupRegs.length,
+        late: lineAnchor ? { earliestCreatedAtISO: lineAnchor } : undefined,
+      });
+      for (const reg of groupRegs) {
+        const idx = d.registrations.findIndex((r) => r.id === reg.id);
+        if (idx < 0) continue;
+        const next: Registration = {
+          ...d.registrations[idx],
+          waitlisted: false, // waitlistGroupId kept — audit trail + sweep pass-1 signal
+          paid: entryTotal === 0, // host-club $0 (shouldn't normally be waitlisted; stay consistent)
+          updatedPending: false,
+          holdExpiresAt: entryTotal > 0 ? holdStamp(event, event.sessions, Date.now()) : undefined,
+        };
+        d.registrations[idx] = next;
+        pushRegistration(next);
+      }
+      if (entryTotal > 0) {
+        const cart = d.carts[personId] ?? (d.carts[personId] = []);
+        const lateSuffix = lineAnchor !== null && lateFeeApplies(event, lineAnchor) ? ' (incl. late fee)' : '';
+        cart.push({
+          id: `ci-self-${Date.now()}-${personId}`,
+          label: `${event.name} entry — ${me?.firstName ?? ''} ${me?.lastName ?? ''} (${groupRegs.map((r) => r.discipline).join('+')})${lateSuffix}`,
+          amount: entryTotal,
+          kind: 'meet-entry',
+          refUserId: personId,
+          refRegIds: groupRegs.map((r) => r.id),
+          refEventId: event.id,
+          refLineType: 'entry',
+        });
+        pushCart(personId, cart, false);
+      }
+    });
+    toast('Entry added to your cart — complete checkout before the hold expires.');
+    navigate('/cart');
+  };
 
   // Persist the member's own registration edits (6a). Modeled on Club.tsx
   // saveRegs + addToCart, but TARGETS THE MEMBER'S OWN CART (carts[personId],
@@ -182,6 +292,12 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
           })
         : 0;
 
+      // Which regs get a cart-add capacity hold stamped (event-mgmt v2 P4):
+      // both the change-fee and entry-fee branches further below reference
+      // ALL of `newRegs`, so a hold is due on all of them whenever either fee
+      // is actually being charged — never on a free edit.
+      const cartLinked = changeFee > 0 || entryTotal > 0;
+
       // Upsert each returned reg. A chargeable edit flips a previously-PAID reg
       // back to "Updated pending purchase"; otherwise preserve prior payment
       // state. Brand-new regs: host-club $0 ⇒ paid immediately, else pending.
@@ -203,6 +319,9 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
           // refRegIds flips it then.
           reg.paid = changeFee === 0 && entryTotal === 0;
           reg.updatedPending = false;
+        }
+        if (cartLinked) {
+          reg.holdExpiresAt = holdStamp(event, event.sessions, Date.now());
         }
         const idx = d.registrations.findIndex((r) => r.id === reg.id);
         if (idx >= 0) d.registrations[idx] = reg;
@@ -353,6 +472,24 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                   </span>
                 </div>
 
+                {/* Promoted waitlist group (event-mgmt v2 P4 T7): spots are
+                    being held — prominent, rendered even when collapsed. */}
+                {(db.waitlistGroups ?? [])
+                  .filter((g) => g.eventId === event.id && g.personId === personId && g.status === 'notified')
+                  .filter((g) => regs.some((r) => r.waitlistGroupId === g.id && r.waitlisted))
+                  .map((g) => (
+                    <div key={g.id} style={{ marginTop: 10, padding: '10px 12px', borderLeft: '4px solid var(--coral-500)', background: 'var(--ice-100)', borderRadius: 6, color: 'var(--ink)' }}>
+                      <div style={{ fontSize: 14, marginBottom: 8 }}>
+                        <strong>A waitlist spot opened up!</strong> Spots are being held
+                        {g.holdExpiresAt && <> until <strong>{new Date(g.holdExpiresAt).toLocaleString()}</strong></>} —
+                        complete checkout before then or you'll return to the end of the queue.
+                      </div>
+                      <button className="btn primary small" onClick={(e) => { e.stopPropagation(); completeWaitlistCheckout(event, g); }}>
+                        Complete checkout →
+                      </button>
+                    </div>
+                  ))}
+
                 {isOpen && (() => {
                   const refundEligible = eventIsRefundEligible(event, db.clubs);
                   return (
@@ -377,6 +514,23 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                                   <Badge tone="info">Refunded</Badge>
                                 ) : r.refundRequested ? (
                                   <Badge tone="warn">Refund requested</Badge>
+                                ) : r.waitlisted ? (
+                                  <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+                                    <Badge tone="info">Waitlisted</Badge>
+                                    {(() => {
+                                      const pos = r.waitlistGroupId ? waitlistPosition(r.waitlistGroupId, db.waitlistGroups ?? []) : undefined;
+                                      return pos !== undefined
+                                        ? <span style={{ fontSize: 12, color: 'var(--ink-soft)' }}>#{pos} in line</span>
+                                        : null;
+                                    })()}
+                                    <button
+                                      className="btn ghost small"
+                                      style={{ color: 'var(--coral-500)' }}
+                                      onClick={() => leaveWaitlist(r)}
+                                    >
+                                      Leave waitlist
+                                    </button>
+                                  </span>
                                 ) : canRequestRefund ? (
                                   <button
                                     className="btn ghost small"
@@ -440,6 +594,8 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
             changeFeeApplies={changeFeeApplies(event)}
             onClose={() => setEditingEventId(null)}
             onSave={(selectedClubId, regs) => saveRegs(event, selectedClubId, regs)}
+            allEventRegs={db.registrations.filter((r) => r.eventId === event.id && !r.refunded)}
+            waitlistGroups={db.waitlistGroups?.filter((g) => g.eventId === event.id) ?? []}
           />
         );
       })()}
@@ -464,11 +620,13 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
 // club-only switch register as an eligible/chargeable change.
 function EditRegistrationModal({
   event, me, clubs, currentClubId, existing, allAthletes, levels, season, changeFeeApplies, onClose, onSave,
+  allEventRegs, waitlistGroups,
 }: {
   event: Event; me: Athlete; clubs: Club[]; currentClubId: string;
   existing: Registration[]; allAthletes: Athlete[]; levels: Level[];
   season: Season; changeFeeApplies: boolean;
   onClose: () => void; onSave: (selectedClubId: string, regs: Registration[]) => void;
+  allEventRegs: Registration[]; waitlistGroups: WaitlistGroup[];
 }) {
   const [clubId, setClubId] = useState<string>(currentClubId);
   const toast = useToast();
@@ -527,6 +685,8 @@ function EditRegistrationModal({
         onSave={(regs) => onSave(clubId, regs)}
         onCancel={onClose}
         isAdmin={caps.isAdmin}
+        allEventRegs={allEventRegs}
+        waitlistGroups={waitlistGroups}
       />
 
       {surveyRequired && (
