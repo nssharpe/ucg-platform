@@ -313,6 +313,10 @@ export interface Event {
   owner?: { userId?: string; name: string; email: string };
   /** The event owner's 7-item task checklist (§B4). Keyed by task id. */
   ownerChecklist?: OwnerChecklist;
+  /** "Set Competition Order" lock flag (event-mgmt v2 P5 §E6). Once true,
+   *  club managers may only VIEW `CompetitionOrder` rows for this event —
+   *  only admins may keep editing. Absent ⇒ false (clubs edit freely). */
+  competitionOrderLocked?: boolean;
 }
 
 /** Event-owner checklist task ids, in the order they're worked (§B4). */
@@ -500,6 +504,26 @@ export interface SessionRequest {
   levelId?: string | null;
   answers: SessionRequestAnswers;
   createdAt?: string;
+  updatedAt?: string;
+}
+
+/** A club's drag-and-drop competing order for one apparatus at one level, at
+ *  one event (event-mgmt v2 Phase 5 §E6, "Set Competition Order"). MAG/WAG
+ *  only — not T&T. `sections` is an array of arrays of registration ids: the
+ *  outer array is section (flight) order, each inner array is that section's
+ *  athlete competing order — one jsonb shape encodes both the athlete order
+ *  AND the club's section split (capped at 12 for WAG / 15 for MAG per
+ *  section, see `sectionCap` in `src/lib/competition-order.ts`). Writable by
+ *  the club manager only while `Event.competitionOrderLocked` is false; once
+ *  locked, only admins may edit (`competition_orders` RLS in the P5 B1
+ *  migration). */
+export interface CompetitionOrder {
+  id: string;
+  eventId: string;
+  clubId: string;
+  levelId: string;
+  apparatus: string;
+  sections: string[][];
   updatedAt?: string;
 }
 
@@ -735,6 +759,8 @@ export interface DB {
   waitlistGroups?: WaitlistGroup[];
   /** Nationals session-request surveys (event-mgmt v2 Phase 5 A1). */
   sessionRequests?: SessionRequest[];
+  /** Club competition orders (event-mgmt v2 Phase 5 B1, spec §E6). */
+  competitionOrders?: CompetitionOrder[];
 }
 
 /** A per-event admin grant: `userId` holds the same host-level access to
