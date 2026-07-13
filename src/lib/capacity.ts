@@ -422,3 +422,24 @@ export function groupRegsByWaitlistKey(
   }
   return order.map((k) => byKey.get(k)!);
 }
+
+// ---- Waitlist position (event-mgmt v2 P4 T7) -------------------------------
+
+/**
+ * 1-based rank of `groupId` among 'waiting' groups for the same event, in
+ * strict FIFO order (`queuedAt` ascending, `id` as a stable tiebreaker for
+ * equal timestamps). Returns `undefined` when the group isn't found in
+ * `groups` or isn't currently in 'waiting' status (a notified/promoted/
+ * cancelled/expired group has no queue position to show). Pure/display-only —
+ * the promotion sweep (scheduled-dispatch) is the actual FIFO authority; this
+ * just mirrors its ordering for UI display.
+ */
+export function waitlistPosition(groupId: string, groups: WaitlistGroup[]): number | undefined {
+  const target = groups.find((g) => g.id === groupId);
+  if (!target || target.status !== 'waiting') return undefined;
+  const waiting = groups
+    .filter((g) => g.eventId === target.eventId && g.status === 'waiting')
+    .sort((a, b) => a.queuedAt.localeCompare(b.queuedAt) || a.id.localeCompare(b.id));
+  const idx = waiting.findIndex((g) => g.id === groupId);
+  return idx >= 0 ? idx + 1 : undefined;
+}

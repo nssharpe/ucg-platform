@@ -16,12 +16,12 @@ import type { Athlete, CartItem, Discipline, Event, EventAdmin, EventSession, Re
 import { DisciplineIcon } from '../components/DisciplineIcon';
 import { SizedAddonPicker } from '../components/AddonPickers';
 import {
-  deleteRegistration, fetchEventCollectedTotal, fetchEventHostAddons, fetchEventHostRoster, findPersonForHost, grantEventAdmin,
+  deleteRegistration, fetchEventCollectedTotal, fetchEventHostAddons, fetchEventHostRoster, fetchEventWaitlist, findPersonForHost, grantEventAdmin,
   hostDeleteRegistration, hostUpsertRegistration, insuranceCertificateUrl,
-  listSanctioningTeam, markMedalsReceived, pushCart, pushEvent, pushEventSessions, pushRegistration,
+  listSanctioningTeam, manageWaitlist, markMedalsReceived, pushCart, pushEvent, pushEventSessions, pushRegistration,
   revokeEventAdmin, syncSynchroPartnerLevelRemote, uploadInsuranceCertificate,
 } from '../lib/supabase';
-import type { HostRosterRow, SanctioningTeamMember } from '../lib/supabase';
+import type { HostRosterRow, SanctioningTeamMember, WaitlistQueueRow } from '../lib/supabase';
 import { summarizeRoster, levelNameResolver } from '../lib/host-page';
 import { buildRegistrationWorkbookSheets, type SheetModel } from '../lib/host-export';
 import { stateCode } from '../lib/sanction';
@@ -313,6 +313,12 @@ export function EventDetail() {
           event admins themselves). */}
       {canManage && <EventAdminsCard event={event} toast={toast} />}
 
+      {/* Waitlist queue (event-mgmt v2 P4 T7) — visible to anyone with
+          host-level access; Promote/Requeue renders only for
+          admin/sanctioning (manage-waitlist's server-returned canManage,
+          re-checked server-side on every action — hosts see it read-only). */}
+      {canManage && <WaitlistCard event={event} toast={toast} />}
+
       <div className="grid cols-3" style={{ marginBottom: 18 }}>
         <div className="card card-pad">
           <h3 className="card-title">Registration</h3>
@@ -551,6 +557,130 @@ export function EventAdminsCard({ event, toast }: { event: Event; toast: (msg: s
           {busy ? 'Adding…' : 'Add admin'}
         </button>
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// WaitlistCard — waitlist queue + admin override (event-mgmt v2 P4 T7)
+// ---------------------------------------------------------------------------
+// FIFO table of every live (waiting/notified) waitlist group for this event,
+// fetched through manage-waitlist's read-only 'list' action — NOT a client
+// waitlist_groups read, because that table's RLS deliberately only exposes a
+// group to its own club/person (plus admins); hosts and sanctioning get the
+// queue via the server-side-authorized read instead of an RLS relaxation.
+// The automatic scheduled-dispatch sweep (every 15 min) does the real
+// promoting; Promote/Requeue here are the admin/sanctioning-only manual
+// override. The buttons render off the server-returned `canManage` flag, and
+// manage-waitlist re-checks the role server-side regardless — the flag is
+// UX, not the security boundary.
+
+function WaitlistCard({ event, toast }: {
+  event: Event; toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void;
+}) {
+  const db = useDB();
+  const fmtDate = useFmtDate();
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [queue, setQueue] = useState<WaitlistQueueRow[] | null>(null);
+  const [canOverride, setCanOverride] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // Bumped after a promote/requeue to re-fetch the queue.
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    let live = true;
+    void fetchEventWaitlist(event.id).then((res) => {
+      if (!live) return;
+      if (!res.ok) { setLoadError(res.error ?? 'Could not load the waitlist.'); setQueue([]); return; }
+      setLoadError(null);
+      setQueue(res.groups ?? []);
+      setCanOverride(!!res.canManage);
+    });
+    return () => { live = false; };
+  }, [event.id, refreshKey]);
+
+  const groups = (queue ?? []).slice().sort((a, b) => {
+    // 'waiting' groups sort by FIFO queuedAt; 'notified' groups (already
+    // promoted, not competing for a queue position) sort after, by
+    // notifiedAt, so the table reads top-to-bottom as "queue, then holds".
+    if (a.status !== b.status) return a.status === 'waiting' ? -1 : 1;
+    const av = a.status === 'waiting' ? a.queuedAt : (a.notifiedAt ?? a.queuedAt);
+    const bv = b.status === 'waiting' ? b.queuedAt : (b.notifiedAt ?? b.queuedAt);
+    return av.localeCompare(bv) || a.id.localeCompare(b.id);
+  });
+
+  const waitingOnly = groups.filter((g) => g.status === 'waiting');
+  const levelName = (id?: string | null) => (id ? db.levels.find((l) => l.id === id)?.name ?? id : '—');
+  const sessionName = (id?: string | null) => (id ? event.sessions.find((s) => s.id === id)?.name ?? id : '—');
+
+  const act = async (group: WaitlistQueueRow, action: 'promote' | 'requeue') => {
+    setBusyId(group.id);
+    const res = await manageWaitlist(group.id, action);
+    setBusyId(null);
+    if (!res.ok) { toast(res.error ?? 'Could not update the waitlist group.', { variant: 'error' }); return; }
+    toast(action === 'promote'
+      ? 'Group promoted — they have been emailed and their spots are held.'
+      : 'Group requeued to the back of the line.');
+    setRefreshKey((k) => k + 1);
+  };
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 18 }}>
+      <h3 className="card-title">Waitlist{queue !== null ? ` (${groups.length})` : ''}</h3>
+      {loadError ? (
+        <p style={{ margin: 0, fontSize: 13, color: 'var(--coral-700)' }}>{loadError}</p>
+      ) : queue === null ? (
+        <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)' }}>Loading…</p>
+      ) : groups.length === 0 ? (
+        <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)' }}>No one is currently waitlisted for this event.</p>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>#</th><th>Club / Athlete</th><th>Discipline</th><th>Level</th><th>Session</th>
+                <th className="num">Regs</th><th>Status</th><th>Queued / hold expires</th>
+                {canOverride && <th />}
+              </tr>
+            </thead>
+            <tbody>
+              {groups.map((g) => {
+                const pos = g.status === 'waiting' ? waitingOnly.findIndex((w) => w.id === g.id) + 1 : null;
+                return (
+                  <tr key={g.id}>
+                    <td>{pos ?? '—'}</td>
+                    <td>{g.name}</td>
+                    <td>{g.discipline === 'TNT' ? 'T&T' : g.discipline}</td>
+                    <td>{levelName(g.levelId)}</td>
+                    <td>{sessionName(g.sessionId)}</td>
+                    <td className="num">{g.regCount}</td>
+                    <td>{g.status === 'waiting' ? <Badge tone="info">Waiting</Badge> : <Badge tone="warn">Holding — must checkout</Badge>}</td>
+                    <td style={{ fontSize: 12.5 }}>
+                      {g.status === 'waiting'
+                        ? `Queued ${fmtDate(g.queuedAt.slice(0, 10))}`
+                        : g.holdExpiresAt ? `Until ${new Date(g.holdExpiresAt).toLocaleString()}` : '—'}
+                    </td>
+                    {canOverride && (
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        {g.status === 'waiting' && (
+                          <button className="btn small ghost" disabled={busyId === g.id} onClick={() => act(g, 'promote')}>
+                            {busyId === g.id ? '…' : 'Promote'}
+                          </button>
+                        )}
+                        {g.status === 'notified' && (
+                          <button className="btn small ghost" disabled={busyId === g.id} onClick={() => act(g, 'requeue')}>
+                            {busyId === g.id ? '…' : 'Requeue'}
+                          </button>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

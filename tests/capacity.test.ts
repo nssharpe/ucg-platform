@@ -13,6 +13,7 @@ import {
   regsAffectedByViolations,
   groupRegsByWaitlistKey,
   isWaitlistable,
+  waitlistPosition,
   type CapacityViolation,
 } from '../src/lib/capacity';
 import type { Event, EventSession, Registration, WaitlistGroup } from '../src/lib/types';
@@ -574,5 +575,50 @@ describe('isWaitlistable (money-invariant gate, fable review of T6)', () => {
 
   it('a refunded reg is not waitlistable (nothing to waitlist)', () => {
     expect(isWaitlistable(baseReg({ paid: false, refunded: true }))).toBe(false);
+  });
+});
+
+describe('waitlistPosition', () => {
+  const grp = (overrides: Partial<WaitlistGroup> = {}): WaitlistGroup => ({
+    id: 'g1', eventId: 'evt1', discipline: 'WAG', status: 'waiting', queuedAt: PAST, ...overrides,
+  });
+
+  it('1-based FIFO rank among waiting groups for the same event, oldest first', () => {
+    const groups = [
+      grp({ id: 'g1', queuedAt: '2026-08-01T10:00:00Z' }),
+      grp({ id: 'g2', queuedAt: '2026-08-01T09:00:00Z' }),
+      grp({ id: 'g3', queuedAt: '2026-08-01T11:00:00Z' }),
+    ];
+    expect(waitlistPosition('g2', groups)).toBe(1);
+    expect(waitlistPosition('g1', groups)).toBe(2);
+    expect(waitlistPosition('g3', groups)).toBe(3);
+  });
+
+  it('only counts groups for the SAME event', () => {
+    const groups = [
+      grp({ id: 'g1', eventId: 'evt1', queuedAt: '2026-08-01T09:00:00Z' }),
+      grp({ id: 'g2', eventId: 'evt2', queuedAt: '2026-08-01T08:00:00Z' }),
+    ];
+    expect(waitlistPosition('g1', groups)).toBe(1);
+  });
+
+  it('undefined for a group not in waiting status (notified/promoted/cancelled/expired)', () => {
+    const groups = [
+      grp({ id: 'g1', status: 'notified' }),
+      grp({ id: 'g2', status: 'waiting' }),
+    ];
+    expect(waitlistPosition('g1', groups)).toBeUndefined();
+  });
+
+  it('undefined when the group id is not found', () => {
+    expect(waitlistPosition('missing', [grp()])).toBeUndefined();
+  });
+
+  it('a notified/promoted group ahead in queued_at does not count toward position (only waiting groups compete)', () => {
+    const groups = [
+      grp({ id: 'g1', status: 'notified', queuedAt: '2026-08-01T08:00:00Z' }),
+      grp({ id: 'g2', status: 'waiting', queuedAt: '2026-08-01T09:00:00Z' }),
+    ];
+    expect(waitlistPosition('g2', groups)).toBe(1);
   });
 });

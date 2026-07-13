@@ -410,9 +410,32 @@ to whatever scheduled work exists:
   while overdue" naturally idempotent via `notification_log`
   (`ref_id = '<eventId>:<taskId>:<stage>'`), same pattern as the sanction
   consumer.
+- **Waitlist promotion sweep** (event-mgmt v2 P4 T7): per event with live
+  `waitlist_groups`, pass 1 resolves `notified` groups (regs no longer
+  waitlisted → `promoted`; hold lapsed → requeued to the back with a
+  "hold lapsed" email), then pass 2 promotes `waiting` groups in strict
+  `queued_at` FIFO using the shared `_shared/capacity.ts` `checkCapacity`
+  engine — a group that doesn't fit blocks its violated cap DIMENSIONS
+  (total / level / discipline / session+apparatus) for the rest of that
+  event's sweep so no later group can jump the queue within a contended
+  dimension, while groups on disjoint dimensions may still promote.
+  Promotion sets `notified` + a hold of min(now+24h, `last_date_to_edit`)
+  and emails the group contact (club managers / the person, resolved
+  server-side via `_shared/waitlist-contacts.ts`); events past
+  `last_date_to_edit` are skipped entirely. Status transitions are atomic
+  conditional updates (`eq('status', …)`), so overlapping runs / a
+  concurrent admin override can't double-claim; emails are best-effort
+  (a missing Resend config never breaks the sweep). Admin override +
+  read-only queue live in the `manage-waitlist` function (actions
+  `promote` — force-notify IGNORING capacity — and `requeue`, both
+  admin/sanctioning-only; action `list` is readable by
+  admin/sanctioning/host-club managers/event-admin grantees and backs the
+  event page's Waitlist card, since `waitlist_groups` RLS only exposes a
+  group to its own club/person).
 
-Both consumers dedupe idempotently via `notification_log` and are isolated in
-their own try/catch so one consumer's failure can't take down the other.
+All consumers dedupe idempotently (via `notification_log` where email is the
+state, via conditional status claims for the waitlist sweep) and are isolated
+in their own try/catch so one consumer's failure can't take down another.
 
 **Three secrets, created manually per environment** (NOT via migration — the
 migrations only read them). **All set up in both envs 2026-07-08.**

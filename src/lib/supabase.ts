@@ -1504,6 +1504,54 @@ export async function processRefund(
   return data as { ok: boolean; refundAmountCents?: number; stripeRefundId?: string | null; error?: string };
 }
 
+/** Admin/sanctioning-only waitlist override (event-mgmt v2 P4 T7): 'promote'
+ *  force-notifies a 'waiting' group right now, IGNORING capacity; 'requeue'
+ *  forces a 'notified' group back to 'waiting' at the back of the queue.
+ *  Server-side authz + the actual DB writes (waitlist_groups' RLS only lets a
+ *  client cancel its OWN group) — this is the one legitimate override path. */
+export async function manageWaitlist(
+  groupId: string,
+  action: 'promote' | 'requeue',
+): Promise<{ ok: boolean; status?: string; holdExpiresAt?: string; queuedAt?: string; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('manage-waitlist', { body: { groupId, action } });
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  return data as { ok: boolean; status?: string; holdExpiresAt?: string; queuedAt?: string; error?: string };
+}
+
+/** One row of the event waitlist queue as returned by manage-waitlist's
+ *  read-only 'list' action (names/counts resolved server-side). */
+export interface WaitlistQueueRow {
+  id: string;
+  clubId: string | null;
+  personId: string | null;
+  name: string;
+  discipline: string;
+  levelId: string | null;
+  sessionId: string | null;
+  status: 'waiting' | 'notified';
+  queuedAt: string;
+  notifiedAt: string | null;
+  holdExpiresAt: string | null;
+  regCount: number;
+}
+
+/** Event waitlist queue (event-mgmt v2 P4 T7), served by the manage-waitlist
+ *  edge function's 'list' action rather than a client waitlist_groups read —
+ *  the table's RLS deliberately only exposes a group to its OWN club/person
+ *  (plus admins), so hosts/sanctioning get visibility through this
+ *  server-side-authorized read (admin/sanctioning/host manager/event-admin
+ *  grantee) instead of an RLS relaxation. `canManage` reports whether the
+ *  caller may promote/requeue (admin/sanctioning). */
+export async function fetchEventWaitlist(
+  eventId: string,
+): Promise<{ ok: boolean; canManage?: boolean; groups?: WaitlistQueueRow[]; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('manage-waitlist', { body: { action: 'list', eventId } });
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  return data as { ok: boolean; canManage?: boolean; groups?: WaitlistQueueRow[]; error?: string };
+}
+
 /** Token lookup for the guardian signing page via SECURITY DEFINER RPC
  *  (the table itself is not publicly readable). */
 export async function fetchSignRequest(token: string): Promise<FnReturns<'get_waiver_sign_request'>[number] | null> {

@@ -402,10 +402,13 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   authorized for admin/sanctioning/host-club managers/event-admin grantees; recipients
   resolved SERVER-side, hosts get no SMS, test-send = caller only, cc = one copy message;
   verify_jwt true), `scheduled-dispatch` (pg_cron every 15 min; sanction-vote
-  reminders + event-owner task escalations (`owner-task` kind, emv2 P1 §B4);
-  verify_jwt STAYS true + requires the `x-cron-secret` header matching its
-  `CRON_SECRET` secret — the runtime's env service key ≠ the legacy JWT, bit us
-  2026-07-08; runbook in `supabase/README.md`), `request-refund` / `process-refund`
+  reminders + event-owner task escalations (`owner-task` kind, emv2 P1 §B4) +
+  waitlist promotion sweep (emv2 P4 T7 — FIFO promote/requeue/complete, runbook in
+  `supabase/README.md`); verify_jwt STAYS true + requires the `x-cron-secret` header
+  matching its `CRON_SECRET` secret — the runtime's env service key ≠ the legacy JWT,
+  bit us 2026-07-08), `manage-waitlist` (emv2 P4 T7: `promote`/`requeue` override =
+  admin/sanctioning only, `list` = + host-club managers/event-admin grantees;
+  verify_jwt true), `request-refund` / `process-refund`
   (emv2 P3 refund request + review/Stripe-processing; both `verify_jwt: true` — the
   no-verify-jwt trio above is UNCHANGED). Notify-style functions allow any signed-in caller and resolve
   recipients server-side; only `send-email`/`send-sms` are admin-gated. (`send-receipt`
@@ -435,5 +438,11 @@ update it there; don't grow a rival list here. Operative notes only:
   branch `feat/emv2-p4`) T1–T6 done: capacity/session engine + DB plumbing, event config
   UI, checkout enforcement + hold stamping, by-session reg picker, cart hold countdown +
   capacity-conflict dialog (waitlist-whole-group / pick-a-different-session / deliberate
-  split) + waitlist visibility (2026-07-12). **T7 (admin waitlist queue + promotion) is
-  the only P4 task left.**
+  split) + waitlist visibility (2026-07-12). T7 (2026-07-13) completes P4 on the branch:
+  FIFO promotion sweep in `scheduled-dispatch` (blocked-dimension bookkeeping — no
+  queue-jumping within a contended cap), new `manage-waitlist` edge fn (admin/sanctioning
+  promote-past-cap override + requeue; `list` backs the event-page Waitlist card for
+  hosts, since `waitlist_groups` RLS only exposes a group to its own club/person),
+  Complete-checkout flow on Club.tsx/MyRegistrations.tsx, `waitlistPosition` helper.
+  **Deployed to STAGING only — prod deploy of `scheduled-dispatch` + `manage-waitlist`
+  (plain deploy, verify_jwt true) is the remaining controller step, then merge.**
