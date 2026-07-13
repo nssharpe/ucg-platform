@@ -10,6 +10,7 @@ import { downloadCartInvoice, downloadReceipt, invoiceTotal } from '../lib/recei
 import { CartCheckout } from '../components/CartCheckout';
 import { CapacityConflictDialog } from '../components/CapacityConflictDialog';
 import { hasCapacityConfig } from '../lib/capacity';
+import { missingNationalsSurveyEvents, type SessionRequestGateReg } from '../lib/pricing';
 import type { CheckoutCapacityError } from '../lib/supabase';
 import type { CartItem, Club, DB, Invoice } from '../lib/types';
 
@@ -36,6 +37,35 @@ function groupCartItems(cart: CartItem[], db: DB) {
     }
   }
   return { membership, events: [...byEvent.values()], other };
+}
+
+/** event-mgmt v2 Phase 5 A3 (spec §L.1/§E5.4): which nationals events among
+ *  `items`' referenced (incoming) registrations still have an unanswered
+ *  required session-planning survey — the client-side advisory mirror of the
+ *  server's checkout gate (`missingNationalsSurveyEvents` in `pricing.ts`).
+ *  Reads `db.*` directly rather than being memoized (M6 in-place-mutation
+ *  trap — `mutate()` never reassigns `db.registrations`/`db.sessionRequests`
+ *  on an update, so a memo keyed on those paths would go stale). Cheap
+ *  enough to recompute on every render. */
+function surveyGateForItems(items: CartItem[], db: DB): { eventId: string; eventName: string }[] {
+  if (items.length === 0) return [];
+  const incomingRegs: SessionRequestGateReg[] = [];
+  for (const item of items) {
+    for (const regId of item.refRegIds ?? []) {
+      const reg = db.registrations.find((r) => r.id === regId);
+      if (!reg) continue;
+      incomingRegs.push({
+        athleteId: reg.athleteId, clubId: reg.clubId, eventId: reg.eventId,
+        discipline: reg.discipline, levelId: reg.levelId, refunded: reg.refunded,
+      });
+    }
+  }
+  if (incomingRegs.length === 0) return [];
+  const existing = (db.sessionRequests ?? []).map((s) => ({
+    eventId: s.eventId, clubId: s.clubId ?? null, personId: s.personId ?? null,
+    discipline: s.discipline, levelId: s.levelId ?? null, answers: s.answers,
+  }));
+  return missingNationalsSurveyEvents(db.events, incomingRegs, db.people, existing);
 }
 
 /** Earliest live (not-yet-expired-in-the-past... this returns it regardless of
@@ -91,13 +121,22 @@ function HoldCountdown({ expiresAtMs }: { expiresAtMs: number }) {
   );
 }
 
-function CartCard({ title, items, returnTo, returnLabel, onCheckout, onRemove, onPrintInvoice, holdExpiresAtMs }: {
+function CartCard({ title, items, returnTo, returnLabel, onCheckout, onRemove, onPrintInvoice, holdExpiresAtMs, surveyGate, surveyReturnTo }: {
   title: string; items: CartItem[]; returnTo: string; returnLabel: string; onCheckout: () => void;
   onRemove: (item: CartItem) => void; onPrintInvoice: () => void;
   /** event-mgmt v2 P4 T6: earliest live cart-add hold among this card's
    *  registrations, epoch ms — only set for capacity-configured events. */
   holdExpiresAtMs?: number | null;
+  /** event-mgmt v2 Phase 5 A3: nationals events among this card's incoming
+   *  regs with an unanswered required session-planning survey. Non-empty ⇒
+   *  the "Check out" button is disabled and a warning is shown instead of
+   *  sending a request the server will just reject. */
+  surveyGate?: { eventId: string; eventName: string }[];
+  /** Where to send the user to answer the survey (club registrations page
+   *  for a club cart, My Registrations for a self cart). */
+  surveyReturnTo?: string;
 }) {
+  const surveyBlocked = !!surveyGate && surveyGate.length > 0;
   return (
     <div className="card card-pad">
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
@@ -105,6 +144,12 @@ function CartCard({ title, items, returnTo, returnLabel, onCheckout, onRemove, o
         <Link to={returnTo} style={{ marginLeft: 'auto', fontSize: 13 }}>{returnLabel} →</Link>
       </div>
       {holdExpiresAtMs != null && <HoldCountdown expiresAtMs={holdExpiresAtMs} />}
+      {surveyBlocked && (
+        <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--coral-600)' }}>
+          Answer the nationals session-planning survey for {surveyGate!.map((g) => g.eventName).join(', ')}{' '}
+          before checking out{surveyReturnTo ? <> — <Link to={surveyReturnTo}>answer it here</Link></> : null}.
+        </p>
+      )}
       <ul style={{ margin: '10px 0', paddingLeft: 18, fontSize: 14 }}>
         {items.map((i) => (
           <li key={i.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
@@ -130,7 +175,7 @@ function CartCard({ title, items, returnTo, returnLabel, onCheckout, onRemove, o
         <button className="btn ghost small" onClick={onPrintInvoice} disabled={items.length === 0}>
           Print Invoice
         </button>
-        <button className="btn primary small" onClick={onCheckout} disabled={items.length === 0}>
+        <button className="btn primary small" onClick={onCheckout} disabled={items.length === 0 || surveyBlocked}>
           Check out {title}
         </button>
       </div>
@@ -167,6 +212,19 @@ function CartScope({
   const [capacityConflict, setCapacityConflict] = useState<CheckoutCapacityError | null>(null);
 
   const groups = useMemo(() => groupCartItems(cart, db), [cart, db]);
+
+  // event-mgmt v2 Phase 5 A3: where this scope answers a nationals
+  // session-planning survey — the club's registrations page for a club cart,
+  // My Registrations for a self cart (mirrors `goPickSession` below).
+  const surveyReturnTo = isClub ? `/club/${ownerKey}/registrations` : '/me/registrations';
+
+  // A 400 session-survey-required rejection is the server-authoritative
+  // fallback for the advisory gate below (e.g. a survey answered/unanswered
+  // by someone else between the client check and the request landing).
+  const goAnswerSurvey = (eventName: string) => {
+    toast(`Answer the nationals session-planning survey for ${eventName} before checking out.`, { variant: 'error' });
+    navigate(surveyReturnTo);
+  };
 
   // (b) "Pick a different session" / the 400 session-required path both land
   // here: no clean deep-link into the registration editor exists from the
@@ -246,6 +304,7 @@ function CartScope({
           onError={(msg) => toast(msg, { variant: 'error' })}
           onCapacityConflict={(err) => { setCheckout(null); setCapacityConflict(err); }}
           onSessionRequired={(err) => { setCheckout(null); goPickSession(err.eventId); }}
+          onSurveyRequired={(err) => { setCheckout(null); goAnswerSurvey(err.eventName); }}
         />
       </div>
     );
@@ -273,8 +332,23 @@ function CartScope({
     return <>{conflictDialog}<p style={{ color: 'var(--ink-soft)' }}>Cart is empty.</p></>;
   }
 
+  // event-mgmt v2 Phase 5 A3: gate every checkout entry point (everything +
+  // each bucket below) on unanswered required nationals surveys among that
+  // bucket's OWN incoming regs — matches the server's per-line scoping
+  // exactly (a bucket that doesn't reference a nationals event's regs is
+  // never blocked by another bucket's missing survey).
+  const everythingSurveyGate = surveyGateForItems(cart, db);
+  const everythingSurveyBlocked = everythingSurveyGate.length > 0;
+
   const checkoutAllButton = (
-    <button className="btn primary" onClick={() => setCheckout({ items: cart, title: 'Everything' })}>
+    <button
+      className="btn primary"
+      onClick={() => setCheckout({ items: cart, title: 'Everything' })}
+      disabled={everythingSurveyBlocked}
+      title={everythingSurveyBlocked
+        ? `Answer the nationals session-planning survey for ${everythingSurveyGate.map((g) => g.eventName).join(', ')} first.`
+        : undefined}
+    >
       Check out everything →
     </button>
   );
@@ -293,13 +367,22 @@ function CartScope({
         {printAllButton}
         {checkoutAllButton}
       </div>
+      {everythingSurveyBlocked && (
+        <p style={{ margin: '-6px 0 14px', fontSize: 13, color: 'var(--coral-600)' }}>
+          "Check out everything" is blocked: answer the nationals session-planning survey for{' '}
+          {everythingSurveyGate.map((g) => g.eventName).join(', ')} — <Link to={surveyReturnTo}>answer it here</Link>.
+          Individual sections not affected by that event can still be checked out separately.
+        </p>
+      )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {groups.membership.length > 0 && (
           <CartCard title="Memberships" items={groups.membership} returnTo={membershipsReturnTo} returnLabel="Checkout Memberships"
             onCheckout={() => setCheckout({ items: groups.membership, title: 'Memberships' })}
             onRemove={removeItem}
-            onPrintInvoice={() => downloadCartInvoice(groups.membership, name, 'Memberships')} />
+            onPrintInvoice={() => downloadCartInvoice(groups.membership, name, 'Memberships')}
+            surveyGate={surveyGateForItems(groups.membership, db)}
+            surveyReturnTo={surveyReturnTo} />
         )}
         {groups.events.map((g) => {
           const event = db.events.find((e) => e.id === g.eventId);
@@ -311,14 +394,18 @@ function CartScope({
               onCheckout={() => setCheckout({ items: g.items, title: g.eventName })}
               onRemove={removeItem}
               onPrintInvoice={() => downloadCartInvoice(g.items, name, g.eventName)}
-              holdExpiresAtMs={holdMs} />
+              holdExpiresAtMs={holdMs}
+              surveyGate={surveyGateForItems(g.items, db)}
+              surveyReturnTo={surveyReturnTo} />
           );
         })}
         {groups.other.length > 0 && (
           <CartCard title="Other" items={groups.other} returnTo={otherReturnTo} returnLabel="Browse"
             onCheckout={() => setCheckout({ items: groups.other, title: 'Other' })}
             onRemove={removeItem}
-            onPrintInvoice={() => downloadCartInvoice(groups.other, name, 'Other')} />
+            onPrintInvoice={() => downloadCartInvoice(groups.other, name, 'Other')}
+            surveyGate={surveyGateForItems(groups.other, db)}
+            surveyReturnTo={surveyReturnTo} />
         )}
       </div>
 

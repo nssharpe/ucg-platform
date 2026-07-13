@@ -1137,6 +1137,108 @@ export function missingSessionRequests(
     e.discipline === key.discipline && e.levelId === key.levelId && sessionRequestAnswered(e.answers)));
 }
 
+// --- Checkout gate (A3): mirrors the server-side block in
+// create-checkout-session so the "Pay" action can be disabled/warned BEFORE
+// the request is even sent (the server check is authoritative; this is
+// advisory only). ---
+
+/** Minimal event slice for the checkout-gate scan (adds id/name to
+ *  `SessionRequestEvent`). */
+export type SessionRequestGateEvent = { id: string; name: string; kind?: 'standard' | 'nationals' };
+
+/** Minimal INCOMING (cart-referenced) registration slice for the
+ *  checkout-gate scan — these are the regs actually being paid for right
+ *  now, matching the server's "levels newly added by in-cart athletes"
+ *  scope (not the athlete's/club's full history). */
+export type SessionRequestGateReg = {
+  athleteId: string; clubId: string; eventId: string;
+  discipline: Discipline; levelId: string; refunded?: boolean;
+};
+
+/** Minimal person slice: only `mainClubId` decides independent (person-scoped)
+ *  vs club-affiliated (club-scoped). */
+export type SessionRequestGatePerson = { id: string; mainClubId: string | null };
+
+/** Minimal existing-survey-row slice carrying the scoping columns — the
+ *  checkout-gate scan spans multiple events/scopes in one pass (unlike the
+ *  A2 UI callers, which pre-filter to one event/scope), so it filters here. */
+export type ExistingSessionRequestRow = ExistingSessionRequest & {
+  eventId: string; clubId?: string | null; personId?: string | null;
+};
+
+/**
+ * Client-side mirror of the A3 server checkout gate (spec §L.1/§E5.4): given
+ * the INCOMING registrations a cart line references (about to be paid for),
+ * returns every nationals event among them that still has an unanswered
+ * required session-request survey. Used to disable "Pay" before the request
+ * is even sent — the server re-derives and enforces the same thing, this is
+ * advisory only.
+ *
+ * Mirrors create-checkout-session's server algorithm exactly: partition
+ * incoming regs PER-REGISTRATION by the athlete's `mainClubId` (independent
+ * ⇒ person-scoped survey keyed by that athlete; else ⇒ club-scoped, keyed by
+ * the reg's OWN `clubId`), derive required keys via `requiredSessionRequests`,
+ * and check `missingSessionRequests` against `existing`. A self cart's regs
+ * are always the payer's own and a club cart's regs always belong to that
+ * club (both enforced server-side by the H4 ownership checks) — so this
+ * naturally never cross-gates one scope on another scope's missing survey;
+ * no extra filtering by cart owner is needed here. An athlete id absent from
+ * `people` defaults to club-scoped (same as the server's `main_club_id`
+ * lookup, where a missing row is NOT null ⇒ not independent).
+ */
+export function missingNationalsSurveyEvents(
+  events: SessionRequestGateEvent[],
+  incomingRegs: SessionRequestGateReg[],
+  people: SessionRequestGatePerson[],
+  existing: ExistingSessionRequestRow[],
+): { eventId: string; eventName: string }[] {
+  const eventsById = new Map(events.map((e) => [e.id, e]));
+  const peopleById = new Map(people.map((p) => [p.id, p]));
+  const regsByEvent = new Map<string, SessionRequestGateReg[]>();
+  for (const r of incomingRegs) {
+    if (r.refunded) continue;
+    const list = regsByEvent.get(r.eventId) ?? [];
+    list.push(r);
+    regsByEvent.set(r.eventId, list);
+  }
+
+  const flagged: { eventId: string; eventName: string }[] = [];
+  for (const [eventId, regs] of regsByEvent) {
+    const event = eventsById.get(eventId);
+    if (!event || event.kind !== 'nationals') continue;
+
+    const byAthlete = new Map<string, SessionRequestGateReg[]>();
+    const byClub = new Map<string, SessionRequestGateReg[]>();
+    for (const r of regs) {
+      const person = peopleById.get(r.athleteId);
+      if (person && person.mainClubId === null) {
+        const list = byAthlete.get(r.athleteId) ?? [];
+        list.push(r);
+        byAthlete.set(r.athleteId, list);
+      } else {
+        const list = byClub.get(r.clubId) ?? [];
+        list.push(r);
+        byClub.set(r.clubId, list);
+      }
+    }
+
+    let hasMissing = false;
+    for (const [athleteId, athleteRegs] of byAthlete) {
+      const required = requiredSessionRequests(event, athleteRegs, 'person');
+      const existingForAthlete = existing.filter((e) => e.eventId === eventId && e.personId === athleteId);
+      if (missingSessionRequests(required, existingForAthlete).length > 0) hasMissing = true;
+    }
+    for (const [clubId, clubRegs] of byClub) {
+      const required = requiredSessionRequests(event, clubRegs, 'club');
+      const existingForClub = existing.filter((e) => e.eventId === eventId && e.clubId === clubId);
+      if (missingSessionRequests(required, existingForClub).length > 0) hasMissing = true;
+    }
+
+    if (hasMissing) flagged.push({ eventId, eventName: event.name });
+  }
+  return flagged;
+}
+
 /** Arrival-window options for the A2 session-request survey UI (club +
  *  independent variants share this so the buckets stay identical). These
  *  mirror the assignment-tool mapping in spec §L.2 (Tue/Wed, Thu-before-noon,

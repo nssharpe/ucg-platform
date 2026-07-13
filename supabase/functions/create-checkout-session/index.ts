@@ -476,6 +476,152 @@ Deno.serve(async (req) => {
     }
   }
 
+  // --- Nationals session-request survey gate (event-mgmt v2 Phase 5 A3,
+  // spec §L.1/§E5.4) ----------------------------------------------------------
+  // Gates BOTH the Stripe path and the $0 free-order path below (same
+  // position as the capacity block above) — a nationals event must not be
+  // checked out until every required session-planning survey is answered,
+  // "including levels newly added by in-cart athletes." Mirrors
+  // `requiredSessionRequests`/`sessionRequestAnswered`/`missingSessionRequests`
+  // in `src/lib/pricing.ts` (the edge function can't import from `src/`, so
+  // the rules are re-derived here — keep in sync). Scoped to the INCOMING
+  // regs referenced via ref_reg_ids (`regsByLine`, already loaded above for
+  // H4) — required keys derive from what's being paid for right NOW, not the
+  // athlete's/club's full registration history, which is exactly the "levels
+  // newly added by in-cart athletes" clause.
+  {
+    const nationalsIncomingRegs = regsByLine.filter((r) => !r.refunded);
+    const nationalsEventIds = Array.from(new Set(nationalsIncomingRegs.map((r) => r.event_id)));
+    if (nationalsEventIds.length) {
+      const { data: natEventRows, error: natEvErr } = await db
+        .from('events')
+        .select('id, name, kind')
+        .in('id', nationalsEventIds);
+      if (natEvErr) return json({ ok: false, error: natEvErr.message }, 500);
+      const nationalsEventsById = new Map(
+        (natEventRows ?? [])
+          .filter((e) => (e as { kind: string }).kind === 'nationals')
+          .map((e) => [e.id as string, e as { id: string; name: string; kind: string }]),
+      );
+
+      if (nationalsEventsById.size) {
+        // Athlete -> main_club_id, for every distinct athlete on an incoming
+        // nationals reg. A missing row (shouldn't happen) defaults to
+        // "not independent" (fail closed), matching the client mirror.
+        const nationalsAthleteIds = Array.from(new Set(
+          nationalsIncomingRegs
+            .filter((r) => nationalsEventsById.has(r.event_id))
+            .map((r) => r.athlete_id),
+        ));
+        const mainClubById = new Map<string, string | null>();
+        if (nationalsAthleteIds.length) {
+          const { data: peopleRows, error: peopleErr } = await db
+            .from('people')
+            .select('id, main_club_id')
+            .in('id', nationalsAthleteIds);
+          if (peopleErr) return json({ ok: false, error: peopleErr.message }, 500);
+          for (const p of peopleRows ?? []) {
+            mainClubById.set(p.id as string, (p as { main_club_id: string | null }).main_club_id);
+          }
+        }
+
+        // Existing surveys for the involved nationals event(s).
+        const { data: surveyRows, error: surveyErr } = await db
+          .from('session_requests')
+          .select('event_id, club_id, person_id, discipline, level_id, answers')
+          .in('event_id', Array.from(nationalsEventsById.keys()));
+        if (surveyErr) return json({ ok: false, error: surveyErr.message }, 500);
+        type SurveyRow = {
+          event_id: string; club_id: string | null; person_id: string | null;
+          discipline: string; level_id: string | null; answers: Record<string, unknown> | null;
+        };
+        const surveys = (surveyRows ?? []) as SurveyRow[];
+        const isAnswered = (s: SurveyRow) =>
+          typeof s.answers?.arrival === 'string' && s.answers.arrival.trim().length > 0;
+
+        for (const [eventId, natEvent] of nationalsEventsById) {
+          const incomingForEvent = nationalsIncomingRegs.filter((r) => r.event_id === eventId);
+          if (incomingForEvent.length === 0) continue;
+
+          // Partition per-registration by the ATHLETE's main_club_id: null
+          // ⇒ independent (person-scoped survey keyed by that athlete);
+          // else ⇒ club-scoped, keyed by the reg's OWN club_id.
+          const byAthlete = new Map<string, RegRow[]>();
+          const byClub = new Map<string, RegRow[]>();
+          for (const r of incomingForEvent) {
+            const mainClubId = mainClubById.get(r.athlete_id) ?? null;
+            if (mainClubById.has(r.athlete_id) && mainClubId === null) {
+              const list = byAthlete.get(r.athlete_id) ?? [];
+              list.push(r);
+              byAthlete.set(r.athlete_id, list);
+            } else {
+              const list = byClub.get(r.club_id ?? '') ?? [];
+              list.push(r);
+              byClub.set(r.club_id ?? '', list);
+            }
+          }
+
+          // Required keys, mirroring requiredSessionRequests: person scope
+          // = one {discipline, null} per distinct discipline; club scope =
+          // one {WAG, levelId} per distinct WAG level + {MAG,null}/{TNT,null}
+          // if present.
+          const missingDescriptions: string[] = [];
+
+          for (const [athleteId, regs] of byAthlete) {
+            const disciplines = new Set(regs.map((r) => r.discipline));
+            for (const discipline of disciplines) {
+              const answered = surveys.some((s) =>
+                s.person_id === athleteId && s.event_id === eventId &&
+                s.discipline === discipline && s.level_id === null && isAnswered(s));
+              if (!answered) missingDescriptions.push(`${discipline} (athlete survey)`);
+            }
+          }
+
+          for (const [clubId, regs] of byClub) {
+            const wagLevels = new Set<string>();
+            let hasMag = false;
+            let hasTnt = false;
+            for (const r of regs) {
+              if (r.discipline === 'WAG') wagLevels.add(r.level_id);
+              else if (r.discipline === 'MAG') hasMag = true;
+              else if (r.discipline === 'TNT') hasTnt = true;
+            }
+            for (const levelId of wagLevels) {
+              const answered = surveys.some((s) =>
+                s.club_id === clubId && s.event_id === eventId &&
+                s.discipline === 'WAG' && s.level_id === levelId && isAnswered(s));
+              if (!answered) missingDescriptions.push(`WAG level (club survey)`);
+            }
+            if (hasMag) {
+              const answered = surveys.some((s) =>
+                s.club_id === clubId && s.event_id === eventId &&
+                s.discipline === 'MAG' && s.level_id === null && isAnswered(s));
+              if (!answered) missingDescriptions.push('MAG (club survey)');
+            }
+            if (hasTnt) {
+              const answered = surveys.some((s) =>
+                s.club_id === clubId && s.event_id === eventId &&
+                s.discipline === 'TNT' && s.level_id === null && isAnswered(s));
+              if (!answered) missingDescriptions.push('T&T (club survey)');
+            }
+          }
+
+          if (missingDescriptions.length) {
+            return json({
+              ok: false,
+              error: `"${natEvent.name}" requires the nationals session-planning survey to be answered before checkout ` +
+                `(missing: ${missingDescriptions.join(', ')}). Answer it on the club/registrations page, then try again.`,
+              code: 'session-survey-required',
+              eventId,
+              eventName: natEvent.name,
+              missing: missingDescriptions,
+            }, 400);
+          }
+        }
+      }
+    }
+  }
+
   // --- Recompute each line into Stripe line items + subtotal ----------------
   // `scope`/`eventId` are the coupon-matching tags: which "Applies to" category
   // (per the promo-code feature) this line falls under, so a coupon can be

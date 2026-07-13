@@ -1173,6 +1173,20 @@ export interface CheckoutSessionRequiredError {
   regIds: string[];
 }
 
+/** A rejected checkout because a nationals event in the cart has an
+ *  unanswered required session-planning survey (event-mgmt v2 Phase 5 A3,
+ *  spec §L.1/§E5.4). The client normally catches this in advance (see
+ *  `missingNationalsSurveyEvents` in `pricing.ts`, checked before this
+ *  request is even sent) — this is the server-authoritative fallback for
+ *  anything the advisory check missed (e.g. a survey answered/unanswered by
+ *  someone else between the check and the request). */
+export interface CheckoutSurveyRequiredError {
+  code: 'session-survey-required';
+  eventId: string;
+  eventName: string;
+  missing: string[];
+}
+
 export async function createCheckoutSession(args: {
   cartItemIds: string[];
   couponCode?: string;
@@ -1180,6 +1194,7 @@ export async function createCheckoutSession(args: {
   ok: boolean; clientSecret?: string; sessionId?: string; paymentId?: string; free?: boolean;
   amountSubtotal?: number; discountAmount?: number; serviceFee?: number; error?: string;
   capacityError?: CheckoutCapacityError; sessionRequiredError?: CheckoutSessionRequiredError;
+  surveyRequiredError?: CheckoutSurveyRequiredError;
 }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('create-checkout-session', { body: args });
@@ -1204,6 +1219,17 @@ export async function createCheckoutSession(args: {
           eventId: body.eventId as string,
           eventName: body.eventName as string,
           regIds: (body.regIds as string[]) ?? [],
+        },
+      };
+    }
+    if (body?.code === 'session-survey-required') {
+      return {
+        ok: false, error: message,
+        surveyRequiredError: {
+          code: 'session-survey-required',
+          eventId: body.eventId as string,
+          eventName: body.eventName as string,
+          missing: (body.missing as string[]) ?? [],
         },
       };
     }

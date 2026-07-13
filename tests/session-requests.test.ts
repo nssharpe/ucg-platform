@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   requiredSessionRequests, sessionRequestAnswered, missingSessionRequests,
+  missingNationalsSurveyEvents,
   type SessionRequestReg, type ExistingSessionRequest,
+  type SessionRequestGateEvent, type SessionRequestGateReg, type SessionRequestGatePerson,
+  type ExistingSessionRequestRow,
 } from '../src/lib/pricing';
 
 describe('requiredSessionRequests', () => {
@@ -107,5 +110,77 @@ describe('missingSessionRequests', () => {
       { discipline: 'MAG', levelId: null, answers: { arrival: 'Friday' } },
     ];
     expect(missingSessionRequests(required, existing)).toEqual([]);
+  });
+});
+
+describe('missingNationalsSurveyEvents (A3 checkout-gate mirror)', () => {
+  const events: SessionRequestGateEvent[] = [
+    { id: 'ev-nat', name: 'Nationals 2026', kind: 'nationals' },
+    { id: 'ev-std', name: 'Standard Meet', kind: 'standard' },
+  ];
+
+  it('does not gate a non-nationals event even with no surveys at all', () => {
+    const regs: SessionRequestGateReg[] = [
+      { athleteId: 'a1', clubId: 'club-1', eventId: 'ev-std', discipline: 'WAG', levelId: 'lvl-3' },
+    ];
+    const people: SessionRequestGatePerson[] = [{ id: 'a1', mainClubId: 'club-1' }];
+    expect(missingNationalsSurveyEvents(events, regs, people, [])).toEqual([]);
+  });
+
+  it('flags a nationals event when a club-affiliated athlete has no matching club survey', () => {
+    const regs: SessionRequestGateReg[] = [
+      { athleteId: 'a1', clubId: 'club-1', eventId: 'ev-nat', discipline: 'WAG', levelId: 'lvl-3' },
+    ];
+    const people: SessionRequestGatePerson[] = [{ id: 'a1', mainClubId: 'club-1' }];
+    expect(missingNationalsSurveyEvents(events, regs, people, [])).toEqual([{ eventId: 'ev-nat', eventName: 'Nationals 2026' }]);
+  });
+
+  it('does not flag once the club survey for that exact level is answered', () => {
+    const regs: SessionRequestGateReg[] = [
+      { athleteId: 'a1', clubId: 'club-1', eventId: 'ev-nat', discipline: 'WAG', levelId: 'lvl-3' },
+    ];
+    const people: SessionRequestGatePerson[] = [{ id: 'a1', mainClubId: 'club-1' }];
+    const existing: ExistingSessionRequestRow[] = [
+      { eventId: 'ev-nat', clubId: 'club-1', discipline: 'WAG', levelId: 'lvl-3', answers: { arrival: 'Thursday' } },
+    ];
+    expect(missingNationalsSurveyEvents(events, regs, people, existing)).toEqual([]);
+  });
+
+  it('routes an independent athlete (mainClubId null) to the person-scoped survey, not the club one', () => {
+    const regs: SessionRequestGateReg[] = [
+      { athleteId: 'indie-1', clubId: 'club-1', eventId: 'ev-nat', discipline: 'MAG', levelId: 'lvl-a' },
+    ];
+    const people: SessionRequestGatePerson[] = [{ id: 'indie-1', mainClubId: null }];
+    // A club survey exists but doesn't matter — this athlete needs their OWN
+    // person-scoped survey answered, and doesn't have one.
+    const existingClubOnly: ExistingSessionRequestRow[] = [
+      { eventId: 'ev-nat', clubId: 'club-1', discipline: 'MAG', levelId: null, answers: { arrival: 'Friday' } },
+    ];
+    expect(missingNationalsSurveyEvents(events, regs, people, existingClubOnly))
+      .toEqual([{ eventId: 'ev-nat', eventName: 'Nationals 2026' }]);
+
+    const existingPerson: ExistingSessionRequestRow[] = [
+      { eventId: 'ev-nat', personId: 'indie-1', discipline: 'MAG', levelId: null, answers: { arrival: 'Friday' } },
+    ];
+    expect(missingNationalsSurveyEvents(events, regs, people, existingPerson)).toEqual([]);
+  });
+
+  it('treats an athlete missing from `people` as club-scoped (fail-closed default, mirrors the server)', () => {
+    const regs: SessionRequestGateReg[] = [
+      { athleteId: 'unknown-1', clubId: 'club-1', eventId: 'ev-nat', discipline: 'TNT', levelId: 'lvl-z' },
+    ];
+    expect(missingNationalsSurveyEvents(events, regs, [], [])).toEqual([{ eventId: 'ev-nat', eventName: 'Nationals 2026' }]);
+    const existing: ExistingSessionRequestRow[] = [
+      { eventId: 'ev-nat', clubId: 'club-1', discipline: 'TNT', levelId: null, answers: { arrival: 'Tuesday' } },
+    ];
+    expect(missingNationalsSurveyEvents(events, regs, [], existing)).toEqual([]);
+  });
+
+  it('ignores a refunded incoming reg entirely', () => {
+    const regs: SessionRequestGateReg[] = [
+      { athleteId: 'a1', clubId: 'club-1', eventId: 'ev-nat', discipline: 'WAG', levelId: 'lvl-9', refunded: true },
+    ];
+    const people: SessionRequestGatePerson[] = [{ id: 'a1', mainClubId: 'club-1' }];
+    expect(missingNationalsSurveyEvents(events, regs, people, [])).toEqual([]);
   });
 });

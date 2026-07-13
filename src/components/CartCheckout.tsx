@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { fmtMoney } from '../lib/scoring';
-import { createCheckoutSession, fetchPaymentStatus, type CheckoutCapacityError, type CheckoutSessionRequiredError } from '../lib/supabase';
+import {
+  createCheckoutSession, fetchPaymentStatus,
+  type CheckoutCapacityError, type CheckoutSessionRequiredError, type CheckoutSurveyRequiredError,
+} from '../lib/supabase';
 import { StripeCheckout } from './StripeCheckout';
 import type { CartItem } from '../lib/types';
 
@@ -43,6 +46,7 @@ export function CartCheckout({
   onError,
   onCapacityConflict,
   onSessionRequired,
+  onSurveyRequired,
 }: {
   items: CartItem[];
   title: string;
@@ -55,6 +59,12 @@ export function CartCheckout({
   onCapacityConflict?: (err: CheckoutCapacityError) => void;
   /** A 400 session-required rejection (by-session event, missing session pick). */
   onSessionRequired?: (err: CheckoutSessionRequiredError) => void;
+  /** event-mgmt v2 Phase 5 A3: a 400 session-survey-required rejection — the
+   *  server-authoritative fallback for the client's own advisory check
+   *  (`missingNationalsSurveyEvents`, checked by the caller before this
+   *  component even mounts a session). When provided, called INSTEAD of
+   *  showing the generic error stage, same pattern as the two above. */
+  onSurveyRequired?: (err: CheckoutSurveyRequiredError) => void;
 }) {
   const [stage, setStage] = useState<Stage>({ kind: 'loading' });
   const [couponInput, setCouponInput] = useState('');
@@ -83,6 +93,8 @@ export function CartCheckout({
           onCapacityConflict(r.capacityError);
         } else if (r.sessionRequiredError && onSessionRequired) {
           onSessionRequired(r.sessionRequiredError);
+        } else if (r.surveyRequiredError && onSurveyRequired) {
+          onSurveyRequired(r.surveyRequiredError);
         } else {
           const msg = r.error ?? 'Could not start checkout. Please try again.';
           setStage({ kind: 'error', message: msg });
