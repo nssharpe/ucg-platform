@@ -10,7 +10,14 @@ test('event listing and detail reflect closed registration', async ({ page }) =>
 
   await page.goto('/ucg-platform/#/events');
 
-  const eventLink = page.getByRole('link', { name: 'UCG Nationals 2026' });
+  // The seeded event's dates (2026-07-10..12) have rolled into the past, so it
+  // may live under either tab depending on today's date — check Upcoming
+  // first, fall back to Past. (Broke 2026-07-13 when it left "Upcoming".)
+  let eventLink = page.getByRole('link', { name: 'UCG Nationals 2026' });
+  if (!(await eventLink.isVisible().catch(() => false))) {
+    await page.getByRole('button', { name: 'Past' }).click();
+    eventLink = page.getByRole('link', { name: 'UCG Nationals 2026' });
+  }
   await expect(eventLink).toBeVisible();
   await eventLink.click();
 
