@@ -200,8 +200,10 @@ here — update THIS list when priorities change, not rival copies.
   admin with a confirm). Refund receipts (jsPDF) appear in Purchase History. A hotfix
   migration (`20260711023234`) closed an RLS policy-recursion regression (42P17) the
   review-reads migration introduced, which briefly broke all `invoice_items` reads.
-  **P4 (capacity & sessions — waitlists, by-session registration) T1–T6 shipped on
-  `feat/emv2-p4`; T7 (admin waitlist queue/promotion + Complete-checkout) shipped on the branch 2026-07-13 — staging-verified; deploy `scheduled-dispatch` + `manage-waitlist` to prod (plain deploy, verify_jwt true) and merge to finish P4.**
+  **P4 (capacity & sessions — waitlists, by-session registration) SHIPPED 2026-07-13:**
+  merged to main; migrations applied staging+prod; `create-checkout-session`,
+  `scheduled-dispatch`, `manage-waitlist` deployed to prod (verify_jwt true; the
+  no-verify-jwt trio re-checked). Next: V2-P5 nationals ops (§L, §E6–7).
   **P0 Task 1 shipped:** pg_cron/pg_net scheduler infra (`notification_log` +
   `scheduled-dispatch-15min` job + `scheduled-dispatch` Edge Function, service-role-only
   auth) with its first consumer — 3d/1d/closed sanction-vote reminder emails, idempotent

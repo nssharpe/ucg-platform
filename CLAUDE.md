@@ -444,5 +444,6 @@ update it there; don't grow a rival list here. Operative notes only:
   promote-past-cap override + requeue; `list` backs the event-page Waitlist card for
   hosts, since `waitlist_groups` RLS only exposes a group to its own club/person),
   Complete-checkout flow on Club.tsx/MyRegistrations.tsx, `waitlistPosition` helper.
-  **Deployed to STAGING only — prod deploy of `scheduled-dispatch` + `manage-waitlist`
-  (plain deploy, verify_jwt true) is the remaining controller step, then merge.**
+  **P4 SHIPPED 2026-07-13**: migrations applied staging+prod; `create-checkout-session`/
+  `scheduled-dispatch`/`manage-waitlist` deployed to prod (verify_jwt true, trio
+  re-checked); merged to main. Next: V2-P5 nationals ops.
