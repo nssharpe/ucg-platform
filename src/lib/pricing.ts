@@ -1,7 +1,7 @@
 // Pure pricing & coupon-validity logic — no React/store/Supabase imports (types
 // erase at compile time). Unit-tested in tests/pricing.test.ts. Used by the
 // membership purchase flow (W6) and promo codes (W14).
-import type { Athlete, CartItem, Coupon, Discipline, Membership, MembershipType, Registration, Season } from './types';
+import type { Athlete, CartItem, Coupon, Discipline, Membership, MembershipType, Registration, Season, SessionRequestAnswers } from './types';
 
 /** Base fee for a membership type in a season. */
 export function membershipFee(season: Season, type: MembershipType): number {
@@ -1048,4 +1048,91 @@ export function refundAmountCents(
  * `supabase/functions/process-refund/index.ts`. */
 export function capRefundCents(computedCents: number, availableCents: number): number {
   return Math.min(computedCents, Math.max(0, availableCents));
+}
+
+// --- Nationals session-request survey (event-mgmt v2 Phase 5 A1, spec §L.1/§E5.4) ---
+// Pure derivation of WHICH surveys a club/independent athlete owes for a
+// nationals event, and whether a given set of existing survey rows already
+// covers them. Reused by the A2 survey UI (what to render/prompt) and the A3
+// checkout gate (block checkout until answered); the same rules are mirrored
+// server-side for A3 (spec calls for enforcement at checkout, not just UI).
+
+/** Minimal Event slice these helpers need. */
+export type SessionRequestEvent = { kind?: 'standard' | 'nationals' };
+
+/** One required survey slot: a discipline, plus (WAG club variant only) the
+ *  specific level it's scoped to. `levelId: null` means the combined
+ *  MAG/T&T club survey OR any independent-athlete survey (which never
+ *  splits by level). */
+export type SessionRequestKey = { discipline: Discipline; levelId: string | null };
+
+/** Minimal Registration slice these helpers need. */
+export type SessionRequestReg = { discipline: Discipline; levelId: string };
+
+/**
+ * Which session-request surveys are required for ONE scope (a club's
+ * registrations, or one independent athlete's registrations) at `event`.
+ * Returns [] for any non-nationals event — the survey only exists on
+ * `event.kind === 'nationals'`.
+ *
+ * Considers ALL passed registrations — paid AND pending/in-cart — since the
+ * survey is about session PLANNING (which needs to account for what's in the
+ * pipeline), not billing state.
+ *
+ * `scope`:
+ *  - 'club': one key per distinct WAG level with ≥1 reg (`{ WAG, levelId }`
+ *    each), plus one combined `{ MAG, null }` key if any MAG reg exists,
+ *    plus one combined `{ TNT, null }` key if any T&T reg exists.
+ *  - 'person' (independent athlete): one `{ discipline, null }` key per
+ *    distinct discipline the person is registered in — never split by
+ *    level, regardless of discipline.
+ */
+export function requiredSessionRequests(
+  event: SessionRequestEvent,
+  regs: SessionRequestReg[],
+  scope: 'club' | 'person',
+): SessionRequestKey[] {
+  if (event.kind !== 'nationals') return [];
+  const keys: SessionRequestKey[] = [];
+  if (scope === 'person') {
+    const disciplines = new Set<Discipline>();
+    for (const r of regs) disciplines.add(r.discipline);
+    for (const discipline of disciplines) keys.push({ discipline, levelId: null });
+    return keys;
+  }
+  // scope === 'club'
+  const wagLevels = new Set<string>();
+  let hasMag = false;
+  let hasTnt = false;
+  for (const r of regs) {
+    if (r.discipline === 'WAG') wagLevels.add(r.levelId);
+    else if (r.discipline === 'MAG') hasMag = true;
+    else if (r.discipline === 'TNT') hasTnt = true;
+  }
+  for (const levelId of wagLevels) keys.push({ discipline: 'WAG', levelId });
+  if (hasMag) keys.push({ discipline: 'MAG', levelId: null });
+  if (hasTnt) keys.push({ discipline: 'TNT', levelId: null });
+  return keys;
+}
+
+/** A survey counts as answered once `arrival` (arrival window/day) is a
+ *  non-empty string — every other field (preferred sessions, separate-gyms,
+ *  notes) is optional, so completeness hinges on the one required choice. */
+export function sessionRequestAnswered(answers: SessionRequestAnswers): boolean {
+  return !!answers.arrival && answers.arrival.trim().length > 0;
+}
+
+/** Minimal existing-survey-row slice these helpers need. */
+export type ExistingSessionRequest = { discipline: Discipline; levelId: string | null; answers: SessionRequestAnswers };
+
+/** Which of `required` keys have no matching ANSWERED row in `existing` —
+ *  an existing-but-unanswered row (e.g. a draft saved mid-fill) does not
+ *  satisfy the requirement. Match is by (discipline, levelId) exact pair;
+ *  `levelId` compares `null`-to-`null` for combined/independent surveys. */
+export function missingSessionRequests(
+  required: SessionRequestKey[],
+  existing: ExistingSessionRequest[],
+): SessionRequestKey[] {
+  return required.filter((key) => !existing.some((e) =>
+    e.discipline === key.discipline && e.levelId === key.levelId && sessionRequestAnswered(e.answers)));
 }

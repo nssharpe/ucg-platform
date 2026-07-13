@@ -462,6 +462,47 @@ export interface WaitlistGroup {
   createdAt?: string;
 }
 
+/** Answer payload for a nationals session-request survey row (event-mgmt v2
+ *  Phase 5 §L.1/§E5.4). `arrival` doubles as the club variant's "arrival
+ *  window" and the independent variant's "arrival day" — a single-choice
+ *  free-form string (the A2 UI defines the actual option set). A survey
+ *  counts as answered once `arrival` is a non-empty string — see
+ *  `sessionRequestAnswered` in `src/lib/pricing.ts`. */
+export type SessionRequestAnswers = {
+  arrival?: string;
+  /** Multi-select of `EventSession.id` values. */
+  preferredSessionIds?: string[];
+  /** Club variant only — whether the club wants its athletes split across
+   *  separate gyms/podiums when possible. Absent/null for the independent
+   *  variant, which has no such field. */
+  separateGyms?: boolean | null;
+  notes?: string;
+};
+
+/** A nationals session-request survey row (event-mgmt v2 Phase 5 §L.1/§E5.4):
+ *  clubs submit one per registered WAG level plus one combined MAG and one
+ *  combined T&T survey; independent athletes submit one per discipline
+ *  they're registered in. Scoped by EITHER `clubId` (club variant) OR
+ *  `personId` (independent variant) — never both, never neither (mirrors
+ *  `WaitlistGroup`'s dual-scoping). Fully client-editable (no state machine
+ *  like `WaitlistGroup`'s status) — see `session_requests` RLS in the P5
+ *  migration. */
+export interface SessionRequest {
+  id: string;
+  eventId: string;
+  /** Set for the club variant; null for the independent-athlete variant. */
+  clubId?: string | null;
+  /** Set for the independent-athlete variant; null for the club variant. */
+  personId?: string | null;
+  discipline: Discipline;
+  /** WAG club variant only; null for combined MAG/TNT and every independent
+   *  survey. */
+  levelId?: string | null;
+  answers: SessionRequestAnswers;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface Score {
   id: string; // `${eventId}|${athleteRegId}|${apparatus}`
   eventId: string;
@@ -692,6 +733,8 @@ export interface DB {
   refundRequests?: RefundRequest[];
   /** Grouped waitlist entries (event-mgmt v2 Phase 4 T1). */
   waitlistGroups?: WaitlistGroup[];
+  /** Nationals session-request surveys (event-mgmt v2 Phase 5 A1). */
+  sessionRequests?: SessionRequest[];
 }
 
 /** A per-event admin grant: `userId` holds the same host-level access to

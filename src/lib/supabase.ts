@@ -8,7 +8,7 @@
 import { createClient, type SupabaseClient, type RealtimePostgresChangesPayload, type PostgrestError } from '@supabase/supabase-js';
 import type {
   AccountInvite, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, EventAdmin, Invoice, Level, Event, Membership, MembershipType, Payment, Region, Registration, RefundRequest, SanctionRequest, SanctionVote, Score, Season,
-  WaiverDocument, WaiverSignature, WaitlistGroup,
+  WaiverDocument, WaiverSignature, WaitlistGroup, SessionRequest,
 } from './types';
 import { writeQueue, type WriteOp, type ExecResult } from './write-queue';
 import type { Database } from './database.types';
@@ -424,6 +424,26 @@ const rowToWaitlistGroup = (r: {
   status: r.status as WaitlistGroup['status'], queuedAt: r.queued_at, notifiedAt: r.notified_at,
   holdExpiresAt: r.hold_expires_at, createdAt: r.created_at,
 });
+// session_requests is not yet in the generated database.types.ts (this
+// migration hasn't been applied/regenerated against at write time) — inline
+// row type like rowToWaitlistGroup. Unlike waitlist_groups, clients may
+// rewrite `answers` in full (surveys are fully editable), so both directions
+// are implemented here with no column-grant restriction.
+const sessionRequestToRow = (s: SessionRequest) => ({
+  id: s.id, event_id: s.eventId, club_id: s.clubId ?? null, person_id: s.personId ?? null,
+  discipline: s.discipline, level_id: s.levelId ?? null, answers: s.answers ?? {},
+  updated_at: new Date().toISOString(),
+});
+const rowToSessionRequest = (r: {
+  id: string; event_id: string; club_id: string | null; person_id: string | null;
+  discipline: string; level_id: string | null; answers: unknown;
+  created_at: string; updated_at: string;
+}): SessionRequest => ({
+  id: r.id, eventId: r.event_id, clubId: r.club_id, personId: r.person_id,
+  discipline: r.discipline as SessionRequest['discipline'], levelId: r.level_id,
+  answers: (r.answers ?? {}) as SessionRequest['answers'],
+  createdAt: r.created_at, updatedAt: r.updated_at,
+});
 const rowToWaiverSignature = (r: Row<'waiver_signatures'>): WaiverSignature => ({
   id: r.id, personId: r.person_id, seasonId: r.season_id, waiverType: r.waiver_type as WaiverSignature['waiverType'],
   waiverDocumentId: r.waiver_document_id, contentHash: r.content_hash,
@@ -464,6 +484,15 @@ export function cancelWaitlistGroup(id: string) { remoteUpdate('waitlist_groups'
  *  cancelled via status update, never deleted, by design); this exists only
  *  for admin-tooling/service-role symmetry with the other delete* helpers. */
 export function deleteWaitlistGroup(id: string) { remoteDelete('waitlist_groups', id, 'id'); }
+/** Upsert a nationals session-request survey (event-mgmt v2 Phase 5 A1):
+ *  a club manager's per-level/MAG/TNT survey, or an independent athlete's
+ *  per-discipline survey. Unlike `pushWaitlistGroup`, this is a full
+ *  read-write upsert — surveys are editable in place (no column-grant
+ *  restriction), so the conflict-update path rewrites `answers` freely.
+ *  `updated_at` is stamped fresh on every write. */
+export function pushSessionRequest(s: SessionRequest) { remoteUpsert('session_requests', [sessionRequestToRow(s)]); }
+/** Delete a session-request survey (e.g. cleanup after a dropped level). */
+export function deleteSessionRequest(id: string) { remoteDelete('session_requests', id, 'id'); }
 /** Upsert a Stripe payment record. In practice the service-role Edge Functions
  *  write these (clients only read own rows via RLS); this exists for symmetry +
  *  any admin tooling. Money fields are CENTS. */
@@ -1582,6 +1611,7 @@ export async function loadAll(): Promise<DB | null> {
       eventsR, sessionsR, squadsR, registrationsR, scoresR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
       clubRequestsR, appSettingsR, accountInvitesR, sanctionRequestsR, sanctionVotesR,
       waiverDocsR, waiverSigsR, clubMembershipsR, paymentsR, eventAdminsR, refundRequestsR, waitlistGroupsR,
+      sessionRequestsR,
     ] = await Promise.all([
       supabase.from('seasons').select('*'),
       supabase.from('levels').select('*'),
@@ -1611,6 +1641,7 @@ export async function loadAll(): Promise<DB | null> {
       supabase.from('event_admins').select('*'),        // emv2 P1 T3; tolerated if absent
       supabase.from('refund_requests').select('*'),     // emv2 P3 T4; tolerated if absent
       supabase.from('waitlist_groups').select('*'),     // emv2 P4 T1; tolerated if absent
+      supabase.from('session_requests').select('*'),    // emv2 P5 A1; tolerated if absent
     ]);
 
     // club_requests may not exist on a pre-0005 DB — tolerate its error, fail on the rest.
@@ -1799,6 +1830,8 @@ export async function loadAll(): Promise<DB | null> {
       .map(rowToRefundRequest);
     const waitlistGroups: WaitlistGroup[] = (waitlistGroupsR.error ? [] : waitlistGroupsR.data ?? [])
       .map(rowToWaitlistGroup);
+    const sessionRequests: SessionRequest[] = (sessionRequestsR.error ? [] : sessionRequestsR.data ?? [])
+      .map(rowToSessionRequest);
 
     return {
       seasons, levels, clubs, people, events, registrations, scores, invoices, coupons,
@@ -1814,6 +1847,7 @@ export async function loadAll(): Promise<DB | null> {
       ...(eventAdmins.length ? { eventAdmins } : {}),
       ...(refundRequests.length ? { refundRequests } : {}),
       ...(waitlistGroups.length ? { waitlistGroups } : {}),
+      ...(sessionRequests.length ? { sessionRequests } : {}),
     };
   } catch (e) {
     console.error('[supabase] loadAll threw:', e);
