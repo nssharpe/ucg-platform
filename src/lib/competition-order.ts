@@ -75,3 +75,34 @@ export function moveInSections(
 
   return next;
 }
+
+/** Reconcile a persisted `sections` shape (or `undefined` — no row saved yet)
+ *  against the CURRENT eligible registration-id set for an apparatus column
+ *  (B2 UI, spec §E6): drop ids no longer eligible (refunded, apparatus
+ *  dropped from the registration, athlete moved level/club), and append
+ *  newly-eligible ids (not yet placed anywhere) to the last section — or a
+ *  fresh section past `cap` — so a mid-event roster edit never orphans or
+ *  silently drops an athlete from their club's competition order. Seeds
+ *  fresh via `splitIntoSections` when there's no persisted row yet. Pure so
+ *  it's cheap for the UI to recompute on every render (never assume the
+ *  persisted shape already matches the current eligible set). */
+export function reconcileSections(existing: string[][] | undefined, eligibleRegIds: string[], cap: number): string[][] {
+  if (!existing || existing.length === 0) {
+    return eligibleRegIds.length > 0 ? splitIntoSections(eligibleRegIds, cap) : [[]];
+  }
+  const eligibleSet = new Set(eligibleRegIds);
+  const kept = existing.map((sec) => sec.filter((id) => eligibleSet.has(id)));
+  const placed = new Set(kept.flat());
+  const toAdd = eligibleRegIds.filter((id) => !placed.has(id));
+
+  if (toAdd.length === 0) return kept.length > 0 ? kept : [[]];
+
+  const result = kept.length > 0 ? kept.slice(0, -1) : [];
+  const last = kept.length > 0 ? kept[kept.length - 1] : [];
+  const room = Math.max(cap - last.length, 0);
+  const appended = [...last, ...toAdd.slice(0, room)];
+  const remaining = toAdd.slice(room);
+  result.push(appended);
+  if (remaining.length > 0) result.push(...splitIntoSections(remaining, cap));
+  return result;
+}

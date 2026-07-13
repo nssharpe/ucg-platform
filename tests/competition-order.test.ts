@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  sectionCap, splitIntoSections, flattenSections, sectionsValid, moveInSections,
+  sectionCap, splitIntoSections, flattenSections, sectionsValid, moveInSections, reconcileSections,
 } from '../src/lib/competition-order';
 
 describe('sectionCap', () => {
@@ -133,5 +133,56 @@ describe('moveInSections', () => {
     const snapshot = sections.map((s) => [...s]);
     moveInSections(sections, 'a', 1, 0);
     expect(sections).toEqual(snapshot);
+  });
+});
+
+describe('reconcileSections (B2 UI: persisted order vs. current eligible set)', () => {
+  it('seeds fresh via splitIntoSections when there is no persisted row', () => {
+    expect(reconcileSections(undefined, ['a', 'b', 'c'], 2)).toEqual([['a', 'b'], ['c']]);
+  });
+
+  it('seeds a single empty section when there is no persisted row and no eligible ids', () => {
+    expect(reconcileSections(undefined, [], 12)).toEqual([[]]);
+  });
+
+  it('seeds fresh when the persisted row is an empty array', () => {
+    expect(reconcileSections([], ['a', 'b'], 2)).toEqual([['a', 'b']]);
+  });
+
+  it('keeps the persisted order unchanged when the eligible set is identical', () => {
+    const existing = [['a', 'b'], ['c']];
+    expect(reconcileSections(existing, ['a', 'b', 'c'], 2)).toEqual(existing);
+  });
+
+  it('drops a registration id no longer eligible (e.g. refunded)', () => {
+    const existing = [['a', 'b'], ['c']];
+    expect(reconcileSections(existing, ['a', 'c'], 2)).toEqual([['a'], ['c']]);
+  });
+
+  it('appends a newly-eligible id to the last section when there is room', () => {
+    const existing = [['a', 'b'], ['c']];
+    expect(reconcileSections(existing, ['a', 'b', 'c', 'd'], 2)).toEqual([['a', 'b'], ['c', 'd']]);
+  });
+
+  it('spills a newly-eligible id into a fresh section once the last section is at cap', () => {
+    const existing = [['a', 'b'], ['c', 'd']];
+    expect(reconcileSections(existing, ['a', 'b', 'c', 'd', 'e'], 2)).toEqual([['a', 'b'], ['c', 'd'], ['e']]);
+  });
+
+  it('handles simultaneous drop and add (athlete swapped out, new one swapped in)', () => {
+    const existing = [['a', 'b'], ['c']];
+    // 'b' is no longer eligible; 'z' is newly eligible.
+    expect(reconcileSections(existing, ['a', 'c', 'z'], 2)).toEqual([['a'], ['c', 'z']]);
+  });
+
+  it('never drops a newly-eligible id — appends past cap rather than losing it', () => {
+    const existing = [Array.from({ length: 12 }, (_, i) => `r${i}`)];
+    const eligible = [...existing[0], 'new1'];
+    const result = reconcileSections(existing, eligible, 12);
+    expect(result.flat().sort()).toEqual([...eligible].sort());
+  });
+
+  it('is a no-op returning [[]] when both persisted and eligible are empty', () => {
+    expect(reconcileSections([[]], [], 12)).toEqual([[]]);
   });
 });

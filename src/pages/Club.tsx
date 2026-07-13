@@ -30,6 +30,7 @@ import { ClubForm } from '../components/ClubForm';
 import { RegistrationEditor } from '../components/RegistrationEditor';
 import { SessionRequestSurveyCard } from '../components/SessionRequestSurvey';
 import { requiredSessionRequests } from '../lib/pricing';
+import { CompetitionOrderCard } from '../components/CompetitionOrderCard';
 
 // ---- sort helpers -----------------------------------------------------------
 
@@ -1665,6 +1666,13 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
           labelFor={(key) => (key.levelId ? `WAG — ${lvlName(key.levelId)}` : (key.discipline === 'TNT' ? 'T&T' : key.discipline))}
         />
       )}
+
+      {/* Set Competition Order (event-mgmt v2 Phase 5 B2, spec §E6): MAG/WAG
+          drag-and-drop competing order per apparatus/level, gated view-only
+          once locked (unless the viewer is an admin). Internal early-return
+          handles the "nothing to show" cases (no MAG/WAG regs, not a
+          manager) — mirrors ClubAddonsCard's gating convention above. */}
+      <CompetitionOrderCard event={event} clubId={clubId} canManage={canManage} isAdmin={caps.isAdmin} />
 
       {/* Card 1: Already registered */}
       {/* Promoted waitlist groups (event-mgmt v2 P4 T7): a 'notified' group

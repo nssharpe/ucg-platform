@@ -319,6 +319,15 @@ export function EventDetail() {
           re-checked server-side on every action — hosts see it read-only). */}
       {canManage && <WaitlistCard event={event} toast={toast} />}
 
+      {/* Set Competition Order lock (event-mgmt v2 Phase 5 §E6): admin-only —
+          once checked, club managers may only VIEW their competition_orders
+          rows (RLS-enforced server-side, event_order_locked()); admins can
+          keep editing regardless. MAG/WAG only, so hidden for a T&T-only
+          event. */}
+      {caps.isAdmin && event.disciplines.some((d) => d === 'MAG' || d === 'WAG') && (
+        <CompetitionOrderLockCard event={event} toast={toast} />
+      )}
+
       <div className="grid cols-3" style={{ marginBottom: 18 }}>
         <div className="card card-pad">
           <h3 className="card-title">Registration</h3>
@@ -681,6 +690,41 @@ function WaitlistCard({ event, toast }: {
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CompetitionOrderLockCard — admin lock toggle (event-mgmt v2 P5 §E6)
+// ---------------------------------------------------------------------------
+
+function CompetitionOrderLockCard({ event, toast }: {
+  event: Event; toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void;
+}) {
+  const locked = !!event.competitionOrderLocked;
+
+  const toggle = (checked: boolean) => {
+    const updated: Event = { ...event, competitionOrderLocked: checked };
+    mutate((d) => {
+      const idx = d.events.findIndex((e) => e.id === event.id);
+      if (idx >= 0) d.events[idx] = updated;
+    });
+    pushEvent(updated);
+    toast(checked
+      ? 'Competition orders locked — club managers now see them read-only.'
+      : 'Competition orders unlocked — club managers can edit again.');
+  };
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 18 }}>
+      <h3 className="card-title">Set competition order</h3>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, cursor: 'pointer' }}>
+        <input type="checkbox" checked={locked} onChange={(e) => toggle(e.target.checked)} />
+        Lock competition orders (clubs view-only)
+      </label>
+      <p style={{ margin: '6px 0 0', fontSize: 12.5, color: 'var(--ink-soft)' }}>
+        Once locked, club managers can still see their submitted competition order but can't change it — only admins can.
+      </p>
     </div>
   );
 }
