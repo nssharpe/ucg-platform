@@ -8,7 +8,7 @@
 import { createClient, type SupabaseClient, type RealtimePostgresChangesPayload, type PostgrestError } from '@supabase/supabase-js';
 import type {
   AccountInvite, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, EventAdmin, Invoice, Level, Event, Membership, MembershipType, Payment, Region, Registration, RefundRequest, SanctionRequest, SanctionVote, Score, Season,
-  WaiverDocument, WaiverSignature, WaitlistGroup, SessionRequest, CompetitionOrder,
+  WaiverDocument, WaiverSignature, WaitlistGroup, SessionRequest, CompetitionOrder, FinalsLineup,
 } from './types';
 import { writeQueue, type WriteOp, type ExecResult } from './write-queue';
 import type { Database } from './database.types';
@@ -247,6 +247,7 @@ const eventToRow = (m: Event) => ({
   owner: m.owner ?? null, owner_checklist: m.ownerChecklist ?? null,
   registration_mode: m.registrationMode ?? 'by-discipline',
   competition_order_locked: m.competitionOrderLocked ?? false,
+  finals_roster_locked: m.finalsRosterLocked ?? false,
 });
 
 const sessionToRow = (eventId: string, s: Event['sessions'][number]) => ({
@@ -463,6 +464,23 @@ const rowToCompetitionOrder = (r: {
   apparatus: r.apparatus, sections: (r.sections ?? []) as string[][],
   updatedAt: r.updated_at,
 });
+// finals_lineups is not yet in the generated database.types.ts (this
+// migration hasn't been applied/regenerated against at write time) — inline
+// row type like rowToCompetitionOrder/rowToSessionRequest. Fully editable
+// (RLS blocks the write entirely once locked, no column-grant restriction).
+const finalsLineupToRow = (l: FinalsLineup) => ({
+  id: l.id, event_id: l.eventId, club_id: l.clubId, level_id: l.levelId,
+  category: l.category, apparatus: l.apparatus, reg_ids: l.regIds ?? [],
+  updated_at: new Date().toISOString(),
+});
+const rowToFinalsLineup = (r: {
+  id: string; event_id: string; club_id: string; level_id: string;
+  category: string; apparatus: string; reg_ids: unknown; updated_at: string;
+}): FinalsLineup => ({
+  id: r.id, eventId: r.event_id, clubId: r.club_id, levelId: r.level_id,
+  category: r.category, apparatus: r.apparatus, regIds: (r.reg_ids ?? []) as string[],
+  updatedAt: r.updated_at,
+});
 const rowToWaiverSignature = (r: Row<'waiver_signatures'>): WaiverSignature => ({
   id: r.id, personId: r.person_id, seasonId: r.season_id, waiverType: r.waiver_type as WaiverSignature['waiverType'],
   waiverDocumentId: r.waiver_document_id, contentHash: r.content_hash,
@@ -521,6 +539,15 @@ export function deleteSessionRequest(id: string) { remoteDelete('session_request
 export function pushCompetitionOrder(o: CompetitionOrder) { remoteUpsert('competition_orders', [competitionOrderToRow(o)]); }
 /** Delete a competition-order row (e.g. cleanup after a dropped apparatus). */
 export function deleteCompetitionOrder(id: string) { remoteDelete('competition_orders', id, 'id'); }
+/** Upsert a club's finals-roster lineup for one (event, level, category,
+ *  apparatus) (event-mgmt v2 Phase 5 C1, spec §E7/§L.3). Full read-write
+ *  upsert — RLS blocks the write entirely once `Event.finalsRosterLocked` is
+ *  true for a non-admin caller (`event_finals_locked()` in the P5 C1
+ *  migration), so no column-grant restriction is needed here (unlike
+ *  `pushWaitlistGroup`). `updated_at` is stamped fresh on every write. */
+export function pushFinalsLineup(l: FinalsLineup) { remoteUpsert('finals_lineups', [finalsLineupToRow(l)]); }
+/** Delete a finals-lineup row (e.g. cleanup after a dropped apparatus). */
+export function deleteFinalsLineup(id: string) { remoteDelete('finals_lineups', id, 'id'); }
 /** Upsert a Stripe payment record. In practice the service-role Edge Functions
  *  write these (clients only read own rows via RLS); this exists for symmetry +
  *  any admin tooling. Money fields are CENTS. */
@@ -1665,7 +1692,7 @@ export async function loadAll(): Promise<DB | null> {
       eventsR, sessionsR, squadsR, registrationsR, scoresR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
       clubRequestsR, appSettingsR, accountInvitesR, sanctionRequestsR, sanctionVotesR,
       waiverDocsR, waiverSigsR, clubMembershipsR, paymentsR, eventAdminsR, refundRequestsR, waitlistGroupsR,
-      sessionRequestsR, competitionOrdersR,
+      sessionRequestsR, competitionOrdersR, finalsLineupsR,
     ] = await Promise.all([
       supabase.from('seasons').select('*'),
       supabase.from('levels').select('*'),
@@ -1697,6 +1724,7 @@ export async function loadAll(): Promise<DB | null> {
       supabase.from('waitlist_groups').select('*'),     // emv2 P4 T1; tolerated if absent
       supabase.from('session_requests').select('*'),    // emv2 P5 A1; tolerated if absent
       supabase.from('competition_orders').select('*'),  // emv2 P5 B1; tolerated if absent
+      supabase.from('finals_lineups').select('*'),      // emv2 P5 C1; tolerated if absent
     ]);
 
     // club_requests may not exist on a pre-0005 DB — tolerate its error, fail on the rest.
@@ -1806,6 +1834,9 @@ export async function loadAll(): Promise<DB | null> {
       ...((r as { competition_order_locked?: boolean | null }).competition_order_locked
         ? { competitionOrderLocked: true }
         : {}),
+      ...((r as { finals_roster_locked?: boolean | null }).finals_roster_locked
+        ? { finalsRosterLocked: true }
+        : {}),
     }));
 
     const registrations: Registration[] = (registrationsR.data ?? []).map(rowToRegistration);
@@ -1892,6 +1923,8 @@ export async function loadAll(): Promise<DB | null> {
       .map(rowToSessionRequest);
     const competitionOrders: CompetitionOrder[] = (competitionOrdersR.error ? [] : competitionOrdersR.data ?? [])
       .map(rowToCompetitionOrder);
+    const finalsLineups: FinalsLineup[] = (finalsLineupsR.error ? [] : finalsLineupsR.data ?? [])
+      .map(rowToFinalsLineup);
 
     return {
       seasons, levels, clubs, people, events, registrations, scores, invoices, coupons,
@@ -1909,6 +1942,7 @@ export async function loadAll(): Promise<DB | null> {
       ...(waitlistGroups.length ? { waitlistGroups } : {}),
       ...(sessionRequests.length ? { sessionRequests } : {}),
       ...(competitionOrders.length ? { competitionOrders } : {}),
+      ...(finalsLineups.length ? { finalsLineups } : {}),
     };
   } catch (e) {
     console.error('[supabase] loadAll threw:', e);

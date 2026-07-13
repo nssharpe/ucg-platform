@@ -18,6 +18,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { analyzeMessage } from './segments.ts';
+import { toE164, sendSmsBatch } from '../_shared/telnyx.ts';
 
 interface Recipient { phone: string; name?: string }
 interface Payload {
@@ -39,16 +40,6 @@ const json = (body: unknown, status = 200) =>
     status,
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
-
-// Normalize loose input to E.164 (US default). Returns null if it can't.
-function toE164(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (/^\+[1-9]\d{7,14}$/.test(trimmed)) return trimmed;       // already E.164
-  const digits = trimmed.replace(/\D/g, '');
-  if (digits.length === 10) return `+1${digits}`;              // US 10-digit
-  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
-  return null;
-}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -121,36 +112,12 @@ Deno.serve(async (req) => {
     }, 400);
   }
 
-  // --- Send via Telnyx, one request per recipient ---
-  const sent: string[] = [];
-  const failed: { phone: string; error: string }[] = [...invalid];
+  // --- Send via Telnyx, one request per recipient (shared transport) ---
+  const result = await sendSmsBatch({ apiKey, fromNumber, profileId }, valid, text);
+  const sent = result.sent;
+  const failed: { phone: string; error: string }[] = [...invalid, ...result.failed];
   // Per-message rows for sms_messages so the webhook can attach delivery receipts.
-  const sentRows: { id: string; direction: string; phone: string; status: string }[] = [];
-
-  for (const r of valid) {
-    const msg: Record<string, unknown> = { to: r.to, text };
-    if (fromNumber) msg.from = fromNumber;
-    if (profileId) msg.messaging_profile_id = profileId;
-    try {
-      const resp = await fetch('https://api.telnyx.com/v2/messages', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(msg),
-      });
-      if (resp.ok) {
-        sent.push(r.to);
-        const okBody = await resp.json().catch(() => ({}));
-        const id = okBody?.data?.id;
-        if (typeof id === 'string') sentRows.push({ id, direction: 'outbound', phone: r.to, status: 'sent' });
-      } else {
-        const errBody = await resp.json().catch(() => ({}));
-        const detail = errBody?.errors?.[0]?.detail ?? errBody?.errors?.[0]?.title ?? `HTTP ${resp.status}`;
-        failed.push({ phone: r.to, error: detail });
-      }
-    } catch (e) {
-      failed.push({ phone: r.to, error: e instanceof Error ? e.message : String(e) });
-    }
-  }
+  const sentRows = result.sentRows;
 
   // Best-effort: record sent messages so DLR webhooks can update their status.
   if (sentRows.length) {

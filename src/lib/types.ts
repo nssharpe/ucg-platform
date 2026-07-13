@@ -317,6 +317,11 @@ export interface Event {
    *  club managers may only VIEW `CompetitionOrder` rows for this event —
    *  only admins may keep editing. Absent ⇒ false (clubs edit freely). */
   competitionOrderLocked?: boolean;
+  /** "Finals roster" lock flag (event-mgmt v2 P5 §E7/§L.3) — SEPARATE from
+   *  `competitionOrderLocked` (own hard-lock timing, 10pm day-1). Once true,
+   *  club managers may only VIEW `FinalsLineup` rows for this event — only
+   *  admins may keep editing. Absent ⇒ false (clubs edit freely). */
+  finalsRosterLocked?: boolean;
 }
 
 /** Event-owner checklist task ids, in the order they're worked (§B4). */
@@ -524,6 +529,25 @@ export interface CompetitionOrder {
   levelId: string;
   apparatus: string;
   sections: string[][];
+  updatedAt?: string;
+}
+
+/** A nationals team's (club + level + placement category) finals lineup for
+ *  one apparatus (event-mgmt v2 Phase 5 §E7, §L.3, "Finals roster"): pick up
+ *  to `FINALS_LINEUP_MAX` (4) athletes + drag order. `category` is the
+ *  placement category string produced by the nationals engine's
+ *  `deriveCategory` (e.g. `'Collegiate Women+'`). Writable by the club
+ *  manager only while `Event.finalsRosterLocked` is false — a SEPARATE lock
+ *  from `Event.competitionOrderLocked`; once locked, only admins may edit
+ *  (`finals_lineups` RLS in the P5 C1 migration). */
+export interface FinalsLineup {
+  id: string;
+  eventId: string;
+  clubId: string;
+  levelId: string;
+  category: string;
+  apparatus: string;
+  regIds: string[];
   updatedAt?: string;
 }
 
@@ -761,6 +785,8 @@ export interface DB {
   sessionRequests?: SessionRequest[];
   /** Club competition orders (event-mgmt v2 Phase 5 B1, spec §E6). */
   competitionOrders?: CompetitionOrder[];
+  /** Nationals finals-roster lineups (event-mgmt v2 Phase 5 C1, spec §E7/§L.3). */
+  finalsLineups?: FinalsLineup[];
 }
 
 /** A per-event admin grant: `userId` holds the same host-level access to
