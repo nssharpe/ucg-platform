@@ -1136,3 +1136,14 @@ export function missingSessionRequests(
   return required.filter((key) => !existing.some((e) =>
     e.discipline === key.discipline && e.levelId === key.levelId && sessionRequestAnswered(e.answers)));
 }
+
+/** Arrival-window options for the A2 session-request survey UI (club +
+ *  independent variants share this so the buckets stay identical). These
+ *  mirror the assignment-tool mapping in spec §L.2 (Tue/Wed, Thu-before-noon,
+ *  Thu-before-8, Fri) — the assignment tool itself is out of scope here. */
+export const SESSION_REQUEST_ARRIVAL_OPTIONS = [
+  { value: 'tue-wed', label: 'Arriving Tuesday or Wednesday' },
+  { value: 'thu-before-noon', label: 'Arriving Thursday before noon' },
+  { value: 'thu-before-8pm', label: 'Arriving Thursday before 8pm' },
+  { value: 'fri', label: 'Arriving Friday' },
+] as const;

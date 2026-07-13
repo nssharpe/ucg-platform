@@ -28,6 +28,8 @@ import { cleanupCrossClubCart } from '../lib/cart-sync';
 import type { ClubMembership } from '../lib/types';
 import { ClubForm } from '../components/ClubForm';
 import { RegistrationEditor } from '../components/RegistrationEditor';
+import { SessionRequestSurveyCard } from '../components/SessionRequestSurvey';
+import { requiredSessionRequests } from '../lib/pricing';
 
 // ---- sort helpers -----------------------------------------------------------
 
@@ -1644,6 +1646,25 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
       )}
 
       <ClubAddonsCard key={event.id} event={event} clubId={clubId} canManage={canManage} />
+
+      {/* Nationals session-planning survey (event-mgmt v2 Phase 5, A2): one
+          card per required WAG-level/combined-MAG/combined-T&T key, derived
+          from this club's non-refunded regs at this event. Read db.sessionRequests
+          directly each render (M6 in-place-mutation trap — mutate() never
+          reassigns the array on an update). Editable until the event's edit
+          deadline; read-only after (mirrors canStillEdit above). */}
+      {event.kind === 'nationals' && (
+        <SessionRequestSurveyCard
+          eventId={event.id}
+          sessions={event.sessions}
+          keys={requiredSessionRequests(event, allRegs, 'club')}
+          existing={(db.sessionRequests ?? []).filter((r) => r.eventId === event.id && r.clubId === clubId)}
+          owner={{ clubId }}
+          editable={canStillEdit}
+          showSeparateGyms
+          labelFor={(key) => (key.levelId ? `WAG — ${lvlName(key.levelId)}` : (key.discipline === 'TNT' ? 'T&T' : key.discipline))}
+        />
+      )}
 
       {/* Card 1: Already registered */}
       {/* Promoted waitlist groups (event-mgmt v2 P4 T7): a 'notified' group
