@@ -7,7 +7,7 @@
 // block the UI) and are no-ops when `isSupabaseConfigured` is false.
 import { createClient, type SupabaseClient, type RealtimePostgresChangesPayload, type PostgrestError } from '@supabase/supabase-js';
 import type {
-  AccountInvite, AccountingCode, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, EventAdmin, HostPayout, Invoice, Level, Event, Membership, MembershipType, Payment, Region, Registration, RefundRequest, SanctionRequest, SanctionVote, Score, Season,
+  AccountInvite, AccountingCode, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, EventAdmin, HostPayout, Invoice, Level, Event, Membership, MembershipType, Payment, PaymentSnapshotLine, Region, Registration, RefundRequest, SanctionRequest, SanctionVote, Score, Season,
   WaiverDocument, WaiverSignature, WaitlistGroup, SessionRequest, CompetitionOrder, FinalsLineup, EventCheckin,
 } from './types';
 import { writeQueue, type WriteOp, type ExecResult } from './write-queue';
@@ -373,12 +373,30 @@ const rowToEventAdmin = (r: { id: string; event_id: string; user_id: string; ema
   id: r.id, eventId: r.event_id, userId: r.user_id, email: r.email,
   name: r.name, grantedBy: r.granted_by, createdAt: r.created_at,
 });
+// Inline snapshot-line row shape written by create-checkout-session's
+// `linesSnapshot` (event-mgmt v2 Phase 6 T2) — snake_case jsonb, mapped to
+// PaymentSnapshotLine below. Tolerant of nulls (early snapshots predate
+// `paid_cents`).
+type PaymentSnapshotLineRow = {
+  id: string; kind: string; label: string; amount_cents: number; paid_cents?: number | null;
+  club_id?: string | null; ref_user_id?: string | null; ref_season_id?: string | null;
+  ref_type?: string | null; ref_reg_ids?: string[] | null; ref_event_id?: string | null;
+  ref_line_type?: string | null;
+};
+const rowToPaymentSnapshotLine = (l: PaymentSnapshotLineRow): PaymentSnapshotLine => ({
+  id: l.id, kind: l.kind as PaymentSnapshotLine['kind'], label: l.label, amountCents: l.amount_cents,
+  paidCents: l.paid_cents ?? undefined, clubId: l.club_id ?? undefined, refUserId: l.ref_user_id ?? undefined,
+  refSeasonId: l.ref_season_id ?? undefined, refType: l.ref_type ?? undefined,
+  refRegIds: l.ref_reg_ids ?? undefined, refEventId: l.ref_event_id ?? undefined,
+  refLineType: l.ref_line_type ?? undefined,
+});
 const rowToPayment = (r: {
   id: string; stripe_session_id: string | null; stripe_payment_intent_id: string | null;
   person_id: string | null; status: string; amount_subtotal: number | null; service_fee: number | null;
   stripe_fee: number | null; currency: string; cart_item_ids: string[] | null; ref_reg_ids: string[] | null;
   ref_season_id: string | null; ref_type: string | null; invoice_id: string | null;
   stripe_event_id: string | null; created_at: string; fulfilled_at: string | null;
+  lines_snapshot?: PaymentSnapshotLineRow[] | null;
 }): Payment => ({
   id: r.id, stripeSessionId: r.stripe_session_id, stripePaymentIntentId: r.stripe_payment_intent_id,
   personId: r.person_id, status: r.status as Payment['status'],
@@ -386,6 +404,7 @@ const rowToPayment = (r: {
   currency: r.currency ?? 'usd', cartItemIds: r.cart_item_ids ?? [], refRegIds: r.ref_reg_ids ?? [],
   refSeasonId: r.ref_season_id, refType: r.ref_type, invoiceId: r.invoice_id,
   stripeEventId: r.stripe_event_id, createdAt: r.created_at, fulfilledAt: r.fulfilled_at,
+  linesSnapshot: r.lines_snapshot ? r.lines_snapshot.map(rowToPaymentSnapshotLine) : undefined,
 });
 // refund_requests is not yet in the generated database.types.ts (T4 does not
 // apply/regenerate against its own migration — the controller pushes it at

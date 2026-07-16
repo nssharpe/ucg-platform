@@ -706,6 +706,27 @@ export interface Invoice {
 
 export type CartItem = InvoiceItem;
 
+/** One frozen line of a payment's `lines_snapshot` (written by
+ *  `create-checkout-session`, event-mgmt v2 Phase 6 T2 — see that function's
+ *  `linesSnapshot` build, ~line 894). `amountCents` is the server-computed
+ *  PRE-coupon list price; `paidCents` is the POST-coupon actual charge (the
+ *  refund base) — absent on payments written before this field existed
+ *  (2026-07-02), in which case callers should fall back to `amountCents`. */
+export type PaymentSnapshotLine = {
+  id: string;
+  kind: InvoiceItem['kind'];
+  label: string;
+  amountCents: number;
+  paidCents?: number;
+  clubId?: string;
+  refUserId?: string;
+  refSeasonId?: string;
+  refType?: string;
+  refRegIds?: string[];
+  refEventId?: string;
+  refLineType?: string;
+};
+
 /** A Stripe Embedded Checkout payment record (server source of truth). All money
  *  fields are in CENTS (Stripe's unit). A `pending` row is created when the
  *  Checkout Session is opened; the verified webhook flips it to `paid` and runs
@@ -729,6 +750,10 @@ export interface Payment {
   stripeEventId: string | null;
   createdAt: string;
   fulfilledAt: string | null;
+  /** Frozen, server-priced line set the payment fulfilled/will fulfill from
+   *  (event-mgmt v2 Phase 6 T2 — see `PaymentSnapshotLine`). Absent for very
+   *  old pre-snapshot payments. */
+  linesSnapshot?: PaymentSnapshotLine[];
 }
 
 export interface Coupon {
