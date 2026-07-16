@@ -31,6 +31,7 @@ import { RegistrationEditor } from '../components/RegistrationEditor';
 import { SessionRequestSurveyCard } from '../components/SessionRequestSurvey';
 import { requiredSessionRequests } from '../lib/pricing';
 import { CompetitionOrderCard } from '../components/CompetitionOrderCard';
+import { NationalsDashboard } from '../components/NationalsDashboard';
 
 // ---- sort helpers -----------------------------------------------------------
 
@@ -1673,6 +1674,13 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
           handles the "nothing to show" cases (no MAG/WAG regs, not a
           manager) — mirrors ClubAddonsCard's gating convention above. */}
       <CompetitionOrderCard event={event} clubId={clubId} canManage={canManage} isAdmin={caps.isAdmin} />
+
+      {/* Nationals summary dashboard (event-mgmt v2 Phase 5 D1, spec §L.3):
+          read-only planning aggregation (eligible teams, decathlon/omnithon,
+          coaches, banquet gap, assigned sessions) scoped to this club. */}
+      {canManage && event.kind === 'nationals' && (
+        <NationalsDashboard eventId={event.id} scope={{ clubId }} />
+      )}
 
       {/* Card 1: Already registered */}
       {/* Promoted waitlist groups (event-mgmt v2 P4 T7): a 'notified' group

@@ -10,6 +10,7 @@ import { Badge, Field, Modal, Tabs } from '../components/ui';
 import { useToast, useFmtDate } from '../components/ui-hooks';
 import { EventWizard } from '../components/EventWizard';
 import { RegistrationEditor } from '../components/RegistrationEditor';
+import { NationalsDashboard, type NationalsDashboardScope } from '../components/NationalsDashboard';
 import { EventStatusBadge } from './Home';
 import { APPARATUS, SHIRT_SIZES } from '../lib/types';
 import type { Athlete, CartItem, Discipline, Event, EventAdmin, EventSession, Registration } from '../lib/types';
@@ -326,6 +327,14 @@ export function EventDetail() {
           event. */}
       {caps.isAdmin && event.disciplines.some((d) => d === 'MAG' || d === 'WAG') && (
         <CompetitionOrderLockCard event={event} toast={toast} />
+      )}
+
+      {/* Nationals summary dashboard, admin "view as" (event-mgmt v2 Phase 5
+          D1, spec §L.3): lets an admin pick any club or independent athlete
+          registered for this event and see their scoped dashboard, without
+          needing to sign in as them. */}
+      {caps.isAdmin && event.kind === 'nationals' && (
+        <NationalsAdminViewCard event={event} />
       )}
 
       <div className="grid cols-3" style={{ marginBottom: 18 }}>
@@ -725,6 +734,67 @@ function CompetitionOrderLockCard({ event, toast }: {
       <p style={{ margin: '6px 0 0', fontSize: 12.5, color: 'var(--ink-soft)' }}>
         Once locked, club managers can still see their submitted competition order but can't change it — only admins can.
       </p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// NationalsAdminViewCard — admin "view as" scope selector for the nationals
+// summary dashboard (event-mgmt v2 P5 D1, spec §L.3)
+// ---------------------------------------------------------------------------
+
+function NationalsAdminViewCard({ event }: { event: Event }) {
+  const db = useDB();
+  const regs = db.registrations.filter((r) => r.eventId === event.id && !r.refunded && !r.waitlisted);
+
+  const clubOptions = [...new Set(regs.map((r) => r.clubId))]
+    .map((clubId) => db.clubs.find((c) => c.id === clubId))
+    .filter((c): c is NonNullable<typeof c> => !!c)
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const independentOptions = [...new Set(
+    regs.filter((r) => db.people.find((p) => p.id === r.athleteId)?.mainClubId === null).map((r) => r.athleteId),
+  )]
+    .map((athleteId) => db.people.find((p) => p.id === athleteId))
+    .filter((p): p is NonNullable<typeof p> => !!p)
+    .sort((a, b) => `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`));
+
+  const options = [
+    ...clubOptions.map((c) => ({ value: `club:${c.id}`, label: `${c.name} (club)` })),
+    ...independentOptions.map((p) => ({ value: `person:${p.id}`, label: `${p.firstName} ${p.lastName} (independent)` })),
+  ];
+
+  const [selected, setSelected] = useState<string>('');
+
+  if (options.length === 0) {
+    return (
+      <div className="card card-pad" style={{ marginBottom: 18 }}>
+        <h3 className="card-title">Nationals summary — view as</h3>
+        <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)' }}>No registrations yet for this event.</p>
+      </div>
+    );
+  }
+
+  const scope: NationalsDashboardScope | null = selected.startsWith('club:')
+    ? { clubId: selected.slice(5) }
+    : selected.startsWith('person:')
+      ? { personId: selected.slice(7) }
+      : null;
+
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div className="card card-pad" style={{ marginBottom: 18 }}>
+        <h3 className="card-title">Nationals summary — view as</h3>
+        <div style={{ maxWidth: 360 }}>
+          <Field label="Club or independent athlete">
+            <select className="input" value={selected} onChange={(e) => setSelected(e.target.value)}>
+              <option value="">Choose…</option>
+              {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </Field>
+        </div>
+      </div>
+      {scope && <NationalsDashboard eventId={event.id} scope={scope} />}
     </div>
   );
 }

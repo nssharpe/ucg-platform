@@ -17,6 +17,7 @@ import type { Athlete, Club, Level, Event, Registration, Season, WaitlistGroup }
 import { canStillEditRegistration, eventIsRefundEligible } from '../lib/events-core';
 import { RefundRequestDialog, type RefundRequestItem } from '../components/RefundRequestDialog';
 import { SessionRequestSurveyCard } from '../components/SessionRequestSurvey';
+import { NationalsDashboard } from '../components/NationalsDashboard';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -570,6 +571,14 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                         notesHint="e.g. who you'd like to be grouped with"
                         labelFor={(key) => (key.discipline === 'TNT' ? 'T&T' : key.discipline)}
                       />
+                    )}
+
+                    {/* Nationals summary dashboard (event-mgmt v2 Phase 5 D1,
+                        spec §L.3) — independent-athlete variant: only when
+                        this athlete has no main club, mirroring the survey
+                        card's gate above. */}
+                    {event.kind === 'nationals' && me?.mainClubId === null && (
+                      <NationalsDashboard eventId={event.id} scope={{ personId }} />
                     )}
 
                     {tab === 'upcoming' && (
