@@ -463,4 +463,7 @@ update it there; don't grow a rival list here. Operative notes only:
   TCR CFN616P); merged to main. All P5 UI gated on `event.kind === 'nationals'`.
   **DEFERRED with §L.2** (Julia marked incomplete): the session-assignment tool + the
   per-team session-timed finals reminders ("5 min after session ends"/Fri-10am) — only the
-  admin-set `finals_lineup_deadline_at` nag+lock shipped. Next: V2-P6 finance dashboards (§M).
+  admin-set `finals_lineup_deadline_at` nag+lock shipped. **V2-P6 finance dashboards
+  (§M)** in progress on `feat/emv2-p6`: T1 (accounting_codes/host_payouts tables) + T2
+  (pure `src/lib/finance.ts` derivation engine — txns/summary/date-range/export models,
+  `Payment.linesSnapshot` mapping) committed, not yet merged/applied. Next: T3 (UI).

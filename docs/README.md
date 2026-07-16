@@ -210,8 +210,14 @@ here — update THIS list when priorities change, not rival copies.
   to main; 5 migrations applied staging+prod; create-checkout-session/send-sms/
   scheduled-dispatch deployed (no-verify-jwt trio re-checked); TELNYX_FROM_NUMBER set to
   the approved 10DLC number. The §L.2 session-assignment tool (and the per-team
-  session-timed finals reminders that depend on it) is DEFERRED per Julia. **Next: V2-P6
-  finance dashboards (§M)** — the last emv2 phase.
+  session-timed finals reminders that depend on it) is DEFERRED per Julia. **V2-P6
+  finance dashboards (§M)** — the last emv2 phase — is IN PROGRESS on `feat/emv2-p6`:
+  T1 (`accounting_codes`/`host_payouts` tables + `finance_admin` read RLS) and T2
+  (pure finance derivation engine `src/lib/finance.ts` — transactions, item-key
+  grouping, date-range defaults, summary/host-payout-owed math, Excel sheet models;
+  `Payment.linesSnapshot` now mapped in `types.ts`/`supabase.ts`) are committed on the
+  branch (not yet applied/merged). **Next: T3** — the finance dashboard UI consuming
+  `finance.ts`.
   **P0 Task 1 shipped:** pg_cron/pg_net scheduler infra (`notification_log` +
   `scheduled-dispatch-15min` job + `scheduled-dispatch` Edge Function, service-role-only
   auth) with its first consumer — 3d/1d/closed sanction-vote reminder emails, idempotent
