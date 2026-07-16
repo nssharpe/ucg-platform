@@ -241,6 +241,11 @@ export interface Event {
    *  (enforced server-side by the `registrations_edit_lockout` trigger, not
    *  just client-side). Absent ⇒ no lockout. */
   lastDateToEdit?: string | null;
+  /** Optional finals-lineup submission deadline instant (nationals only, spec
+   *  §L.3 "9pm Friday deadline"). `scheduled-dispatch` nags club managers with
+   *  missing finals lineups at/after this instant and hard-locks
+   *  `finalsRosterLocked` at deadline + 1h. Absent ⇒ scheduler does nothing. */
+  finalsLineupDeadlineAt?: string | null;
   entryFee: number; // per discipline
   secondDisciplineFee: number;
   disciplines: Discipline[];

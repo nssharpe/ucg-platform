@@ -248,6 +248,7 @@ const eventToRow = (m: Event) => ({
   registration_mode: m.registrationMode ?? 'by-discipline',
   competition_order_locked: m.competitionOrderLocked ?? false,
   finals_roster_locked: m.finalsRosterLocked ?? false,
+  finals_lineup_deadline_at: m.finalsLineupDeadlineAt || null,
 });
 
 const sessionToRow = (eventId: string, s: Event['sessions'][number]) => ({
@@ -1804,6 +1805,7 @@ export async function loadAll(): Promise<DB | null> {
       state: r.state ?? '', timezone: r.timezone, startDate: r.start_date ?? '', endDate: r.end_date ?? '',
       status: r.status as Event['status'], regOpens: r.reg_opens ?? '', regCloses: r.reg_closes ?? '',
       lastDateToEdit: r.last_date_to_edit ?? null,
+      finalsLineupDeadlineAt: (r as { finals_lineup_deadline_at?: string | null }).finals_lineup_deadline_at ?? null,
       entryFee: Number(r.entry_fee), secondDisciplineFee: Number(r.second_discipline_fee),
       disciplines: (r.disciplines ?? []) as Event['disciplines'], sessions: sessionsByEvent.get(r.id) ?? [],
       ...(r.private_reg_code ? { privateRegCode: r.private_reg_code } : {}),
