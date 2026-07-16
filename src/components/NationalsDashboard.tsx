@@ -1,8 +1,9 @@
-import type { ReactNode } from 'react';
+import { Fragment, type ReactNode } from 'react';
 import { useDB } from '../lib/store';
 import { APPARATUS } from '../lib/types';
 import type { DB, Event, Registration } from '../lib/types';
 import { eligibleTeams, isAllAround, TEAM_MIN_PER_APPARATUS } from '../lib/nationals-teams';
+import { FinalsLineupEditor } from './FinalsLineupEditor';
 import { Badge } from './ui';
 
 /** Scope the dashboard to ONE club (a club manager's own view) or ONE
@@ -121,27 +122,36 @@ function EligibleTeamsSection({ event, scope }: { event: Event; scope: Nationals
             </thead>
             <tbody>
               {teams.map((team) => (
-                <tr key={`${team.clubId}|${team.discipline}|${team.levelId}|${team.category}`}>
-                  <td>{team.discipline === 'TNT' ? 'T&T' : team.discipline}</td>
-                  <td>{levelName(team.levelId)}</td>
-                  <td>{team.category}</td>
-                  <td style={{ fontSize: 13 }}>
-                    {APPARATUS[team.discipline]
-                      .filter((a) => (team.apparatusRegIds[a.code]?.length ?? 0) > 0)
-                      .map((a) => {
-                        const count = team.apparatusRegIds[a.code].length;
-                        const eligible = team.eligibleApparatus.includes(a.code);
-                        return (
-                          <span
-                            key={a.code}
-                            style={{ marginRight: 10, fontWeight: eligible ? 700 : 400, color: eligible ? 'var(--green-600)' : 'var(--ink)' }}
-                          >
-                            {a.code}: {count}{eligible ? ' ✓' : ''}
-                          </span>
-                        );
-                      })}
-                  </td>
-                </tr>
+                <Fragment key={`${team.clubId}|${team.discipline}|${team.levelId}|${team.category}`}>
+                  <tr>
+                    <td>{team.discipline === 'TNT' ? 'T&T' : team.discipline}</td>
+                    <td>{levelName(team.levelId)}</td>
+                    <td>{team.category}</td>
+                    <td style={{ fontSize: 13 }}>
+                      {APPARATUS[team.discipline]
+                        .filter((a) => (team.apparatusRegIds[a.code]?.length ?? 0) > 0)
+                        .map((a) => {
+                          const count = team.apparatusRegIds[a.code].length;
+                          const eligible = team.eligibleApparatus.includes(a.code);
+                          return (
+                            <span
+                              key={a.code}
+                              style={{ marginRight: 10, fontWeight: eligible ? 700 : 400, color: eligible ? 'var(--green-600)' : 'var(--ink)' }}
+                            >
+                              {a.code}: {count}{eligible ? ' ✓' : ''}
+                            </span>
+                          );
+                        })}
+                    </td>
+                  </tr>
+                  {team.eligibleApparatus.length > 0 && (
+                    <tr>
+                      <td colSpan={4} style={{ paddingTop: 0 }}>
+                        <FinalsLineupEditor event={event} team={team} />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               ))}
             </tbody>
           </table>
