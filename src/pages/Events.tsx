@@ -25,7 +25,8 @@ import {
 } from '../lib/supabase';
 import type { HostRosterRow, SanctioningTeamMember, WaitlistQueueRow } from '../lib/supabase';
 import { summarizeRoster, levelNameResolver } from '../lib/host-page';
-import { buildRegistrationWorkbookSheets, type SheetModel } from '../lib/host-export';
+import { buildRegistrationWorkbookSheets } from '../lib/host-export';
+import { downloadWorkbook } from '../lib/xlsx-download';
 import { stateCode } from '../lib/sanction';
 import { fmtMoney } from '../lib/scoring';
 import {
@@ -1341,21 +1342,7 @@ function HostExportCard({ event, rows, error, toast }: { event: Event; rows: Hos
         banquetConfigured: !!event.banquet,
         isCamp: event.eventType === 'camp',
       });
-      const { Workbook } = await import('exceljs');
-      const wb = new Workbook();
-      wb.creator = 'UCG Registration Platform';
-      wb.created = new Date();
-      for (const sheet of sheets) writeSheet(wb, sheet);
-      const buffer = await wb.xlsx.writeBuffer();
-      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${event.slug}-registrations.xlsx`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      await downloadWorkbook(sheets, `${event.slug}-registrations.xlsx`);
     } catch (err) {
       toast(`Couldn't build the workbook: ${err instanceof Error ? err.message : String(err)}`, { variant: 'error' });
     } finally {
@@ -1376,20 +1363,6 @@ function HostExportCard({ event, rows, error, toast }: { event: Event; rows: Hos
       </button>
     </div>
   );
-}
-
-/** Thin exceljs wiring for one sheet model: header row (bold, frozen),
- *  column widths sized to content, and the data rows as-is. Kept
- *  intentionally untested — the shaping logic it wires up is in
- *  src/lib/host-export.ts and IS unit-tested. */
-function writeSheet(wb: import('exceljs').Workbook, sheet: SheetModel): void {
-  const ws = wb.addWorksheet(sheet.name.slice(0, 31), { views: [{ state: 'frozen', ySplit: 1 }] });
-  ws.columns = sheet.columns.map((header, i) => ({
-    header,
-    width: Math.min(40, Math.max(10, header.length + 2, ...sheet.rows.map((r) => String(r[i] ?? '').length + 2))),
-  }));
-  ws.getRow(1).font = { bold: true };
-  for (const row of sheet.rows) ws.addRow(row);
 }
 
 /** Status card (§C): each line reads "waiting" until the underlying data

@@ -52,13 +52,23 @@ function navFor(caps: ReturnType<typeof useCapabilities>): NavGroup[] {
       { to: '/admin/communicate', label: 'Communicate' },
       { to: '/admin/errors', label: 'Error Log' },
       { to: '/admin/refunds', label: 'Refund Requests' },
+      { to: '/admin/finance', label: 'Finance' },
     ]});
-  } else if (caps.isRefundManager) {
-    // A refund manager who is NOT an admin has no other League-group access —
-    // isAdmin is never implicitly isRefundManager or vice versa (CLAUDE.md).
-    groups.push({ group: 'Refunds', items: [
-      { to: '/admin/refunds', label: 'Refund Requests' },
-    ]});
+  } else {
+    // isAdmin is never implicitly isRefundManager/isFinanceAdmin or vice
+    // versa (CLAUDE.md) — a non-admin can hold either role, both, or
+    // neither, so these two groups are independent checks, not an
+    // else-if chain.
+    if (caps.isRefundManager) {
+      groups.push({ group: 'Refunds', items: [
+        { to: '/admin/refunds', label: 'Refund Requests' },
+      ]});
+    }
+    if (caps.isFinanceAdmin) {
+      groups.push({ group: 'Finance', items: [
+        { to: '/admin/finance', label: 'Finance' },
+      ]});
+    }
   }
   return groups;
 }

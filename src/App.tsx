@@ -89,6 +89,7 @@ const MyRegistrations = lazy(() => import('./pages/MyRegistrations').then((m) =>
 const PurchaseHistory = lazy(() => import('./pages/PurchaseHistory').then((m) => ({ default: m.PurchaseHistory })));
 const ErrorLog = lazy(() => import('./pages/ErrorLog').then((m) => ({ default: m.ErrorLog })));
 const RefundReview = lazy(() => import('./pages/admin/league/RefundReview').then((m) => ({ default: m.RefundReview })));
+const Finance = lazy(() => import('./pages/admin/league/Finance').then((m) => ({ default: m.Finance })));
 const Cart = lazy(() => import('./pages/Cart').then((m) => ({ default: m.Cart })));
 const MembershipsCheckout = lazy(() => import('./pages/Cart').then((m) => ({ default: m.MembershipsCheckout })));
 
@@ -173,6 +174,31 @@ function RequireRefundAccess({ children }: { children: ReactNode }) {
       <div style={{ padding: '60px 24px', maxWidth: 480, margin: '0 auto', textAlign: 'center' }}>
         <div style={{ fontSize: 32, marginBottom: 16 }}>🔒</div>
         <h2 style={{ marginBottom: 8 }}>Refund manager access required</h2>
+        <p style={{ color: 'var(--ink-soft)' }}>
+          You don't have access to this page. Contact a UCG administrator if you believe this is an error.
+        </p>
+      </div>
+    );
+  }
+  return <>{children}</>;
+}
+
+/**
+ * Gate the finance dashboards (event-mgmt v2 Phase 6, spec §M) to admins OR
+ * the 'finance_admin' role — mirrors RequireRefundAccess's shape exactly.
+ * finance_admin and refund_manager can coexist on one non-admin user, so
+ * this check is independent of RequireRefundAccess's.
+ */
+function RequireFinanceAccess({ children }: { children: ReactNode }) {
+  const caps = useCapabilities();
+  const rolesLoaded = useRolesLoaded();
+  if (!caps.signedIn) return <Gate onUnlock={() => {}} />;
+  if (!rolesLoaded) return <PageFallback />;
+  if (!caps.isAdmin && !caps.isFinanceAdmin) {
+    return (
+      <div style={{ padding: '60px 24px', maxWidth: 480, margin: '0 auto', textAlign: 'center' }}>
+        <div style={{ fontSize: 32, marginBottom: 16 }}>🔒</div>
+        <h2 style={{ marginBottom: 8 }}>Finance access required</h2>
         <p style={{ color: 'var(--ink-soft)' }}>
           You don't have access to this page. Contact a UCG administrator if you believe this is an error.
         </p>
@@ -274,6 +300,7 @@ export default function App() {
               <Route path="/admin/communicate" element={<RequireAdmin><Communicate /></RequireAdmin>} />
               <Route path="/admin/errors" element={<RequireAdmin><ErrorLog /></RequireAdmin>} />
               <Route path="/admin/refunds" element={<RequireRefundAccess><RefundReview /></RequireRefundAccess>} />
+              <Route path="/admin/finance" element={<RequireFinanceAccess><Finance /></RequireFinanceAccess>} />
               <Route path="/waiver/sign/:token" element={<WaiverSign />} />
               <Route path="/manager-access/:token" element={<ManagerAccessReview />} />
               <Route path="/set-password" element={<SetPassword />} />
