@@ -300,7 +300,7 @@ function SummaryTab({
                   <button
                     type="button"
                     className="btn-link"
-                    style={{ background: 'none', border: 'none', padding: 0, color: 'var(--accent)', cursor: 'pointer', textDecoration: 'underline', font: 'inherit' }}
+                    style={{ background: 'none', border: 'none', padding: 0, color: 'var(--teal-900)', cursor: 'pointer', textDecoration: 'underline', font: 'inherit' }}
                     onClick={() => onItemKeyClick(l.itemKey)}
                     title="View these transactions"
                   >
@@ -388,7 +388,7 @@ function HostPayoutCard({
         </div>
       </div>
       <details style={{ marginBottom: 16 }}>
-        <summary style={{ fontSize: 12.5, color: 'var(--accent)', cursor: 'pointer' }}>Show calculation</summary>
+        <summary style={{ fontSize: 12.5, color: 'var(--teal-900)', cursor: 'pointer' }}>Show calculation</summary>
         <ul style={{ margin: '6px 0 0 16px', fontSize: 12.5, color: 'var(--ink-soft)' }}>
           {owed.parts.map((p) => (
             <li key={p.label}>{p.label}: {fmtMoney(p.cents / 100)}</li>
