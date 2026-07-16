@@ -197,8 +197,9 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   state is documented in `supabase/README.md`; keep specs in sync with it.
 
 ## Docs
-- `README.md` overview; `docs/README.md` index + **the authoritative "What's next"
-  list**; `supabase/README.md` backend schema/RLS/migration table; `docs/specs/` design
+- `README.md` overview; `docs/README.md` index; **`docs/whats-next.md` = the
+  authoritative open-work list** (moved out of docs/README.md 2026-07-16);
+  `supabase/README.md` backend schema/RLS/migration table; `docs/specs/` design
   specs; `docs/plans/` implementation plans (do NOT recreate `docs/superpowers/`);
   `docs/stripe-go-live-checklist.md`.
 - **Keep docs current after every commit** — a `PostToolUse` hook fires after `git commit`
@@ -423,57 +424,22 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   `partitionByConsent` (`src/lib/sms-send.ts`) excludes only explicit `false`, treating
   `undefined`/`true` as eligible. Migration `20260704015417` backfilled everyone to
   `true` EXCEPT anyone who'd already sent a STOP reply (matched against `sms_messages`).
-
 ## Deferred / TODO
-**The single authoritative open-work list is `docs/README.md` → "What's next"** —
-update it there; don't grow a rival list here. Operative notes only:
-- Feedback tracker (`docs/plans/2026-06-28-feedback-tracker.md`): Cohort A + B1–B4, B6,
-  B7, B8 all shipped; **B5** (finance dashboards) is absorbed by event-management v2.
-- **Event management v2** (Julia's 2026-07-06 requirements): digest + gap analysis in
-  `docs/specs/2026-07-06-event-management-v2-requirements.md`; raw materials in
-  `docs/reference/` (every "NAIGC" there reads as UCG — Nate 2026-07-06). Phasing
-  V2-P0…P6 approved + all §N7 questions answered by Julia 2026-07-06. P0–P3 shipped
-  (P2 = per-unit add-ons + camps, 2026-07-10; P3 = in-app refunds, 2026-07-11 — decisions
-  in spec §E3/§G/§H). **P4 capacity & sessions** (waitlists, by-session registration,
-  branch `feat/emv2-p4`) T1–T6 done: capacity/session engine + DB plumbing, event config
-  UI, checkout enforcement + hold stamping, by-session reg picker, cart hold countdown +
-  capacity-conflict dialog (waitlist-whole-group / pick-a-different-session / deliberate
-  split) + waitlist visibility (2026-07-12). T7 (2026-07-13) completes P4 on the branch:
-  FIFO promotion sweep in `scheduled-dispatch` (blocked-dimension bookkeeping — no
-  queue-jumping within a contended cap), new `manage-waitlist` edge fn (admin/sanctioning
-  promote-past-cap override + requeue; `list` backs the event-page Waitlist card for
-  hosts, since `waitlist_groups` RLS only exposes a group to its own club/person),
-  Complete-checkout flow on Club.tsx/MyRegistrations.tsx, `waitlistPosition` helper.
-  **P4 SHIPPED 2026-07-13**: migrations applied staging+prod; `create-checkout-session`/
-  `scheduled-dispatch`/`manage-waitlist` deployed to prod (verify_jwt true, trio
-  re-checked); merged to main.
-- **Event management v2 — P5 nationals ops SHIPPED 2026-07-16** (§L, §E6–7): A1–A3
-  session-request surveys (`session_requests` table + club/independent UI + server
-  checkout gate `code:'session-survey-required'` in create-checkout-session); B1–B2 Set
-  Competition Order (`competition_orders` table + `@dnd-kit` drag UI + section dividers
-  12WAG/15MAG + `events.competition_order_locked`); C1–C3 finals lineups (`finals_lineups`
-  table + `events.finals_roster_locked` + editor UI + `_shared/telnyx.ts` extracted from
-  send-sms + `scheduled-dispatch` deadline nag email+SMS & 10pm hard lock driven by
-  `events.finals_lineup_deadline_at`); D1 nationals summary dashboard (`nationals-teams.ts`
-  eligible-teams helper + read-only sections + admin view-as); E1 check-in flow
-  (`event_checkins` table, admin-open + club/athlete confirm+sign). 5 migrations applied
-  staging+prod; `create-checkout-session`/`send-sms`/`scheduled-dispatch` deployed
-  (verify_jwt true; no-verify-jwt trio re-checked); `TELNYX_FROM_NUMBER` set to the
-  approved 10DLC number +16787988123 (campaign 4b30019e-f12c-f96d-859a-4d995c868e87,
-  TCR CFN616P); merged to main. All P5 UI gated on `event.kind === 'nationals'`.
-  **DEFERRED with §L.2** (Julia marked incomplete): the session-assignment tool + the
-  per-team session-timed finals reminders ("5 min after session ends"/Fri-10am) — only the
-  admin-set `finals_lineup_deadline_at` nag+lock shipped.
-- **Event management v2 — P6 finance dashboards SHIPPED 2026-07-16** (§M — emv2 complete):
-  `#/admin/finance` (admin or `finance_admin`; nav mirrors the refunds pattern) —
-  league/per-event scope + date filters (defaults: prev month / regOpens→end+7d),
-  Summary (per-item-key gross/refunds/net + codes + merchant fees collected/paid/profit,
-  click-through to Transactions), Transactions ledger + .xlsx export (shared
-  `src/lib/xlsx-download.ts`, extracted from Events.tsx), Accounting-codes tab, per-event
-  Host payout card + manual payout ledger (`host_payouts`). Pure engine
-  `src/lib/finance.ts` (authoritative amounts = `payments.lines_snapshot` `paid_cents`,
-  legacy fallback invoice_items ×100; `Payment.linesSnapshot` now mapped). Migration
-  `20260716120000` (tables + finance_admin read RLS) applied staging+prod; NO
-  edge-function changes (trio re-checked anyway). ⚠ Host-payout "owed" = event net
-  revenue is PROVISIONAL pending Julia's formula; 👤 Nate: grant `finance_admin` to
-  Julia/bookkeeper. Next: non-emv2 backlog (`docs/README.md` → What's next).
+**The single authoritative open-work list is `docs/whats-next.md`** (reconciled
+2026-07-16) — update it there; don't grow a rival list here. Operative notes only:
+- **Event management v2 (Julia's 2026-07-06 requirements) is COMPLETE** — P0–P6 all
+  shipped to main + prod (last: P6 finance dashboards, 2026-07-16). Spec:
+  `docs/specs/2026-07-06-event-management-v2-requirements.md`; phase-by-phase history
+  lives in the spec, `docs/README.md` tables, memory, and git — not here.
+  Operative residuals (also in whats-next §4):
+  - **§L.2 DEFERRED per Julia** (her section incomplete): the session-assignment tool
+    + per-team session-timed finals reminders; only the admin-set
+    `finals_lineup_deadline_at` nag + 10pm hard lock shipped. All P5 UI is gated on
+    `event.kind === 'nationals'`.
+  - ⚠ Host-payout "owed" = event net revenue is **PROVISIONAL** pending Julia's
+    formula (`src/lib/finance.ts`).
+  - 👤 Nate: grant `finance_admin` (Julia/bookkeeper); verify the P3 prereqs landed
+    ("UCG - Main" `is_league_host` + `refund_manager` grants).
+- **Security hardening Phase 3** still TODO (`docs/plans/2026-07-02-security-hardening.md`).
+- **UI/UX review fixes** not started (`docs/plans/2026-07-04-uiux-review-fixes.md`) —
+  money-story task O1 first; ⚠️-marked tasks need the fable money review.

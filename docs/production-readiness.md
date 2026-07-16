@@ -8,14 +8,15 @@ reliability, observability, and compliance — with concrete steps split between
 **How to read this:** the [scorecard](#readiness-scorecard) is the one-screen summary.
 Each dimension below has *Where we are → The gap → Steps*. This doc is the
 *dimension view* of readiness; the single authoritative **ordered "what's next"
-list lives in [`README.md`](README.md#whats-next--the-authoritative-list)** — when
+list lives in [`whats-next.md`](whats-next.md)** — when
 the two disagree, that list wins and this doc needs a refresh.
 
 This doc is the *non-hosting* half of launch readiness; the infrastructure/hosting
 slice lives in [`hosting-and-launch.md`](hosting-and-launch.md) and is referenced, not
-duplicated. Status date: **2026-07-04** (refreshed from the original 2026-06-21
-analysis — payments, CI gating, Resend, error handling, and the security
-review/hardening cycle all shipped in between).
+duplicated. Status date: **2026-07-16** (partial refresh at emv2 completion — staging +
+Playwright E2E, in-app refunds, finance dashboards (B5), and the scheduled-dispatch
+infra all shipped since the 2026-07-04 full refresh; per-section text below may still
+read as of 7/04 where noted).
 
 ---
 
@@ -23,14 +24,14 @@ review/hardening cycle all shipped in between).
 
 | Dimension | Now | Target | Biggest gap |
 |---|---|---|---|
-| Core functionality | 🟢 Strong | Gold | B5 finance dashboards deferred; minor items only |
-| Payments / money | 🟡 Built (test mode) | Live + refundable | Go-live checklist (live keys); in-app refunds; hardening Phase 3 |
+| Core functionality | 🟢 Strong | Gold | emv2 complete (incl. B5 finance dashboards); minor items only |
+| Payments / money | 🟡 Built (test mode) | Live + refundable | Go-live checklist (live keys); hardening Phase 3 (in-app refunds ✅ shipped emv2 P3) |
 | Auth & access control | 🟡 Audited once | Continuously safe | No rate limiting / CAPTCHA; no admin MFA |
 | UI / UX polish | 🟡 Good, mobile-verified | WCAG AA | No a11y audit; loading/empty/error states uneven |
 | Reliability / fallback | 🟢 Failure-aware | Self-healing | Offline stance undecided (queue survives reload; no offline UX) |
 | Observability / monitoring | 🟡 Errors logged | Alerted | Nothing *notifies* us — no uptime check, no alerts, no analytics |
 | Bug reporting | 🔴 Passive only | In-app + triage | `error_logs` captures crashes; users still can't report problems |
-| Testing / CI | 🟡 Gated | Gated + E2E + staging | No component/E2E tests; no staging env — migrations hit prod first |
+| Testing / CI | 🟡 Gated | Gated + E2E + staging | Staging + Playwright smoke E2E exist (2026-07-04); E2E not run in CI; no component tests |
 | Email / notifications | 🟢 Production ESP | — | Resend on verified naigc.org; branded template shipped (B7 done) |
 | Hosting / infra | 🟡 Dev-grade | Prod stack | GitHub Pages + HashRouter; free Supabase; **no backups/PITR** |
 | Legal / compliance | 🔴 Gap | Counsel-blessed | No privacy policy / ToS; waiver unblessed; minors → COPPA |
@@ -152,24 +153,24 @@ RegistrationEditor) are verified by hand — and **no staging environment**, so
 schema/feature changes hit prod first.
 
 **Steps**
-- 👤 Approve a **staging** Supabase project (second free project) — unblocks
-  testing migrations + E2E off prod. (See the unblock instructions in the
-  what's-next list.)
-- 🤖 **Playwright smoke E2E** for the can't-break journeys (sign-in → register →
-  cart → checkout renders; member self-edit; club cart), run against staging.
-  (Responsive-screenshot proposal: `plans/2026-06-24-playwright-responsive-tests.md`.)
+- ~~👤 staging Supabase project~~ **done 2026-07-04** (`ucg-staging`, seeded; runbook
+  in `supabase/README.md`) — migrations now apply to staging FIRST, then prod.
+- ~~🤖 Playwright smoke E2E~~ **done 2026-07-04** (5 specs vs. staging: Gate sign-in,
+  seeded cart, live checkout-session → Stripe render, events pages). Still open:
+  **run E2E in CI** (deploy workflow runs lint/unit only).
 - 🤖 Component tests (Vitest + jsdom + Testing Library) for cart-sync /
   RegistrationEditor semantics.
-- 🤖 Per-release **manual QA checklist** (esp. meet-day flows).
+- 🤖 Per-release **manual QA checklist** (esp. event-day flows).
 
 ## 7. Functionality remaining  🟢
 
-Feature status lives in [`README.md`](README.md) (single what's-next list). The
+Feature status lives in [`whats-next.md`](whats-next.md) (single open-work list). The
 production-relevant headlines: **payments are built** (Stripe Embedded Checkout
-S1–S5, all line kinds, server-authoritative, deployed in test mode) — remaining is
-the [go-live checklist](stripe-go-live-checklist.md) (👤 live keys, smoke test),
-**in-app refunds** (Dashboard-only today), and the deferred feature roadmap
-(codeless judge access, scoring config, B5 finance dashboards, certs/tickets).
+S1–S5, all line kinds, server-authoritative, deployed in test mode), **in-app refunds
+shipped** (emv2 P3, 2026-07-11), **event management v2 complete** (P0–P6 incl. B5
+finance dashboards, 2026-07-16) — remaining is the
+[go-live checklist](stripe-go-live-checklist.md) (👤 live keys, smoke test) and the
+deferred feature roadmap (codeless judge access, scoring config, certs/tickets).
 
 ## 8. Email / notifications  🟢
 
@@ -233,10 +234,10 @@ items only Nate can do.
 
 | Phase | Theme | Contents | Status |
 |---|---|---|---|
-| **0** | Safety net & foundation | ~~Error boundary~~ · ~~write-failure surfacing~~ · ~~CI test gate~~ · ~~RLS audit~~ · ~~production ESP~~ · **Supabase Pro + backups** · **uptime/alerting** · **staging env** | 🟡 code done; 👤 accounts remain |
-| **1** | Payments | ~~Build (S1–S5)~~ · ~~server-authoritative fulfillment~~ · ~~security hardening P1+P2~~ · **go-live checklist (live keys)** · **hardening P3** · **in-app refunds** | 🟡 built + hardened; go-live is 👤 |
-| **2** | Hardening & polish | Rate limiting/CAPTCHA · a11y audit · loading/error states · bug-report widget · E2E on staging · **legal docs (waiver/privacy/ToS/COPPA)** · hosting move + headers | 🔴 next up |
-| **3** | Remaining features | Codeless judge access · scoring config · multi-club picker · B5 finance · certs/tickets/rosters | 🔴 as prioritized |
+| **0** | Safety net & foundation | ~~Error boundary~~ · ~~write-failure surfacing~~ · ~~CI test gate~~ · ~~RLS audit~~ · ~~production ESP~~ · ~~uptime/alerting~~ · ~~staging env~~ · **Supabase Pro + backups** | 🟡 done except 👤 Supabase Pro |
+| **1** | Payments | ~~Build (S1–S5)~~ · ~~server-authoritative fulfillment~~ · ~~security hardening P1+P2~~ · ~~in-app refunds~~ (emv2 P3) · **go-live checklist (live keys)** · **hardening P3** | 🟡 built + hardened; go-live is 👤 |
+| **2** | Hardening & polish | Rate limiting/CAPTCHA · a11y audit · loading/error states · bug-report widget · E2E in CI · UI/UX fix batch · **legal docs (waiver/privacy/ToS/COPPA)** · hosting move + headers | 🔴 next up |
+| **3** | Remaining features | Codeless judge access · scoring config · multi-club picker · typed memberships · certs/tickets (~~B5 finance~~ shipped emv2 P6) | 🔴 as prioritized |
 | **4** | Scale & ongoing | Analytics-driven iteration · status page · external API · data-layer scale path (watch-list above) | — |
 
 ---

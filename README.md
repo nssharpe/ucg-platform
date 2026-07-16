@@ -29,15 +29,17 @@ There is no role switcher. Permissions are derived from the signed-in user's rea
 state by [`src/lib/capabilities.ts`](src/lib/capabilities.ts) (React hooks) over the
 pure [`src/lib/capabilities-core.ts`](src/lib/capabilities-core.ts) (`deriveCapabilities`):
 
-- **Guests** (no account) browse public pages — live results, meets.
+- **Guests** (no account) browse public pages — live results, events.
 - **Members** (signed in) manage their profile, buy memberships, self-attach to
   clubs, request new clubs.
 - **Club managers** (a `club_managers` row) co-manage their club's roster, managers,
-  and meet registration.
-- **Admins** (the only `user_roles` role) get league controls + a "View as" person
-  impersonation tool.
-- **Meet host** = a manager of the meet's host club (derived, not a stored role).
-- **Judges** will be account-free via a per-meet code (sub-project D, not built yet).
+  and event registration.
+- **App roles** (`user_roles`): `admin` (league controls + a "View as" person
+  impersonation tool), plus scoped roles `sanctioning`, `regional_rep`,
+  `finance_admin`, `refund_manager` — admins are NOT implicitly any of the others.
+- **Event host** = a manager of the event's host club (derived, not a stored role),
+  or a per-event grant via `event_admins`.
+- **Judges** will be account-free via a per-event code (sub-project D, not built yet).
 
 Accounts link to a person row by **verified email** on first sign-in
 (`link_or_create_person` RPC); email confirmation must stay ON.
@@ -110,16 +112,20 @@ server-authoritative fulfillment; test mode) · **security hardening Phases 1–
 guard triggers, token exposure, retryable fulfillment) · **event "Meet management"**
 (Draft/Live publication state + timestamp-driven registration open/close, a
 role-gated last-date-to-edit lockout, correct cross-club registration visibility on a
-club-transfer, synchro same-level auto-sync).
+club-transfer, synchro same-level auto-sync) · **2026 UCG rebrand** (tokens, licensed
+fonts, logos) · **event management v2 in full** (P0–P6, 2026-07-07 → 2026-07-16: host
+dashboard/workbook/communication, per-unit add-ons + camps, in-app refunds + $0
+checkout, capacity/waitlists/by-session registration, nationals ops — competition
+order, finals lineups, check-in — and finance dashboards with .xlsx export) ·
+**staging environment + Playwright E2E smoke suite** · **scheduled dispatch**
+(pg_cron reminders/escalations/waitlist promotion).
 
-**Next:** Stripe go-live checklist (live keys, in-app refunds — Nate's action; see
-[checklist](docs/stripe-go-live-checklist.md)) → security hardening Phase 3 (deferred
-hardening items) → typed memberships + per-season waiver (sub-project B) → club-based
-multi-club registration picker (C) → codeless judge access (D) → meet 1-vs-2-panel +
-calculator-vs-simple config (E) → MFA/passkeys (see
-[research note](docs/research/2026-06-22-auth-2fa-passkeys.md)). Further out: PDF certs,
-banquet tickets, external API, finals rosters. Full status in [`CLAUDE.md`](CLAUDE.md);
-docs index in [`docs/`](docs).
+**Next:** the single authoritative open-work list is
+[`docs/whats-next.md`](docs/whats-next.md) (reconciled 2026-07-16) — headlines:
+Stripe go-live ([checklist](docs/stripe-go-live-checklist.md)) + Supabase Pro,
+legal/counsel, security hardening Phase 3 + rate limiting, the 2026-07-04 UI/UX fix
+batch, then sub-projects B (typed memberships) → C (multi-club picker) → D (codeless
+judge access) → E (scoring config). Docs index in [`docs/`](docs).
 
 **Path to launch:** [`docs/production-readiness.md`](docs/production-readiness.md) is the
 gap analysis + phased plan for reaching production gold standards (UX, security,

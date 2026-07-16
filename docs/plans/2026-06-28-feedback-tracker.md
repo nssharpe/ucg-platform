@@ -8,12 +8,10 @@ happened), so it wasn't trustworthy unattended. Reverted to direct Claude
 implementation for everything below. See memory `agy-offload-pipeline` for the
 post-mortem if this is ever revisited.
 
-## Status at a glance (2026-07-04)
-**Still open:**
-- **B5** — Finance dashboards (whole epic). Flagged "likely defer given budget" —
-  not started, no active plan.
-
-**Fully done:** Cohort A, B1, B2, B3, B4 (all 4 sub-items), B6, B7 (all 3 items), B8.
+## Status at a glance (2026-07-16)
+**COMPLETE — nothing open.** Cohort A, B1, B2, B3, B4 (all 4 sub-items), B6, B7
+(all 3 items), B8 all shipped; **B5 (finance dashboards) shipped 2026-07-16 via
+event-management v2 P6** (spec §M — `#/admin/finance`).
 Full detail on everything below, in order.
 
 ## Cohort A — small/mechanical, direct-Claude
@@ -363,5 +361,5 @@ payment form. Build/lint/197 tests pass (3 new coupon hard-expiry tests added). 
 ## Suggested sequence (historical — all steps below are now done)
 1. Run Cohort A (self-driving). 2. Claude: B1 (critical payments) with review.
 3. B6 (cheap server-logic regressions). 4. B2/B3/B4 as budget allows. 5. Defer B5/B7.
-**Actual outcome:** all of 1–4 shipped, plus all of B7 and B8. Only B5 (deferred by
-design) remains — see "Status at a glance" at the top of this file.
+**Actual outcome:** all of 1–4 shipped, plus all of B7 and B8; B5 shipped last via
+emv2 P6 (2026-07-16). The tracker is fully complete.
