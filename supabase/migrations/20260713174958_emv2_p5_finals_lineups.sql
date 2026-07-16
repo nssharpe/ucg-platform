@@ -52,10 +52,11 @@ create unique index on finals_lineups (event_id, club_id, level_id, category, ap
 -- policies never read back into finals_lineups, so there's no cycle), but a
 -- helper function keeps the lock-check readable/reusable across the
 -- insert/update/delete policies below and fail-closed by construction
--- (coalesce(...,false) — an event row that's somehow missing is treated as
--- LOCKED, the safer default, rather than open).
+-- (coalesce(...,true) — an event row that's somehow missing is treated as
+-- LOCKED, the safer default, rather than open; unreachable in practice since
+-- event_id is a NOT NULL FK, but the default must match the documented intent).
 create or replace function event_finals_locked(eid text) returns boolean as $$
-  select coalesce((select finals_roster_locked from events where id = eid), false);
+  select coalesce((select finals_roster_locked from events where id = eid), true);
 $$ language sql stable security definer set search_path = public, pg_temp;
 revoke all on function event_finals_locked(text) from public;
 grant execute on function event_finals_locked(text) to authenticated;
@@ -114,3 +115,65 @@ create policy finals_lineups_delete on finals_lineups for delete
 
 revoke all on finals_lineups from public;
 grant select, insert, update, delete on finals_lineups to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Content validation — finals_lineups_validate() trigger
+-- ---------------------------------------------------------------------------
+-- RLS above scopes WHO may write a row (the club's manager, pre-lock), but
+-- says nothing about WHAT `reg_ids` contains — a caller hitting PostgREST
+-- directly could otherwise store malformed JSON, more than 4 athletes, or
+-- registration ids from a different club/event, which finals day-of tooling
+-- would then trust. This trigger pins the content invariants:
+--   - `reg_ids` is a JSON array of at most 4 strings (FINALS_LINEUP_MAX,
+--     mirrored in src/lib/finals-lineup.ts);
+--   - no registration id appears twice;
+--   - every id references a registration of THIS event and THIS club.
+--
+-- SECURITY DEFINER (the guard-trigger idiom, e.g. guard_registration_paid)
+-- so the registrations lookup can't false-reject on RLS visibility. Reads
+-- only NEW — exempt from the upsert-trigger trap (CLAUDE.md), which only
+-- bites triggers that consult OLD/tg_op.
+create or replace function finals_lineups_validate() returns trigger as $$
+declare
+  ids text[];
+  n_ids int;
+  n_bad int;
+begin
+  if jsonb_typeof(new.reg_ids) is distinct from 'array' then
+    raise exception 'reg_ids must be a JSON array of registration ids';
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements(new.reg_ids) el(e)
+    where jsonb_typeof(el.e) <> 'string'
+  ) then
+    raise exception 'registration ids in reg_ids must be strings';
+  end if;
+
+  select coalesce(array_agg(el.e #>> '{}'), '{}') into ids
+  from jsonb_array_elements(new.reg_ids) el(e);
+
+  n_ids := coalesce(array_length(ids, 1), 0);
+  if n_ids > 4 then
+    raise exception 'a finals lineup may list at most 4 athletes (got %)', n_ids;
+  end if;
+  if n_ids <> (select count(distinct u) from unnest(ids) u) then
+    raise exception 'reg_ids may not list the same registration id twice';
+  end if;
+
+  select count(*) into n_bad
+  from unnest(ids) rid
+  where not exists (
+    select 1 from registrations r
+    where r.id = rid and r.event_id = new.event_id and r.club_id = new.club_id
+  );
+  if n_bad > 0 then
+    raise exception '% registration id(s) in reg_ids do not belong to this event/club', n_bad;
+  end if;
+
+  return new;
+end;
+$$ language plpgsql security definer set search_path = public, pg_temp;
+
+create trigger finals_lineups_validate
+  before insert or update on finals_lineups
+  for each row execute function finals_lineups_validate();
