@@ -28,6 +28,11 @@ import { cleanupCrossClubCart } from '../lib/cart-sync';
 import type { ClubMembership } from '../lib/types';
 import { ClubForm } from '../components/ClubForm';
 import { RegistrationEditor } from '../components/RegistrationEditor';
+import { SessionRequestSurveyCard } from '../components/SessionRequestSurvey';
+import { requiredSessionRequests } from '../lib/pricing';
+import { CompetitionOrderCard } from '../components/CompetitionOrderCard';
+import { NationalsDashboard } from '../components/NationalsDashboard';
+import { EventCheckinCard } from '../components/EventCheckinCard';
 
 // ---- sort helpers -----------------------------------------------------------
 
@@ -1644,6 +1649,46 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
       )}
 
       <ClubAddonsCard key={event.id} event={event} clubId={clubId} canManage={canManage} />
+
+      {/* Nationals session-planning survey (event-mgmt v2 Phase 5, A2): one
+          card per required WAG-level/combined-MAG/combined-T&T key, derived
+          from this club's non-refunded regs at this event. Read db.sessionRequests
+          directly each render (M6 in-place-mutation trap — mutate() never
+          reassigns the array on an update). Editable until the event's edit
+          deadline; read-only after (mirrors canStillEdit above). */}
+      {event.kind === 'nationals' && (
+        <SessionRequestSurveyCard
+          eventId={event.id}
+          sessions={event.sessions}
+          keys={requiredSessionRequests(event, allRegs, 'club')}
+          existing={(db.sessionRequests ?? []).filter((r) => r.eventId === event.id && r.clubId === clubId)}
+          owner={{ clubId }}
+          editable={canStillEdit}
+          showSeparateGyms
+          labelFor={(key) => (key.levelId ? `WAG — ${lvlName(key.levelId)}` : (key.discipline === 'TNT' ? 'T&T' : key.discipline))}
+        />
+      )}
+
+      {/* Set Competition Order (event-mgmt v2 Phase 5 B2, spec §E6): MAG/WAG
+          drag-and-drop competing order per apparatus/level, gated view-only
+          once locked (unless the viewer is an admin). Internal early-return
+          handles the "nothing to show" cases (no MAG/WAG regs, not a
+          manager) — mirrors ClubAddonsCard's gating convention above. */}
+      <CompetitionOrderCard event={event} clubId={clubId} canManage={canManage} isAdmin={caps.isAdmin} />
+
+      {/* Nationals summary dashboard (event-mgmt v2 Phase 5 D1, spec §L.3):
+          read-only planning aggregation (eligible teams, decathlon/omnithon,
+          coaches, banquet gap, assigned sessions) scoped to this club. */}
+      {canManage && event.kind === 'nationals' && (
+        <NationalsDashboard eventId={event.id} scope={{ clubId }} />
+      )}
+
+      {/* Nationals check-in (event-mgmt v2 Phase 5 E1, spec §L.4): gated on
+          event.kind === 'nationals' to keep check-in scoped to P5, though
+          the underlying feature isn't nationals-specific per spec. */}
+      {canManage && event.kind === 'nationals' && (
+        <EventCheckinCard eventId={event.id} scope={{ clubId }} />
+      )}
 
       {/* Card 1: Already registered */}
       {/* Promoted waitlist groups (event-mgmt v2 P4 T7): a 'notified' group

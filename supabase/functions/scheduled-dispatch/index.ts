@@ -23,6 +23,7 @@ import {
   resolveGroupContacts, groupLandingUrl, promotionEmailHtml, requeueEmailHtml, promotionSubject, requeueSubject,
   type WaitlistGroupRow,
 } from '../_shared/waitlist-contacts.ts';
+import { toE164, sendSmsBatch } from '../_shared/telnyx.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -273,10 +274,61 @@ Deno.serve(async (req) => {
     failures.push('waitlist:sweep');
   }
 
+  // d. Nationals finals-lineup deadline nag + hard lock (event-mgmt v2 Phase 5
+  // Task C3, spec §L.3). Isolated in its own try/catch (loading the event
+  // list) with a PER-EVENT try/catch inside, mirroring (b)'s owner-task
+  // pattern, so one event's failure can't take down another's.
+  //
+  // DEFERRED (spec §L.3): the per-team reminder "5 min after the team's
+  // session ends" (incl. the special-cased Friday-10am-last-session wording)
+  // and the day-1 8pm "lineups are now open" nudge both depend on SESSION
+  // ASSIGNMENTS from the §L.2 assignment tool, which Julia marked
+  // incomplete/skip-for-now (2026-07-16 kickoff). This consumer implements
+  // only the two pieces that depend solely on the admin-set
+  // `finals_lineup_deadline_at` instant (a timestamptz — no timezone math
+  // needed, just compare to `now()`): the deadline nag to club managers with
+  // missing finals lineups, and the deadline+1h hard lock.
+  let finalsNagEmailCount = 0;
+  let finalsNagSmsCount = 0;
+  let finalsLocked = 0;
+  try {
+    const { data: natEvents, error: natErr } = await db
+      .from('events')
+      .select('id, slug, name, finals_roster_locked, finals_lineup_deadline_at')
+      .eq('kind', 'nationals')
+      .not('finals_lineup_deadline_at', 'is', null)
+      .lte('finals_lineup_deadline_at', nowISO);
+    if (natErr) throw natErr;
+
+    for (const ev of natEvents ?? []) {
+      const eventId = ev.id as string;
+      try {
+        const result = await processFinalsDeadline(db, {
+          id: eventId,
+          slug: ev.slug as string,
+          name: ev.name as string,
+          finalsRosterLocked: !!ev.finals_roster_locked,
+          finalsLineupDeadlineAt: ev.finals_lineup_deadline_at as string,
+        }, nowISO, appUrl);
+        finalsNagEmailCount += result.emailsSent;
+        finalsNagSmsCount += result.smsSent;
+        if (result.locked) finalsLocked++;
+        failures.push(...result.failures);
+      } catch (err) {
+        console.error(`scheduled-dispatch: finals-deadline consumer failed for event ${eventId}`, err);
+        failures.push(`finals-deadline:event:${eventId}`);
+      }
+    }
+  } catch (err) {
+    console.error('scheduled-dispatch: finals-deadline consumer failed to load events', err);
+    failures.push('finals-deadline:query');
+  }
+
   return json({
     ok: failures.length === 0,
     reminders3d, reminders1d, closures, ownerTaskReminders,
     waitlistPromoted, waitlistRequeued, waitlistCompleted,
+    finalsNagEmailCount, finalsNagSmsCount, finalsLocked,
     failures,
   });
 });
@@ -623,4 +675,317 @@ async function emailRequeue(
   const messages: EmailMessage[] = contacts.map((c) => ({ to: c.name ? `${c.name} <${c.email}>` : c.email, subject: requeueSubject(event.name), html }));
   const result = await sendBatch(messages);
   if (!result.ok) console.warn(`scheduled-dispatch: waitlist requeue email send failed for group ${group.id}`, result.failed);
+}
+
+// ---------------------------------------------------------------------------
+// e. Nationals finals-lineup deadline nag + hard lock (event-mgmt v2 Phase 5
+//    Task C3, spec §L.3)
+// ---------------------------------------------------------------------------
+// See the DEFERRED note on the inline "d." consumer above for what this does
+// NOT do (per-team session-timed reminders — blocked on the §L.2 session-
+// assignment tool). What it DOES do, for every `kind = 'nationals'` event
+// whose `finals_lineup_deadline_at` has passed:
+//
+//  1. Derive missing finals lineups. This mirrors src/lib/nationals-teams.ts's
+//     `eligibleTeams` (group registrations by club+discipline+level+category,
+//     an apparatus is "eligible" at >=3 registrants) and
+//     src/lib/nationals-adapter.ts's `platformCategory` (placement override,
+//     else gender + student status) — replicated inline because edge
+//     functions can't import from `src/`. A team-apparatus is "missing" when
+//     no `finals_lineups` row exists for that exact
+//     (club_id, level_id, category, apparatus) key with a non-empty `reg_ids`.
+//  2. For every club with >=1 missing lineup, email + SMS that club's
+//     managers, idempotently (claimNotifications/releaseClaims, same idiom as
+//     the sanction/owner-task consumers above) under kinds
+//     'finals-lineup-nag-email'/'finals-lineup-nag-sms'. SMS respects the
+//     opt-out consent model (`sms_consent !== false`, mirrors
+//     `partitionByConsent` in src/lib/sms-send.ts) and is skipped entirely if
+//     Telnyx isn't configured.
+//  3. Hard-lock: once `now >= deadline + 1h`, idempotently flip
+//     `finals_roster_locked` to `true` (a conditional
+//     `where finals_roster_locked = false` update IS the idempotency guard —
+//     no notification_log claim needed since the write itself is a no-op on
+//     re-run).
+
+interface FinalsEventRow {
+  id: string;
+  slug: string;
+  name: string;
+  finalsRosterLocked: boolean;
+  finalsLineupDeadlineAt: string;
+}
+
+interface FinalsRegRow {
+  id: string;
+  athlete_id: string;
+  club_id: string | null;
+  discipline: string;
+  level_id: string | null;
+  apparatus: string[] | null;
+  refunded: boolean | null;
+  waitlisted: boolean | null;
+}
+
+interface FinalsPersonRow {
+  id: string;
+  gender: string | null;
+  student_status: string | null;
+  placement: Record<string, string> | null;
+}
+
+interface FinalsLineupRow {
+  club_id: string;
+  level_id: string;
+  category: string;
+  apparatus: string;
+  reg_ids: unknown;
+}
+
+interface ManagerRow {
+  id: string;
+  first_name: string | null;
+  last_name: string | null;
+  email: string | null;
+  phone: string | null;
+  sms_consent: boolean | null;
+}
+
+interface MissingLineup {
+  levelId: string;
+  levelName: string;
+  category: string;
+  apparatus: string;
+}
+
+const TEAM_MIN_PER_APPARATUS = 3;
+const APPARATUS_NAMES: Record<string, string> = {
+  FX: 'Floor', PH: 'Pommel Horse', SR: 'Still Rings', VT: 'Vault', PB: 'Parallel Bars', HB: 'High Bar',
+  UB: 'Uneven Bars', BB: 'Balance Beam', TR: 'Trampoline', DM: 'Double Mini', TU: 'Tumbling', SY: 'Synchro Trampoline',
+};
+
+interface FinalsDeadlineResult {
+  emailsSent: number;
+  smsSent: number;
+  locked: boolean;
+  failures: string[];
+}
+
+async function processFinalsDeadline(
+  db: SupabaseClient,
+  event: FinalsEventRow,
+  nowISO: string,
+  appUrl: string,
+): Promise<FinalsDeadlineResult> {
+  const failures: string[] = [];
+  let emailsSent = 0;
+  let smsSent = 0;
+  let locked = false;
+  const nowMs = new Date(nowISO).getTime();
+  const deadlineMs = new Date(event.finalsLineupDeadlineAt).getTime();
+
+  // --- 1. Derive missing finals lineups ---
+  const missingByClub = await missingFinalsLineupsByClub(db, event.id);
+
+  if (missingByClub.size > 0) {
+    const clubIds = [...missingByClub.keys()];
+    const { data: mgrRows, error: mgrErr } = await db
+      .from('club_managers')
+      .select('club_id, person_id')
+      .in('club_id', clubIds);
+    if (mgrErr) {
+      console.error(`scheduled-dispatch: finals-deadline club_managers load failed for ${event.id}`, mgrErr);
+      failures.push(`finals-deadline:managers:${event.id}`);
+    } else {
+      const personIds = [...new Set((mgrRows ?? []).map((r) => r.person_id as string))];
+      const managerByPersonId = new Map<string, ManagerRow>();
+      if (personIds.length > 0) {
+        const { data: peopleRows } = await db
+          .from('people')
+          .select('id, first_name, last_name, email, phone, sms_consent')
+          .in('id', personIds);
+        for (const p of (peopleRows ?? []) as ManagerRow[]) managerByPersonId.set(p.id, p);
+      }
+      const managersByClub = new Map<string, ManagerRow[]>();
+      for (const r of mgrRows ?? []) {
+        const clubId = r.club_id as string;
+        const manager = managerByPersonId.get(r.person_id as string);
+        if (!manager) continue;
+        const arr = managersByClub.get(clubId) ?? [];
+        arr.push(manager);
+        managersByClub.set(clubId, arr);
+      }
+
+      for (const [clubId, missing] of missingByClub) {
+        const managers = managersByClub.get(clubId) ?? [];
+        if (managers.length === 0) continue;
+        const eventLink = `${appUrl}/#/events/${event.slug}/nationals`;
+
+        // --- Email ---
+        const emailCandidates = managers
+          .map((m) => ({ ...m, email: (m.email ?? '').trim().toLowerCase() }))
+          .filter((m) => EMAIL_RE.test(m.email));
+        if (emailCandidates.length > 0) {
+          const kind = 'finals-lineup-nag-email';
+          const claimed = await claimNotifications(db, kind, event.id, emailCandidates.map((m) => m.email));
+          if (claimed.length > 0) {
+            const claimedSet = new Set(claimed);
+            const rows = missing.map((m) => `<li>${esc(m.levelName)} · ${esc(m.category)} · ${esc(APPARATUS_NAMES[m.apparatus] ?? m.apparatus)}</li>`).join('');
+            const html = renderEmail({
+              heading: 'Finals lineup deadline has passed',
+              bodyHtml: `<p>Hello,</p>
+<p>The finals-lineup submission deadline for <strong>${esc(event.name)}</strong> has passed, and your club still has missing finals lineups:</p>
+<ul>${rows}</ul>
+<p>Lineups hard-lock 1 hour after the deadline — submit as soon as possible.</p>`,
+              cta: { text: 'Submit finals lineups', href: eventLink },
+            });
+            const subject = `Action needed: missing finals lineups for ${event.name}`;
+            const messages: EmailMessage[] = emailCandidates
+              .filter((m) => claimedSet.has(m.email))
+              .map((m) => ({ to: `${m.first_name ?? ''} ${m.last_name ?? ''}`.trim() ? `${m.first_name} ${m.last_name} <${m.email}>` : m.email, subject, html }));
+            const result = await sendBatch(messages);
+            if (!result.ok) {
+              console.error(`scheduled-dispatch: finals-lineup-nag-email send failed for ${event.id}:${clubId}`, result.failed);
+              failures.push(`finals-lineup-nag-email:${event.id}:${clubId}`);
+              await releaseClaims(db, kind, event.id, claimed);
+            }
+            emailsSent += result.sentCount;
+          }
+        }
+
+        // --- SMS (best-effort — skipped entirely if Telnyx isn't configured) ---
+        const apiKey = Deno.env.get('TELNYX_API_KEY');
+        const fromNumber = Deno.env.get('TELNYX_FROM_NUMBER');
+        const profileId = Deno.env.get('TELNYX_MESSAGING_PROFILE_ID');
+        if (apiKey && (fromNumber || profileId)) {
+          const smsCandidates = managers
+            .filter((m) => m.sms_consent !== false && typeof m.phone === 'string' && m.phone.trim())
+            .map((m) => ({ ...m, e164: toE164(m.phone as string) }))
+            .filter((m): m is ManagerRow & { e164: string } => !!m.e164);
+          if (smsCandidates.length > 0) {
+            const kind = 'finals-lineup-nag-sms';
+            const claimed = await claimNotifications(db, kind, event.id, smsCandidates.map((m) => m.e164));
+            if (claimed.length > 0) {
+              const claimedSet = new Set(claimed);
+              const summary = missing.map((m) => `${m.levelName} ${m.category} ${APPARATUS_NAMES[m.apparatus] ?? m.apparatus}`).join('; ');
+              const text = `UCG: The finals-lineup deadline for ${event.name} has passed. Missing: ${summary}. Lineups lock in 1 hour — submit now: ${eventLink}`;
+              const recipients = smsCandidates
+                .filter((m) => claimedSet.has(m.e164))
+                .map((m) => ({ to: m.e164, name: `${m.first_name ?? ''} ${m.last_name ?? ''}`.trim() || undefined }));
+              const result = await sendSmsBatch({ apiKey, fromNumber, profileId }, recipients, text);
+              if (result.sentRows.length) {
+                try { await db.from('sms_messages').insert(result.sentRows); }
+                catch (e) { console.error(`scheduled-dispatch: finals-lineup-nag-sms sms_messages insert failed for ${event.id}:${clubId}`, e); }
+              }
+              if (result.failed.length > 0) {
+                console.error(`scheduled-dispatch: finals-lineup-nag-sms send failed for ${event.id}:${clubId}`, result.failed);
+                failures.push(`finals-lineup-nag-sms:${event.id}:${clubId}`);
+                await releaseClaims(db, kind, event.id, result.failed.map((f) => f.phone));
+              }
+              smsSent += result.sent.length;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // --- 3. Hard lock (idempotent: the `eq('finals_roster_locked', false)`
+  // clause IS the guard — a re-run after the row already flipped is a no-op) ---
+  if (!event.finalsRosterLocked && nowMs >= deadlineMs + 60 * 60 * 1000) {
+    const { data: claimed, error: lockErr } = await db
+      .from('events')
+      .update({ finals_roster_locked: true })
+      .eq('id', event.id)
+      .eq('finals_roster_locked', false)
+      .select('id')
+      .maybeSingle();
+    if (lockErr) {
+      console.error(`scheduled-dispatch: finals-roster hard-lock failed for ${event.id}`, lockErr);
+      failures.push(`finals-lock:${event.id}`);
+    } else if (claimed) {
+      locked = true;
+    }
+  }
+
+  return { emailsSent, smsSent, locked, failures };
+}
+
+/** Groups this event's currently-missing finals lineups by club id (mirrors
+ *  src/lib/nationals-teams.ts's `eligibleTeams` grouping + `platformCategory`
+ *  category derivation — see the section-header comment above for why this
+ *  is replicated rather than imported). */
+async function missingFinalsLineupsByClub(db: SupabaseClient, eventId: string): Promise<Map<string, MissingLineup[]>> {
+  const { data: regRows, error: regErr } = await db
+    .from('registrations')
+    .select('id, athlete_id, club_id, discipline, level_id, apparatus, refunded, waitlisted')
+    .eq('event_id', eventId);
+  if (regErr) throw regErr;
+  const regs = ((regRows ?? []) as FinalsRegRow[]).filter((r) => !r.refunded && !r.waitlisted);
+  if (regs.length === 0) return new Map();
+
+  const athleteIds = [...new Set(regs.map((r) => r.athlete_id))];
+  const peopleById = new Map<string, FinalsPersonRow>();
+  if (athleteIds.length > 0) {
+    const { data: peopleRows, error: peopleErr } = await db
+      .from('people')
+      .select('id, gender, student_status, placement')
+      .in('id', athleteIds);
+    if (peopleErr) throw peopleErr;
+    for (const p of (peopleRows ?? []) as FinalsPersonRow[]) peopleById.set(p.id, p);
+  }
+
+  // teamKey (clubId|discipline|levelId|category) -> apparatus -> reg count
+  const teamApparatusCounts = new Map<string, Map<string, number>>();
+  for (const r of regs) {
+    if (!r.club_id || !r.level_id) continue;
+    const person = peopleById.get(r.athlete_id);
+    if (!person) continue; // nothing to categorize
+    const placement = (person.placement ?? {})[r.discipline];
+    const women = placement ? placement === 'women+' : person.gender === 'Female';
+    const collegiate = person.student_status === 'Student';
+    const category = `${collegiate ? 'Collegiate' : 'Community'} ${women ? 'Women+' : 'Men+'}`;
+    const teamKey = `${r.club_id}|${r.discipline}|${r.level_id}|${category}`;
+    let apparatusCounts = teamApparatusCounts.get(teamKey);
+    if (!apparatusCounts) { apparatusCounts = new Map(); teamApparatusCounts.set(teamKey, apparatusCounts); }
+    for (const apparatus of r.apparatus ?? []) {
+      apparatusCounts.set(apparatus, (apparatusCounts.get(apparatus) ?? 0) + 1);
+    }
+  }
+
+  const eligible: { clubId: string; levelId: string; category: string; apparatus: string }[] = [];
+  for (const [teamKey, apparatusCounts] of teamApparatusCounts) {
+    const [clubId, , levelId, category] = teamKey.split('|');
+    for (const [apparatus, count] of apparatusCounts) {
+      if (count >= TEAM_MIN_PER_APPARATUS) eligible.push({ clubId, levelId, category, apparatus });
+    }
+  }
+  if (eligible.length === 0) return new Map();
+
+  const { data: lineupRows, error: lineupErr } = await db
+    .from('finals_lineups')
+    .select('club_id, level_id, category, apparatus, reg_ids')
+    .eq('event_id', eventId);
+  if (lineupErr) throw lineupErr;
+  const haveKeys = new Set(
+    ((lineupRows ?? []) as FinalsLineupRow[])
+      .filter((r) => Array.isArray(r.reg_ids) && (r.reg_ids as unknown[]).length > 0)
+      .map((r) => `${r.club_id}|${r.level_id}|${r.category}|${r.apparatus}`),
+  );
+
+  const levelIds = [...new Set(eligible.map((e) => e.levelId))];
+  const levelNameById = new Map<string, string>();
+  if (levelIds.length > 0) {
+    const { data: levelRows } = await db.from('levels').select('id, name').in('id', levelIds);
+    for (const l of levelRows ?? []) levelNameById.set(l.id as string, l.name as string);
+  }
+
+  const missingByClub = new Map<string, MissingLineup[]>();
+  for (const e of eligible) {
+    const key = `${e.clubId}|${e.levelId}|${e.category}|${e.apparatus}`;
+    if (haveKeys.has(key)) continue;
+    const arr = missingByClub.get(e.clubId) ?? [];
+    arr.push({ levelId: e.levelId, levelName: levelNameById.get(e.levelId) ?? e.levelId, category: e.category, apparatus: e.apparatus });
+    missingByClub.set(e.clubId, arr);
+  }
+  return missingByClub;
 }

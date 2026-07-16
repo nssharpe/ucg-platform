@@ -137,6 +137,10 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
   // or the event's host club may still edit a registration.
   const [hasEditLockout, setHasEditLockout] = useState(!!editEvent?.lastDateToEdit);
   const [lastDateToEdit, setLastDateToEdit] = useState(editEvent?.lastDateToEdit ? toDatetimeLocalValue(editEvent.lastDateToEdit) : `${addDays(defaultStart, -7)}T23:59`);
+  // Finals lineup deadline (event-mgmt v2 P5 §L.3, nationals only): scheduled-dispatch
+  // nags club managers at/after this instant and hard-locks finals rosters 1h later.
+  const [hasFinalsDeadline, setHasFinalsDeadline] = useState(!!editEvent?.finalsLineupDeadlineAt);
+  const [finalsLineupDeadlineAt, setFinalsLineupDeadlineAt] = useState(editEvent?.finalsLineupDeadlineAt ? toDatetimeLocalValue(editEvent.finalsLineupDeadlineAt) : `${addDays(defaultStart, -1)}T21:00`);
   // Age-calculation date (event-mgmt v2 §A): applies to all events, not just camps.
   const [hasAgeCalcAt, setHasAgeCalcAt] = useState(!!editEvent?.ageCalcAt);
   const [ageCalcAt, setAgeCalcAt] = useState(editEvent?.ageCalcAt ? toDatetimeLocalValue(editEvent.ageCalcAt) : `${defaultStart}T00:00`);
@@ -361,6 +365,7 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
       ...(hasBanner ? { bannerAddon: { price: Number(bannerPrice), ...(bannerLastPurchaseAt ? { lastPurchaseAt: bannerLastPurchaseAt } : {}) } } : { bannerAddon: undefined }),
       ...(hasChangeFee ? { changeFee: { amount: Number(changeFeeAmount), startsAt: changeFeeStartsAt } } : { changeFee: undefined }),
       lastDateToEdit: hasEditLockout ? lastDateToEdit : null,
+      finalsLineupDeadlineAt: nationals && hasFinalsDeadline ? finalsLineupDeadlineAt : null,
       venue: venue.trim() || undefined,
       streetAddress: streetAddress.trim() || undefined,
       country: country.trim() || undefined,
@@ -768,6 +773,21 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
               </label>
             ))}
           </div>
+
+          {/* Finals lineup deadline (event-mgmt v2 P5 §L.3) */}
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, marginTop: 12, marginBottom: hasFinalsDeadline ? 8 : 0 }}>
+            <input type="checkbox" checked={hasFinalsDeadline} onChange={(e) => setHasFinalsDeadline(e.target.checked)} /> Set a finals lineup deadline
+          </label>
+          {hasFinalsDeadline && (
+            <div className="grid cols-3" style={{ marginBottom: 8 }}>
+              <Field
+                label={`Finals lineup deadline (${timezone})`}
+                hint="Managers are reminded at this time; lineups hard-lock 1 hour later."
+              >
+                <input className="input" type="datetime-local" value={finalsLineupDeadlineAt} onChange={(e) => setFinalsLineupDeadlineAt(e.target.value)} />
+              </Field>
+            </div>
+          )}
         </>
       )}
 

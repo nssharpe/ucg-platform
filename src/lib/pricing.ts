@@ -1,7 +1,7 @@
 // Pure pricing & coupon-validity logic — no React/store/Supabase imports (types
 // erase at compile time). Unit-tested in tests/pricing.test.ts. Used by the
 // membership purchase flow (W6) and promo codes (W14).
-import type { Athlete, CartItem, Coupon, Discipline, Membership, MembershipType, Registration, Season } from './types';
+import type { Athlete, CartItem, Coupon, Discipline, Membership, MembershipType, Registration, Season, SessionRequestAnswers } from './types';
 
 /** Base fee for a membership type in a season. */
 export function membershipFee(season: Season, type: MembershipType): number {
@@ -1049,3 +1049,215 @@ export function refundAmountCents(
 export function capRefundCents(computedCents: number, availableCents: number): number {
   return Math.min(computedCents, Math.max(0, availableCents));
 }
+
+// --- Nationals session-request survey (event-mgmt v2 Phase 5 A1, spec §L.1/§E5.4) ---
+// Pure derivation of WHICH surveys a club/independent athlete owes for a
+// nationals event, and whether a given set of existing survey rows already
+// covers them. Reused by the A2 survey UI (what to render/prompt) and the A3
+// checkout gate (block checkout until answered); the same rules are mirrored
+// server-side for A3 (spec calls for enforcement at checkout, not just UI).
+
+/** Minimal Event slice these helpers need. */
+export type SessionRequestEvent = { kind?: 'standard' | 'nationals' };
+
+/** One required survey slot: a discipline, plus (WAG club variant only) the
+ *  specific level it's scoped to. `levelId: null` means the combined
+ *  MAG/T&T club survey OR any independent-athlete survey (which never
+ *  splits by level). */
+export type SessionRequestKey = { discipline: Discipline; levelId: string | null };
+
+/** Minimal Registration slice these helpers need. */
+export type SessionRequestReg = { discipline: Discipline; levelId: string };
+
+/**
+ * Which session-request surveys are required for ONE scope (a club's
+ * registrations, or one independent athlete's registrations) at `event`.
+ * Returns [] for any non-nationals event — the survey only exists on
+ * `event.kind === 'nationals'`.
+ *
+ * Considers ALL passed registrations — paid AND pending/in-cart — since the
+ * survey is about session PLANNING (which needs to account for what's in the
+ * pipeline), not billing state.
+ *
+ * `scope`:
+ *  - 'club': one key per distinct WAG level with ≥1 reg (`{ WAG, levelId }`
+ *    each), plus one combined `{ MAG, null }` key if any MAG reg exists,
+ *    plus one combined `{ TNT, null }` key if any T&T reg exists.
+ *  - 'person' (independent athlete): one `{ discipline, null }` key per
+ *    distinct discipline the person is registered in — never split by
+ *    level, regardless of discipline.
+ */
+export function requiredSessionRequests(
+  event: SessionRequestEvent,
+  regs: SessionRequestReg[],
+  scope: 'club' | 'person',
+): SessionRequestKey[] {
+  if (event.kind !== 'nationals') return [];
+  const keys: SessionRequestKey[] = [];
+  if (scope === 'person') {
+    const disciplines = new Set<Discipline>();
+    for (const r of regs) disciplines.add(r.discipline);
+    for (const discipline of disciplines) keys.push({ discipline, levelId: null });
+    return keys;
+  }
+  // scope === 'club'
+  const wagLevels = new Set<string>();
+  let hasMag = false;
+  let hasTnt = false;
+  for (const r of regs) {
+    if (r.discipline === 'WAG') wagLevels.add(r.levelId);
+    else if (r.discipline === 'MAG') hasMag = true;
+    else if (r.discipline === 'TNT') hasTnt = true;
+  }
+  for (const levelId of wagLevels) keys.push({ discipline: 'WAG', levelId });
+  if (hasMag) keys.push({ discipline: 'MAG', levelId: null });
+  if (hasTnt) keys.push({ discipline: 'TNT', levelId: null });
+  return keys;
+}
+
+/** A survey counts as answered once `arrival` (arrival window/day) is a
+ *  non-empty string — every other field (preferred sessions, separate-gyms,
+ *  notes) is optional, so completeness hinges on the one required choice. */
+export function sessionRequestAnswered(answers: SessionRequestAnswers): boolean {
+  return !!answers.arrival && answers.arrival.trim().length > 0;
+}
+
+/** Minimal existing-survey-row slice these helpers need. */
+export type ExistingSessionRequest = { discipline: Discipline; levelId: string | null; answers: SessionRequestAnswers };
+
+/** Which of `required` keys have no matching ANSWERED row in `existing` —
+ *  an existing-but-unanswered row (e.g. a draft saved mid-fill) does not
+ *  satisfy the requirement. Match is by (discipline, levelId) exact pair;
+ *  `levelId` compares `null`-to-`null` for combined/independent surveys. */
+export function missingSessionRequests(
+  required: SessionRequestKey[],
+  existing: ExistingSessionRequest[],
+): SessionRequestKey[] {
+  return required.filter((key) => !existing.some((e) =>
+    e.discipline === key.discipline && e.levelId === key.levelId && sessionRequestAnswered(e.answers)));
+}
+
+/** Minimal registration slice `checkinAthleteCount` needs. */
+export type CheckinScopeReg = { athleteId: string };
+
+/** Distinct-athlete count for a check-in scope (event-mgmt v2 Phase 5 E1,
+ *  spec §L.4) — "Athlete gift count" on the check-in card. Callers pass
+ *  already-scoped, non-refunded/non-waitlisted registrations (one athlete
+ *  can appear in several regs across disciplines/apparatus — the gift count
+ *  is per ATHLETE, not per registration). */
+export function checkinAthleteCount(regs: CheckinScopeReg[]): number {
+  return new Set(regs.map((r) => r.athleteId)).size;
+}
+
+// --- Checkout gate (A3): mirrors the server-side block in
+// create-checkout-session so the "Pay" action can be disabled/warned BEFORE
+// the request is even sent (the server check is authoritative; this is
+// advisory only). ---
+
+/** Minimal event slice for the checkout-gate scan (adds id/name to
+ *  `SessionRequestEvent`). */
+export type SessionRequestGateEvent = { id: string; name: string; kind?: 'standard' | 'nationals' };
+
+/** Minimal INCOMING (cart-referenced) registration slice for the
+ *  checkout-gate scan — these are the regs actually being paid for right
+ *  now, matching the server's "levels newly added by in-cart athletes"
+ *  scope (not the athlete's/club's full history). */
+export type SessionRequestGateReg = {
+  athleteId: string; clubId: string; eventId: string;
+  discipline: Discipline; levelId: string; refunded?: boolean;
+};
+
+/** Minimal person slice: only `mainClubId` decides independent (person-scoped)
+ *  vs club-affiliated (club-scoped). */
+export type SessionRequestGatePerson = { id: string; mainClubId: string | null };
+
+/** Minimal existing-survey-row slice carrying the scoping columns — the
+ *  checkout-gate scan spans multiple events/scopes in one pass (unlike the
+ *  A2 UI callers, which pre-filter to one event/scope), so it filters here. */
+export type ExistingSessionRequestRow = ExistingSessionRequest & {
+  eventId: string; clubId?: string | null; personId?: string | null;
+};
+
+/**
+ * Client-side mirror of the A3 server checkout gate (spec §L.1/§E5.4): given
+ * the INCOMING registrations a cart line references (about to be paid for),
+ * returns every nationals event among them that still has an unanswered
+ * required session-request survey. Used to disable "Pay" before the request
+ * is even sent — the server re-derives and enforces the same thing, this is
+ * advisory only.
+ *
+ * Mirrors create-checkout-session's server algorithm exactly: partition
+ * incoming regs PER-REGISTRATION by the athlete's `mainClubId` (independent
+ * ⇒ person-scoped survey keyed by that athlete; else ⇒ club-scoped, keyed by
+ * the reg's OWN `clubId`), derive required keys via `requiredSessionRequests`,
+ * and check `missingSessionRequests` against `existing`. A self cart's regs
+ * are always the payer's own and a club cart's regs always belong to that
+ * club (both enforced server-side by the H4 ownership checks) — so this
+ * naturally never cross-gates one scope on another scope's missing survey;
+ * no extra filtering by cart owner is needed here. An athlete id absent from
+ * `people` defaults to club-scoped (same as the server's `main_club_id`
+ * lookup, where a missing row is NOT null ⇒ not independent).
+ */
+export function missingNationalsSurveyEvents(
+  events: SessionRequestGateEvent[],
+  incomingRegs: SessionRequestGateReg[],
+  people: SessionRequestGatePerson[],
+  existing: ExistingSessionRequestRow[],
+): { eventId: string; eventName: string }[] {
+  const eventsById = new Map(events.map((e) => [e.id, e]));
+  const peopleById = new Map(people.map((p) => [p.id, p]));
+  const regsByEvent = new Map<string, SessionRequestGateReg[]>();
+  for (const r of incomingRegs) {
+    if (r.refunded) continue;
+    const list = regsByEvent.get(r.eventId) ?? [];
+    list.push(r);
+    regsByEvent.set(r.eventId, list);
+  }
+
+  const flagged: { eventId: string; eventName: string }[] = [];
+  for (const [eventId, regs] of regsByEvent) {
+    const event = eventsById.get(eventId);
+    if (!event || event.kind !== 'nationals') continue;
+
+    const byAthlete = new Map<string, SessionRequestGateReg[]>();
+    const byClub = new Map<string, SessionRequestGateReg[]>();
+    for (const r of regs) {
+      const person = peopleById.get(r.athleteId);
+      if (person && person.mainClubId === null) {
+        const list = byAthlete.get(r.athleteId) ?? [];
+        list.push(r);
+        byAthlete.set(r.athleteId, list);
+      } else {
+        const list = byClub.get(r.clubId) ?? [];
+        list.push(r);
+        byClub.set(r.clubId, list);
+      }
+    }
+
+    let hasMissing = false;
+    for (const [athleteId, athleteRegs] of byAthlete) {
+      const required = requiredSessionRequests(event, athleteRegs, 'person');
+      const existingForAthlete = existing.filter((e) => e.eventId === eventId && e.personId === athleteId);
+      if (missingSessionRequests(required, existingForAthlete).length > 0) hasMissing = true;
+    }
+    for (const [clubId, clubRegs] of byClub) {
+      const required = requiredSessionRequests(event, clubRegs, 'club');
+      const existingForClub = existing.filter((e) => e.eventId === eventId && e.clubId === clubId);
+      if (missingSessionRequests(required, existingForClub).length > 0) hasMissing = true;
+    }
+
+    if (hasMissing) flagged.push({ eventId, eventName: event.name });
+  }
+  return flagged;
+}
+
+/** Arrival-window options for the A2 session-request survey UI (club +
+ *  independent variants share this so the buckets stay identical). These
+ *  mirror the assignment-tool mapping in spec §L.2 (Tue/Wed, Thu-before-noon,
+ *  Thu-before-8, Fri) — the assignment tool itself is out of scope here. */
+export const SESSION_REQUEST_ARRIVAL_OPTIONS = [
+  { value: 'tue-wed', label: 'Arriving Tuesday or Wednesday' },
+  { value: 'thu-before-noon', label: 'Arriving Thursday before noon' },
+  { value: 'thu-before-8pm', label: 'Arriving Thursday before 8pm' },
+  { value: 'fri', label: 'Arriving Friday' },
+] as const;

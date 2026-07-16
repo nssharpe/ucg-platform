@@ -446,4 +446,21 @@ update it there; don't grow a rival list here. Operative notes only:
   Complete-checkout flow on Club.tsx/MyRegistrations.tsx, `waitlistPosition` helper.
   **P4 SHIPPED 2026-07-13**: migrations applied staging+prod; `create-checkout-session`/
   `scheduled-dispatch`/`manage-waitlist` deployed to prod (verify_jwt true, trio
-  re-checked); merged to main. Next: V2-P5 nationals ops.
+  re-checked); merged to main.
+- **Event management v2 — P5 nationals ops** (§L, §E6–7): CODE-COMPLETE on branch
+  `feat/emv2-p5`, NOT YET DEPLOYED/MERGED (as of 2026-07-16). Ten tasks committed +
+  locally verified (build/eslint/vitest green): A1–A3 session-request surveys (new
+  `session_requests` table + club/independent UI + server checkout gate); B1–B2 Set
+  Competition Order (new `competition_orders` table + `@dnd-kit` drag UI + section
+  dividers 12WAG/15MAG + `events.competition_order_locked`); C1–C3 finals lineups (new
+  `finals_lineups` table + `events.finals_roster_locked` + editor UI + `_shared/telnyx.ts`
+  extracted from send-sms + `scheduled-dispatch` deadline nag email+SMS & 10pm hard lock
+  driven by new `events.finals_lineup_deadline_at`); D1 nationals summary dashboard
+  (`nationals-teams.ts` eligible-teams helper + read-only sections + admin view-as); E1
+  check-in flow (new `event_checkins` table). **DEFERRED with §L.2** (Julia marked
+  incomplete): the session-assignment tool + the per-team session-timed finals reminders
+  ("5 min after session ends"/Fri-10am). **PENDING go-live**: responsive sweep of the new
+  UI; apply 5 migrations staging→prod (`session_requests`, `competition_orders`,
+  `finals_lineups`, `finals_deadline`, `event_checkins`); deploy `create-checkout-session`
+  + `send-sms` + `scheduled-dispatch` (re-check no-verify-jwt trio); confirm
+  `TELNYX_FROM_NUMBER` = the approved 10DLC number +16787988123; merge to main.

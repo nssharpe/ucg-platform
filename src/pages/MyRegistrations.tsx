@@ -8,7 +8,7 @@ import { pushRegistration, pushCart, syncSynchroPartnerLevelRemote, cancelWaitli
 import { RegistrationEditor } from '../components/RegistrationEditor';
 import {
   newRegistrationEntryTotal, registrationChangeFee, changeIsEligible, syncSynchroPartnerLevel, lateFeeApplies, lateFeeAnchor,
-  initialCampSurveyDraft, campSurveyValid, campSurveyToStored, CABIN_GENDER_OPTIONS,
+  initialCampSurveyDraft, campSurveyValid, campSurveyToStored, CABIN_GENDER_OPTIONS, requiredSessionRequests,
 } from '../lib/pricing';
 import type { RegChangeState, CampSurveyDraft } from '../lib/pricing';
 import { holdStamp, waitlistPosition } from '../lib/capacity';
@@ -16,6 +16,9 @@ import { fmtMoney } from '../lib/scoring';
 import type { Athlete, Club, Level, Event, Registration, Season, WaitlistGroup } from '../lib/types';
 import { canStillEditRegistration, eventIsRefundEligible } from '../lib/events-core';
 import { RefundRequestDialog, type RefundRequestItem } from '../components/RefundRequestDialog';
+import { SessionRequestSurveyCard } from '../components/SessionRequestSurvey';
+import { NationalsDashboard } from '../components/NationalsDashboard';
+import { EventCheckinCard } from '../components/EventCheckinCard';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -549,6 +552,42 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                         })}
                       </tbody>
                     </table>
+
+                    {/* Nationals session-planning survey (event-mgmt v2 Phase
+                        5, A2) — independent-athlete variant: only when this
+                        athlete has no main club. One key per registered
+                        discipline. Read db.sessionRequests directly each
+                        render (M6 in-place-mutation trap). Editable until the
+                        event's edit deadline; read-only after (canStillEdit,
+                        same gate the Edit button above uses). */}
+                    {event.kind === 'nationals' && me?.mainClubId === null && (
+                      <SessionRequestSurveyCard
+                        eventId={event.id}
+                        sessions={event.sessions}
+                        keys={requiredSessionRequests(event, regs.filter((r) => !r.refunded), 'person')}
+                        existing={(db.sessionRequests ?? []).filter((r) => r.eventId === event.id && r.personId === personId)}
+                        owner={{ personId }}
+                        editable={canStillEdit}
+                        showSeparateGyms={false}
+                        notesHint="e.g. who you'd like to be grouped with"
+                        labelFor={(key) => (key.discipline === 'TNT' ? 'T&T' : key.discipline)}
+                      />
+                    )}
+
+                    {/* Nationals summary dashboard (event-mgmt v2 Phase 5 D1,
+                        spec §L.3) — independent-athlete variant: only when
+                        this athlete has no main club, mirroring the survey
+                        card's gate above. */}
+                    {event.kind === 'nationals' && me?.mainClubId === null && (
+                      <NationalsDashboard eventId={event.id} scope={{ personId }} />
+                    )}
+
+                    {/* Nationals check-in (event-mgmt v2 Phase 5 E1, spec
+                        §L.4) — independent-athlete variant, same gate as the
+                        summary dashboard above. */}
+                    {event.kind === 'nationals' && me?.mainClubId === null && (
+                      <EventCheckinCard eventId={event.id} scope={{ personId }} />
+                    )}
 
                     {tab === 'upcoming' && (
                       changeFeePending(event) ? (

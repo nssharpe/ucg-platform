@@ -241,6 +241,11 @@ export interface Event {
    *  (enforced server-side by the `registrations_edit_lockout` trigger, not
    *  just client-side). Absent ⇒ no lockout. */
   lastDateToEdit?: string | null;
+  /** Optional finals-lineup submission deadline instant (nationals only, spec
+   *  §L.3 "9pm Friday deadline"). `scheduled-dispatch` nags club managers with
+   *  missing finals lineups at/after this instant and hard-locks
+   *  `finalsRosterLocked` at deadline + 1h. Absent ⇒ scheduler does nothing. */
+  finalsLineupDeadlineAt?: string | null;
   entryFee: number; // per discipline
   secondDisciplineFee: number;
   disciplines: Discipline[];
@@ -313,6 +318,15 @@ export interface Event {
   owner?: { userId?: string; name: string; email: string };
   /** The event owner's 7-item task checklist (§B4). Keyed by task id. */
   ownerChecklist?: OwnerChecklist;
+  /** "Set Competition Order" lock flag (event-mgmt v2 P5 §E6). Once true,
+   *  club managers may only VIEW `CompetitionOrder` rows for this event —
+   *  only admins may keep editing. Absent ⇒ false (clubs edit freely). */
+  competitionOrderLocked?: boolean;
+  /** "Finals roster" lock flag (event-mgmt v2 P5 §E7/§L.3) — SEPARATE from
+   *  `competitionOrderLocked` (own hard-lock timing, 10pm day-1). Once true,
+   *  club managers may only VIEW `FinalsLineup` rows for this event — only
+   *  admins may keep editing. Absent ⇒ false (clubs edit freely). */
+  finalsRosterLocked?: boolean;
 }
 
 /** Event-owner checklist task ids, in the order they're worked (§B4). */
@@ -459,6 +473,116 @@ export interface WaitlistGroup {
   queuedAt: string;
   notifiedAt?: string | null;
   holdExpiresAt?: string | null;
+  createdAt?: string;
+}
+
+/** Answer payload for a nationals session-request survey row (event-mgmt v2
+ *  Phase 5 §L.1/§E5.4). `arrival` doubles as the club variant's "arrival
+ *  window" and the independent variant's "arrival day" — a single-choice
+ *  free-form string (the A2 UI defines the actual option set). A survey
+ *  counts as answered once `arrival` is a non-empty string — see
+ *  `sessionRequestAnswered` in `src/lib/pricing.ts`. */
+export type SessionRequestAnswers = {
+  arrival?: string;
+  /** Multi-select of `EventSession.id` values. */
+  preferredSessionIds?: string[];
+  /** Club variant only — whether the club wants its athletes split across
+   *  separate gyms/podiums when possible. Absent/null for the independent
+   *  variant, which has no such field. */
+  separateGyms?: boolean | null;
+  notes?: string;
+};
+
+/** A nationals session-request survey row (event-mgmt v2 Phase 5 §L.1/§E5.4):
+ *  clubs submit one per registered WAG level plus one combined MAG and one
+ *  combined T&T survey; independent athletes submit one per discipline
+ *  they're registered in. Scoped by EITHER `clubId` (club variant) OR
+ *  `personId` (independent variant) — never both, never neither (mirrors
+ *  `WaitlistGroup`'s dual-scoping). Fully client-editable (no state machine
+ *  like `WaitlistGroup`'s status) — see `session_requests` RLS in the P5
+ *  migration. */
+export interface SessionRequest {
+  id: string;
+  eventId: string;
+  /** Set for the club variant; null for the independent-athlete variant. */
+  clubId?: string | null;
+  /** Set for the independent-athlete variant; null for the club variant. */
+  personId?: string | null;
+  discipline: Discipline;
+  /** WAG club variant only; null for combined MAG/TNT and every independent
+   *  survey. */
+  levelId?: string | null;
+  answers: SessionRequestAnswers;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/** A club's drag-and-drop competing order for one apparatus at one level, at
+ *  one event (event-mgmt v2 Phase 5 §E6, "Set Competition Order"). MAG/WAG
+ *  only — not T&T. `sections` is an array of arrays of registration ids: the
+ *  outer array is section (flight) order, each inner array is that section's
+ *  athlete competing order — one jsonb shape encodes both the athlete order
+ *  AND the club's section split (capped at 12 for WAG / 15 for MAG per
+ *  section, see `sectionCap` in `src/lib/competition-order.ts`). Writable by
+ *  the club manager only while `Event.competitionOrderLocked` is false; once
+ *  locked, only admins may edit (`competition_orders` RLS in the P5 B1
+ *  migration). */
+export interface CompetitionOrder {
+  id: string;
+  eventId: string;
+  clubId: string;
+  levelId: string;
+  apparatus: string;
+  sections: string[][];
+  updatedAt?: string;
+}
+
+/** A nationals team's (club + level + placement category) finals lineup for
+ *  one apparatus (event-mgmt v2 Phase 5 §E7, §L.3, "Finals roster"): pick up
+ *  to `FINALS_LINEUP_MAX` (4) athletes + drag order. `category` is the
+ *  placement category string produced by the nationals engine's
+ *  `deriveCategory` (e.g. `'Collegiate Women+'`). Writable by the club
+ *  manager only while `Event.finalsRosterLocked` is false — a SEPARATE lock
+ *  from `Event.competitionOrderLocked`; once locked, only admins may edit
+ *  (`finals_lineups` RLS in the P5 C1 migration). */
+export interface FinalsLineup {
+  id: string;
+  eventId: string;
+  clubId: string;
+  levelId: string;
+  category: string;
+  apparatus: string;
+  regIds: string[];
+  updatedAt?: string;
+}
+
+/** A nationals check-in row (event-mgmt v2 Phase 5 E1, spec §L.4): a row
+ *  EXISTS only once a league/meet admin has OPENED check-in for a scope —
+ *  "no row for this (event, scope)" IS the "not opened yet" state, so there's
+ *  no separate boolean. Scoped by EITHER `clubId` (club variant) OR
+ *  `personId` (independent-athlete variant) — never both, never neither
+ *  (same dual-scoping idiom as `WaitlistGroup`/`SessionRequest`). Once open,
+ *  the club manager (or the athlete themself) confirms with a checkbox +
+ *  typed signature, flipping `status` to `'checked-in'`. Client writes to an
+ *  EXISTING row may only touch `status`/`signedName`/`checkedInAt`/
+ *  `checkedInBy` — a column-level grant in the `event_checkins` RLS blocks
+ *  rewriting `eventId`/`clubId`/`personId`/`openedBy` (see
+ *  `confirmEventCheckin` in `src/lib/supabase.ts`). */
+export interface EventCheckin {
+  id: string;
+  eventId: string;
+  /** Set for the club variant; null for the independent-athlete variant. */
+  clubId?: string | null;
+  /** Set for the independent-athlete variant; null for the club variant. */
+  personId?: string | null;
+  status: 'open' | 'checked-in';
+  /** The name typed at confirmation. */
+  signedName?: string | null;
+  checkedInAt?: string | null;
+  /** Person id of whoever confirmed (club manager or the athlete). */
+  checkedInBy?: string | null;
+  /** Person id of the admin who opened check-in for this scope. */
+  openedBy?: string | null;
   createdAt?: string;
 }
 
@@ -692,6 +816,14 @@ export interface DB {
   refundRequests?: RefundRequest[];
   /** Grouped waitlist entries (event-mgmt v2 Phase 4 T1). */
   waitlistGroups?: WaitlistGroup[];
+  /** Nationals session-request surveys (event-mgmt v2 Phase 5 A1). */
+  sessionRequests?: SessionRequest[];
+  /** Club competition orders (event-mgmt v2 Phase 5 B1, spec §E6). */
+  competitionOrders?: CompetitionOrder[];
+  /** Nationals finals-roster lineups (event-mgmt v2 Phase 5 C1, spec §E7/§L.3). */
+  finalsLineups?: FinalsLineup[];
+  /** Nationals check-in flow rows (event-mgmt v2 Phase 5 E1, spec §L.4). */
+  eventCheckins?: EventCheckin[];
 }
 
 /** A per-event admin grant: `userId` holds the same host-level access to

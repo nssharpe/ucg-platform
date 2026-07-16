@@ -8,7 +8,7 @@
 import { createClient, type SupabaseClient, type RealtimePostgresChangesPayload, type PostgrestError } from '@supabase/supabase-js';
 import type {
   AccountInvite, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, EventAdmin, Invoice, Level, Event, Membership, MembershipType, Payment, Region, Registration, RefundRequest, SanctionRequest, SanctionVote, Score, Season,
-  WaiverDocument, WaiverSignature, WaitlistGroup,
+  WaiverDocument, WaiverSignature, WaitlistGroup, SessionRequest, CompetitionOrder, FinalsLineup, EventCheckin,
 } from './types';
 import { writeQueue, type WriteOp, type ExecResult } from './write-queue';
 import type { Database } from './database.types';
@@ -246,6 +246,9 @@ const eventToRow = (m: Event) => ({
   confirmation_email: m.confirmationEmail ?? null,
   owner: m.owner ?? null, owner_checklist: m.ownerChecklist ?? null,
   registration_mode: m.registrationMode ?? 'by-discipline',
+  competition_order_locked: m.competitionOrderLocked ?? false,
+  finals_roster_locked: m.finalsRosterLocked ?? false,
+  finals_lineup_deadline_at: m.finalsLineupDeadlineAt || null,
 });
 
 const sessionToRow = (eventId: string, s: Event['sessions'][number]) => ({
@@ -424,6 +427,84 @@ const rowToWaitlistGroup = (r: {
   status: r.status as WaitlistGroup['status'], queuedAt: r.queued_at, notifiedAt: r.notified_at,
   holdExpiresAt: r.hold_expires_at, createdAt: r.created_at,
 });
+// session_requests is not yet in the generated database.types.ts (this
+// migration hasn't been applied/regenerated against at write time) — inline
+// row type like rowToWaitlistGroup. Unlike waitlist_groups, clients may
+// rewrite `answers` in full (surveys are fully editable), so both directions
+// are implemented here with no column-grant restriction.
+const sessionRequestToRow = (s: SessionRequest) => ({
+  id: s.id, event_id: s.eventId, club_id: s.clubId ?? null, person_id: s.personId ?? null,
+  discipline: s.discipline, level_id: s.levelId ?? null, answers: s.answers ?? {},
+  updated_at: new Date().toISOString(),
+});
+const rowToSessionRequest = (r: {
+  id: string; event_id: string; club_id: string | null; person_id: string | null;
+  discipline: string; level_id: string | null; answers: unknown;
+  created_at: string; updated_at: string;
+}): SessionRequest => ({
+  id: r.id, eventId: r.event_id, clubId: r.club_id, personId: r.person_id,
+  discipline: r.discipline as SessionRequest['discipline'], levelId: r.level_id,
+  answers: (r.answers ?? {}) as SessionRequest['answers'],
+  createdAt: r.created_at, updatedAt: r.updated_at,
+});
+// competition_orders is not yet in the generated database.types.ts (this
+// migration hasn't been applied/regenerated against at write time) — inline
+// row type like rowToSessionRequest/rowToWaitlistGroup. Fully editable (like
+// session_requests, unlike waitlist_groups' column-grant restriction) so both
+// directions are implemented with no column-grant restriction.
+const competitionOrderToRow = (o: CompetitionOrder) => ({
+  id: o.id, event_id: o.eventId, club_id: o.clubId, level_id: o.levelId,
+  apparatus: o.apparatus, sections: o.sections ?? [],
+  updated_at: new Date().toISOString(),
+});
+const rowToCompetitionOrder = (r: {
+  id: string; event_id: string; club_id: string; level_id: string;
+  apparatus: string; sections: unknown; updated_at: string;
+}): CompetitionOrder => ({
+  id: r.id, eventId: r.event_id, clubId: r.club_id, levelId: r.level_id,
+  apparatus: r.apparatus, sections: (r.sections ?? []) as string[][],
+  updatedAt: r.updated_at,
+});
+// finals_lineups is not yet in the generated database.types.ts (this
+// migration hasn't been applied/regenerated against at write time) — inline
+// row type like rowToCompetitionOrder/rowToSessionRequest. Fully editable
+// (RLS blocks the write entirely once locked, no column-grant restriction).
+const finalsLineupToRow = (l: FinalsLineup) => ({
+  id: l.id, event_id: l.eventId, club_id: l.clubId, level_id: l.levelId,
+  category: l.category, apparatus: l.apparatus, reg_ids: l.regIds ?? [],
+  updated_at: new Date().toISOString(),
+});
+const rowToFinalsLineup = (r: {
+  id: string; event_id: string; club_id: string; level_id: string;
+  category: string; apparatus: string; reg_ids: unknown; updated_at: string;
+}): FinalsLineup => ({
+  id: r.id, eventId: r.event_id, clubId: r.club_id, levelId: r.level_id,
+  category: r.category, apparatus: r.apparatus, regIds: (r.reg_ids ?? []) as string[],
+  updatedAt: r.updated_at,
+});
+// event_checkins is not yet in the generated database.types.ts (this
+// migration hasn't been applied/regenerated against at write time) — inline
+// row type like rowToCompetitionOrder/rowToFinalsLineup. Unlike those two,
+// `authenticated` holds a column-level UPDATE grant restricted to
+// status/signed_name/checked_in_at/checked_in_by ONLY (see
+// `confirmEventCheckin` below) — `eventCheckinToRow` still emits every
+// column (used for the admin-only INSERT "open" path, which needs the full
+// row), the restriction is enforced server-side by the grant, not here.
+const eventCheckinToRow = (c: EventCheckin) => ({
+  id: c.id, event_id: c.eventId, club_id: c.clubId ?? null, person_id: c.personId ?? null,
+  status: c.status, signed_name: c.signedName ?? null, checked_in_at: c.checkedInAt ?? null,
+  checked_in_by: c.checkedInBy ?? null, opened_by: c.openedBy ?? null,
+});
+const rowToEventCheckin = (r: {
+  id: string; event_id: string; club_id: string | null; person_id: string | null;
+  status: string; signed_name: string | null; checked_in_at: string | null;
+  checked_in_by: string | null; opened_by: string | null; created_at: string;
+}): EventCheckin => ({
+  id: r.id, eventId: r.event_id, clubId: r.club_id, personId: r.person_id,
+  status: r.status as EventCheckin['status'], signedName: r.signed_name,
+  checkedInAt: r.checked_in_at, checkedInBy: r.checked_in_by, openedBy: r.opened_by,
+  createdAt: r.created_at,
+});
 const rowToWaiverSignature = (r: Row<'waiver_signatures'>): WaiverSignature => ({
   id: r.id, personId: r.person_id, seasonId: r.season_id, waiverType: r.waiver_type as WaiverSignature['waiverType'],
   waiverDocumentId: r.waiver_document_id, contentHash: r.content_hash,
@@ -464,6 +545,51 @@ export function cancelWaitlistGroup(id: string) { remoteUpdate('waitlist_groups'
  *  cancelled via status update, never deleted, by design); this exists only
  *  for admin-tooling/service-role symmetry with the other delete* helpers. */
 export function deleteWaitlistGroup(id: string) { remoteDelete('waitlist_groups', id, 'id'); }
+/** Upsert a nationals session-request survey (event-mgmt v2 Phase 5 A1):
+ *  a club manager's per-level/MAG/TNT survey, or an independent athlete's
+ *  per-discipline survey. Unlike `pushWaitlistGroup`, this is a full
+ *  read-write upsert — surveys are editable in place (no column-grant
+ *  restriction), so the conflict-update path rewrites `answers` freely.
+ *  `updated_at` is stamped fresh on every write. */
+export function pushSessionRequest(s: SessionRequest) { remoteUpsert('session_requests', [sessionRequestToRow(s)]); }
+/** Delete a session-request survey (e.g. cleanup after a dropped level). */
+export function deleteSessionRequest(id: string) { remoteDelete('session_requests', id, 'id'); }
+/** Upsert a club's competition order for one (event, level, apparatus)
+ *  (event-mgmt v2 Phase 5 B1, spec §E6). Full read-write upsert — RLS blocks
+ *  the write entirely once `Event.competitionOrderLocked` is true for a
+ *  non-admin caller (`event_order_locked()` in the P5 B1 migration), so no
+ *  column-grant restriction is needed here (unlike `pushWaitlistGroup`).
+ *  `updated_at` is stamped fresh on every write. */
+export function pushCompetitionOrder(o: CompetitionOrder) { remoteUpsert('competition_orders', [competitionOrderToRow(o)]); }
+/** Delete a competition-order row (e.g. cleanup after a dropped apparatus). */
+export function deleteCompetitionOrder(id: string) { remoteDelete('competition_orders', id, 'id'); }
+/** Upsert a club's finals-roster lineup for one (event, level, category,
+ *  apparatus) (event-mgmt v2 Phase 5 C1, spec §E7/§L.3). Full read-write
+ *  upsert — RLS blocks the write entirely once `Event.finalsRosterLocked` is
+ *  true for a non-admin caller (`event_finals_locked()` in the P5 C1
+ *  migration), so no column-grant restriction is needed here (unlike
+ *  `pushWaitlistGroup`). `updated_at` is stamped fresh on every write. */
+export function pushFinalsLineup(l: FinalsLineup) { remoteUpsert('finals_lineups', [finalsLineupToRow(l)]); }
+/** Delete a finals-lineup row (e.g. cleanup after a dropped apparatus). */
+export function deleteFinalsLineup(id: string) { remoteDelete('finals_lineups', id, 'id'); }
+/** Admin/sanctioning-only: OPEN check-in for a club or independent athlete
+ *  (event-mgmt v2 Phase 5 E1, spec §L.4) — an insert-only upsert (RLS's
+ *  INSERT policy is admin/sanctioning-only, and the conflict-update path
+ *  would need the full column-write reach non-admins don't have; admins can
+ *  re-open an existing row via this same call since they bypass the
+ *  column grant). `status:'open'` is always the row's initial state. */
+export function pushEventCheckin(c: EventCheckin) { remoteUpsert('event_checkins', [eventCheckinToRow(c)]); }
+/** Club manager / athlete confirms an already-open check-in (event-mgmt v2
+ *  Phase 5 E1). Must go through this targeted `remoteUpdate`, NOT
+ *  `pushEventCheckin`'s upsert — RLS grants UPDATE on
+ *  status/signed_name/checked_in_at/checked_in_by ONLY, and an upsert's ON
+ *  CONFLICT DO UPDATE path writes every column (incl. event_id/club_id/
+ *  person_id/opened_by), which is denied for a row that already exists. */
+export function confirmEventCheckin(id: string, patch: { status: 'checked-in'; signedName: string; checkedInAt: string; checkedInBy: string }) {
+  remoteUpdate('event_checkins', id, { status: patch.status, signed_name: patch.signedName, checked_in_at: patch.checkedInAt, checked_in_by: patch.checkedInBy }, 'id');
+}
+/** Admin-only cleanup: undo an erroneously opened check-in. */
+export function deleteEventCheckin(id: string) { remoteDelete('event_checkins', id, 'id'); }
 /** Upsert a Stripe payment record. In practice the service-role Edge Functions
  *  write these (clients only read own rows via RLS); this exists for symmetry +
  *  any admin tooling. Money fields are CENTS. */
@@ -1144,6 +1270,20 @@ export interface CheckoutSessionRequiredError {
   regIds: string[];
 }
 
+/** A rejected checkout because a nationals event in the cart has an
+ *  unanswered required session-planning survey (event-mgmt v2 Phase 5 A3,
+ *  spec §L.1/§E5.4). The client normally catches this in advance (see
+ *  `missingNationalsSurveyEvents` in `pricing.ts`, checked before this
+ *  request is even sent) — this is the server-authoritative fallback for
+ *  anything the advisory check missed (e.g. a survey answered/unanswered by
+ *  someone else between the check and the request). */
+export interface CheckoutSurveyRequiredError {
+  code: 'session-survey-required';
+  eventId: string;
+  eventName: string;
+  missing: string[];
+}
+
 export async function createCheckoutSession(args: {
   cartItemIds: string[];
   couponCode?: string;
@@ -1151,6 +1291,7 @@ export async function createCheckoutSession(args: {
   ok: boolean; clientSecret?: string; sessionId?: string; paymentId?: string; free?: boolean;
   amountSubtotal?: number; discountAmount?: number; serviceFee?: number; error?: string;
   capacityError?: CheckoutCapacityError; sessionRequiredError?: CheckoutSessionRequiredError;
+  surveyRequiredError?: CheckoutSurveyRequiredError;
 }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('create-checkout-session', { body: args });
@@ -1175,6 +1316,17 @@ export async function createCheckoutSession(args: {
           eventId: body.eventId as string,
           eventName: body.eventName as string,
           regIds: (body.regIds as string[]) ?? [],
+        },
+      };
+    }
+    if (body?.code === 'session-survey-required') {
+      return {
+        ok: false, error: message,
+        surveyRequiredError: {
+          code: 'session-survey-required',
+          eventId: body.eventId as string,
+          eventName: body.eventName as string,
+          missing: (body.missing as string[]) ?? [],
         },
       };
     }
@@ -1582,6 +1734,7 @@ export async function loadAll(): Promise<DB | null> {
       eventsR, sessionsR, squadsR, registrationsR, scoresR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
       clubRequestsR, appSettingsR, accountInvitesR, sanctionRequestsR, sanctionVotesR,
       waiverDocsR, waiverSigsR, clubMembershipsR, paymentsR, eventAdminsR, refundRequestsR, waitlistGroupsR,
+      sessionRequestsR, competitionOrdersR, finalsLineupsR, eventCheckinsR,
     ] = await Promise.all([
       supabase.from('seasons').select('*'),
       supabase.from('levels').select('*'),
@@ -1611,6 +1764,10 @@ export async function loadAll(): Promise<DB | null> {
       supabase.from('event_admins').select('*'),        // emv2 P1 T3; tolerated if absent
       supabase.from('refund_requests').select('*'),     // emv2 P3 T4; tolerated if absent
       supabase.from('waitlist_groups').select('*'),     // emv2 P4 T1; tolerated if absent
+      supabase.from('session_requests').select('*'),    // emv2 P5 A1; tolerated if absent
+      supabase.from('competition_orders').select('*'),  // emv2 P5 B1; tolerated if absent
+      supabase.from('finals_lineups').select('*'),      // emv2 P5 C1; tolerated if absent
+      supabase.from('event_checkins').select('*'),      // emv2 P5 E1; tolerated if absent
     ]);
 
     // club_requests may not exist on a pre-0005 DB — tolerate its error, fail on the rest.
@@ -1690,6 +1847,7 @@ export async function loadAll(): Promise<DB | null> {
       state: r.state ?? '', timezone: r.timezone, startDate: r.start_date ?? '', endDate: r.end_date ?? '',
       status: r.status as Event['status'], regOpens: r.reg_opens ?? '', regCloses: r.reg_closes ?? '',
       lastDateToEdit: r.last_date_to_edit ?? null,
+      finalsLineupDeadlineAt: (r as { finals_lineup_deadline_at?: string | null }).finals_lineup_deadline_at ?? null,
       entryFee: Number(r.entry_fee), secondDisciplineFee: Number(r.second_discipline_fee),
       disciplines: (r.disciplines ?? []) as Event['disciplines'], sessions: sessionsByEvent.get(r.id) ?? [],
       ...(r.private_reg_code ? { privateRegCode: r.private_reg_code } : {}),
@@ -1716,6 +1874,12 @@ export async function loadAll(): Promise<DB | null> {
       ...(r.owner_checklist ? { ownerChecklist: r.owner_checklist as Event['ownerChecklist'] } : {}),
       ...((r as { registration_mode?: string | null }).registration_mode === 'by-session'
         ? { registrationMode: 'by-session' as const }
+        : {}),
+      ...((r as { competition_order_locked?: boolean | null }).competition_order_locked
+        ? { competitionOrderLocked: true }
+        : {}),
+      ...((r as { finals_roster_locked?: boolean | null }).finals_roster_locked
+        ? { finalsRosterLocked: true }
         : {}),
     }));
 
@@ -1799,6 +1963,14 @@ export async function loadAll(): Promise<DB | null> {
       .map(rowToRefundRequest);
     const waitlistGroups: WaitlistGroup[] = (waitlistGroupsR.error ? [] : waitlistGroupsR.data ?? [])
       .map(rowToWaitlistGroup);
+    const sessionRequests: SessionRequest[] = (sessionRequestsR.error ? [] : sessionRequestsR.data ?? [])
+      .map(rowToSessionRequest);
+    const competitionOrders: CompetitionOrder[] = (competitionOrdersR.error ? [] : competitionOrdersR.data ?? [])
+      .map(rowToCompetitionOrder);
+    const finalsLineups: FinalsLineup[] = (finalsLineupsR.error ? [] : finalsLineupsR.data ?? [])
+      .map(rowToFinalsLineup);
+    const eventCheckins: EventCheckin[] = (eventCheckinsR.error ? [] : eventCheckinsR.data ?? [])
+      .map(rowToEventCheckin);
 
     return {
       seasons, levels, clubs, people, events, registrations, scores, invoices, coupons,
@@ -1814,6 +1986,10 @@ export async function loadAll(): Promise<DB | null> {
       ...(eventAdmins.length ? { eventAdmins } : {}),
       ...(refundRequests.length ? { refundRequests } : {}),
       ...(waitlistGroups.length ? { waitlistGroups } : {}),
+      ...(sessionRequests.length ? { sessionRequests } : {}),
+      ...(competitionOrders.length ? { competitionOrders } : {}),
+      ...(finalsLineups.length ? { finalsLineups } : {}),
+      ...(eventCheckins.length ? { eventCheckins } : {}),
     };
   } catch (e) {
     console.error('[supabase] loadAll threw:', e);
