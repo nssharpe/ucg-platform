@@ -471,7 +471,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                     {isOpen && tab === 'upcoming' && !regClosed && !canStillEdit && (
                       <span style={{ fontSize: 12, color: 'var(--ink-soft)' }}>Edit deadline passed</span>
                     )}
-                    <span style={{ color: 'var(--accent)', fontSize: 13 }}>{isOpen ? 'Hide' : 'Details'}</span>
+                    <span style={{ color: 'var(--teal-900)', fontSize: 13 }}>{isOpen ? 'Hide' : 'Details'}</span>
                   </span>
                 </div>
 

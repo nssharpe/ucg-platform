@@ -7,7 +7,7 @@ export function RegionsTab() {
   const db = useDB();
   return (
     <div>
-      <div className="card card-pad" style={{ marginBottom: 16, borderLeft: '4px solid var(--accent)' }}>
+      <div className="card card-pad" style={{ marginBottom: 16, borderLeft: '4px solid var(--bluegreen)' }}>
         <p style={{ margin: 0, fontSize: 13.5 }}>
           <strong>Edit state→region assignments below.</strong> Changes are persisted via{' '}
           <code>db.regionOverrides</code> and override the built-in <code>STATE_REGIONS</code> map

@@ -135,7 +135,7 @@ export function Waivers() {
                     onClick={() => downloadWaiverProof(sig, version, name, (db.waiverDocuments ?? []).find((d) => d.id === sig.waiverDocumentId)?.body)}>Download proof (PDF)</button>
                 </div>
                 <details>
-                  <summary style={{ fontSize: 12.5, color: 'var(--accent)', cursor: 'pointer' }}>Certificate</summary>
+                  <summary style={{ fontSize: 12.5, color: 'var(--teal-900)', cursor: 'pointer' }}>Certificate</summary>
                   <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '4px 0 0' }}>
                     {certificateText(sig, version, name)}
                   </p>

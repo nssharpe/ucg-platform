@@ -557,7 +557,7 @@ export function Communicate() {
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
                 <span style={{ fontWeight: 600, fontSize: 14 }}>
                   Last send — {lastSend.channel === 'sms' ? 'Text' : 'Email'} to{' '}
-                  <span style={{ color: 'var(--accent)' }}>{lastSend.recipientCount} recipient{lastSend.recipientCount !== 1 ? 's' : ''}</span>
+                  <span style={{ color: 'var(--teal-900)' }}>{lastSend.recipientCount} recipient{lastSend.recipientCount !== 1 ? 's' : ''}</span>
                 </span>
                 <span style={{ fontSize: 12, color: 'var(--ink-soft)' }}>
                   {lastSend.sentAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{' '}
@@ -650,7 +650,7 @@ export function Communicate() {
                         {c.sentCount != null && ` · ${c.sentCount} sent${c.failedCount ? `, ${c.failedCount} failed` : ''}`}
                       </span>
                       <Badge tone={ok ? 'ok' : 'err'}>{ok ? 'Sent' : 'Issues'}</Badge>
-                      <span style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--accent)' }}>{open ? 'Hide' : 'Details'}</span>
+                      <span style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--teal-900)' }}>{open ? 'Hide' : 'Details'}</span>
                     </div>
                     {open && (
                       <div style={{ marginTop: 8, fontSize: 13 }}>
