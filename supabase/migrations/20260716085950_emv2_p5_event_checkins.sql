@@ -107,3 +107,7 @@ grant select, insert on event_checkins to authenticated;
 -- confirmation action (e.g. reassigning club_id, or self-stamping opened_by
 -- to fake an admin-opened check-in).
 grant update (status, signed_name, checked_in_at, checked_in_by) on event_checkins to authenticated;
+-- DELETE grant so the admin-only delete policy above is actually reachable
+-- (a policy without the underlying table privilege can never fire). The
+-- policy still restricts the row set to admins; this just makes it work.
+grant delete on event_checkins to authenticated;
