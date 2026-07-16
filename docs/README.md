@@ -203,7 +203,15 @@ here — update THIS list when priorities change, not rival copies.
   **P4 (capacity & sessions — waitlists, by-session registration) SHIPPED 2026-07-13:**
   merged to main; migrations applied staging+prod; `create-checkout-session`,
   `scheduled-dispatch`, `manage-waitlist` deployed to prod (verify_jwt true; the
-  no-verify-jwt trio re-checked). Next: V2-P5 nationals ops (§L, §E6–7).
+  no-verify-jwt trio re-checked).
+  **P5 (nationals ops — §L, §E6–7) CODE-COMPLETE on branch `feat/emv2-p5`, not yet
+  deployed/merged (2026-07-16):** session-request surveys + checkout gate, Set Competition
+  Order drag UI + lock, finals lineups (editor + deadline nag email/SMS + 10pm hard lock),
+  nationals summary dashboard, and check-in flow — all built + locally verified. The §L.2
+  session-assignment tool (and the per-team session-timed finals reminders that depend on
+  it) is DEFERRED per Julia. Pending go-live: responsive sweep, 5 migrations staging→prod,
+  deploy create-checkout-session/send-sms/scheduled-dispatch, merge to main. Next after
+  that: V2-P6 finance dashboards (§M).
   **P0 Task 1 shipped:** pg_cron/pg_net scheduler infra (`notification_log` +
   `scheduled-dispatch-15min` job + `scheduled-dispatch` Edge Function, service-role-only
   auth) with its first consumer — 3d/1d/closed sanction-vote reminder emails, idempotent
