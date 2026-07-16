@@ -11,6 +11,7 @@ import { useToast, useFmtDate } from '../components/ui-hooks';
 import { EventWizard } from '../components/EventWizard';
 import { RegistrationEditor } from '../components/RegistrationEditor';
 import { NationalsDashboard, type NationalsDashboardScope } from '../components/NationalsDashboard';
+import { EventCheckinAdminCard } from '../components/EventCheckinCard';
 import { EventStatusBadge } from './Home';
 import { APPARATUS, SHIRT_SIZES } from '../lib/types';
 import type { Athlete, CartItem, Discipline, Event, EventAdmin, EventSession, Registration } from '../lib/types';
@@ -335,6 +336,15 @@ export function EventDetail() {
           needing to sign in as them. */}
       {caps.isAdmin && event.kind === 'nationals' && (
         <NationalsAdminViewCard event={event} />
+      )}
+
+      {/* Nationals check-in — admin open + view-as (event-mgmt v2 Phase 5
+          E1, spec §L.4). Gated on admin/sanctioning (opening check-in is an
+          admin/league action per the E1 RLS) + event.kind === 'nationals' to
+          keep check-in scoped to P5, though the underlying feature isn't
+          nationals-specific per spec. */}
+      {(caps.isAdmin || caps.isSanctioning) && event.kind === 'nationals' && (
+        <EventCheckinAdminCard eventId={event.id} />
       )}
 
       <div className="grid cols-3" style={{ marginBottom: 18 }}>

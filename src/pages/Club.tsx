@@ -32,6 +32,7 @@ import { SessionRequestSurveyCard } from '../components/SessionRequestSurvey';
 import { requiredSessionRequests } from '../lib/pricing';
 import { CompetitionOrderCard } from '../components/CompetitionOrderCard';
 import { NationalsDashboard } from '../components/NationalsDashboard';
+import { EventCheckinCard } from '../components/EventCheckinCard';
 
 // ---- sort helpers -----------------------------------------------------------
 
@@ -1680,6 +1681,13 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
           coaches, banquet gap, assigned sessions) scoped to this club. */}
       {canManage && event.kind === 'nationals' && (
         <NationalsDashboard eventId={event.id} scope={{ clubId }} />
+      )}
+
+      {/* Nationals check-in (event-mgmt v2 Phase 5 E1, spec §L.4): gated on
+          event.kind === 'nationals' to keep check-in scoped to P5, though
+          the underlying feature isn't nationals-specific per spec. */}
+      {canManage && event.kind === 'nationals' && (
+        <EventCheckinCard eventId={event.id} scope={{ clubId }} />
       )}
 
       {/* Card 1: Already registered */}

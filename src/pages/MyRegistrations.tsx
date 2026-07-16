@@ -18,6 +18,7 @@ import { canStillEditRegistration, eventIsRefundEligible } from '../lib/events-c
 import { RefundRequestDialog, type RefundRequestItem } from '../components/RefundRequestDialog';
 import { SessionRequestSurveyCard } from '../components/SessionRequestSurvey';
 import { NationalsDashboard } from '../components/NationalsDashboard';
+import { EventCheckinCard } from '../components/EventCheckinCard';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -579,6 +580,13 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                         card's gate above. */}
                     {event.kind === 'nationals' && me?.mainClubId === null && (
                       <NationalsDashboard eventId={event.id} scope={{ personId }} />
+                    )}
+
+                    {/* Nationals check-in (event-mgmt v2 Phase 5 E1, spec
+                        §L.4) — independent-athlete variant, same gate as the
+                        summary dashboard above. */}
+                    {event.kind === 'nationals' && me?.mainClubId === null && (
+                      <EventCheckinCard eventId={event.id} scope={{ personId }} />
                     )}
 
                     {tab === 'upcoming' && (

@@ -556,6 +556,36 @@ export interface FinalsLineup {
   updatedAt?: string;
 }
 
+/** A nationals check-in row (event-mgmt v2 Phase 5 E1, spec §L.4): a row
+ *  EXISTS only once a league/meet admin has OPENED check-in for a scope —
+ *  "no row for this (event, scope)" IS the "not opened yet" state, so there's
+ *  no separate boolean. Scoped by EITHER `clubId` (club variant) OR
+ *  `personId` (independent-athlete variant) — never both, never neither
+ *  (same dual-scoping idiom as `WaitlistGroup`/`SessionRequest`). Once open,
+ *  the club manager (or the athlete themself) confirms with a checkbox +
+ *  typed signature, flipping `status` to `'checked-in'`. Client writes to an
+ *  EXISTING row may only touch `status`/`signedName`/`checkedInAt`/
+ *  `checkedInBy` — a column-level grant in the `event_checkins` RLS blocks
+ *  rewriting `eventId`/`clubId`/`personId`/`openedBy` (see
+ *  `confirmEventCheckin` in `src/lib/supabase.ts`). */
+export interface EventCheckin {
+  id: string;
+  eventId: string;
+  /** Set for the club variant; null for the independent-athlete variant. */
+  clubId?: string | null;
+  /** Set for the independent-athlete variant; null for the club variant. */
+  personId?: string | null;
+  status: 'open' | 'checked-in';
+  /** The name typed at confirmation. */
+  signedName?: string | null;
+  checkedInAt?: string | null;
+  /** Person id of whoever confirmed (club manager or the athlete). */
+  checkedInBy?: string | null;
+  /** Person id of the admin who opened check-in for this scope. */
+  openedBy?: string | null;
+  createdAt?: string;
+}
+
 export interface Score {
   id: string; // `${eventId}|${athleteRegId}|${apparatus}`
   eventId: string;
@@ -792,6 +822,8 @@ export interface DB {
   competitionOrders?: CompetitionOrder[];
   /** Nationals finals-roster lineups (event-mgmt v2 Phase 5 C1, spec §E7/§L.3). */
   finalsLineups?: FinalsLineup[];
+  /** Nationals check-in flow rows (event-mgmt v2 Phase 5 E1, spec §L.4). */
+  eventCheckins?: EventCheckin[];
 }
 
 /** A per-event admin grant: `userId` holds the same host-level access to

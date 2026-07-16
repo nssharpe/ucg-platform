@@ -1137,6 +1137,18 @@ export function missingSessionRequests(
     e.discipline === key.discipline && e.levelId === key.levelId && sessionRequestAnswered(e.answers)));
 }
 
+/** Minimal registration slice `checkinAthleteCount` needs. */
+export type CheckinScopeReg = { athleteId: string };
+
+/** Distinct-athlete count for a check-in scope (event-mgmt v2 Phase 5 E1,
+ *  spec §L.4) — "Athlete gift count" on the check-in card. Callers pass
+ *  already-scoped, non-refunded/non-waitlisted registrations (one athlete
+ *  can appear in several regs across disciplines/apparatus — the gift count
+ *  is per ATHLETE, not per registration). */
+export function checkinAthleteCount(regs: CheckinScopeReg[]): number {
+  return new Set(regs.map((r) => r.athleteId)).size;
+}
+
 // --- Checkout gate (A3): mirrors the server-side block in
 // create-checkout-session so the "Pay" action can be disabled/warned BEFORE
 // the request is even sent (the server check is authoritative; this is

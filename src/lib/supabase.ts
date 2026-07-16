@@ -8,7 +8,7 @@
 import { createClient, type SupabaseClient, type RealtimePostgresChangesPayload, type PostgrestError } from '@supabase/supabase-js';
 import type {
   AccountInvite, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, EventAdmin, Invoice, Level, Event, Membership, MembershipType, Payment, Region, Registration, RefundRequest, SanctionRequest, SanctionVote, Score, Season,
-  WaiverDocument, WaiverSignature, WaitlistGroup, SessionRequest, CompetitionOrder, FinalsLineup,
+  WaiverDocument, WaiverSignature, WaitlistGroup, SessionRequest, CompetitionOrder, FinalsLineup, EventCheckin,
 } from './types';
 import { writeQueue, type WriteOp, type ExecResult } from './write-queue';
 import type { Database } from './database.types';
@@ -482,6 +482,29 @@ const rowToFinalsLineup = (r: {
   category: r.category, apparatus: r.apparatus, regIds: (r.reg_ids ?? []) as string[],
   updatedAt: r.updated_at,
 });
+// event_checkins is not yet in the generated database.types.ts (this
+// migration hasn't been applied/regenerated against at write time) — inline
+// row type like rowToCompetitionOrder/rowToFinalsLineup. Unlike those two,
+// `authenticated` holds a column-level UPDATE grant restricted to
+// status/signed_name/checked_in_at/checked_in_by ONLY (see
+// `confirmEventCheckin` below) — `eventCheckinToRow` still emits every
+// column (used for the admin-only INSERT "open" path, which needs the full
+// row), the restriction is enforced server-side by the grant, not here.
+const eventCheckinToRow = (c: EventCheckin) => ({
+  id: c.id, event_id: c.eventId, club_id: c.clubId ?? null, person_id: c.personId ?? null,
+  status: c.status, signed_name: c.signedName ?? null, checked_in_at: c.checkedInAt ?? null,
+  checked_in_by: c.checkedInBy ?? null, opened_by: c.openedBy ?? null,
+});
+const rowToEventCheckin = (r: {
+  id: string; event_id: string; club_id: string | null; person_id: string | null;
+  status: string; signed_name: string | null; checked_in_at: string | null;
+  checked_in_by: string | null; opened_by: string | null; created_at: string;
+}): EventCheckin => ({
+  id: r.id, eventId: r.event_id, clubId: r.club_id, personId: r.person_id,
+  status: r.status as EventCheckin['status'], signedName: r.signed_name,
+  checkedInAt: r.checked_in_at, checkedInBy: r.checked_in_by, openedBy: r.opened_by,
+  createdAt: r.created_at,
+});
 const rowToWaiverSignature = (r: Row<'waiver_signatures'>): WaiverSignature => ({
   id: r.id, personId: r.person_id, seasonId: r.season_id, waiverType: r.waiver_type as WaiverSignature['waiverType'],
   waiverDocumentId: r.waiver_document_id, contentHash: r.content_hash,
@@ -549,6 +572,24 @@ export function deleteCompetitionOrder(id: string) { remoteDelete('competition_o
 export function pushFinalsLineup(l: FinalsLineup) { remoteUpsert('finals_lineups', [finalsLineupToRow(l)]); }
 /** Delete a finals-lineup row (e.g. cleanup after a dropped apparatus). */
 export function deleteFinalsLineup(id: string) { remoteDelete('finals_lineups', id, 'id'); }
+/** Admin/sanctioning-only: OPEN check-in for a club or independent athlete
+ *  (event-mgmt v2 Phase 5 E1, spec §L.4) — an insert-only upsert (RLS's
+ *  INSERT policy is admin/sanctioning-only, and the conflict-update path
+ *  would need the full column-write reach non-admins don't have; admins can
+ *  re-open an existing row via this same call since they bypass the
+ *  column grant). `status:'open'` is always the row's initial state. */
+export function pushEventCheckin(c: EventCheckin) { remoteUpsert('event_checkins', [eventCheckinToRow(c)]); }
+/** Club manager / athlete confirms an already-open check-in (event-mgmt v2
+ *  Phase 5 E1). Must go through this targeted `remoteUpdate`, NOT
+ *  `pushEventCheckin`'s upsert — RLS grants UPDATE on
+ *  status/signed_name/checked_in_at/checked_in_by ONLY, and an upsert's ON
+ *  CONFLICT DO UPDATE path writes every column (incl. event_id/club_id/
+ *  person_id/opened_by), which is denied for a row that already exists. */
+export function confirmEventCheckin(id: string, patch: { status: 'checked-in'; signedName: string; checkedInAt: string; checkedInBy: string }) {
+  remoteUpdate('event_checkins', id, { status: patch.status, signed_name: patch.signedName, checked_in_at: patch.checkedInAt, checked_in_by: patch.checkedInBy }, 'id');
+}
+/** Admin-only cleanup: undo an erroneously opened check-in. */
+export function deleteEventCheckin(id: string) { remoteDelete('event_checkins', id, 'id'); }
 /** Upsert a Stripe payment record. In practice the service-role Edge Functions
  *  write these (clients only read own rows via RLS); this exists for symmetry +
  *  any admin tooling. Money fields are CENTS. */
@@ -1693,7 +1734,7 @@ export async function loadAll(): Promise<DB | null> {
       eventsR, sessionsR, squadsR, registrationsR, scoresR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
       clubRequestsR, appSettingsR, accountInvitesR, sanctionRequestsR, sanctionVotesR,
       waiverDocsR, waiverSigsR, clubMembershipsR, paymentsR, eventAdminsR, refundRequestsR, waitlistGroupsR,
-      sessionRequestsR, competitionOrdersR, finalsLineupsR,
+      sessionRequestsR, competitionOrdersR, finalsLineupsR, eventCheckinsR,
     ] = await Promise.all([
       supabase.from('seasons').select('*'),
       supabase.from('levels').select('*'),
@@ -1726,6 +1767,7 @@ export async function loadAll(): Promise<DB | null> {
       supabase.from('session_requests').select('*'),    // emv2 P5 A1; tolerated if absent
       supabase.from('competition_orders').select('*'),  // emv2 P5 B1; tolerated if absent
       supabase.from('finals_lineups').select('*'),      // emv2 P5 C1; tolerated if absent
+      supabase.from('event_checkins').select('*'),      // emv2 P5 E1; tolerated if absent
     ]);
 
     // club_requests may not exist on a pre-0005 DB — tolerate its error, fail on the rest.
@@ -1927,6 +1969,8 @@ export async function loadAll(): Promise<DB | null> {
       .map(rowToCompetitionOrder);
     const finalsLineups: FinalsLineup[] = (finalsLineupsR.error ? [] : finalsLineupsR.data ?? [])
       .map(rowToFinalsLineup);
+    const eventCheckins: EventCheckin[] = (eventCheckinsR.error ? [] : eventCheckinsR.data ?? [])
+      .map(rowToEventCheckin);
 
     return {
       seasons, levels, clubs, people, events, registrations, scores, invoices, coupons,
@@ -1945,6 +1989,7 @@ export async function loadAll(): Promise<DB | null> {
       ...(sessionRequests.length ? { sessionRequests } : {}),
       ...(competitionOrders.length ? { competitionOrders } : {}),
       ...(finalsLineups.length ? { finalsLineups } : {}),
+      ...(eventCheckins.length ? { eventCheckins } : {}),
     };
   } catch (e) {
     console.error('[supabase] loadAll threw:', e);
