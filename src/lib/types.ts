@@ -586,6 +586,38 @@ export interface EventCheckin {
   createdAt?: string;
 }
 
+/** A purchase-item-type → external accounting code mapping (event-mgmt v2
+ *  Phase 6 T1, spec §M) -- e.g. mapping 'membership' or 'meet-entry:entry' to
+ *  a QuickBooks code, for the finance dashboards to group revenue by code.
+ *  `itemKey` is app-defined and unique; admin/finance_admin fully editable. */
+export type AccountingCode = {
+  id: string;
+  itemKey: string;
+  code: string;
+  label?: string;
+  updatedAt?: string;
+};
+
+/** A manual record of money paid OUT to an event host club (event-mgmt v2
+ *  Phase 6 T1, spec §M) -- payouts happen outside Stripe (check/PayPal/ACH),
+ *  so finance_admin/admin record them by hand for the dashboards to
+ *  reconcile against gross revenue. */
+export type HostPayout = {
+  id: string;
+  eventId: string;
+  amountCents: number;
+  method: 'check' | 'paypal' | 'ach';
+  /** Check #, PayPal txn id, or ACH reference -- free text, method-dependent. */
+  reference?: string;
+  /** ISO date (not a full timestamp) the payout was made. */
+  paidOn: string;
+  notes?: string;
+  /** Person id of the finance user who recorded the payout. */
+  createdBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
 export interface Score {
   id: string; // `${eventId}|${athleteRegId}|${apparatus}`
   eventId: string;
@@ -674,6 +706,27 @@ export interface Invoice {
 
 export type CartItem = InvoiceItem;
 
+/** One frozen line of a payment's `lines_snapshot` (written by
+ *  `create-checkout-session`, event-mgmt v2 Phase 6 T2 — see that function's
+ *  `linesSnapshot` build, ~line 894). `amountCents` is the server-computed
+ *  PRE-coupon list price; `paidCents` is the POST-coupon actual charge (the
+ *  refund base) — absent on payments written before this field existed
+ *  (2026-07-02), in which case callers should fall back to `amountCents`. */
+export type PaymentSnapshotLine = {
+  id: string;
+  kind: InvoiceItem['kind'];
+  label: string;
+  amountCents: number;
+  paidCents?: number;
+  clubId?: string;
+  refUserId?: string;
+  refSeasonId?: string;
+  refType?: string;
+  refRegIds?: string[];
+  refEventId?: string;
+  refLineType?: string;
+};
+
 /** A Stripe Embedded Checkout payment record (server source of truth). All money
  *  fields are in CENTS (Stripe's unit). A `pending` row is created when the
  *  Checkout Session is opened; the verified webhook flips it to `paid` and runs
@@ -697,6 +750,10 @@ export interface Payment {
   stripeEventId: string | null;
   createdAt: string;
   fulfilledAt: string | null;
+  /** Frozen, server-priced line set the payment fulfilled/will fulfill from
+   *  (event-mgmt v2 Phase 6 T2 — see `PaymentSnapshotLine`). Absent for very
+   *  old pre-snapshot payments. */
+  linesSnapshot?: PaymentSnapshotLine[];
 }
 
 export interface Coupon {
@@ -824,6 +881,13 @@ export interface DB {
   finalsLineups?: FinalsLineup[];
   /** Nationals check-in flow rows (event-mgmt v2 Phase 5 E1, spec §L.4). */
   eventCheckins?: EventCheckin[];
+  /** Purchase-item-type → external accounting code lookup (event-mgmt v2
+   *  Phase 6 T1, spec §M). Admin/finance_admin editable. */
+  accountingCodes?: AccountingCode[];
+  /** Manual records of money paid OUT to an event host club (event-mgmt v2
+   *  Phase 6 T1, spec §M) -- payouts happen outside Stripe. Admin/
+   *  finance_admin editable. */
+  hostPayouts?: HostPayout[];
 }
 
 /** A per-event admin grant: `userId` holds the same host-level access to
