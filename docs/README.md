@@ -210,14 +210,19 @@ here — update THIS list when priorities change, not rival copies.
   to main; 5 migrations applied staging+prod; create-checkout-session/send-sms/
   scheduled-dispatch deployed (no-verify-jwt trio re-checked); TELNYX_FROM_NUMBER set to
   the approved 10DLC number. The §L.2 session-assignment tool (and the per-team
-  session-timed finals reminders that depend on it) is DEFERRED per Julia. **V2-P6
-  finance dashboards (§M)** — the last emv2 phase — is IN PROGRESS on `feat/emv2-p6`:
-  T1 (`accounting_codes`/`host_payouts` tables + `finance_admin` read RLS) and T2
-  (pure finance derivation engine `src/lib/finance.ts` — transactions, item-key
-  grouping, date-range defaults, summary/host-payout-owed math, Excel sheet models;
-  `Payment.linesSnapshot` now mapped in `types.ts`/`supabase.ts`) are committed on the
-  branch (not yet applied/merged). **Next: T3** — the finance dashboard UI consuming
-  `finance.ts`.
+  session-timed finals reminders that depend on it) is DEFERRED per Julia.
+  **P6 (finance dashboards — §M) SHIPPED 2026-07-16** — the last emv2 phase:
+  `#/admin/finance` (admin or `finance_admin`) with league-wide/per-event scope +
+  date-range filters, Summary tab (per-item-key gross/refunds/net + accounting codes +
+  merchant fees collected/paid/profit), Transactions ledger tab (click-through from
+  summary lines, search, .xlsx export incl. summary sheet), Accounting-codes management
+  tab, and a per-event Host payout card (provisional owed = event net revenue —
+  **formula pending Julia's confirmation** — plus a manual payout ledger:
+  check/PayPal/ACH, reference, paid-on). New tables `accounting_codes`/`host_payouts` +
+  `finance_admin` read RLS on payments/invoices/invoice_items/refund_requests/people
+  (migration `20260716120000`, applied staging+prod); pure engine `src/lib/finance.ts`
+  (24 vitest tests); no edge-function changes. Nate must grant `finance_admin` in
+  `user_roles` for Julia/bookkeeper access (admins already see the page).
   **P0 Task 1 shipped:** pg_cron/pg_net scheduler infra (`notification_log` +
   `scheduled-dispatch-15min` job + `scheduled-dispatch` Edge Function, service-role-only
   auth) with its first consumer — 3d/1d/closed sanction-vote reminder emails, idempotent

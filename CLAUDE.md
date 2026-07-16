@@ -108,7 +108,7 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   `supabase/migrations/` — **the authoritative migration list + per-migration narrative +
   schema/RLS model is `supabase/README.md`**; keep its table updated with every migration
   (detail goes THERE, not here). All migrations through
-  `20260711023234_fix_refund_manager_read_recursion.sql` are applied. Security hardening:
+  `20260716120000_emv2_p6_finance_foundations.sql` are applied. Security hardening:
   Phase 1+2 applied; Phase 3 TODO (`docs/plans/2026-07-02-security-hardening.md`).
 - New migrations: `supabase migration new <name>` (timestamp filename format is required).
   Apply via `supabase db push` — network is sandbox-blocked, run with sandbox disabled.
@@ -463,7 +463,17 @@ update it there; don't grow a rival list here. Operative notes only:
   TCR CFN616P); merged to main. All P5 UI gated on `event.kind === 'nationals'`.
   **DEFERRED with §L.2** (Julia marked incomplete): the session-assignment tool + the
   per-team session-timed finals reminders ("5 min after session ends"/Fri-10am) — only the
-  admin-set `finals_lineup_deadline_at` nag+lock shipped. **V2-P6 finance dashboards
-  (§M)** in progress on `feat/emv2-p6`: T1 (accounting_codes/host_payouts tables) + T2
-  (pure `src/lib/finance.ts` derivation engine — txns/summary/date-range/export models,
-  `Payment.linesSnapshot` mapping) committed, not yet merged/applied. Next: T3 (UI).
+  admin-set `finals_lineup_deadline_at` nag+lock shipped.
+- **Event management v2 — P6 finance dashboards SHIPPED 2026-07-16** (§M — emv2 complete):
+  `#/admin/finance` (admin or `finance_admin`; nav mirrors the refunds pattern) —
+  league/per-event scope + date filters (defaults: prev month / regOpens→end+7d),
+  Summary (per-item-key gross/refunds/net + codes + merchant fees collected/paid/profit,
+  click-through to Transactions), Transactions ledger + .xlsx export (shared
+  `src/lib/xlsx-download.ts`, extracted from Events.tsx), Accounting-codes tab, per-event
+  Host payout card + manual payout ledger (`host_payouts`). Pure engine
+  `src/lib/finance.ts` (authoritative amounts = `payments.lines_snapshot` `paid_cents`,
+  legacy fallback invoice_items ×100; `Payment.linesSnapshot` now mapped). Migration
+  `20260716120000` (tables + finance_admin read RLS) applied staging+prod; NO
+  edge-function changes (trio re-checked anyway). ⚠ Host-payout "owed" = event net
+  revenue is PROVISIONAL pending Julia's formula; 👤 Nate: grant `finance_admin` to
+  Julia/bookkeeper. Next: non-emv2 backlog (`docs/README.md` → What's next).
