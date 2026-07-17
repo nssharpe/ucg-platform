@@ -52,10 +52,11 @@ export function NationalsConfigEditor({ event }: { event: Event }) {
     edit((c) => { c.finalsLevelIds = on ? [...c.finalsLevelIds, levelId] : c.finalsLevelIds.filter((id) => id !== levelId); });
 
   const save = () => {
-    mutate((d) => {
+    const applied = mutate((d) => {
       const m = d.events.find((x) => x.id === event.id);
       if (m) { m.nationalsConfig = cfg; pushEvent(m); }
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     setDirty(false);
     toast('Qualification config saved.');
   };

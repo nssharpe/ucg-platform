@@ -239,11 +239,12 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
     // `people` insert RLS policy (`auth_user_id = auth.uid()`). adminView edits
     // of OTHER people must NOT pass it (they pass is_admin() instead).
     const selfAuthUserId = adminView ? undefined : getSession()?.user.id;
-    mutate((d) => {
+    const applied = mutate((d) => {
       const i = d.people.findIndex((x) => x.id === pid);
       d.people[i] = { ...p };
       pushPerson(d.people[i], selfAuthUserId ? { selfAuthUserId } : undefined);
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     setDraft(null);
     setEditMode(false);
     toast('Profile saved.');
@@ -834,7 +835,7 @@ function ClubRequestForm({ requesterPersonId, onClose }: { requesterPersonId: st
       status: 'pending',
       createdAt: new Date().toISOString(),
     };
-    mutate((d) => { d.clubRequests.push(req); pushClubRequest(req); });
+    if (!mutate((d) => { d.clubRequests.push(req); pushClubRequest(req); })) return; // offline read-only gate
     toast('Request submitted — a UCG admin will review it.');
     onClose();
   };
@@ -915,7 +916,7 @@ function AdminMembershipControls({
     const seasonName = db.seasons.find((s) => s.id === seasonId)?.name ?? seasonId;
     const waiverOk = hasWaiverOnFile(seasonId);
     const defaultType: 'athlete' | 'coach' = (roles.coach && !roles.athlete) ? 'coach' : 'athlete';
-    mutate((d) => {
+    const applied = mutate((d) => {
       const pid = d.people.find((x) => x.id === personId)!;
       let em = pid.memberships.find((x) => x.seasonId === seasonId);
       const status = waiverOk ? 'active' : 'pending-waiver';
@@ -926,6 +927,7 @@ function AdminMembershipControls({
       }
       pushMembership(pid.id, em);
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     if (waiverOk) toast(`Membership activated for ${seasonName}.`);
     else { toast(`${seasonName} membership is pending a signed waiver.`); setWaiverPopupSeason(seasonId); }
   };
@@ -933,7 +935,7 @@ function AdminMembershipControls({
   const confirmRevoke = () => {
     if (!revokeSeasonId) return;
     let removedCount = 0;
-    mutate((d) => {
+    const applied = mutate((d) => {
       const personInDraft = d.people.find((x) => x.id === personId)!;
       // Update membership status
       const em = personInDraft.memberships.find((x) => x.seasonId === revokeSeasonId);
@@ -952,6 +954,7 @@ function AdminMembershipControls({
       toRemove.forEach((r) => deleteRegistration(r.id));
       d.registrations = d.registrations.filter((r) => !(r.athleteId === personId && openEventIds.has(r.eventId)));
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     toast(`Membership revoked; removed from ${removedCount} upcoming competition${removedCount !== 1 ? 's' : ''}.`);
     setRevokeSeasonId(null);
   };

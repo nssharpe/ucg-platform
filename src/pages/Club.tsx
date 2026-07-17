@@ -248,13 +248,13 @@ function ClubMembershipCard({ club }: { club: Club }) {
 
   const grant = (seasonId: string, byAdmin: boolean) => {
     const cm: ClubMembership = { id: crypto.randomUUID(), clubId: club.id, seasonId, status: 'active', grantedByAdmin: byAdmin, createdAt: new Date().toISOString() };
-    mutate((d) => { (d.clubMemberships ??= []).push(cm); pushClubMembership(cm); });
+    if (!mutate((d) => { (d.clubMemberships ??= []).push(cm); pushClubMembership(cm); })) return; // offline read-only gate
     toast(`Club membership ${byAdmin ? 'granted' : 'purchased'} for ${seasonName(seasonId)}.`);
   };
   const revoke = (seasonId: string) => {
     const cm = (db.clubMemberships ?? []).find((x) => x.clubId === club.id && x.seasonId === seasonId);
     if (!cm) return;
-    mutate((d) => { d.clubMemberships = (d.clubMemberships ?? []).filter((x) => x.id !== cm.id); deleteClubMembership(cm.id); });
+    if (!mutate((d) => { d.clubMemberships = (d.clubMemberships ?? []).filter((x) => x.id !== cm.id); deleteClubMembership(cm.id); })) return; // offline read-only gate
     toast(`Club membership revoked for ${seasonName(seasonId)}.`);
   };
 
@@ -269,7 +269,7 @@ function ClubMembershipCard({ club }: { club: Club }) {
       setReviewSeason(null);
       return;
     }
-    mutate((d) => {
+    const applied = mutate((d) => {
       const cart = d.carts[club.id] ?? (d.carts[club.id] = []);
       cart.push({
         id: `ci-clubmem-${Date.now()}-${seasonId}`,
@@ -281,6 +281,7 @@ function ClubMembershipCard({ club }: { club: Club }) {
       });
       pushCart(club.id, cart, true);
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     toast(`${seasonName(seasonId)} club membership added to the cart. Pay to activate it.`);
     setReviewSeason(null);
     navigate('/cart');
@@ -359,9 +360,10 @@ function ClubMembershipReview({ club, season, isCurrent, onConfirm, onClose }: {
   const dirty = draft.name !== club.name || draft.shortName !== club.shortName
     || draft.state !== club.state || draft.email !== club.email;
 
-  const persistEdits = () => {
-    if (!dirty) return;
-    mutate((d) => {
+  /** Returns false only when the offline read-only gate refused the write. */
+  const persistEdits = (): boolean => {
+    if (!dirty) return true;
+    return mutate((d) => {
       const c = d.clubs.find((x) => x.id === club.id);
       if (!c) return;
       c.name = draft.name.trim();
@@ -375,13 +377,13 @@ function ClubMembershipReview({ club, season, isCurrent, onConfirm, onClose }: {
 
   const saveOnly = () => {
     if (!valid) { toast('Name, short name, and state are required.'); return; }
-    persistEdits();
+    if (!persistEdits()) return; // offline read-only gate — no false success toast
     toast('Club details saved.');
   };
 
   const confirm = () => {
     if (!valid) { toast('Name, short name, and state are required.'); return; }
-    persistEdits();
+    if (!persistEdits()) return; // offline read-only gate — don't continue to the cart
     onConfirm();
   };
 
@@ -431,11 +433,12 @@ function ClubManagers({ club }: { club: Club }) {
     .map((p) => ({ value: p.id, label: `${p.firstName} ${p.lastName}`, sub: `${p.kind} · ${p.email}` }));
 
   const addManager = (personId: string) => {
-    mutate((d) => {
+    const applied = mutate((d) => {
       const c = d.clubs.find((x) => x.id === club.id)!;
       if (!c.managerIds.includes(personId)) c.managerIds.push(personId);
       pushClubManager(club.id, personId, true);
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     toast('Manager added.');
   };
 
@@ -842,11 +845,12 @@ function ClubAddonsCard({ event, clubId, canManage }: { event: Event; clubId: st
       toast('Choose at least one add-on to add to the cart.', { variant: 'error' });
       return;
     }
-    mutate((d) => {
+    const applied = mutate((d) => {
       const cart = d.carts[clubId] ?? (d.carts[clubId] = []);
       for (const item of items) cart.push(item);
       pushCart(clubId, cart, true);
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     toast('Add-ons added to the club cart.');
     setDraft(initialClubAddonDraft());
   };
@@ -1127,7 +1131,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
     const deletable = allWl.filter((r) => r.updatedPending !== true);
     const kept = allWl.filter((r) => r.updatedPending === true);
     const groupIds = [...new Set(allWl.map((r) => r.waitlistGroupId).filter((id): id is string => !!id))];
-    mutate((d) => {
+    const applied = mutate((d) => {
       for (const gid of groupIds) {
         const idx = (d.waitlistGroups ?? []).findIndex((g) => g.id === gid);
         if (idx >= 0 && d.waitlistGroups) {
@@ -1147,6 +1151,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
         }
       }
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     if (kept.length > 0) {
       toast(
         'Left the waitlist, but a previously-purchased registration was kept (it was an update to a paid '
@@ -1177,7 +1182,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
       arr.push(r);
       byAthlete.set(r.athleteId, arr);
     }
-    mutate((d) => {
+    const applied = mutate((d) => {
       const cart = d.carts[clubId] ?? (d.carts[clubId] = []);
       for (const [athleteId, regs] of byAthlete) {
         // Prior (non-waitlisted, non-refunded) regs the athlete already holds
@@ -1223,6 +1228,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
       }
       pushCart(clubId, cart, true);
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     toast('Entry added to the club cart — complete checkout before the hold expires.');
     navigate('/cart');
   };
@@ -1260,7 +1266,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
     const alreadyPendingItem = changeFeePendingItem(athleteId);
     let addedEntryFee = 0;
     let chargedChangeFee = 0;
-    mutate((d) => {
+    const applied = mutate((d) => {
       const existingForAthlete = d.registrations.filter(
         (r) => r.eventId === event.id && r.athleteId === athleteId && r.clubId === clubId && !r.refunded,
       );
@@ -1438,6 +1444,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
         pushCart(clubId, cart, true);
       }
     });
+    if (!applied) return; // offline read-only gate — no false success toast
 
     setEditingAthleteId(null);
     setRegisterAthleteId(null);
@@ -1458,7 +1465,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   const addToCart = (athleteId: string, regs: Registration[]) => {
     if (clubMembershipBlocked()) return;
     let hostFree = false;
-    mutate((d) => {
+    const applied = mutate((d) => {
       const existingForAthlete = d.registrations.filter(
         (r) => r.eventId === event.id && r.athleteId === athleteId && r.clubId === clubId && !r.refunded,
       );
@@ -1482,6 +1489,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
         if (!hostFree) reg.holdExpiresAt = holdStamp(event, event.sessions, Date.now());
       }
     });
+    if (!applied) return; // offline read-only gate — don't continue the register flow
 
     // skipEntryFeeLine: this function owns the entry-fee cart line below
     // (needs its own refEventId-aware dedupe check, C5) — saveRegs must not
@@ -1554,7 +1562,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
     const to = db.people.find((p) => p.id === toId);
     if (!to) return;
     const swapFee = changeFeeApplies ? registrationChangeFee(event, { competingClubId: clubId }) : 0;
-    mutate((d) => {
+    const applied = mutate((d) => {
       const swappedRegIds: string[] = [];
       // Snapshot the FULL prior registration row (before athleteId/paid/
       // updatedPending are mutated below) so deleting the resulting change-fee
@@ -1609,6 +1617,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
         pushCart(clubId, cart, true);
       }
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     toast(`Registration swapped to ${to.firstName} ${to.lastName}.${swapFee > 0 ? ` Change fee ${fmtMoney(swapFee)} added to club cart.` : ''}`);
     setEditingAthleteId(null);
   };

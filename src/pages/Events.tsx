@@ -458,13 +458,14 @@ export function EventDetail() {
 // OwnerAssignBlock — event-owner assignment (event-mgmt v2 §B3)
 // ---------------------------------------------------------------------------
 
-function saveEventOwner(event: Event, owner: Event['owner']) {
+function saveEventOwner(event: Event, owner: Event['owner']): boolean {
   const updated: Event = { ...event, owner };
-  mutate((d) => {
+  const applied = mutate((d) => {
     const idx = d.events.findIndex((e) => e.id === event.id);
     if (idx >= 0) d.events[idx] = updated;
   });
-  pushEvent(updated);
+  if (applied) pushEvent(updated); // offline read-only gate: never push what local lacks
+  return applied;
 }
 
 function OwnerAssignBlock({ event, toast }: { event: Event; toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void }) {
@@ -487,7 +488,7 @@ function OwnerAssignBlock({ event, toast }: { event: Event; toast: (msg: string,
   const save = () => {
     const member = (team ?? []).find((m) => m.userId === selectedId);
     if (!member) return;
-    saveEventOwner(event, { userId: member.userId, name: member.name, email: member.email });
+    if (!saveEventOwner(event, { userId: member.userId, name: member.name, email: member.email })) return;
     setEditing(false);
   };
 
@@ -725,10 +726,11 @@ function CompetitionOrderLockCard({ event, toast }: {
 
   const toggle = (checked: boolean) => {
     const updated: Event = { ...event, competitionOrderLocked: checked };
-    mutate((d) => {
+    const applied = mutate((d) => {
       const idx = d.events.findIndex((e) => e.id === event.id);
       if (idx >= 0) d.events[idx] = updated;
     });
+    if (!applied) return; // offline read-only gate — don't push or claim success
     pushEvent(updated);
     toast(checked
       ? 'Competition orders locked — club managers now see them read-only.'
@@ -821,11 +823,11 @@ function OwnerChecklistCard({ event, fmtDate, toast }: { event: Event; fmtDate: 
   const patchTask = (taskId: OwnerTaskId, patch: Partial<OwnerChecklistEntry>) => {
     const entry = { ...checklist[taskId], ...patch };
     const updated: Event = { ...event, ownerChecklist: { ...checklist, [taskId]: entry } };
-    mutate((d) => {
+    const applied = mutate((d) => {
       const idx = d.events.findIndex((e) => e.id === event.id);
       if (idx >= 0) d.events[idx] = updated;
     });
-    pushEvent(updated);
+    if (applied) pushEvent(updated); // offline read-only gate: never push what local lacks
   };
 
   const toggleDone = (taskId: OwnerTaskId) => {
@@ -1710,11 +1712,12 @@ function StandaloneAddonsModal({ event, athlete, onClose, toast }: {
       toast('Choose at least one add-on to purchase.', { variant: 'error' });
       return;
     }
-    mutate((d) => {
+    const applied = mutate((d) => {
       const cart = d.carts[athlete.id] ?? (d.carts[athlete.id] = []);
       for (const item of items) cart.push(item);
       pushCart(athlete.id, cart, false);
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     toast('Add-ons saved to your cart. Check out to complete payment.');
     onClose();
     navigate('/cart');
@@ -1840,7 +1843,7 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
       for (const r of regs) r.campSurvey = storedSurvey;
     }
     let hostFree = false;
-    mutate((d) => {
+    const applied = mutate((d) => {
       const existingForAthlete = d.registrations.filter(
         (r) => r.eventId === event.id && r.athleteId === athlete.id && !r.refunded,
       );
@@ -1987,6 +1990,7 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
       // (The old stub reused cart-item ids as invoice_items PKs, colliding across
       // registrations — `invoice_items_pkey` duplicate-key error.)
     });
+    if (!applied) return; // offline read-only gate — no false success toast
 
     toast(
       hostFree
@@ -2271,7 +2275,7 @@ function SquadBuilder({ event, session }: { event: Event; session: EventSession 
   };
 
   const applyDefault = (n: number) => {
-    mutate((d) => {
+    const applied = mutate((d) => {
       const m = d.events.find((x) => x.id === event.id)!;
       const s = m.sessions.find((x) => x.id === session.id)!;
       const sregs = d.registrations.filter((r) => r.eventId === event.id && r.sessionId === session.id && !r.refunded);
@@ -2283,11 +2287,12 @@ function SquadBuilder({ event, session }: { event: Event; session: EventSession 
       sregs.forEach((r, i) => s.squads[i % n].athleteRegIds.push(r.id));
       pushEventSessions(m, d.registrations);
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     toast(`Split ${regs.length} athletes into ${n} squads. Adjust then Save.`);
   };
 
   const copyToOthers = () => {
-    mutate((d) => {
+    const applied = mutate((d) => {
       const m = d.events.find((x) => x.id === event.id)!;
       for (const s of m.sessions) {
         if (s.id === session.id || s.discipline !== session.discipline) continue;
@@ -2302,6 +2307,7 @@ function SquadBuilder({ event, session }: { event: Event; session: EventSession 
       }
       pushEventSessions(m, d.registrations);
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     toast('Squad setup copied to other ' + session.discipline + ' sessions.');
   };
 

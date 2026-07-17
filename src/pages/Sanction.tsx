@@ -340,10 +340,11 @@ export function SanctionRequestForm() {
       deadlineAt: deadlineISO,
     };
 
-    mutate((d) => {
+    const applied = mutate((d) => {
       if (!d.sanctionRequests) d.sanctionRequests = [];
       d.sanctionRequests.push(req);
     });
+    if (!applied) return; // offline read-only gate — don't push/notify/claim success
     pushSanctionRequest(req);
     notifySanction({ requestId: req.id, event: 'submitted' });
     toast('Sanction request submitted; the Sanctioning Team will vote within 7 days.');
@@ -824,12 +825,13 @@ export function SanctionVotePage() {
       votedAt: new Date().toISOString(),
     };
 
-    mutate((d) => {
+    const applied = mutate((d) => {
       if (!d.sanctionVotes) d.sanctionVotes = [];
       const idx = d.sanctionVotes.findIndex((v) => v.requestId === request.id && v.voterUserId === voterId);
       if (idx >= 0) d.sanctionVotes[idx] = vote;
       else d.sanctionVotes.push(vote);
     });
+    if (!applied) return; // offline read-only gate — don't push/tally/claim success
     pushSanctionVote(vote);
     toast(`Vote recorded: ${voteChoice}`);
 
@@ -906,7 +908,7 @@ export function SanctionVotePage() {
         } : {}),
       };
 
-      mutate((d) => {
+      const applied = mutate((d) => {
         d.events.push(event);
         const rIdx = (d.sanctionRequests ?? []).findIndex((r) => r.id === req.id);
         if (rIdx >= 0) {
@@ -919,6 +921,7 @@ export function SanctionVotePage() {
           };
         }
       });
+      if (!applied) return; // offline read-only gate — don't push/notify/claim success
       pushEvent(event);
       pushSanctionRequest({ ...req, status: 'approved', decidedAt: decidedNow, createdEventId: eventId, sanctionId: sid });
       notifySanction({ requestId: req.id, event: 'approved' });
@@ -926,7 +929,7 @@ export function SanctionVotePage() {
       toast(`Approved! Sanction ID: ${sid}. Event created as draft.`);
     } else {
       // Rejected
-      mutate((d) => {
+      const applied = mutate((d) => {
         const rIdx = (d.sanctionRequests ?? []).findIndex((r) => r.id === req.id);
         if (rIdx >= 0) {
           d.sanctionRequests![rIdx] = {
@@ -936,6 +939,7 @@ export function SanctionVotePage() {
           };
         }
       });
+      if (!applied) return; // offline read-only gate — don't push/notify/claim success
       pushSanctionRequest({ ...req, status: 'rejected', decidedAt: decidedNow });
       notifySanction({ requestId: req.id, event: 'rejected' });
       toast('Request rejected.');

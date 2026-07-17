@@ -268,6 +268,8 @@ function CartScope({
       return;
     }
     const { action, keptRegIds } = removeCartItemWithSync(ownerKey, isClub, item);
+    // Offline read-only gate: nothing was removed; mutate() already toasted.
+    if (action === 'blocked-offline') return;
     const message = {
       'delete-registration': 'Removed from cart and canceled the registration.',
       'revert-registration': 'Removed from cart — registration reverted to its prior state.',

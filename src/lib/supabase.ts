@@ -10,7 +10,8 @@ import type {
   AccountInvite, AccountingCode, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, EventAdmin, HostPayout, Invoice, Level, Event, Membership, MembershipType, Payment, PaymentSnapshotLine, Region, Registration, RefundRequest, SanctionRequest, SanctionVote, Score, Season,
   WaiverDocument, WaiverSignature, WaitlistGroup, SessionRequest, CompetitionOrder, FinalsLineup, EventCheckin,
 } from './types';
-import { writeQueue, type WriteOp, type ExecResult } from './write-queue';
+import { writeQueue, humanizeWriteError, type WriteOp, type ExecResult, type WriteQueueEntry } from './write-queue';
+import { pushToast } from './toast-bus';
 import type { Database } from './database.types';
 import type { CapacityViolation } from './capacity';
 
@@ -107,6 +108,58 @@ async function executeWriteOp(op: WriteOp): Promise<ExecResult> {
 }
 
 if (supabase) writeQueue.setExecutor(executeWriteOp);
+
+// A PERMANENT write failure (RLS denial, integrity violation, etc. — see
+// classifyWriteError) means the optimistic local change in src/lib/store.ts
+// is now known to be wrong: the server never applied it and never will on
+// retry. There's no per-entry undo, so the rollback is a full reload from
+// Supabase (store.ts's syncFromSupabase, the same function boot hydration
+// uses) — imported dynamically to avoid a static import cycle with store.ts
+// (which imports isSupabaseConfigured/loadAll from this module).
+// The sync must NOT run while other queued writes are still pending: it
+// reassigns the whole local db from the server, so syncing mid-queue would
+// wipe the optimistic state of writes that are about to succeed (e.g. a batch
+// where one line hits RLS while another is in transient backoff) — a new
+// divergence introduced by the rollback itself. So: wait for the queue to
+// fully drain (every entry succeeded, was removed as permanent, or settled to
+// 'failed'), then sync once. Coalesced: permanent failures arriving while a
+// drain-then-sync is already scheduled are covered by that same sync, because
+// writeQueue.run() re-entrantly returns the in-flight run promise, which only
+// resolves after the process loop has dealt with EVERY pending entry —
+// including ones enqueued or re-failed after this was scheduled.
+let rollbackSyncScheduled = false;
+function scheduleRollbackSync() {
+  if (rollbackSyncScheduled) return;
+  rollbackSyncScheduled = true;
+  const waitForDrain = async (): Promise<void> => {
+    for (;;) {
+      await writeQueue.run();
+      // run() can also resolve early when the browser went offline mid-run
+      // (entries left pending, no attempts burned). Syncing then would wipe
+      // their optimistic state, so wait for the next queue notification
+      // (resume()/online, retry, …) and re-check until truly drained.
+      if (writeQueue.getState().pending === 0) return;
+      await new Promise<void>((resolve) => {
+        const unsub = writeQueue.subscribe(() => { unsub(); resolve(); });
+      });
+    }
+  };
+  void waitForDrain()
+    .then(() => import('./store'))
+    .then((m) => m.syncFromSupabase())
+    .finally(() => { rollbackSyncScheduled = false; });
+}
+
+function handlePermanentWriteFailure(entry: WriteQueueEntry, error: unknown): void {
+  const reason = humanizeWriteError(error);
+  pushToast(
+    `Couldn't save ${entry.label}: ${reason}. Your change was not saved and the page has been refreshed from the server.`,
+    { variant: 'error' },
+  );
+  scheduleRollbackSync();
+}
+
+if (supabase) writeQueue.setOnPermanentFailure(handlePermanentWriteFailure);
 
 /** Queue an upsert (chunked at execution time for arrays >500 rows). */
 function remoteUpsert(table: string, rows: Record<string, unknown>[], onConflict?: string) {

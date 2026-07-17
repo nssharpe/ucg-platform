@@ -413,10 +413,12 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
         : { kind: 'standard' as const }),
     };
     if (isEdit) {
-      mutate((d) => { const idx = d.events.findIndex((m) => m.id === event.id); if (idx >= 0) d.events[idx] = event; pushEvent(event); });
+      const applied = mutate((d) => { const idx = d.events.findIndex((m) => m.id === event.id); if (idx >= 0) d.events[idx] = event; pushEvent(event); });
+      if (!applied) return; // offline read-only gate — no false success toast
       toast(`${event.name} updated.`);
     } else {
-      mutate((d) => { d.events.push(event); pushEvent(event); });
+      const applied = mutate((d) => { d.events.push(event); pushEvent(event); });
+      if (!applied) return; // offline read-only gate — no false success toast
       toast(`${event.name} sanctioned — #/events/${slug}`);
     }
     onClose();

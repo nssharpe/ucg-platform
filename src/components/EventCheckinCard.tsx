@@ -90,12 +90,13 @@ function CheckinOpenForm({ row, isClub, myPersonId }: {
     if (!canSubmit || !myPersonId) return;
     const checkedInAt = new Date().toISOString();
     const signedName = name.trim();
-    mutate((d) => {
+    const applied = mutate((d) => {
       const list = d.eventCheckins ?? (d.eventCheckins = []);
       const idx = list.findIndex((c) => c.id === row.id);
       const updated: EventCheckin = { ...row, status: 'checked-in', signedName, checkedInAt, checkedInBy: myPersonId };
       if (idx >= 0) list[idx] = updated; else list.push(updated);
     });
+    if (!applied) return; // offline read-only gate — don't push or claim success
     confirmEventCheckin(row.id, { status: 'checked-in', signedName, checkedInAt, checkedInBy: myPersonId });
     setDialogOpen(false);
   };
@@ -194,10 +195,11 @@ export function EventCheckinAdminCard({ eventId }: { eventId: string }) {
       status: 'open',
       openedBy: caps.personId,
     };
-    mutate((d) => {
+    const applied = mutate((d) => {
       const list = d.eventCheckins ?? (d.eventCheckins = []);
       list.push(row);
     });
+    if (!applied) return; // offline read-only gate — don't push a row local state lacks
     pushEventCheckin(row);
   };
 

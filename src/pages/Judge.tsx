@@ -130,7 +130,7 @@ export function Judge() {
       };
     }
     const calcState = calcCfg && calcSt != null ? { v: 2 as const, kind: calcCfg.kind, state: calcSt } : undefined;
-    mutate((d) => {
+    const applied = mutate((d) => {
       const id = `${eventRec.id}|${active.id}|${apparatus}`;
       d.scores = d.scores.filter((s) => s.id !== id);
       const score = {
@@ -143,6 +143,7 @@ export function Judge() {
       d.scores.push(score);
       pushScore(score);
     });
+    if (!applied) return; // offline read-only gate — no false "Score posted"
     setFlash({ name: athleteName, score: finalScore });
     close();
     toast(`Score posted: ${athleteName} — ${fmtScore(finalScore)}`);

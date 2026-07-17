@@ -36,10 +36,11 @@ export function RegionEditor({ regionOverrides }: Props) {
   };
 
   const save = () => {
-    mutate((d) => {
+    const applied = mutate((d) => {
       d.regionOverrides = { ...pending };
       pushRegionOverrides(d.regionOverrides);
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     setDirty(false);
     toast('Region assignments saved.');
   };

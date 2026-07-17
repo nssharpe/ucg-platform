@@ -122,7 +122,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
     // deleting it would destroy a purchased registration — that's a refund
     // action only. Cancel the group but keep the reg.
     const keepPaidHistory = reg.updatedPending === true;
-    mutate((d) => {
+    const applied = mutate((d) => {
       if (reg.waitlistGroupId) {
         const idx = (d.waitlistGroups ?? []).findIndex((g) => g.id === reg.waitlistGroupId);
         if (idx >= 0 && d.waitlistGroups) {
@@ -142,6 +142,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
         deleteRegistration(reg.id);
       }
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     if (keepPaidHistory) {
       toast(
         'Left the waitlist, but your registration was kept (it was an update to a paid registration, not '
@@ -166,7 +167,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   const completeWaitlistCheckout = (event: Event, group: WaitlistGroup) => {
     const groupRegs = db.registrations.filter((r) => r.waitlistGroupId === group.id && r.waitlisted && r.athleteId === personId);
     if (groupRegs.length === 0) return;
-    mutate((d) => {
+    const applied = mutate((d) => {
       const priorRegs = d.registrations.filter(
         (r) => r.eventId === event.id && r.athleteId === personId
           && !r.refunded && !groupRegs.some((g) => g.id === r.id) && !r.waitlisted,
@@ -208,6 +209,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
         pushCart(personId, cart, false);
       }
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     toast('Entry added to your cart — complete checkout before the hold expires.');
     navigate('/cart');
   };
@@ -229,7 +231,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
     const alreadyPendingItem = changeFeePendingItem(event);
     const alreadyPending = !!alreadyPendingItem;
     let chargedFee = 0;
-    mutate((d) => {
+    const applied = mutate((d) => {
       const existingForAthlete = d.registrations.filter(
         (r) => r.eventId === event.id && r.athleteId === personId && !r.refunded,
       );
@@ -405,6 +407,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
         pushCart(personId, cart, false);
       }
     });
+    if (!applied) return; // offline read-only gate — no false success toast
 
     toast(chargedFee > 0
       ? alreadyPending
@@ -688,7 +691,7 @@ function EditRegistrationModal({
       return;
     }
     const stored = campSurveyToStored(surveyDraft);
-    mutate((d) => {
+    const applied = mutate((d) => {
       for (const r of existing) {
         const idx = d.registrations.findIndex((x) => x.id === r.id);
         const updated: Registration = { ...(idx >= 0 ? d.registrations[idx] : r), campSurvey: stored };
@@ -696,6 +699,7 @@ function EditRegistrationModal({
         pushRegistration(updated);
       }
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     toast('Overnight-accommodations answers saved.');
     onClose();
   };

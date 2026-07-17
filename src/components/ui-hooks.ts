@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo } from 'react';
+import type { ToastOptions } from '../lib/toast-bus';
 
 // Non-component exports (a context + two hooks) live here rather than in ui.tsx
 // so that ui.tsx exports only components — required for Vite fast-refresh
@@ -8,8 +9,10 @@ import { createContext, useContext, useMemo } from 'react';
 // ---- Toasts ----
 // `variant: 'error'` persists by default (no auto-dismiss) so errors can be read
 // and screenshotted; pass `persist` to override either way. All toasts have a
-// manual ✕ close.
-export type ToastOptions = { variant?: 'info' | 'error'; persist?: boolean };
+// manual ✕ close. `ToastOptions` is re-exported from lib/toast-bus so both the
+// React (useToast) and imperative (pushToast, for non-component code) entry
+// points share one type.
+export type { ToastOptions };
 export const ToastCtx = createContext<(msg: string, opts?: ToastOptions) => void>(() => {});
 export const useToast = () => useContext(ToastCtx);
 

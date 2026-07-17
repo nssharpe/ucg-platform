@@ -60,7 +60,7 @@ export async function loadNationals(): Promise<{ athletes: number; scores: numbe
   };
 
   let scoreCount = 0;
-  mutate((db) => {
+  const applied = mutate((db) => {
     // Idempotent: wipe any previous import first.
     db.events = db.events.filter((m) => m.id !== NATIONALS_EVENT_ID);
     db.registrations = db.registrations.filter((r) => r.eventId !== NATIONALS_EVENT_ID);
@@ -127,6 +127,9 @@ export async function loadNationals(): Promise<{ athletes: number; scores: numbe
     }
     db.events.push(event);
   });
+  // Blocked by the offline read-only gate — surface as a failed import rather
+  // than reporting success counts for data that was never applied.
+  if (!applied) throw new Error("You're offline — the import was not applied.");
 
   return { athletes: data.people.length, scores: scoreCount };
 }

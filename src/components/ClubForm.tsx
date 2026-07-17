@@ -27,7 +27,7 @@ export function ClubForm({ club, onClose }: { club?: Club; onClose: () => void }
   const save = () => {
     if (!valid) { toast('Name, short name, and state are required.'); return; }
     const data = { ...draft, name: draft.name.trim(), shortName: draft.shortName.trim(), region };
-    mutate((d) => {
+    const applied = mutate((d) => {
       if (club) {
         const i = d.clubs.findIndex((c) => c.id === club.id);
         d.clubs[i] = { ...d.clubs[i], ...data };
@@ -38,6 +38,7 @@ export function ClubForm({ club, onClose }: { club?: Club; onClose: () => void }
         pushClub(created);
       }
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     toast(club ? 'Club updated.' : 'Club created.');
     onClose();
   };
