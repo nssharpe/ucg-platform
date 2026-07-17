@@ -57,9 +57,11 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
 2. **Rate limiting / CAPTCHA** on sign-up and the public email-sending functions
    (`request-guardian-waiver`, `notify-club-cart`, `request-manager-access`) —
    these can spam from the verified naigc.org domain today.
-3. **Daily "anything wrong?" digest** — new `error_logs` rows + `payments` stuck
-   `pending` > 1h → email via Resend. Cheap now: `scheduled-dispatch` (pg_cron,
-   15-min) already exists; this is one more dispatch kind.
+3. **Daily "anything wrong?" digest** — SHIPPED 2026-07-17: `daily-digest` kind
+   in `scheduled-dispatch` (new `error_logs` rows since the last digest +
+   every `payments` row stuck `pending` > 1h → email via Resend, at most once
+   per UTC day). Runbook in `supabase/README.md` "Scheduled dispatch (pg_cron)".
+   Not yet deployed — controller still owns the deploy step.
 4. **Privacy policy + ToS drafts** for counsel review, plus sign-up consent capture.
 5. **Run the Playwright E2E suite in CI** (staging project + specs exist; the deploy
    workflow doesn't run them yet).

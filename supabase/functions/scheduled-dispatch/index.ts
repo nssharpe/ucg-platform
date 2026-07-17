@@ -24,6 +24,7 @@ import {
   type WaitlistGroupRow,
 } from '../_shared/waitlist-contacts.ts';
 import { toE164, sendSmsBatch } from '../_shared/telnyx.ts';
+import { digestDateKey, isDigestFireWindow, digestWindowStart, isStuckPayment } from '../_shared/digest-logic.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -40,6 +41,10 @@ interface Recipient {
   lastName: string;
   email: string; // already lowercased + validated
 }
+
+// Daily "anything wrong?" digest recipients — hardcoded, update-in-place (same
+// idiom as report-problem's ROUTES map). Not derived from any DB role.
+const DIGEST_RECIPIENTS: string[] = ['nssharpe@gmail.com'];
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -324,11 +329,30 @@ Deno.serve(async (req) => {
     failures.push('finals-deadline:query');
   }
 
+  // f. Daily "anything wrong?" digest (whats-next §3): a single daily email of
+  // new error_logs rows since the last digest + any payments stuck 'pending'
+  // for more than 1h. Isolated in its own try/catch for the same reason as
+  // (b)/(d) above.
+  let digestSent = false;
+  let digestErrorCount = 0;
+  let digestStuckPaymentCount = 0;
+  try {
+    const result = await runDailyDigest(db, nowISO, appUrl);
+    digestSent = result.sent;
+    digestErrorCount = result.errorCount;
+    digestStuckPaymentCount = result.stuckPaymentCount;
+    failures.push(...result.failures);
+  } catch (err) {
+    console.error('scheduled-dispatch: daily digest failed', err);
+    failures.push('daily-digest:run');
+  }
+
   return json({
     ok: failures.length === 0,
     reminders3d, reminders1d, closures, ownerTaskReminders,
     waitlistPromoted, waitlistRequeued, waitlistCompleted,
     finalsNagEmailCount, finalsNagSmsCount, finalsLocked,
+    digestSent, digestErrorCount, digestStuckPaymentCount,
     failures,
   });
 });
@@ -988,4 +1012,198 @@ async function missingFinalsLineupsByClub(db: SupabaseClient, eventId: string): 
     missingByClub.set(e.clubId, arr);
   }
   return missingByClub;
+}
+
+// ---------------------------------------------------------------------------
+// f. Daily "anything wrong?" digest (whats-next §3)
+// ---------------------------------------------------------------------------
+// Sends at most one email per UTC day, gated on the FIRST cron run at or
+// after 13:00 UTC (`isDigestFireWindow`). Once-per-day enforcement reuses the
+// existing `notification_log` (kind, ref_id, recipient) dedupe idiom rather
+// than a new table: `ref_id` is the UTC calendar date (`digestDateKey`), so a
+// claim can succeed at most once per day per recipient — the same atomic
+// insert-on-conflict-do-nothing race protection every other consumer above
+// gets for free. The window reported (new error_logs) spans since the
+// PREVIOUS digest's recorded `sent_at` (falls back to 24h). Stuck payments
+// are NOT windowed — every currently-stuck row is listed every time, since
+// each one represents unreconciled money until it resolves. The email is
+// skipped entirely (no claim, no send) when there is nothing to report, so a
+// quiet day never emails and never consumes the day's one-digest claim
+// (letting a later run the same day still fire if something shows up).
+
+const DIGEST_KIND = 'daily-digest';
+const ERROR_ROW_CAP = 20;
+const ERROR_MESSAGE_TRUNC = 120;
+
+interface DigestErrorRow {
+  id: string;
+  created_at: string;
+  email: string | null;
+  context: string | null;
+  message: string;
+}
+
+interface DigestPaymentRow {
+  id: string;
+  created_at: string;
+  person_id: string | null;
+  amount_subtotal: number | null;
+  service_fee: number | null;
+  stripe_session_id: string | null;
+  status: string;
+}
+
+interface DigestResult {
+  sent: boolean;
+  errorCount: number;
+  stuckPaymentCount: number;
+  failures: string[];
+}
+
+async function runDailyDigest(db: SupabaseClient, nowISO: string, appUrl: string): Promise<DigestResult> {
+  const failures: string[] = [];
+  if (!isDigestFireWindow(nowISO)) {
+    return { sent: false, errorCount: 0, stuckPaymentCount: 0, failures };
+  }
+
+  // Previous digest's send time (most recent notification_log row for this
+  // kind, across any recipient/day) drives the reporting window.
+  const { data: lastSentRow, error: lastSentErr } = await db
+    .from('notification_log')
+    .select('sent_at')
+    .eq('kind', DIGEST_KIND)
+    .order('sent_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (lastSentErr) {
+    console.error('scheduled-dispatch: daily digest failed to load last sent_at', lastSentErr);
+    return { sent: false, errorCount: 0, stuckPaymentCount: 0, failures: ['daily-digest:last-sent-query'] };
+  }
+  const windowStart = digestWindowStart(nowISO, (lastSentRow?.sent_at as string | undefined) ?? null);
+
+  // New error_logs rows since the window start, most-recent-first, capped for
+  // the email body; the true total count drives "and N more".
+  const { count: errorTotal, error: errCountErr } = await db
+    .from('error_logs')
+    .select('id', { count: 'exact', head: true })
+    .gte('created_at', windowStart);
+  if (errCountErr) {
+    console.error('scheduled-dispatch: daily digest failed to count error_logs', errCountErr);
+    return { sent: false, errorCount: 0, stuckPaymentCount: 0, failures: ['daily-digest:error-count-query'] };
+  }
+  const errorCount = errorTotal ?? 0;
+
+  const { data: errorRows, error: errRowsErr } = await db
+    .from('error_logs')
+    .select('id, created_at, email, context, message')
+    .gte('created_at', windowStart)
+    .order('created_at', { ascending: false })
+    .limit(ERROR_ROW_CAP);
+  if (errRowsErr) {
+    console.error('scheduled-dispatch: daily digest failed to load error_logs', errRowsErr);
+    return { sent: false, errorCount: 0, stuckPaymentCount: 0, failures: ['daily-digest:error-rows-query'] };
+  }
+
+  // Every currently-stuck pending payment (created_at < now-1h), regardless
+  // of the digest window. The `.lt('created_at', cutoffISO)` clause does the
+  // heavy lifting server-side; `isStuckPayment` is re-applied client-side as
+  // a defense-in-depth check against the same predicate (unit-tested).
+  const cutoffISO = new Date(Date.parse(nowISO) - 60 * 60 * 1000).toISOString();
+  const { data: pendingRows, error: pendingErr } = await db
+    .from('payments')
+    .select('id, created_at, person_id, amount_subtotal, service_fee, stripe_session_id, status')
+    .eq('status', 'pending')
+    .lt('created_at', cutoffISO)
+    .order('created_at', { ascending: true });
+  if (pendingErr) {
+    console.error('scheduled-dispatch: daily digest failed to load stuck payments', pendingErr);
+    return { sent: false, errorCount: 0, stuckPaymentCount: 0, failures: ['daily-digest:payments-query'] };
+  }
+  const stuckRows = ((pendingRows ?? []) as DigestPaymentRow[])
+    .filter((r) => isStuckPayment(nowISO, r.created_at, r.status));
+
+  if (errorCount === 0 && stuckRows.length === 0) {
+    return { sent: false, errorCount: 0, stuckPaymentCount: 0, failures };
+  }
+
+  const claimed = await claimNotifications(db, DIGEST_KIND, digestDateKey(nowISO), DIGEST_RECIPIENTS);
+  if (claimed.length === 0) {
+    // Already sent today (or every recipient already claimed) — nothing new
+    // to do this run.
+    return { sent: false, errorCount, stuckPaymentCount: stuckRows.length, failures };
+  }
+
+  // Cheap person-email resolution for stuck payments (id + amount alone is
+  // acceptable per spec; a lookup is included here since it's a single batch
+  // query, not per-row).
+  const personIds = [...new Set(stuckRows.map((r) => r.person_id).filter((id): id is string => !!id))];
+  const emailByPersonId = new Map<string, string>();
+  if (personIds.length > 0) {
+    const { data: peopleRows } = await db.from('people').select('id, email').in('id', personIds);
+    for (const p of peopleRows ?? []) {
+      if (p.email) emailByPersonId.set(p.id as string, p.email as string);
+    }
+  }
+
+  const html = renderEmail({
+    heading: 'Daily digest',
+    bodyHtml: digestBodyHtml(errorRows as DigestErrorRow[], errorCount, stuckRows, emailByPersonId),
+    footnoteHtml: `<a href="${appUrl}/#/admin/errors" style="color:#5b6b7a;">Open the admin Error Log</a>`,
+  });
+  const subject = `UCG daily digest — ${errorCount} new error${errorCount === 1 ? '' : 's'}, ${stuckRows.length} stuck payment${stuckRows.length === 1 ? '' : 's'}`;
+  const messages: EmailMessage[] = claimed.map((recipient) => ({ to: recipient, subject, html }));
+  const result = await sendBatch(messages);
+  if (!result.ok) {
+    console.error('scheduled-dispatch: daily digest send failed', result.failed);
+    failures.push('daily-digest:send');
+    await releaseClaims(db, DIGEST_KIND, digestDateKey(nowISO), claimed);
+    return { sent: false, errorCount, stuckPaymentCount: stuckRows.length, failures };
+  }
+
+  return { sent: true, errorCount, stuckPaymentCount: stuckRows.length, failures };
+}
+
+function formatCents(cents: number | null): string {
+  return `$${((cents ?? 0) / 100).toFixed(2)}`;
+}
+
+function digestBodyHtml(
+  errorRows: DigestErrorRow[],
+  errorTotal: number,
+  stuckRows: DigestPaymentRow[],
+  emailByPersonId: Map<string, string>,
+): string {
+  const sections: string[] = [];
+
+  sections.push(`<h2 style="font-size:15px;margin:20px 0 8px;">New errors (${errorTotal})</h2>`);
+  if (errorRows.length === 0) {
+    sections.push('<p>None.</p>');
+  } else {
+    const rows = errorRows.map((r) => {
+      const time = esc(r.created_at.replace('T', ' ').slice(0, 19)) + ' UTC';
+      const who = esc(r.email ?? 'guest');
+      const context = esc(r.context ?? '—');
+      const msg = esc(r.message.length > ERROR_MESSAGE_TRUNC ? `${r.message.slice(0, ERROR_MESSAGE_TRUNC)}…` : r.message);
+      return `<tr><td style="padding:4px 8px 4px 0;white-space:nowrap;">${time}</td><td style="padding:4px 8px 4px 0;">${who}</td><td style="padding:4px 8px 4px 0;">${context}</td><td style="padding:4px 0;">${msg}</td></tr>`;
+    }).join('');
+    sections.push(`<table role="presentation" style="border-collapse:collapse;font-size:13px;width:100%;">${rows}</table>`);
+    const more = errorTotal - errorRows.length;
+    if (more > 0) sections.push(`<p style="font-size:13px;">…and ${more} more.</p>`);
+  }
+
+  sections.push(`<h2 style="font-size:15px;margin:20px 0 8px;">Stuck payments — pending &gt;1h (${stuckRows.length})</h2>`);
+  if (stuckRows.length === 0) {
+    sections.push('<p>None.</p>');
+  } else {
+    const rows = stuckRows.map((r) => {
+      const time = esc(r.created_at.replace('T', ' ').slice(0, 19)) + ' UTC';
+      const who = r.person_id ? esc(emailByPersonId.get(r.person_id) ?? r.person_id) : '—';
+      const amount = esc(formatCents((r.amount_subtotal ?? 0) + (r.service_fee ?? 0)));
+      const session = esc(r.stripe_session_id ?? '—');
+      return `<tr><td style="padding:4px 8px 4px 0;white-space:nowrap;">${time}</td><td style="padding:4px 8px 4px 0;">${esc(r.id)}</td><td style="padding:4px 8px 4px 0;">${who}</td><td style="padding:4px 8px 4px 0;">${amount}</td><td style="padding:4px 0;">${session}</td></tr>`;
+    }).join('');
+    sections.push(`<table role="presentation" style="border-collapse:collapse;font-size:13px;width:100%;">${rows}</table>`);
+  }
+
+  return sections.join('');
 }

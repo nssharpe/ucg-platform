@@ -481,6 +481,21 @@ to whatever scheduled work exists:
   admin/sanctioning/host-club managers/event-admin grantees and backs the
   event page's Waitlist card, since `waitlist_groups` RLS only exposes a
   group to its own club/person).
+- **Daily "anything wrong?" digest** (`daily-digest` kind, whats-next §3): at
+  most one email per UTC day, to a hardcoded recipient list (`DIGEST_RECIPIENTS`
+  in `scheduled-dispatch/index.ts`, update-in-place — same idiom as
+  `report-problem`'s `ROUTES` map). Gated on the first 15-min cron run at or
+  after 13:00 UTC (`_shared/digest-logic.ts` `isDigestFireWindow`); once-per-day
+  enforcement reuses `notification_log` with `ref_id` = the UTC calendar date
+  (`digestDateKey`) rather than a new table. Reports (a) new `error_logs` rows
+  since the PREVIOUS digest's recorded `sent_at` (falls back to 24h,
+  `digestWindowStart`) — most-recent 20 shown + "and N more" — and (b) every
+  `payments` row currently `status='pending'` for more than 1h (unwindowed —
+  each represents unreconciled money until resolved), with a cheap batch
+  `people` lookup for a stuck payment's email when resolvable. Skipped
+  entirely (no claim, no send) when both are empty, so a quiet day never
+  consumes the day's one-digest claim. Footer links to the admin Error Log
+  (`#/admin/errors`).
 
 All consumers dedupe idempotently (via `notification_log` where email is the
 state, via conditional status claims for the waitlist sweep) and are isolated
