@@ -87,7 +87,8 @@ Live build/tooling notes live in [`../CLAUDE.md`](../CLAUDE.md); open work is
 | [password-policy](research/2026-06-22-password-policy.md) | Password best practice (NIST) + Supabase policy settings | 📓 research |
 | [error-logging-observability](research/2026-06-22-error-logging-observability.md) | Error-log strategy (DB + admin search; Sentry optional) | 📓 research → **shipped (error_logs)** |
 | [admin-refresh-flash](research/2026-06-22-admin-refresh-flash.md) | Diagnosis + fix for the admin-page "access denied" flash on refresh | 📓 research → **shipped (rolesLoaded)** |
-| [security-review-options](research/2026-07-17-security-review-options.md) | Third-party security review market scan + scoped recommendation (~$5k ± $2k, 2-layer plan) | 📓 research — 👤 Nate to pick option + timing (gates live keys) |
+| [security-review-options](research/2026-07-17-security-review-options.md) | Third-party security review market scan + scoped recommendation (~$5k ± $2k, 2-layer plan) | 📓 research — 👤 Nate chose Supabomb + internal review for now (gap accepted in go-live checklist) |
+| [supabomb-scan-results](research/2026-07-17-supabomb-scan-results.md) | First automated Supabase scan + manual anon-read RLS probe (prod+staging) | 📓 research → clean except **camp_survey world-readable** (queued fix, whats-next §0) |
 
 ## What's next
 
