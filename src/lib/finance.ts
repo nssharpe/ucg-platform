@@ -12,14 +12,16 @@
 //   browser/CI timezone, which is unacceptable for a finance report whose
 //   numbers must match regardless of where it's run. `defaultEventRange`
 //   likewise adds its 7-day pad and snaps to end-of-day in UTC.
-// - `hostPayoutOwedCents` is explicitly provisional (per the task brief) —
-//   it returns event-scoped net revenue (gross minus refunds) with NO fee or
-//   prior-payout deduction. Merchant (Stripe) fees are treated as the
-//   league's own cost and service fees as the league's own income, neither
-//   of which reduces what's owed to the host; payouts already made are
-//   surfaced separately by the caller (host_payouts) for a side-by-side
-//   comparison, not subtracted here. Confirm with Julia before this becomes
-//   the actual payout figure sent to a host.
+// - `hostPayoutOwedCents` (formula confirmed by Julia, 2026-07-17): what's
+//   owed to a host club is the event-scoped GROSS collected — every dollar
+//   paid for athlete registrations and add-ons, before service/admin fees —
+//   with refunds NOT deducted. Rationale: in-app refunds exist only for
+//   league-hosted events (which get no payout), and when an athlete asks a
+//   host club for a refund the club handles it themselves — UCG still pays
+//   the full amount collected even if the athlete was removed from the
+//   event. Merchant (Stripe) fees are the league's own cost and service
+//   fees its own income; neither touches the payout. Payouts already made
+//   are surfaced separately by the caller (host_payouts), not subtracted.
 // - Money in `FinanceSummarySheet`/`FinanceTxnsSheet` rows is rendered as
 //   plain dollar numbers (cents / 100), not formatted strings — `SheetModel`
 //   rows are `(string | number)[]` and host-export.ts's existing sheets never
@@ -383,15 +385,17 @@ export function buildFinanceSummary(
 
 // --- Host payout owed ------------------------------------------------------
 
-/** Provisional "what does this host's payout owe" figure — see the header
- *  note. `summaryForEvent` MUST already be scoped to one event (i.e. built
- *  with `eventId` set) — this function does no further scoping itself. */
+/** Amount owed to the host club: the event's GROSS collected (registrations
+ *  + add-ons, before service/admin fees), refunds NOT deducted — see the
+ *  header note (formula per Julia, 2026-07-17). `summaryForEvent` MUST
+ *  already be scoped to one event (i.e. built with `eventId` set) — this
+ *  function does no further scoping itself. */
 export function hostPayoutOwedCents(
   summaryForEvent: FinanceSummary,
 ): { owedCents: number; parts: { label: string; cents: number }[] } {
-  const parts = summaryForEvent.lines.map((l) => ({ label: l.label, cents: l.netCents }));
-  parts.push({ label: 'Total', cents: summaryForEvent.netCents });
-  return { owedCents: summaryForEvent.netCents, parts };
+  const parts = summaryForEvent.lines.map((l) => ({ label: l.label, cents: l.grossCents }));
+  parts.push({ label: 'Total', cents: summaryForEvent.grossCents });
+  return { owedCents: summaryForEvent.grossCents, parts };
 }
 
 // --- Excel sheet models ------------------------------------------------------
