@@ -287,6 +287,15 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   in place — a `useMemo`/`useEffect` keyed on a nested `db.*` path NEVER sees local
   mutations (only a full `syncFromSupabase()` reload reassigns). Read `db.*` directly
   each render; audit for this trap when touching store consumers.
+- **`mutate()` returns `boolean` (offline read-only gate, 2026-07-17):** when Supabase
+  is configured and the browser is offline, `mutate()` REFUSES the write (toasts, returns
+  `false`) so local state never diverges from a queue that isn't accepting new work. Any
+  call site whose continuation presumes success (success toast, modal close, navigate,
+  a `push*` OUTSIDE the callback) MUST guard on the return value — every existing site
+  was swept 2026-07-17. Write-queue side: `classifyWriteError` makes RLS/integrity/auth
+  failures 'permanent' (no retry; boot-wired toast + drain-then-`syncFromSupabase()`
+  rollback in `supabase.ts`); non-React code toasts via `pushToast` (`lib/toast-bus.ts`),
+  the imperative escape hatch into the same ToastProvider.
 - **New DB collection plumbing:** add to `types.ts` (`DB.<x>`), `rowTo<X>` +
   `push<X>`/`delete<X>` in `supabase.ts`, and the `loadAll` Promise.all + map +
   conditional spread. `from('<new_table>')` typechecks even if absent from `database.types`.
