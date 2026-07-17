@@ -14,7 +14,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendOne } from '../_shared/resend.ts';
 import { renderEmail } from '../_shared/email-layout.ts';
-import { jwtAalClaim, callerAalSatisfies } from '../_shared/jwt-aal.ts';
+import { requireAalForEnrolledCaller } from '../_shared/aal-guard.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -52,26 +52,14 @@ Deno.serve(async (req) => {
   const isAdmin = (roles ?? []).some((r: { role: string }) => r.role === 'admin');
   if (!isAdmin) return json({ ok: false, error: 'Admin role required to reset two-factor authentication.' }, 403);
 
-  // Phase-B AAL enforcement, mirroring the hardened is_admin() migration
-  // (20260717140238): this function IS admin power (it strips MFA factors —
-  // including, potentially, the CALLER'S own), and because it authorizes via
-  // the service-role client it bypasses the RLS-level is_admin() hardening.
-  // Without this check a stolen aal1 JWT for an MFA-enrolled admin could
-  // reset that same admin's factors and then pass the hardened is_admin()
-  // everywhere. Rule: caller has any verified factor ⇒ the SAME token
-  // getUser() just authenticated must carry aal === 'aal2'. Fail-closed —
-  // an unreadable aal claim with verified factors present is denied; if we
-  // can't even list the caller's factors, deny outright.
-  const { data: callerFactorData, error: callerFactorErr } =
-    await admin.auth.admin.mfa.listFactors({ userId: callerData.user.id });
-  if (callerFactorErr) return json({ ok: false, error: 'Could not verify your session security level.' }, 500);
-  const callerHasVerifiedFactor = (callerFactorData?.factors ?? []).some((f) => f.status === 'verified');
-  if (!callerAalSatisfies(jwtAalClaim(token), callerHasVerifiedFactor)) {
-    return json({
-      ok: false,
-      error: 'This action requires a two-factor-verified session — sign in again and complete your 2FA challenge.',
-    }, 403);
-  }
+  // Phase-B AAL enforcement (shared guard — see _shared/aal-guard.ts): this
+  // function IS admin power (it strips MFA factors — including, potentially,
+  // the CALLER'S own), and because it authorizes via the service-role client
+  // it bypasses the RLS-level is_admin() hardening. Without this check a
+  // stolen aal1 JWT for an MFA-enrolled admin could reset that same admin's
+  // factors and then pass the hardened is_admin() everywhere.
+  const aalDenied = await requireAalForEnrolledCaller(admin, callerData.user.id, token, corsHeaders);
+  if (aalDenied) return aalDenied;
 
   let payload: Payload;
   try { payload = await req.json(); } catch { return json({ ok: false, error: 'Invalid JSON body.' }, 400); }

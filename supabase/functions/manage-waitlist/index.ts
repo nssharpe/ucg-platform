@@ -27,6 +27,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendBatch, type EmailMessage } from '../_shared/resend.ts';
 import { PROMOTION_HOLD_HOURS } from '../_shared/capacity.ts';
+import { requireAalForEnrolledCaller } from '../_shared/aal-guard.ts';
 import {
   resolveGroupContacts, groupLandingUrl, promotionEmailHtml, requeueEmailHtml, promotionSubject, requeueSubject,
   type WaitlistGroupRow,
@@ -71,6 +72,13 @@ Deno.serve(async (req) => {
   if (roleErr) return json({ error: 'Could not verify permissions.' }, 403);
   const roles = ((roleRows ?? []) as { role: string }[]).map((r) => r.role);
   const isOverrider = roles.includes('admin') || roles.includes('sanctioning');
+
+  // Phase-B AAL guard: an MFA-enrolled caller must present an aal2 JWT.
+  // Placed before the per-action branches so it covers both the 'list'
+  // (admin/sanctioning/host/grantee) and 'promote'/'requeue' (admin/
+  // sanctioning) surfaces; unenrolled callers are untouched.
+  const aalDenied = await requireAalForEnrolledCaller(db, authUserId, token, corsHeaders);
+  if (aalDenied) return aalDenied;
 
   // --- Validate payload ---
   let payload: Payload;

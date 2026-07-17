@@ -30,6 +30,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { getStripe } from '../_shared/stripe.ts';
 import { sendBatch, sendOne, type EmailMessage } from '../_shared/resend.ts';
 import { renderEmail } from '../_shared/email-layout.ts';
+import { requireAalForEnrolledCaller } from '../_shared/aal-guard.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -78,6 +79,10 @@ Deno.serve(async (req) => {
   if (!roles.includes('refund_manager') && !roles.includes('admin')) {
     return json({ error: 'You do not have permission to review refund requests.' }, 403);
   }
+
+  // Phase-B AAL guard: an MFA-enrolled caller must present an aal2 JWT.
+  const aalDenied = await requireAalForEnrolledCaller(db, authUserId, token, corsHeaders);
+  if (aalDenied) return aalDenied;
 
   // --- Resolve the caller's own person row (reviewed_by; fail closed) ---
   const { data: caller, error: callerErr } = await db
