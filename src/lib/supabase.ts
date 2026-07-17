@@ -44,6 +44,23 @@ function chunk<T>(rows: T[], size = CHUNK_SIZE): T[][] {
 
 const PAGE_SIZE = 1000;
 
+/** Explicit `registrations` column list for the broad `loadAll` read,
+ *  EXCLUDING `camp_survey` — see the privacy fix in migration
+ *  20260717205348_camp_survey_scoped_read.sql / docs/research/2026-07-17-
+ *  supabomb-scan-results.md. `registrations` carries a public `using (true)`
+ *  read policy (drives live results/start lists for every visitor), so a
+ *  bare `select('*')` here would ask for `camp_survey` on every page load —
+ *  the column is REVOKEd from anon/authenticated at the DB level, which would
+ *  make `select('*')` itself fail (PostgREST errors the whole query on any
+ *  requested-but-unreadable column). Keep in sync with the `registrations`
+ *  table schema (Row/Insert/Update in database.types.ts, plus the
+ *  post-generation columns noted in registrationToRow/rowToRegistration:
+ *  waitlisted/waitlist_group_id/hold_expires_at). Callers that need
+ *  camp_survey use the scoped `fetchCampSurveys` RPC instead (self / club
+ *  manager / event host) or `fetchEventHostRoster` (host workbook — already
+ *  scoped, unaffected by this). */
+const REGISTRATION_COLUMNS_NO_SURVEY = 'id, event_id, athlete_id, club_id, discipline, level_id, apparatus, apparatus_levels, session_id, squad_id, refunded, refund_requested, keep_listed, partner_athlete_id, paid, updated_pending, created_at, waitlisted, waitlist_group_id, hold_expires_at' as const;
+
 /** Fetch every row from a table, paging past PostgREST's default row cap
  *  (1000) — needed for `people`, which now exceeds that with the full
  *  ScoreFlippers import. */
@@ -333,7 +350,12 @@ function squadIdsByReg(event: Event): Map<string, string> {
   for (const s of event.sessions) for (const q of s.squads) for (const regId of q.athleteRegIds) map.set(regId, q.id);
   return map;
 }
-const rowToRegistration = (r: Row<'registrations'>): Registration => ({
+// `camp_survey` is deliberately excluded from loadAll's registrations select
+// (REGISTRATION_COLUMNS_NO_SURVEY, see the const's doc comment) — the row
+// shape coming back from that query has no `camp_survey` key at all, so this
+// mapper's input type makes the column optional rather than requiring it.
+type RegistrationRowMaybeSurvey = Omit<Row<'registrations'>, 'camp_survey'> & { camp_survey?: Row<'registrations'>['camp_survey'] };
+const rowToRegistration = (r: RegistrationRowMaybeSurvey): Registration => ({
   id: r.id, eventId: r.event_id, athleteId: r.athlete_id, clubId: r.club_id ?? '', discipline: r.discipline as Registration['discipline'],
   levelId: r.level_id ?? '', apparatus: (r.apparatus ?? []) as Registration['apparatus'], sessionId: r.session_id ?? '',
   refunded: r.refunded, keepListed: r.keep_listed,
@@ -789,6 +811,31 @@ export function pushRegistration(r: Registration, squadId: string | null = null)
   remoteUpsert('registrations', [registrationToRow(r, squadId)]);
 }
 export function deleteRegistration(id: string) { remoteDelete('registrations', id); }
+
+/** Scoped camp-survey read (privacy fix, docs/research/2026-07-17-supabomb-
+ *  scan-results.md "camp_survey is world-readable"): `camp_survey` is no
+ *  longer selectable off the base `registrations` row (loadAll's broad read
+ *  excludes it, and the column is REVOKEd from anon/authenticated — see
+ *  migration 20260717205348_camp_survey_scoped_read.sql) since that table
+ *  carries a public `using (true)` read policy. The self-registration/edit
+ *  flows (Events.tsx SelfRegModal, MyRegistrations.tsx EditRegistrationModal)
+ *  still need to prefill an athlete's OWN prior answer, so they call this RPC
+ *  on demand instead — authorized for the athlete themself, a manager of the
+ *  registration's club, or the event's host (mirrors `is_event_host`).
+ *  Returns a registrationId → campSurvey map; omit `eventId` to fetch across
+ *  every registration the caller may see (used sparingly — callers here
+ *  always pass one event). Fails soft ([] map) on error, matching the
+ *  read-only, non-blocking nature of a prefill. */
+export async function fetchCampSurveys(eventId?: string): Promise<Record<string, Registration['campSurvey'] | null>> {
+  if (!supabase) return {};
+  const { data, error } = await supabase.rpc('registration_camp_surveys', { p_event_id: eventId ?? null });
+  if (error) { console.error('[supabase] registration_camp_surveys failed:', error); return {}; }
+  const out: Record<string, Registration['campSurvey'] | null> = {};
+  for (const r of (data ?? []) as FnReturns<'registration_camp_surveys'>) {
+    out[r.registration_id] = (r.camp_survey as Registration['campSurvey'] | null) ?? null;
+  }
+  return out;
+}
 
 /** B4.4: sync a synchro partner's SY level server-side via
  *  sync_synchro_partner_level — NOT a plain upsert, since the caller
@@ -1891,7 +1938,7 @@ export async function loadAll(): Promise<DB | null> {
       supabase.from('events').select('*'),
       supabase.from('event_sessions').select('*'),
       supabase.from('squads').select('*'),
-      supabase.from('registrations').select('*'),
+      supabase.from('registrations').select(REGISTRATION_COLUMNS_NO_SURVEY),
       supabase.from('scores').select('*'),
       supabase.from('coupons').select('*'),
       supabase.from('cart_items').select('*'),

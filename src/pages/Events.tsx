@@ -18,7 +18,7 @@ import type { Athlete, CartItem, Discipline, Event, EventAdmin, EventSession, Re
 import { DisciplineIcon } from '../components/DisciplineIcon';
 import { SizedAddonPicker } from '../components/AddonPickers';
 import {
-  deleteRegistration, fetchEventCollectedTotal, fetchEventHostAddons, fetchEventHostRoster, fetchEventWaitlist, findPersonForHost, grantEventAdmin,
+  deleteRegistration, fetchCampSurveys, fetchEventCollectedTotal, fetchEventHostAddons, fetchEventHostRoster, fetchEventWaitlist, findPersonForHost, grantEventAdmin,
   hostDeleteRegistration, hostUpsertRegistration, insuranceCertificateUrl,
   listSanctioningTeam, manageWaitlist, markMedalsReceived, pushCart, pushEvent, pushEventSessions, pushRegistration,
   revokeEventAdmin, syncSynchroPartnerLevelRemote, uploadInsuranceCertificate,
@@ -1797,6 +1797,22 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
   const [surveyDraft, setSurveyDraft] = useState<CampSurveyDraft>(
     () => initialCampSurveyDraft(existingRegs[0]?.campSurvey),
   );
+  // camp_survey is no longer part of the broad loadAll read (privacy fix,
+  // docs/research/2026-07-17-supabomb-scan-results.md) — existingRegs[0]
+  // above never carries a prior answer any more, so fetch it on demand via
+  // the scoped RPC (self-scoped: this athlete's own registration) to seed
+  // the redo-registration prefill. No-op when there's nothing to prefill.
+  useEffect(() => {
+    if (!surveyRequired || existingRegs.length === 0) return;
+    let cancelled = false;
+    fetchCampSurveys(event.id).then((surveys) => {
+      if (cancelled) return;
+      const prior = surveys[existingRegs[0].id];
+      if (prior) setSurveyDraft(initialCampSurveyDraft(prior));
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const changeFeeApplies = !!(
     event.changeFee && new Date() >= new Date(event.changeFee.startsAt)

@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { Badge, Combo, Field, Modal, Tabs } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
-import { pushRegistration, pushCart, syncSynchroPartnerLevelRemote, cancelWaitlistGroup, deleteRegistration } from '../lib/supabase';
+import { pushRegistration, pushCart, syncSynchroPartnerLevelRemote, cancelWaitlistGroup, deleteRegistration, fetchCampSurveys } from '../lib/supabase';
 import { RegistrationEditor } from '../components/RegistrationEditor';
 import {
   newRegistrationEntryTotal, registrationChangeFee, changeIsEligible, syncSynchroPartnerLevel, lateFeeApplies, lateFeeAnchor,
@@ -684,6 +684,22 @@ function EditRegistrationModal({
   const [surveyDraft, setSurveyDraft] = useState<CampSurveyDraft>(
     () => initialCampSurveyDraft(existing[0]?.campSurvey),
   );
+  // camp_survey is no longer part of the broad loadAll read (privacy fix,
+  // docs/research/2026-07-17-supabomb-scan-results.md) — existing[0] above
+  // never carries a prior answer any more, so fetch it on demand via the
+  // scoped RPC (self-scoped: this athlete's own registration) to seed the
+  // edit form. No-op when there's nothing to prefill.
+  useEffect(() => {
+    if (!surveyRequired || existing.length === 0) return;
+    let cancelled = false;
+    fetchCampSurveys(event.id).then((surveys) => {
+      if (cancelled) return;
+      const prior = surveys[existing[0].id];
+      if (prior) setSurveyDraft(initialCampSurveyDraft(prior));
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const saveSurvey = () => {
     if (!campSurveyValid(surveyDraft)) {
