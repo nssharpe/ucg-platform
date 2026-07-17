@@ -26,6 +26,20 @@ already built, deployed, and proven in **test** mode (account `acct_1TjNQ73b3Mn8
 - [ ] **Tax / 1099-K awareness.** Confirm the business TIN is on file so Stripe can issue
       year-end forms; this is a UCG/NAIGC finance task, not a code change.
 - [ ] **Statement descriptor** reviewed so members recognize the charge on their card.
+- [ ] **Passkey Relying Party = the real domain.** WebAuthn/passkey MFA (enabled
+      2026-07-17) is configured with Relying Party ID `nssharpe.github.io` /
+      origin `https://nssharpe.github.io`. Passkeys are **domain-bound**: when the
+      app moves to `registration.unitedgymnastics.org` (or similar), update
+      Dashboard → Auth → Passkeys (Relying Party ID + Origins) to the new domain —
+      and note any passkeys enrolled against the old domain will stop working and
+      must be re-enrolled (TOTP factors are unaffected; users keep 2FA via code).
+- [ ] **Auth Attack Protection** (Dashboard → Auth → Attack Protection):
+      - "Prevent use of leaked passwords" — enable (may require the Pro upgrade
+        that's already a pre-flight gate above; flip it when upgrading).
+      - "Enable Captcha protection" — do NOT flip until the CAPTCHA frontend work
+        ships (whats-next §2.2): the toggle enforces a captcha token on ALL auth
+        calls, so enabling it early breaks every sign-in/sign-up, including dev
+        auto-login and the E2E suite.
 - [ ] **Bug-report / support routing emails** — the in-app "Report a problem" widget
       currently routes the "event/rule/policy question" category to the interim
       `jzsharpe+ucghelp@gmail.com` / `nssharpe+ucghelp@gmail.com` aliases (decided
@@ -91,13 +105,13 @@ Do this with a **real personal card** on the live site, smallest possible real c
 ## 3. Refund the smoke test
 
 - [ ] **Refund the smoke charge from the Stripe Dashboard** (Payments → the charge →
-      Refund → full). This is the manual path — see "Admin refund path (deferred)" below for
-      why the in-app refund isn't built yet.
+      Refund → full). (In-app refunds shipped emv2 P3, but they only cover
+      league-hosted event registrations — a Dashboard refund is the right tool for
+      an arbitrary smoke charge.)
 - [ ] Confirm the refund settles. **Known gap:** refunding in the Dashboard does **not**
-      currently update our `payments.status` to `refunded` or reverse the fulfillment
-      (membership/registration stay active, invoice stays). For the one smoke test, manually
-      reconcile (or just leave it — it was your own $1). Track the real fix in the deferred
-      refund work below.
+      update our `payments.status` or reverse fulfillment (no `charge.refunded`
+      handler yet — see the shipped-refunds note below). For the one smoke test,
+      manually reconcile (or just leave it — it was your own $1).
 
 ## 4. Post-go-live verification
 
@@ -116,28 +130,40 @@ secret is unset, so clearing `STRIPE_WEBHOOK_SECRET` is an emergency "stop fulfi
 
 ---
 
-## Admin refund path (DEFERRED — sketch)
+## Admin refund path — ✅ SHIPPED (emv2 P3, 2026-07-11)
 
-Not built in S5 (the user gave discretion; the spec marks it "may defer to the Phase 5
-finance work"). Today refunds are issued **manually in the Stripe Dashboard**. The gap: a
-Dashboard refund does not reflect back into our data model. When built (recommended
-alongside the Phase 5 finance dashboards), the shape is:
+The sketch that used to live here was superseded by the real implementation:
+in-app refunds via `request-refund` / `process-refund` + `#/admin/refunds`
+(see CLAUDE.md "Payments → Refunds"). One piece of the sketch is still open and
+tracked in whats-next §6 (payments-reconciliation view): a `charge.refunded`
+webhook handler, so refunds issued directly in the Stripe **Dashboard** reflect
+back into `payments.status` — today those still need manual reconciliation.
 
-1. **`create-refund` Edge Function** (admin / `finance_admin` gated, `edgeErrorMessage`
-   unwrap pattern): takes a `paymentId`, looks up the `payments` row's
-   `stripe_payment_intent_id`, calls `stripe.refunds.create({ payment_intent })` (full or
-   partial), and on success sets `payments.status='refunded'`. Idempotent on the Stripe
-   refund id.
-2. **Reverse fulfillment** in the same routine (mirror, in reverse, what `stripe-webhook`'s
-   `fulfill()` does): deactivate the membership(s)/club membership, flip the linked
-   `registrations.paid` back to `false`, mark the invoice/`invoice_items.refunded=true`.
-   This is the careful part — reuse the same `cart_item_ids` / `ref_reg_ids` / `ref_type`
-   links the payment row already carries.
-3. **`charge.refunded` webhook handler** (alternatively/additionally) so refunds initiated
-   in the **Dashboard** also flow back: subscribe `charge.refunded`, resolve the payment by
-   `stripe_payment_intent_id`, run the same reversal. This closes the §3 manual-reconcile
-   gap above.
-4. **Admin UI**: a Refund button in the Finance/Payments view → confirm dialog → calls the
-   invoker. Contrast-check (AA) any new text/bg.
+## Known gap at go-live: no third-party security review (accepted 2026-07-17)
 
-Until then: **refund in the Stripe Dashboard and reconcile by hand.**
+**Decision (Nate):** go live on automated scanning (Supabomb + similar
+Supabase-specific scanners) plus Claude's internal adversarial reviews — defer
+the paid third-party engagement (options: `docs/research/2026-07-17-security-review-options.md`).
+
+**What that leaves on the table — the two review layers we DO have are
+correlated.** The internal reviews (2026-07-02 money-path review, hardening
+1–2, the 2026-07-17 MFA/AAL work) are thorough but share one author-mindset;
+scanners only find *known misconfiguration patterns* (missing RLS, exposed
+buckets, anon-key probes). Neither reliably finds novel business-logic flaws —
+the class an independent human tester is paid to hunt.
+
+Residual risks, honestly stated:
+
+| Risk | Probability | Severity | Worst realistic outcome |
+|---|---|---|---|
+| **Business-logic money flaw** (a pricing/refund/coupon path we both reasoned about the same wrong way) | Low–moderate — this class survives author review precisely because it's a shared blind spot; we've already caught 5+ internally, which cuts both ways | High | Under- or over-charging real cards; fraudulent free registrations; refund over-payment. Bounded by Stripe volume (small league, low $ per event) and reversibility (refunds), but real money + trust damage with clubs |
+| **RLS gap on a PII table** scanners miss (policy exists but predicate is subtly wrong for one role path) | Low — the RLS test scripts + scanners cover the obvious; cross-role edge paths are the residue | **Very high** | Exposure of minors' DOB/contact/emergency data → parental trust collapse, possible state-privacy/COPPA exposure, reportable breach. This is the single scariest cell in this table |
+| **Auth/token-flow flaw** (no-login waiver/manager-access links, recovery flows) | Low — token entropy checked, flows reviewed | High | Account takeover of a manager/admin → pivots to the two rows above |
+| **Abuse/spam of public functions** (known gap until rate limiting ships) | **High** (it's trivially doable today) | Low–moderate | naigc.org domain reputation damage, Resend suspension, nuisance costs. Mitigated by shipping whats-next §2.2 BEFORE go-live |
+
+**Mitigations bundled with this acceptance:** run Supabomb/scanner sweeps
+against staging on every schema-touching release; keep the standing fable-tier
+adversarial review on every money/auth/RLS diff; ship rate limiting (§2.2)
+before live keys; Supabase Pro backups (§0) bound the blast radius of any
+data-mutation exploit; revisit the paid review (~$5k) once real revenue exists —
+the calculus flips quickly when weekly volume is no longer trivial.
