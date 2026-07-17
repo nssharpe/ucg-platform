@@ -6,6 +6,7 @@ import { useSyncExternalStore } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { fetchMyRoles, isSupabaseConfigured, linkOrCreatePerson, pushPerson, supabase } from './supabase';
 import { getDB, mutate, syncFromSupabase } from './store';
+import type { AalLevel } from './mfa-core';
 
 let session: Session | null = null;
 // True until the initial getSession() resolves — lets callers avoid flashing
@@ -20,6 +21,28 @@ let rolesLoaded = !isSupabaseConfigured;
 let linkedUserId: string | null = null; // auth user we've already linked this session
 const listeners = new Set<() => void>();
 const roleListeners = new Set<() => void>();
+
+// Authenticator Assurance Level (MFA step-up, emv2-adjacent auth-hardening
+// work). `currentLevel` is what the live JWT carries; `nextLevel` is the
+// highest level reachable given the account's verified factors. When they
+// differ (aal1 → aal2 available) the App-level interstitial (Gate/App.tsx)
+// challenges for the second factor before rendering protected UI.
+let aal: { currentLevel: AalLevel; nextLevel: AalLevel } = { currentLevel: null, nextLevel: null };
+const aalListeners = new Set<() => void>();
+function notifyAal() { aalListeners.forEach((l) => l()); }
+
+/** Re-read the AAL from Supabase and notify subscribers. Call after a
+ *  sign-in, after an MFA verify/unenroll, and on every session change — those
+ *  are exactly the events that can move currentLevel/nextLevel. */
+export async function refreshAal(): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) { aal = { currentLevel: null, nextLevel: null }; notifyAal(); return; }
+  if (!session) { aal = { currentLevel: null, nextLevel: null }; notifyAal(); return; }
+  const { data, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+  aal = error || !data
+    ? { currentLevel: null, nextLevel: null }
+    : { currentLevel: data.currentLevel as AalLevel, nextLevel: data.nextLevel as AalLevel };
+  notifyAal();
+}
 
 function notify() { listeners.forEach((l) => l()); }
 function notifyRoles() { roleListeners.forEach((l) => l()); }
@@ -95,6 +118,7 @@ function applySession(next: Session | null) {
     rolesLoaded = !isSupabaseConfigured;
     if (roles.length) { roles = []; notifyRoles(); }
   }
+  void refreshAal();
 }
 
 if (isSupabaseConfigured && supabase) {
@@ -142,6 +166,22 @@ export function useMyRoles(): string[] {
 /** Non-reactive roles snapshot. */
 export function getMyRoles(): string[] {
   return roles;
+}
+
+/** Reactive Authenticator Assurance Level — { currentLevel, nextLevel }.
+ *  currentLevel === nextLevel === null while unconfigured/signed-out; both
+ *  'aal1' for a no-factor account; 'aal1'/'aal2' when a step-up is available
+ *  but not yet presented. See `needsMfaStepUp` (mfa-core.ts) for the gate. */
+export function useAal(): { currentLevel: AalLevel; nextLevel: AalLevel } {
+  return useSyncExternalStore(
+    (cb) => { aalListeners.add(cb); return () => aalListeners.delete(cb); },
+    () => aal,
+  );
+}
+
+/** Non-reactive AAL snapshot. */
+export function getAal(): { currentLevel: AalLevel; nextLevel: AalLevel } {
+  return aal;
 }
 
 /** True once the signed-in user's roles have been fetched (or when Supabase is

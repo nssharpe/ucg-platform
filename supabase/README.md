@@ -175,6 +175,7 @@ one event and also admits sanctioning/hosts/event-admin grantees.
 | `process-refund` | Refund review + Stripe processing (emv2 P3, spec §H, T6): `reject` (email only, no state change) or `approve` — refund base is the snapshot line's post-coupon `paid_cents` from `payments.lines_snapshot` (falls back to the `invoice_items.amount` list price for pre-T6 snapshots), 100% at-or-before `events.last_date_to_edit` else 75%, capped at `payment.amount_subtotal` minus already-approved refunds against that same payment (`refund_requests.refund_amount_cents` sum). Atomically claims the request (`status: pending → approved`, conditional update) **before** calling `stripe.refunds.create` on the original `payment_intent`, so a concurrent retry can't double-refund; on Stripe failure the claim is reverted to `pending` and logged to `error_logs`. A $0-capped approval (e.g. a fully-couponed order) skips the Stripe call. On-time approval **deletes** the registration (scores cascade via FK); post-deadline approval sets `refunded: true, keep_listed: true`, blanks `apparatus`/`apparatus_levels`/`partner_athlete_id`. Auth: `refund_manager` or `admin` role only, fail-closed. `verify_jwt` stays `true`. | refund manager / admin |
 | `scheduled-dispatch` | Invoked every 15 min by the `scheduled-dispatch-15min` pg_cron job. Two consumers: (1) sanction-vote reminder emails (3-day / 1-day / voting-closed nudge) to Sanctioning Team + admins who haven't voted; (2) event-owner task escalation emails (`owner-task` kind, event-mgmt v2 §B4) — for every non-camp event with an assigned `owner`, walks the 7 `owner_checklist` tasks (skips `done` ones), computes each task's due date via `_shared/owner-checklist.ts`, and emails the owner at the 1-week/1-day/daily-overdue stages. Both idempotent via `notification_log`. Gateway keeps `verify_jwt = true`, AND the function itself requires the bearer token to equal `SUPABASE_SERVICE_ROLE_KEY` exactly (or the `x-cron-secret` header) — no user-JWT path. | pg_cron only (service-role bearer) |
 | `report-problem` | In-app "Report a problem" (nav-drawer entry, Layout.tsx sidebar footer). Validates category (`bug`/`question`/`unsure`) + description (≤5000 chars) + ≤10 recent-error strings (≤500 chars each, from the client's `report-error.ts` ring buffer) + route/appVersion. Reporter identity (name/email) is resolved server-side from the caller's JWT/`people` row — never trusted from the payload. Routes to a hardcoded recipient map at the top of the function (`bug`→Nate+Julia, `question`→the `+ucghelp` aliases, `unsure`→all four); sends one email via `renderEmail`, `reply_to` set to the reporter so replies land with them. `verify_jwt` stays `true` (not part of the no-verify-jwt trio). | any signed-in user |
+| `admin-reset-mfa` | Auth-hardening break-glass (Phase B): deletes ALL of a target auth user's MFA factors via the admin API (`auth.admin.mfa.listFactors`/`deleteFactor`) and emails them a notice. Takes `targetUserId` or `targetEmail`. Used by the Members page "Reset 2FA" action for someone who lost their authenticator/passkey. `verify_jwt` stays `true`. | admin only |
 | `stripe-webhook` | The sole completer for PAID orders. Verifies the Stripe signature with `constructEventAsync` against `STRIPE_WEBHOOK_SECRET` (**fail-closed** if unset). On `session.completed`/`async_payment_succeeded`, looks up the real processing fee from the balance transaction and the M5 amount-reconciliation assertion, then delegates the actual fulfillment (flip `registrations.paid` via `ref_reg_ids`, activate membership(s)/club memberships, write the paid invoice, clear cart lines, email the payer a receipt, camp-details block, coupon redemption) to the shared **`fulfillPayment`** core (`_shared/fulfill.ts`, emv2 P3 — extracted verbatim from the webhook so the new $0-total free-order path in `create-checkout-session` can call the identical logic; semantics unchanged, still idempotent via `fulfilled_at`). On `expired`/`async_payment_failed` → mark `failed`. | Stripe (no JWT; deploy `--no-verify-jwt`; signature-verified) |
 
 Stripe functions share `functions/_shared/stripe.ts` (Stripe client via `npm:stripe`,
@@ -361,6 +362,32 @@ Accounts link to a `people` row by verified email on first sign-in via the
 The `app_role` enum carries the original values plus `sanctioning`, `regional_rep`,
 and `finance_admin`; `admin`, `sanctioning`, `regional_rep`, and `finance_admin`
 are issued as account roles via the admin User Roles page.
+
+## Auth: MFA / aal2-for-admins (added 2026-07-17)
+
+TOTP (+ passkey, if the SDK/project support it) MFA is opt-in for everyone via
+Profile → "Two-factor authentication" (`src/pages/ProfileMfa.tsx`), enroll/
+challenge/verify through `supabase.auth.mfa.*` / `supabase.auth.webauthn.*`.
+Design doc: `docs/research/2026-06-22-auth-2fa-passkeys.md`.
+
+- **Sign-in step-up:** `App.tsx` renders `MfaChallenge` (outside the router,
+  like the existing auth-flash gate) whenever the live session is `aal1` but
+  the account has a verified factor (`nextLevel === 'aal2'`) —
+  `needsMfaStepUp()` in `src/lib/mfa-core.ts`. A no-factor account (every
+  seeded dev/E2E user) never sees it.
+- **RLS enforcement:** migration `20260717140238_mfa_aal2_admin_enforcement`
+  hardens `is_admin()` — an admin with a verified factor must present an
+  `aal2` JWT for `is_admin()` to return true; an admin with no factor is
+  unaffected. Fail-closed (`coalesce(..., false)`). **NOT YET APPLIED** as of
+  this writing — apply staging-first per the usual migration flow.
+- **Admin reset (break-glass):** `#/admin/members` → "Reset 2FA" calls the
+  `admin-reset-mfa` edge function (admin-only), which deletes every one of the
+  target's MFA factors via the service-role admin API and emails them a
+  notice. **If the only remaining admin locks themselves out** (loses their
+  device and no other admin can run the reset for them), the fallback is the
+  **Supabase dashboard**: Auth → Users → find the user → delete their MFA
+  factor there directly. There is no in-app recovery-code story (Supabase
+  doesn't provide one) — this dashboard path is the true last resort.
 
 ## How the app data layer uses this
 

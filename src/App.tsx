@@ -8,9 +8,12 @@ import { ToastProvider } from './components/ui';
 import { isUnlocked } from './lib/store';
 import { useCapabilities } from './lib/capabilities';
 import { isSupabaseConfigured } from './lib/supabase';
-import { useSession, useAuthLoading, hasLikelySession, hasAuthCallbackInUrl, useRolesLoaded } from './lib/auth';
+import { useSession, useAuthLoading, hasLikelySession, hasAuthCallbackInUrl, useRolesLoaded, useAal } from './lib/auth';
+import { needsMfaStepUp } from './lib/mfa-core';
 import { Gate } from './pages/Gate';
 import { Home } from './pages/Home';
+import { MfaChallenge } from './pages/MfaChallenge';
+import { AdminMfaNag } from './components/AdminMfaNag';
 
 // McMaster-Carr-style "intelligent bundling": only the shell + home ship in the
 // first chunk; every other page is its own chunk, then ALL of them are
@@ -155,7 +158,7 @@ function RequireAdmin({ children }: { children: ReactNode }) {
       </div>
     );
   }
-  return <>{children}</>;
+  return <><AdminMfaNag />{children}</>;
 }
 
 /**
@@ -237,6 +240,7 @@ function SetPasswordRedirect() {
 export default function App() {
   const session = useSession();
   const authLoading = useAuthLoading();
+  const aal = useAal();
   const [unlockedLocally, setUnlockedLocally] = useState(isUnlocked());
   usePrefetchRoutes();
 
@@ -249,6 +253,14 @@ export default function App() {
     // Guests with neither signal fall through to the app and browse public
     // pages; account routes are gated by RequireAccount below.
     if (!session && authLoading && (hasLikelySession() || hasAuthCallbackInUrl())) return <PageFallback />;
+    // MFA step-up (auth-hardening, admins-require-aal2): a live aal1 session
+    // whose account has a verified factor (nextLevel === 'aal2') must clear
+    // the second factor before any protected UI renders — rendered here,
+    // outside HashRouter, exactly like the auth-flash gate above. A
+    // no-factor account (incl. every seeded dev/E2E user) has
+    // nextLevel === 'aal1', so needsMfaStepUp is false and this never fires
+    // for them.
+    if (session && needsMfaStepUp(aal.currentLevel, aal.nextLevel)) return <MfaChallenge />;
   } else if (!unlockedLocally) {
     return <Gate onUnlock={() => setUnlockedLocally(true)} />;
   }

@@ -1501,6 +1501,17 @@ export async function inviteAccount(args: {
   return data as { ok: boolean; sentCount?: number; error?: string };
 }
 
+/** Admin-only break-glass: deletes ALL of the target auth user's MFA factors
+ *  and emails them a notice (auth-hardening Phase B). Pass either id. */
+export async function adminResetMfa(
+  target: { targetUserId: string } | { targetEmail: string },
+): Promise<{ ok: boolean; removedCount?: number; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('admin-reset-mfa', { body: target });
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  return data as { ok: boolean; removedCount?: number; error?: string };
+}
+
 // ---------------------------------------------------------------------------
 // Client error log — durable, admin-searchable record of front-end errors.
 // ---------------------------------------------------------------------------
