@@ -420,7 +420,11 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   admin/sanctioning only, `list` = + host-club managers/event-admin grantees;
   verify_jwt true), `request-refund` / `process-refund`
   (emv2 P3 refund request + review/Stripe-processing; both `verify_jwt: true` — the
-  no-verify-jwt trio above is UNCHANGED). Notify-style functions allow any signed-in caller and resolve
+  no-verify-jwt trio above is UNCHANGED), `report-problem` (in-app "Report a problem"
+  nav-drawer entry, any signed-in caller; verify_jwt true; reporter identity resolved
+  server-side from the JWT, never the client payload; routes bug/question/unsure to a
+  hardcoded recipient map at the top of the function — update it there if the
+  recipients change). Notify-style functions allow any signed-in caller and resolve
   recipients server-side; only `send-email`/`send-sms` are admin-gated. (`send-receipt`
   was removed 2026-07-04 — dead code, never called from `src/`; `stripe-webhook`'s own
   `emailReceipt()` is the actual live receipt path — since emv2 P0 it also renders each
