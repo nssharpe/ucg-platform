@@ -25,18 +25,19 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
    (account activation, live keys, $1 smoke + refund).
 6. **Legal (longest lead time — start early):** engage counsel on waiver wording,
    privacy policy, ToS, minors/COPPA. 🤖 drafts the documents (item 2.4 below).
-7. 💬 **Open decisions** — resolved by Nate 2026-07-16 except the last:
-   - Offline stance: **read-only when offline** (decided; implementation with the
-     write-queue hardening below).
-   - Admin MFA: **implement the 2026-06-22 research doc's recommendations in
-     full, no phasing** (decided) — **built on `feat/mfa` 2026-07-17**, see
-     item 5's MFA/passkeys entry below for status + remaining Nate items.
-   - Bug reports: **via email for now**, category-routed (site broken →
-     nssharpe@gmail.com + jzsharpe@gmail.com; event/rule/policy question →
-     `+ucghelp` aliases of both until real `info@unitedgymnastics.com`-style
-     addresses exist; unsure → both sets). Swap-to-real-emails is on the
-     go-live checklist.
-   - Security-review budget: research in progress (options brief for Nate).
+7. 💬 **Open decisions** — resolved by Nate 2026-07-16 and SHIPPED 2026-07-17:
+   - Offline stance: **read-only when offline** — ✅ shipped (write-queue
+     hardening: permanent-failure rollback + toast, `mutate()` offline gate,
+     offline banner).
+   - Admin MFA: ✅ **shipped in full** (merged + deployed 2026-07-17) — see
+     item 5's MFA entry for the two remaining 👤 toggles.
+   - Bug reports: ✅ **shipped** — in-app "Report a problem" (category-routed
+     email: site broken → nssharpe@gmail.com + jzsharpe@gmail.com;
+     event/rule/policy → the `+ucghelp` aliases; unsure → both) + version
+     stamp. Swap-to-real-emails is on the go-live checklist.
+   - Security-review budget: ✅ researched — options brief at
+     [research/2026-07-17-security-review-options.md](research/2026-07-17-security-review-options.md);
+     👤 Nate picks an option + timing (gates live keys).
 
 ## 2. Launch blockers (🤖 buildable now)
 
@@ -68,8 +69,9 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
   payment-status badges on My Registrations.
 - **Accessibility audit** to WCAG 2.1 AA (axe + manual keyboard/focus/ARIA pass) +
   loading/empty/error-state consistency across pages.
-- **In-app "Report a problem" widget** + visible version/build stamp (`error_logs` is
-  passive today).
+- ~~In-app "Report a problem" widget + version/build stamp~~ ✅ **shipped 2026-07-17**
+  (nav-drawer entry, 3-category email routing via the `report-problem` edge fn,
+  console-error ring buffer, git-SHA build stamp; live-smoke-tested).
 - **New-club-request email** to `newclubinquiries@naigc.org` (transport exists, not wired).
 - **PWA production update path** — verify deploys reach users promptly; add a "new
   version available, reload" prompt if not.
@@ -98,14 +100,16 @@ these were explicitly deferred, not dropped:
 - **C** multi-club registration picker →
 - **D** codeless judge access (URL / 6-digit code / QR) →
 - **E** scoring config (1-vs-2 panels, calculator vs. simple entry).
-- ~~MFA/passkeys~~ **implemented on `feat/mfa` (2026-07-17)**, all three phases from the
-  [research doc](research/2026-06-22-auth-2fa-passkeys.md): TOTP opt-in (Profile page),
-  aal2-required admins (migration `20260717140238`, NOT yet applied), admin break-glass
-  reset (`admin-reset-mfa`), and passkey (webauthn) as an additional factor — the SDK
-  supports it but **the project's Supabase Auth has WebAuthn MFA disabled server-side**
-  (confirmed live: enroll returns "MFA enroll is disabled for WebAuthn"); 👤 Nate: flip it
-  on in the dashboard (Auth → Multi-Factor Authentication) if passkeys should go live, and
-  apply the aal2 migration staging-then-prod once the branch is reviewed/merged.
+- ~~MFA/passkeys~~ ✅ **shipped 2026-07-17** (merged to main; migration applied
+  staging+prod; 9 guarded edge functions deployed), all three phases from the
+  [research doc](research/2026-06-22-auth-2fa-passkeys.md): TOTP opt-in (Profile),
+  aal2-required admins (hardened `is_admin()` + step-up challenge at sign-in +
+  the edge-function AAL guard on every privileged function), admin break-glass
+  reset (`admin-reset-mfa`; dashboard = last-admin fallback), passkey support in
+  the UI. Two 👤 remainders: (1) **enable WebAuthn MFA** in the dashboard (Auth →
+  Multi-Factor Authentication) if passkeys should go live — until then "Add a
+  passkey" errors server-side; (2) **enroll your own TOTP factor** (and Julia's)
+  so admin accounts actually get the aal2 protection.
 - Further out: PDF certificates, external API.
 
 ## 6. Proposed additions (Claude, 2026-07-16 — NOT yet committed; Nate to triage)

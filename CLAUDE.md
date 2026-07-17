@@ -236,6 +236,15 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   signup-confirmation/magic-link/recovery URL token — `hasLikelySession()` alone misses
   that case (no prior localStorage entry yet), which is exactly what caused the
   "confirm my account → flashes a page" report.
+- **MFA / aal2 (2026-07-17):** TOTP opt-in (`ProfileMfa.tsx`); App.tsx renders the
+  `MfaChallenge` step-up interstitial when `needsMfaStepUp` (`mfa-core.ts`) — no-factor
+  accounts (incl. seeded dev/E2E users) never see it. `is_admin()` returns true only on
+  an aal2 JWT once the caller has a verified factor (`20260717140238`). **Privileged
+  edge functions MUST call `_shared/aal-guard.ts` `requireAalForEnrolledCaller` right
+  after their role gate** — service-role clients bypass the RLS-level hardening (9 fns
+  guarded; runbook in `supabase/README.md` "Auth: MFA"). Break-glass: `admin-reset-mfa`
+  (itself guarded) or the dashboard. WebAuthn UI ships but errors until Nate enables
+  WebAuthn MFA in the dashboard.
 - **App roles** (`user_roles.role`, enum `app_role`): `admin`, `sanctioning`,
   `regional_rep` (region via `regional_rep_regions`), `finance_admin`, `refund_manager`
   (emv2 P3). Capabilities: `isSanctioning`/`isRegionalRep`/`isFinanceAdmin`/

@@ -26,11 +26,11 @@ read as of 7/04 where noted).
 |---|---|---|---|
 | Core functionality | 🟢 Strong | Gold | emv2 complete (incl. B5 finance dashboards); minor items only |
 | Payments / money | 🟡 Built (test mode) | Live + refundable | Go-live checklist (live keys); hardening Phase 3 (in-app refunds ✅ shipped emv2 P3) |
-| Auth & access control | 🟡 Audited once | Continuously safe | No rate limiting / CAPTCHA; no admin MFA |
+| Auth & access control | 🟡 Audited once | Continuously safe | No rate limiting / CAPTCHA (MFA shipped 2026-07-17: TOTP + aal2-required admins + AAL-guarded edge fns) |
 | UI / UX polish | 🟡 Good, mobile-verified | WCAG AA | No a11y audit; loading/empty/error states uneven |
 | Reliability / fallback | 🟢 Failure-aware | Self-healing | Offline stance undecided (queue survives reload; no offline UX) |
 | Observability / monitoring | 🟡 Errors logged | Alerted | Nothing *notifies* us — no uptime check, no alerts, no analytics |
-| Bug reporting | 🔴 Passive only | In-app + triage | `error_logs` captures crashes; users still can't report problems |
+| Bug reporting | 🟢 In-app | In-app + triage | "Report a problem" + version stamp shipped 2026-07-17 (category-routed email); triage SLA still informal |
 | Testing / CI | 🟡 Gated | Gated + E2E + staging | Staging + Playwright smoke E2E exist (2026-07-04); E2E not run in CI; no component tests |
 | Email / notifications | 🟢 Production ESP | — | Resend on verified naigc.org; branded template shipped (B7 done) |
 | Hosting / infra | 🟡 Dev-grade | Prod stack | GitHub Pages + HashRouter; free Supabase; **no backups/PITR** |
