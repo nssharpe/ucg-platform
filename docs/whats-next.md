@@ -41,6 +41,14 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
 
 ## 2. Launch blockers (🤖 buildable now)
 
+0. **Fix `camp_survey` world-readability** (found by the 2026-07-17 Supabomb pass —
+   [results](research/2026-07-17-supabomb-scan-results.md)): `registrations` has a
+   `using(true)` public-read policy, and the emv2-P2 `camp_survey` column (minors'
+   bedtime/gender/roommate answers) rides on it → anonymous-readable. Latent today
+   (no camps run yet) but **must fix before the first camp**. Fix = explicit column
+   list in `loadAll` excluding `camp_survey` + scoped SECURITY DEFINER read (mirrors
+   `event_host_roster`) + `revoke select (camp_survey) … from anon, authenticated`.
+   Auth/RLS — controller-reviewed.
 1. **Security hardening Phase 3** ([plan](plans/2026-07-02-security-hardening.md)):
    M1 coupon reservation at session-create, M2 tighter `cart_member_clubpush`
    WITH CHECK, M4 route the `people` self-insert-by-email branch through
