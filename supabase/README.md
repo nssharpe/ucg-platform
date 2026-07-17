@@ -156,25 +156,26 @@ one event and also admits sanctioning/hosts/event-admin grantees.
 
 | Function | Purpose | Caller |
 |----------|---------|--------|
-| `send-email` | Communicate broadcast / test sender (Resend batch, 50-recipient cap). | admin only |
-| `send-event-email` | Event-scoped communication (event-mgmt v2 §J): emails one event's registrants, filtered by role (athlete/manager/clubEmail) + session/level/discipline. Recipients resolved server-side from `registrations`/`people`/`club_managers`/`clubs` (service role) — the client never supplies a recipient list. `test:true` sends ONLY to the caller's own auth email. Shares the pure filter/dedupe helpers in `_shared/event-comm.ts` with the client (`EventCommunicate.tsx`). Same 50-recipient cap pattern as `send-email`. **`verify_jwt` stays `true`** — NOT one of the three-function `--no-verify-jwt` set below. **Email only** — SMS deliberately stays league-admin-only (controller/Nate decision 2026-07-09, deviation from spec §J); the admin SMS toggle on the same page reuses `send-sms` with client-resolved recipients instead. | admin / sanctioning / host-club manager / event_admins grantee |
-| `send-sms` | Communicate text sender (Telnyx); records sent messages to `sms_messages`. | admin only |
+| `send-email` | Communicate broadcast / test sender (Resend batch, 50-recipient cap). (AAL guard) | admin only |
+| `send-event-email` | Event-scoped communication (event-mgmt v2 §J): emails one event's registrants, filtered by role (athlete/manager/clubEmail) + session/level/discipline. Recipients resolved server-side from `registrations`/`people`/`club_managers`/`clubs` (service role) — the client never supplies a recipient list. `test:true` sends ONLY to the caller's own auth email. Shares the pure filter/dedupe helpers in `_shared/event-comm.ts` with the client (`EventCommunicate.tsx`). Same 50-recipient cap pattern as `send-email`. **`verify_jwt` stays `true`** — NOT one of the three-function `--no-verify-jwt` set below. **Email only** — SMS deliberately stays league-admin-only (controller/Nate decision 2026-07-09, deviation from spec §J); the admin SMS toggle on the same page reuses `send-sms` with client-resolved recipients instead. | admin / sanctioning / host-club manager / event_admins grantee (AAL guard) |
+| `send-sms` | Communicate text sender (Telnyx); records sent messages to `sms_messages`. (AAL guard) | admin only |
 | `sms-webhook` | Inbound Telnyx webhook: DLRs → `sms_messages` status, inbound replies → store + email admins, STOP → `sms_consent` off. Verifies Telnyx Ed25519 signature (`TELNYX_PUBLIC_KEY`). | Telnyx (no JWT; signature-verified) |
 | `record-waiver-signature` | Server-stamps real IP into `waiver_signatures`, activates membership (club-pay rows → `pending-club-payment`; returns `pendingPayment`). The no-login (token) path stamps `signer_role` from the request row, not the request body. | signed-in owner (JWT, no token) / no-login token (self or guardian) |
 | `request-guardian-waiver` | Creates a signing token + emails a minor's guardian the link. | signed-in owner |
-| `create-waiver-link` | Mints a no-login waiver signing link for a member (admin "Activate" popup — email or copy). Takes optional `signerRole: 'self'\|'guardian'` (default `'guardian'`) stored on the request row. Returns `{token, link, signerRole}`. | admin / club manager |
+| `create-waiver-link` | Mints a no-login waiver signing link for a member (admin "Activate" popup — email or copy). Takes optional `signerRole: 'self'\|'guardian'` (default `'guardian'`) stored on the request row. Returns `{token, link, signerRole}`. (AAL guard) | admin / club manager |
 | `notify-club-cart` | Emails a club's managers when a member pushes fees to the cart. | any signed-in member |
 | `send-membership-welcome` | "Welcome to UCG" email for a no-club member's FIRST membership-only purchase, CC'ing the region's regional-team address and naming its Regional Leader(s). Re-checks no-club + not-Outside-US server-side; resolves region (`STATE_REGIONS[state]`), reps (`regional_rep` role ∩ `regional_rep_regions`), and CC address server-side. | any signed-in member (self only) |
-| `send-club-invite` | Invite a coach (signup) or a member (purchase membership) by email. | club manager / admin |
-| `invite-account` | Create an account + email a branded set-password link (Resend). Used by club "Add athlete"/"Add coach" (`roles` set to match kind). | club manager / admin |
+| `send-club-invite` | Invite a coach (signup) or a member (purchase membership) by email. (AAL guard) | club manager / admin |
+| `invite-account` | Create an account + email a branded set-password link (Resend). Used by club "Add athlete"/"Add coach" (`roles` set to match kind). (AAL guard) | club manager / admin |
 | `request-manager-access` | "Request Club Admin Role": records `manager_access_requests` + emails the requested club's managers (admins only if the club has none yet) a no-login review link; first responder approves/denies. | any signed-in member |
 | `notify-manager-access-denied` | Emails the requester that their Club Admin request was not approved. Token-gated (deploy `--no-verify-jwt`); resolves recipient server-side; fails closed unless the request is `denied`. | no-login (secret token) |
 | `notify-sanction` | Sanction lifecycle emails (submitted → team+admins; approved/rejected → requester). | any signed-in member |
 | `create-checkout-session` | Stripe Embedded Checkout. As of **S4** generalized to **every** cart-line kind (membership / club-membership / member-targeted membership / meet entry / change fee / addon) for **both** self carts and manager-paid club carts. **Recomputes** all amounts server-side (cart `amount` never trusted) — season fees + existing memberships for memberships; meet config (honoring host-club $0) keyed on the new `ref_meet_id`/`ref_line_type` tags for entries/changes/addons — adds the service fee (`processingFee`), creates the session (`ui_mode:'embedded'`, no redirect), inserts a `pending` `payments` row. Returns `{ clientSecret, sessionId, paymentId }`. **emv2 P3 free-order path:** if a coupon fully covers the cart (post-discount total is exactly $0), the function skips Stripe entirely — inserts the `payments` row with `stripe_session_id: null`, calls the new shared `fulfillPayment` (`_shared/fulfill.ts`) directly, retries once inline on failure, logs to `error_logs` and returns 500 (no stranded pending order) if the retry also fails — and returns `{ free: true, paymentId }` instead of a client secret; FE `CartCheckout.tsx` has a `'free'` stage that polls the payment row to `paid` instead of mounting Stripe Embedded. | any signed-in member (own cart) / club manager (club cart) |
 | `request-refund` | Refund REQUEST (emv2 P3, spec §H): inserts a `refund_requests` row (service role is the only writer — the table's RLS is SELECT-only) and emails the requester + refund managers (falls back to admins if none are set up). Auth is fail-closed and server-computed from the caller's own `people`/`club_managers` rows — self-owner of the registration/purchase, or a manager of the owning club. Only offered for events whose host club has `clubs.is_league_host = true`. Rejects a duplicate pending/approved request against the same item (409). `verify_jwt` stays `true`. | any signed-in member (self) / club manager |
-| `process-refund` | Refund review + Stripe processing (emv2 P3, spec §H, T6): `reject` (email only, no state change) or `approve` — refund base is the snapshot line's post-coupon `paid_cents` from `payments.lines_snapshot` (falls back to the `invoice_items.amount` list price for pre-T6 snapshots), 100% at-or-before `events.last_date_to_edit` else 75%, capped at `payment.amount_subtotal` minus already-approved refunds against that same payment (`refund_requests.refund_amount_cents` sum). Atomically claims the request (`status: pending → approved`, conditional update) **before** calling `stripe.refunds.create` on the original `payment_intent`, so a concurrent retry can't double-refund; on Stripe failure the claim is reverted to `pending` and logged to `error_logs`. A $0-capped approval (e.g. a fully-couponed order) skips the Stripe call. On-time approval **deletes** the registration (scores cascade via FK); post-deadline approval sets `refunded: true, keep_listed: true`, blanks `apparatus`/`apparatus_levels`/`partner_athlete_id`. Auth: `refund_manager` or `admin` role only, fail-closed. `verify_jwt` stays `true`. | refund manager / admin |
+| `process-refund` | Refund review + Stripe processing (emv2 P3, spec §H, T6): `reject` (email only, no state change) or `approve` — refund base is the snapshot line's post-coupon `paid_cents` from `payments.lines_snapshot` (falls back to the `invoice_items.amount` list price for pre-T6 snapshots), 100% at-or-before `events.last_date_to_edit` else 75%, capped at `payment.amount_subtotal` minus already-approved refunds against that same payment (`refund_requests.refund_amount_cents` sum). Atomically claims the request (`status: pending → approved`, conditional update) **before** calling `stripe.refunds.create` on the original `payment_intent`, so a concurrent retry can't double-refund; on Stripe failure the claim is reverted to `pending` and logged to `error_logs`. A $0-capped approval (e.g. a fully-couponed order) skips the Stripe call. On-time approval **deletes** the registration (scores cascade via FK); post-deadline approval sets `refunded: true, keep_listed: true`, blanks `apparatus`/`apparatus_levels`/`partner_athlete_id`. Auth: `refund_manager` or `admin` role only, fail-closed. `verify_jwt` stays `true`. | refund manager / admin (AAL guard) |
 | `scheduled-dispatch` | Invoked every 15 min by the `scheduled-dispatch-15min` pg_cron job. Two consumers: (1) sanction-vote reminder emails (3-day / 1-day / voting-closed nudge) to Sanctioning Team + admins who haven't voted; (2) event-owner task escalation emails (`owner-task` kind, event-mgmt v2 §B4) — for every non-camp event with an assigned `owner`, walks the 7 `owner_checklist` tasks (skips `done` ones), computes each task's due date via `_shared/owner-checklist.ts`, and emails the owner at the 1-week/1-day/daily-overdue stages. Both idempotent via `notification_log`. Gateway keeps `verify_jwt = true`, AND the function itself requires the bearer token to equal `SUPABASE_SERVICE_ROLE_KEY` exactly (or the `x-cron-secret` header) — no user-JWT path. | pg_cron only (service-role bearer) |
 | `report-problem` | In-app "Report a problem" (nav-drawer entry, Layout.tsx sidebar footer). Validates category (`bug`/`question`/`unsure`) + description (≤5000 chars) + ≤10 recent-error strings (≤500 chars each, from the client's `report-error.ts` ring buffer) + route/appVersion. Reporter identity (name/email) is resolved server-side from the caller's JWT/`people` row — never trusted from the payload. Routes to a hardcoded recipient map at the top of the function (`bug`→Nate+Julia, `question`→the `+ucghelp` aliases, `unsure`→all four); sends one email via `renderEmail`, `reply_to` set to the reporter so replies land with them. `verify_jwt` stays `true` (not part of the no-verify-jwt trio). | any signed-in user |
+| `admin-reset-mfa` | Auth-hardening break-glass (Phase B): deletes ALL of a target auth user's MFA factors via the admin API (`auth.admin.mfa.listFactors`/`deleteFactor`) and emails them a notice. Takes `targetUserId` or `targetEmail`. Used by the Members page "Reset 2FA" action for someone who lost their authenticator/passkey. **AAL-guarded** (`_shared/jwt-aal.ts`, mirrors the hardened `is_admin()` migration): an MFA-enrolled admin caller must present an `aal2` JWT or gets 403 — closes the stolen-aal1-JWT → strip-own-factors → pass-is_admin() bypass. `verify_jwt` stays `true`. | admin only (aal2 if enrolled) |
 | `stripe-webhook` | The sole completer for PAID orders. Verifies the Stripe signature with `constructEventAsync` against `STRIPE_WEBHOOK_SECRET` (**fail-closed** if unset). On `session.completed`/`async_payment_succeeded`, looks up the real processing fee from the balance transaction and the M5 amount-reconciliation assertion, then delegates the actual fulfillment (flip `registrations.paid` via `ref_reg_ids`, activate membership(s)/club memberships, write the paid invoice, clear cart lines, email the payer a receipt, camp-details block, coupon redemption) to the shared **`fulfillPayment`** core (`_shared/fulfill.ts`, emv2 P3 — extracted verbatim from the webhook so the new $0-total free-order path in `create-checkout-session` can call the identical logic; semantics unchanged, still idempotent via `fulfilled_at`). On `expired`/`async_payment_failed` → mark `failed`. | Stripe (no JWT; deploy `--no-verify-jwt`; signature-verified) |
 
 Stripe functions share `functions/_shared/stripe.ts` (Stripe client via `npm:stripe`,
@@ -361,6 +362,44 @@ Accounts link to a `people` row by verified email on first sign-in via the
 The `app_role` enum carries the original values plus `sanctioning`, `regional_rep`,
 and `finance_admin`; `admin`, `sanctioning`, `regional_rep`, and `finance_admin`
 are issued as account roles via the admin User Roles page.
+
+## Auth: MFA / aal2-for-admins (added 2026-07-17)
+
+TOTP (+ passkey, if the SDK/project support it) MFA is opt-in for everyone via
+Profile → "Two-factor authentication" (`src/pages/ProfileMfa.tsx`), enroll/
+challenge/verify through `supabase.auth.mfa.*` / `supabase.auth.webauthn.*`.
+Design doc: `docs/research/2026-06-22-auth-2fa-passkeys.md`.
+
+- **Sign-in step-up:** `App.tsx` renders `MfaChallenge` (outside the router,
+  like the existing auth-flash gate) whenever the live session is `aal1` but
+  the account has a verified factor (`nextLevel === 'aal2'`) —
+  `needsMfaStepUp()` in `src/lib/mfa-core.ts`. A no-factor account (every
+  seeded dev/E2E user) never sees it.
+- **RLS enforcement:** migration `20260717140238_mfa_aal2_admin_enforcement`
+  hardens `is_admin()` — an admin with a verified factor must present an
+  `aal2` JWT for `is_admin()` to return true; an admin with no factor is
+  unaffected. Fail-closed (`coalesce(..., false)`). **NOT YET APPLIED** as of
+  this writing — apply staging-first per the usual migration flow.
+- **Edge-function AAL guard (swept 2026-07-17):** privileged functions
+  authorize via the service-role client and so bypass the RLS-level
+  `is_admin()` hardening — each now calls the shared
+  `requireAalForEnrolledCaller` (`functions/_shared/aal-guard.ts`, pure logic
+  in `_shared/jwt-aal.ts`, vitest-covered) right after its existing
+  auth+role gate: any caller with a verified MFA factor must present an aal2
+  JWT or gets 403 (unenrolled callers untouched; factor-list failure → 500,
+  fail closed). Guarded: `admin-reset-mfa`, `send-email`, `send-sms`,
+  `send-event-email`, `invite-account`, `create-waiver-link`,
+  `send-club-invite`, `manage-waitlist`, `process-refund` — the "(AAL
+  guard)" markers in the function table above. The no-verify-jwt trio and
+  recipient-resolution-only functions are deliberately excluded.
+- **Admin reset (break-glass):** `#/admin/members` → "Reset 2FA" calls the
+  `admin-reset-mfa` edge function (admin-only), which deletes every one of the
+  target's MFA factors via the service-role admin API and emails them a
+  notice. **If the only remaining admin locks themselves out** (loses their
+  device and no other admin can run the reset for them), the fallback is the
+  **Supabase dashboard**: Auth → Users → find the user → delete their MFA
+  factor there directly. There is no in-app recovery-code story (Supabase
+  doesn't provide one) — this dashboard path is the true last resort.
 
 ## How the app data layer uses this
 

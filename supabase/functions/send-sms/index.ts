@@ -19,6 +19,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { analyzeMessage } from './segments.ts';
 import { toE164, sendSmsBatch } from '../_shared/telnyx.ts';
+import { requireAalForEnrolledCaller } from '../_shared/aal-guard.ts';
 
 interface Recipient { phone: string; name?: string }
 interface Payload {
@@ -72,6 +73,10 @@ Deno.serve(async (req) => {
   if (roleErr) return json({ error: 'Could not verify permissions.' }, 500);
   const isAdmin = (roles ?? []).some((r: { role: string }) => r.role === 'admin');
   if (!isAdmin) return json({ error: 'Admin role required to send SMS.' }, 403);
+
+  // Phase-B AAL guard: an MFA-enrolled caller must present an aal2 JWT.
+  const aalDenied = await requireAalForEnrolledCaller(admin, userData.user.id, token, corsHeaders);
+  if (aalDenied) return aalDenied;
 
   // --- Validate payload ---
   let payload: Payload;

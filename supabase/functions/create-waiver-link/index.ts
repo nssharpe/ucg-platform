@@ -9,6 +9,7 @@
 //
 // Auth: a signed-in admin, OR a manager of the person's main club.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { requireAalForEnrolledCaller } from '../_shared/aal-guard.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -65,6 +66,10 @@ Deno.serve(async (req) => {
     }
   }
   if (!authorized) return json({ ok: false, error: 'You must be an admin or a manager of this member’s club.' }, 403);
+
+  // Phase-B AAL guard: an MFA-enrolled caller must present an aal2 JWT.
+  const aalDenied = await requireAalForEnrolledCaller(db, userData.user.id, token, corsHeaders);
+  if (aalDenied) return aalDenied;
 
   // --- Mint a pending signing token (guardian_email is NOT NULL; default to the
   // member's own address — the link works regardless of which is recorded) ---

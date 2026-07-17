@@ -28,6 +28,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendBatch, type EmailMessage } from '../_shared/resend.ts';
 import { ccCopyAddressing, dedupeContacts, matchesEventCommFilters, type EventCommFilters, type RegistrationFacetRow } from '../_shared/event-comm.ts';
+import { requireAalForEnrolledCaller } from '../_shared/aal-guard.ts';
 
 interface Payload {
   eventId?: string;
@@ -144,6 +145,11 @@ Deno.serve(async (req) => {
   if (!isSanctioning && !isHost && !isEventAdmin) {
     return json({ error: 'You do not have access to email this event\'s registrants.' }, 403);
   }
+
+  // Phase-B AAL guard: an MFA-enrolled caller must present an aal2 JWT
+  // (applies to every admitted branch — admin/sanctioning/host/grantee).
+  const aalDenied = await requireAalForEnrolledCaller(db, authUserId, token, corsHeaders);
+  if (aalDenied) return aalDenied;
 
   const subject = (payload.subject ?? '').trim();
   const html = payload.html ?? '';

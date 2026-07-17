@@ -11,6 +11,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendOne } from '../_shared/resend.ts';
 import { renderEmail } from '../_shared/email-layout.ts';
+import { requireAalForEnrolledCaller } from '../_shared/aal-guard.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -60,6 +61,10 @@ Deno.serve(async (req) => {
     authorized = !!mgr;
   }
   if (!authorized) return json({ ok: false, error: 'You must manage this club to add members.' }, 403);
+
+  // Phase-B AAL guard: an MFA-enrolled caller must present an aal2 JWT.
+  const aalDenied = await requireAalForEnrolledCaller(db, userData.user.id, token, corsHeaders);
+  if (aalDenied) return aalDenied;
 
   const { data: club } = await db.from('clubs').select('name, short_name').eq('id', clubId).maybeSingle();
   if (!club) return json({ ok: false, error: 'Club not found.' }, 404);

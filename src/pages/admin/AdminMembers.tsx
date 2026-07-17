@@ -7,7 +7,7 @@ import { PersonForm } from '../../components/PersonForm';
 import { STATE_REGIONS } from '../../lib/types';
 import type { AccountInvite, Athlete } from '../../lib/types';
 import { randomPromoCode } from '../../lib/pricing';
-import { fetchAllRoles, pushAccountInvite, pushClubManager, pushMembership, pushRegistration, pushUserRole, deleteRegistration, sendEmail, pushPerson, deletePerson, type SendEmailResult } from '../../lib/supabase';
+import { fetchAllRoles, pushAccountInvite, pushClubManager, pushMembership, pushRegistration, pushUserRole, deleteRegistration, sendEmail, pushPerson, deletePerson, adminResetMfa, type SendEmailResult } from '../../lib/supabase';
 import { escapeHtml } from '../../lib/sanitize-html';
 import { useCapabilities } from '../../lib/capabilities';
 
@@ -229,6 +229,44 @@ function RevokeMembershipModal({ person, seasonId, onClose }: { person: Athlete;
   );
 }
 
+// ---------- Reset 2FA confirmation modal ----------
+function ResetMfaModal({ person, onClose }: { person: Athlete; onClose: () => void }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+
+  const doReset = async () => {
+    if (!person.authUserId) return;
+    setBusy(true);
+    const res = await adminResetMfa({ targetUserId: person.authUserId });
+    setBusy(false);
+    if (res.ok) toast(`Two-factor authentication reset for ${person.firstName} ${person.lastName}.`);
+    else toast(`Reset failed: ${res.error ?? 'unknown error'}.`, { variant: 'error' });
+    onClose();
+  };
+
+  return (
+    <Modal title="Reset two-factor authentication?" onClose={onClose}>
+      <p style={{ marginTop: 0, fontSize: 14 }}>
+        This removes ALL authenticator app and passkey factors from{' '}
+        <strong>{person.firstName} {person.lastName}</strong>'s account. They'll be able to sign in with just
+        their password again, and can set up a new factor from their Profile page. Use this when they've lost
+        their device.
+      </p>
+      <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+        <button
+          className="btn primary"
+          style={{ background: 'var(--coral-600)', borderColor: 'var(--coral-600)' }}
+          disabled={busy}
+          onClick={doReset}
+        >
+          {busy ? 'Resetting…' : 'Yes, reset 2FA'}
+        </button>
+        <button className="btn ghost" disabled={busy} onClick={onClose}>Cancel</button>
+      </div>
+    </Modal>
+  );
+}
+
 // ---------- Members ----------
 export function AdminMembers() {
   const db = useDB();
@@ -240,6 +278,8 @@ export function AdminMembers() {
   const [showMerge, setShowMerge] = useState(false);
   // W13 task 6: revoke confirmation
   const [revoking, setRevoking] = useState<{ person: Athlete; seasonId: string } | null>(null);
+  // Auth-hardening Phase B: admin break-glass MFA reset confirmation
+  const [resettingMfa, setResettingMfa] = useState<Athlete | null>(null);
   const season = db.seasons.find((s) => s.current)!;
 
   // Admin grants: which auth users hold the 'admin' role (admin reads all rows).
@@ -420,9 +460,19 @@ To activate it, sign up using <strong>this email address</strong> (${escapeHtml(
                         )}
                       </span>
                     ) : (
-                      <label className="checkrow" style={{ margin: 0 }} data-tip="Grant or revoke league admin">
-                        <input type="checkbox" checked={isAdminUser} onChange={() => toggleAdmin(p)} /> Admin
-                      </label>
+                      <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <label className="checkrow" style={{ margin: 0 }} data-tip="Grant or revoke league admin">
+                          <input type="checkbox" checked={isAdminUser} onChange={() => toggleAdmin(p)} /> Admin
+                        </label>
+                        <button
+                          className="btn small ghost"
+                          style={{ fontSize: 11, padding: '1px 6px' }}
+                          title="Remove all their 2FA factors — use if they've lost their device"
+                          onClick={() => setResettingMfa(p)}
+                        >
+                          Reset 2FA
+                        </button>
+                      </span>
                     )}
                   </td>
                   <td><button className="btn small ghost" onClick={() => setEditing(p)}>Edit</button></td>
@@ -442,6 +492,7 @@ To activate it, sign up using <strong>this email address</strong> (${escapeHtml(
           onClose={() => setRevoking(null)}
         />
       )}
+      {resettingMfa && <ResetMfaModal person={resettingMfa} onClose={() => setResettingMfa(null)} />}
     </div>
   );
 }

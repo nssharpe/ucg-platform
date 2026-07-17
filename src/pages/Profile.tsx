@@ -9,6 +9,7 @@ import type { Athlete, ClubRequest, Gender, Region } from '../lib/types';
 import { GENERAL_WAIVER_TYPE } from '../lib/types';
 import { pushClubRequest, pushMembership, pushPerson, deleteRegistration, sendEmail, createWaiverLink, fetchPublishedWaiver, requestManagerAccess } from '../lib/supabase';
 import { getSession, useAuthLoading, useRolesLoaded } from '../lib/auth';
+import { MfaSection } from './ProfileMfa';
 import { escapeHtml } from '../lib/sanitize-html';
 import { downloadWaiverProof, formatSignedAt } from '../lib/waiver-proof';
 import { isMinorAt } from '../lib/waivers-core';
@@ -290,6 +291,10 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
           />
         </div>
       )}
+
+      {/* Self-service only — MFA factors belong to the auth session, not to an
+          arbitrary person record an admin is editing. */}
+      {!adminView && <MfaSection />}
 
       {editMode ? (
         // ----------------------------------------------------------------
