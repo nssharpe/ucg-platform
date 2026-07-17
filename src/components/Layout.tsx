@@ -9,7 +9,11 @@ import { offeredMembershipTypes } from '../lib/pricing';
 import { useSession } from '../lib/auth';
 import { Combo } from './ui';
 import { TopbarMembership } from './TopbarMembership';
+import { ReportProblemDialog } from './ReportProblemDialog';
 import { useNavHistory, useGoBack, labelFor } from '../lib/navHistory';
+
+/** "vSHA · YYYY-MM-DD" build stamp shown at the bottom of the sidebar. */
+const buildStampLabel = `v${__BUILD_INFO__.sha} · ${__BUILD_INFO__.date.slice(0, 10)}`;
 
 interface NavGroup { group: string; items: { to: string; label: string }[] }
 
@@ -79,6 +83,7 @@ export function Layout({ children }: { children: ReactNode }) {
   const loc = useLocation();
   const topbarRef = useRef<HTMLElement>(null);
   const [navOpen, setNavOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
 
   // Close the drawer on navigation. Derive the close from a path change using
   // the store-previous-value pattern (setState during render bails out the
@@ -217,7 +222,17 @@ export function Layout({ children }: { children: ReactNode }) {
             <div className="persona">Browsing as a guest · <Link to="/me">sign in</Link> to register.</div>
           )}
         </div>
+
+        <div className="sidebar-footer">
+          {isSupabaseConfigured && session && (
+            <button type="button" className="sidebar-footer-link" onClick={() => setReportOpen(true)}>
+              Report a problem
+            </button>
+          )}
+          <div className="version-stamp">{buildStampLabel}</div>
+        </div>
       </aside>
+      {reportOpen && <ReportProblemDialog onClose={() => setReportOpen(false)} />}
       {navOpen && <div className="nav-overlay" onClick={() => setNavOpen(false)} aria-hidden="true" />}
       <div className="main">
         <header className="topbar" ref={topbarRef}>

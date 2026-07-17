@@ -1,6 +1,22 @@
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
+import { execSync } from 'node:child_process';
+
+// Build-time version stamp ("Report a problem" + a footer stamp use this to
+// identify which deploy a user is looking at). Short git SHA, falling back to
+// 'dev' when git is unavailable (e.g. a source-only build without .git).
+function buildInfo() {
+  let sha = 'dev';
+  try {
+    sha = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString()
+      .trim() || 'dev';
+  } catch {
+    /* no git available at build time — keep 'dev' */
+  }
+  return { sha, date: new Date().toISOString() };
+}
 
 /**
  * McMaster-Carr-style critical CSS: our whole stylesheet is small (~12 kB raw),
@@ -99,6 +115,9 @@ export default defineConfig({
       },
     }),
   ],
+  define: {
+    __BUILD_INFO__: JSON.stringify(buildInfo()),
+  },
   base: '/ucg-platform/',
   build: {
     // Route-level chunks are defined via React.lazy in App.tsx; keep vendor split tidy.

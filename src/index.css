@@ -216,6 +216,34 @@ option { color: var(--ink); background: #fff; }
 .role-card .combo .input::placeholder { color: rgba(219, 235, 237, 0.45); }
 .role-card .combo .input:focus { border-color: var(--coral-500); }
 
+/* Sidebar footer: "Report a problem" entry + version stamp, below the role
+   card. --ice-300 on navy-800 is ~9.9:1 contrast (same token already used for
+   .persona/.rank-chip.r3 on navy) — comfortably passes AA for small text. */
+.sidebar-footer {
+  padding: 8px 20px 16px;
+  border-top: 1px solid rgba(219, 235, 237, 0.12);
+}
+.sidebar-footer-link {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 4px 0;
+  margin-bottom: 4px;
+  color: var(--ice-300);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.sidebar-footer-link:hover { color: var(--ice-200); }
+.version-stamp {
+  color: var(--ice-300);
+  font-size: 11px;
+  opacity: 0.85;
+}
+
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .topbar {
   display: flex;
