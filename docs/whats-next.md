@@ -79,7 +79,8 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
   loading/empty/error-state consistency across pages.
 - ~~In-app "Report a problem" widget + version/build stamp~~ ✅ **shipped 2026-07-17**
   (nav-drawer entry, 3-category email routing via the `report-problem` edge fn,
-  console-error ring buffer, git-SHA build stamp; live-smoke-tested).
+  console-error ring buffer, git-SHA build stamp, **image attachments** — up to 3
+  screenshots, client-compressed + magic-byte-validated; all live-smoke-tested).
 - **New-club-request email** to `newclubinquiries@naigc.org` (transport exists, not wired).
 - **PWA production update path** — verify deploys reach users promptly; add a "new
   version available, reload" prompt if not.
