@@ -1847,6 +1847,10 @@ export async function reportProblem(args: {
   route: string;
   appVersion: string;
   recentErrors: { message: string; at: string }[];
+  /** Optional screenshots (compressed client-side to JPEG, max 3 / 2MB each —
+   *  see src/lib/image-resize.ts). The server re-validates size/type/magic
+   *  bytes; this is UX-only, not a trust boundary. */
+  attachments?: { name: string; type: 'image/jpeg' | 'image/png' | 'image/webp'; dataBase64: string }[];
 }): Promise<{ ok: boolean; error?: string }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('report-problem', { body: args });

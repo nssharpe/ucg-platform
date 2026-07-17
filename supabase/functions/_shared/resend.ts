@@ -36,6 +36,10 @@ export interface EmailMessage {
   subject: string;
   html?: string;
   text?: string;
+  /** Resend's attachment shape (base64 `content`, no `data:` prefix). Optional
+   *  and omitted by every existing caller — added for report-problem's
+   *  screenshot attachments (2026-07-17). */
+  attachments?: { filename: string; content: string }[];
 }
 
 /** RESEND_FROM with its display name swapped to `name` (address unchanged).
@@ -63,7 +67,7 @@ export async function sendOne(msg: EmailMessage): Promise<{ id: string }> {
   const res = await fetch(EMAILS_URL, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey()}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from: fromWithName(msg.fromName), to: msg.to, cc: msg.cc, reply_to: msg.reply_to, subject: msg.subject, html: msg.html, text: msg.text }),
+    body: JSON.stringify({ from: fromWithName(msg.fromName), to: msg.to, cc: msg.cc, reply_to: msg.reply_to, subject: msg.subject, html: msg.html, text: msg.text, attachments: msg.attachments }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body?.message ?? `Resend error (${res.status})`);
@@ -78,7 +82,7 @@ export async function sendOne(msg: EmailMessage): Promise<{ id: string }> {
  *  bounces are not reflected here (they'd need Resend webhooks). */
 export async function sendBatch(messages: EmailMessage[]): Promise<BatchResult> {
   if (messages.length === 0) return { ok: true, sentCount: 0, failedCount: 0, sent: [], failed: [] };
-  const payload = messages.map((m) => ({ from: fromWithName(m.fromName), to: m.to, cc: m.cc, reply_to: m.reply_to, subject: m.subject, html: m.html, text: m.text }));
+  const payload = messages.map((m) => ({ from: fromWithName(m.fromName), to: m.to, cc: m.cc, reply_to: m.reply_to, subject: m.subject, html: m.html, text: m.text, attachments: m.attachments }));
   const res = await fetch(BATCH_URL, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey()}`, 'Content-Type': 'application/json' },

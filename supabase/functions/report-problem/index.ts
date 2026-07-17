@@ -10,6 +10,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendOne } from '../_shared/resend.ts';
 import { renderEmail } from '../_shared/email-layout.ts';
+import { validateAttachments } from '../_shared/attachment-validation.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -67,6 +68,7 @@ Deno.serve(async (req) => {
     route?: unknown;
     appVersion?: unknown;
     recentErrors?: unknown;
+    attachments?: unknown;
   };
   try {
     body = await req.json();
@@ -94,6 +96,13 @@ Deno.serve(async (req) => {
     return line.slice(0, RECENT_ERROR_MSG_MAX);
   }).filter((l) => l.length > 0);
 
+  // --- Validate optional screenshot attachments (count/type/size/magic-bytes) ---
+  const attachmentResult = validateAttachments(body.attachments);
+  if (!attachmentResult.ok) {
+    return json({ ok: false, error: attachmentResult.error ?? 'Invalid attachments.' }, 400);
+  }
+  const attachments = attachmentResult.attachments;
+
   // --- Resolve the reporter SERVER-SIDE (never trust client-sent identity) ---
   const { data: caller } = await db
     .from('people')
@@ -110,6 +119,9 @@ Deno.serve(async (req) => {
     ? `<p style="margin:16px 0 4px;font-weight:700;">Recent console errors</p>
 <pre style="background:#f4f4f4;border-radius:6px;padding:10px;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word;margin:0;">${esc(recentErrors.join('\n'))}</pre>`
     : '';
+  const attachmentsBlock = attachments.length
+    ? `<p><strong>Screenshots:</strong> ${attachments.length} attached</p>`
+    : '';
 
   const html = renderEmail({
     heading: `Problem report — ${CATEGORY_LABEL[category]}`,
@@ -117,6 +129,7 @@ Deno.serve(async (req) => {
 <p><strong>Reporter:</strong> ${esc(reporterLabel)}</p>
 <p><strong>Route:</strong> ${esc(route || '(unknown)')}</p>
 <p><strong>App version:</strong> ${esc(appVersion)}</p>
+${attachmentsBlock}
 <p style="margin:16px 0 4px;font-weight:700;">Description</p>
 <p style="white-space:pre-wrap;">${esc(descriptionSafe)}</p>
 ${errorsBlock}`,
@@ -128,6 +141,7 @@ ${errorsBlock}`,
       subject: `[UCG] Problem report: ${CATEGORY_LABEL[category]}`,
       html,
       ...(reporterEmail ? { reply_to: reporterEmail } : {}),
+      ...(attachments.length ? { attachments: attachments.map((a) => ({ filename: a.filename, content: a.dataBase64 })) } : {}),
     });
   } catch (e) {
     return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 500);
