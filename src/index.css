@@ -160,7 +160,7 @@ option { color: var(--ink); background: #fff; }
   text-decoration: none;
   /* Brand: headers/labels are ALL CAPS (Suisse) — tracking added for small-size legibility */
   font-size: 12.5px;
-  font-weight: 700;
+  font-weight: 400;
   text-transform: uppercase;
   letter-spacing: 0.07em;
   margin-bottom: 1px;

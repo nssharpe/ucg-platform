@@ -376,11 +376,12 @@ function HostPayoutCard({
     <div className="card card-pad">
       <h3 className="card-title">Host payout — {event.name}</h3>
       <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginTop: 0 }}>
-        Owed amount is provisional: it's this event's net revenue (gross minus approved refunds), with no
-        deduction for merchant fees or payouts already made. Confirm the final figure before sending money.
+        Owed is the total collected for this event (registrations and add-ons, before service/admin
+        fees). Refunds are not deducted — refund requests to a host club are handled by the club
+        itself, and the full amount collected is still paid out.
       </p>
       <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginBottom: 10 }}>
-        <div>Owed (provisional): <strong>{fmtMoney(owed.owedCents / 100)}</strong></div>
+        <div>Owed: <strong>{fmtMoney(owed.owedCents / 100)}</strong></div>
         <div>Recorded payouts: <strong>{fmtMoney(recordedCents / 100)}</strong></div>
         <div>
           Remaining:{' '}

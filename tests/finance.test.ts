@@ -323,15 +323,31 @@ describe('buildFinanceSummary', () => {
 });
 
 describe('hostPayoutOwedCents', () => {
-  it('equals the event summary net', () => {
+  it('equals the event summary gross (before fees)', () => {
     const payment = mkPayment({
       linesSnapshot: [{ id: 'ci1', kind: 'meet-entry', label: 'Event entry', amountCents: 3000, refEventId: 'evA', refLineType: 'entry' }],
+      serviceFee: 120, stripeFee: 95,
     });
     const txns = buildFinanceTxns({ payments: [payment], invoices: [], refundRequests: [], events: [] });
     const summary = buildFinanceSummary(txns, { eventId: 'evA' });
     const owed = hostPayoutOwedCents(summary);
-    expect(owed.owedCents).toBe(summary.netCents);
-    expect(owed.owedCents).toBe(3000);
+    expect(owed.owedCents).toBe(summary.grossCents);
+    expect(owed.owedCents).toBe(3000); // service/Stripe fees never touch the payout
     expect(owed.parts.find((p) => p.label === 'Total')?.cents).toBe(3000);
+  });
+
+  it('does not deduct refunds (per Julia 2026-07-17: hosts handle their own refunds)', () => {
+    const payment = mkPayment({
+      linesSnapshot: [{ id: 'ci1', kind: 'meet-entry', label: 'Event entry', amountCents: 3000, refEventId: 'evA', refLineType: 'entry' }],
+    });
+    const rr: RefundRequest = {
+      id: 'rr1', createdAt: '2026-06-01T00:00:00.000Z', requesterPersonId: 'person1', eventId: 'evA',
+      kind: 'registration', reason: 'injury', status: 'approved', reviewedAt: '2026-06-15T00:00:00.000Z', refundAmountCents: 3000,
+    };
+    const txns = buildFinanceTxns({ payments: [payment], invoices: [], refundRequests: [rr], events: [] });
+    const summary = buildFinanceSummary(txns, { eventId: 'evA' });
+    expect(summary.netCents).toBe(0); // the summary itself still nets refunds out…
+    const owed = hostPayoutOwedCents(summary);
+    expect(owed.owedCents).toBe(3000); // …but the payout owes the full amount collected
   });
 });

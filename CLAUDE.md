@@ -434,7 +434,10 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   server-side from the JWT, never the client payload; routes bug/question/unsure to a
   hardcoded recipient map at the top of the function — update it there if the
   recipients change). Notify-style functions allow any signed-in caller and resolve
-  recipients server-side; only `send-email`/`send-sms` are admin-gated. (`send-receipt`
+  recipients server-side; only `send-email`/`send-sms` are admin-gated. `scheduled-dispatch`
+  also runs the daily "anything wrong?" digest (`daily-digest` kind, new error_logs +
+  stuck-pending-payments summary, hardcoded recipient list in the function, at most
+  one per UTC day; runbook in `supabase/README.md`). (`send-receipt`
   was removed 2026-07-04 — dead code, never called from `src/`; `stripe-webhook`'s own
   `emailReceipt()` is the actual live receipt path — since emv2 P0 it also renders each
   purchased event's `confirmation_email.bodyHtml` above the receipt, cc's the event
@@ -458,8 +461,9 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
     + per-team session-timed finals reminders; only the admin-set
     `finals_lineup_deadline_at` nag + 10pm hard lock shipped. All P5 UI is gated on
     `event.kind === 'nationals'`.
-  - ⚠ Host-payout "owed" = event net revenue is **PROVISIONAL** pending Julia's
-    formula (`src/lib/finance.ts`).
+  - Host-payout "owed" formula CONFIRMED by Julia 2026-07-17: event gross collected
+    (registrations + add-ons, before service/admin fees), refunds NOT deducted
+    (hosts handle their own refunds) — implemented in `src/lib/finance.ts`.
   - 👤 Nate: grant `finance_admin` (Julia/bookkeeper); verify the P3 prereqs landed
     ("UCG - Main" `is_league_host` + `refund_manager` grants).
 - **Security hardening Phase 3** still TODO (`docs/plans/2026-07-02-security-hardening.md`).

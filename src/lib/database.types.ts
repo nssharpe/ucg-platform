@@ -2073,6 +2073,10 @@ export type Database = {
         Args: { p_code: string; p_person_id?: string }
         Returns: boolean
       }
+      registration_camp_surveys: {
+        Args: { p_event_id?: string }
+        Returns: { registration_id: string; camp_survey: Json | null }[]
+      }
       replace_club_managers: {
         Args: { p_club_id: string; p_person_ids: string[] }
         Returns: undefined
