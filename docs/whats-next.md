@@ -12,8 +12,7 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
 
 ## 1. Nate-only action items (👤 — quick, unblock others)
 
-1. **Grant `finance_admin`** in `user_roles` to Julia / the bookkeeper — the
-   `#/admin/finance` page is live but only admins see it today (emv2 P6).
+1. ~~Grant `finance_admin`~~ **done 2026-07-16** (Nate granted all relevant users).
 2. **Verify the P3 refund prerequisites landed:** "UCG - Main" flagged
    `clubs.is_league_host` + `refund_manager` granted to whoever reviews refunds.
 3. **Confirm the host-payout "owed" formula with Julia** — the P6 payout card
@@ -26,9 +25,17 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
    (account activation, live keys, $1 smoke + refund).
 6. **Legal (longest lead time — start early):** engage counsel on waiver wording,
    privacy policy, ToS, minors/COPPA. 🤖 drafts the documents (item 2.4 below).
-7. 💬 **Open decisions** (from production-readiness): offline stance (recommend
-   read-only offline), admin MFA (recommend require), where bug reports land,
-   security-review budget before live keys.
+7. 💬 **Open decisions** — resolved by Nate 2026-07-16 except the last:
+   - Offline stance: **read-only when offline** (decided; implementation with the
+     write-queue hardening below).
+   - Admin MFA: **implement the 2026-06-22 research doc's recommendations in
+     full, no phasing** (decided).
+   - Bug reports: **via email for now**, category-routed (site broken →
+     nssharpe@gmail.com + jzsharpe@gmail.com; event/rule/policy question →
+     `+ucghelp` aliases of both until real `info@unitedgymnastics.com`-style
+     addresses exist; unsure → both sets). Swap-to-real-emails is on the
+     go-live checklist.
+   - Security-review budget: research in progress (options brief for Nate).
 
 ## 2. Launch blockers (🤖 buildable now)
 

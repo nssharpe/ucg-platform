@@ -26,6 +26,12 @@ already built, deployed, and proven in **test** mode (account `acct_1TjNQ73b3Mn8
 - [ ] **Tax / 1099-K awareness.** Confirm the business TIN is on file so Stripe can issue
       year-end forms; this is a UCG/NAIGC finance task, not a code change.
 - [ ] **Statement descriptor** reviewed so members recognize the charge on their card.
+- [ ] **Bug-report / support routing emails** — the in-app "Report a problem" widget
+      currently routes the "event/rule/policy question" category to the interim
+      `jzsharpe+ucghelp@gmail.com` / `nssharpe+ucghelp@gmail.com` aliases (decided
+      2026-07-16). Before go-live, replace with the real support address (e.g.
+      `info@unitedgymnastics.com`) — the addresses live in the `report-problem`
+      Edge Function's routing map.
 
 ## 1. Swap test → live keys + webhook
 

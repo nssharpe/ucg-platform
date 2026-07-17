@@ -496,10 +496,13 @@ Dropbox), keeping the newest 14 per env. A Windows scheduled task
   metadata). Brand fonts have their Dropbox source; `event-files` uploads
   (insurance certs) would need re-upload after a total loss.
 - **Creds:** direct-connection passwords in `.env.local` — `STAGING_DB_PASSWORD`
-  (present) and `PROD_DB_PASSWORD` (add it or prod is skipped with a warning).
-- **TLS:** fully verified when `scripts/supabase-prod-ca-2021.crt` exists
-  (download from https://supabase.com/downloads/prod-ca-2021.crt); otherwise the
+  and `PROD_DB_PASSWORD` (both present since 2026-07-17; if `PROD_DB_PASSWORD`
+  is ever removed, prod is skipped with a warning).
+- **TLS:** fully verified — `scripts/supabase-prod-ca-2021.crt` (Supabase's
+  public root CA, committed to the repo 2026-07-17). If the file is deleted the
   script warns and connects encrypted-but-unverified.
+- Verified live 2026-07-17: prod 74 tables / 3,990 rows + staging dumps, no TLS
+  warning.
 - This is interim insurance for the dev/test phase only — **Supabase Pro
   backups/PITR remain the hard pre-flight gate before real money** (go-live
   checklist).
