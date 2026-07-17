@@ -29,8 +29,10 @@ import type { CartItem, DB } from './types';
 
 export type CartRemovalResult = {
   /** What actually happened to the underlying registration(s)/membership, for
-   *  the caller to toast honestly. */
-  action: 'delete-registration' | 'revert-registration' | 'no-snapshot-remove-only' | 'clear-membership-hold' | 'remove-only';
+   *  the caller to toast honestly. 'blocked-offline': the offline read-only
+   *  gate refused the mutation — NOTHING was removed or changed; callers must
+   *  not show any success/removal feedback (mutate itself already toasted). */
+  action: 'delete-registration' | 'revert-registration' | 'no-snapshot-remove-only' | 'clear-membership-hold' | 'remove-only' | 'blocked-offline';
   /** H5: registration ids that were left untouched because another cart line
    *  in the same scope still references them (only set for
    *  delete-registration/revert-registration; empty otherwise). */
@@ -48,7 +50,7 @@ export function removeCartItemWithSync(ownerKey: string, isClub: boolean, item: 
   const action = classifyCartRemoval(item);
   let keptRegIds: string[] = [];
 
-  mutate((d) => {
+  const applied = mutate((d) => {
     const cart = d.carts[ownerKey] ?? [];
     const next = cart.filter((i) => i.id !== item.id);
 
@@ -104,6 +106,9 @@ export function removeCartItemWithSync(ownerKey: string, isClub: boolean, item: 
     pushCart(ownerKey, next, isClub);
   });
 
+  // Offline read-only gate refused the whole mutation: honest "nothing
+  // happened" result so callers don't toast a removal that never occurred.
+  if (!applied) return { action: 'blocked-offline', keptRegIds: [] };
   return { action, keptRegIds };
 }
 
@@ -169,7 +174,10 @@ export function cleanupCrossClubCart(
     const otherShort = otherClubId
       ? db.clubs.find((c) => c.id === otherClubId)?.shortName ?? 'another club'
       : 'another club';
-    removeCartItemWithSync(clubId, true, i);
+    const { action } = removeCartItemWithSync(clubId, true, i);
+    // Offline read-only gate: nothing was removed (and every further item
+    // would hit the same gate) — stop without toasting a removal.
+    if (action === 'blocked-offline') return;
     toast(`${name} was removed from the cart — they're now registered with ${otherShort}.`, { variant: 'info' });
   }
 }

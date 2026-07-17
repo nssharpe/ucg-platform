@@ -132,18 +132,20 @@ export function Finance() {
     const existing = accountingCodes.find((c) => c.itemKey === itemKey);
     if (!trimmed) {
       if (existing) {
-        mutate((d) => { d.accountingCodes = (d.accountingCodes ?? []).filter((c) => c.itemKey !== itemKey); });
+        // offline read-only gate: skip the remote delete if local was refused
+        if (!mutate((d) => { d.accountingCodes = (d.accountingCodes ?? []).filter((c) => c.itemKey !== itemKey); })) return;
         deleteAccountingCode(existing.id);
       }
       return;
     }
     if (existing && existing.code === trimmed) return;
     const code: AccountingCode = { id: existing?.id ?? crypto.randomUUID(), itemKey, code: trimmed, updatedAt: new Date().toISOString() };
-    mutate((d) => {
+    const applied = mutate((d) => {
       const list = (d.accountingCodes ??= []);
       const idx = list.findIndex((c) => c.itemKey === itemKey);
       if (idx >= 0) list[idx] = code; else list.push(code);
     });
+    if (!applied) return; // offline read-only gate — don't push or claim success
     pushAccountingCode(code);
     toast(`Saved code for ${itemKeyLabel(itemKey)}.`);
   };
@@ -170,14 +172,14 @@ export function Finance() {
       createdBy: caps.personId ?? undefined,
       createdAt: new Date().toISOString(),
     };
-    mutate((d) => { (d.hostPayouts ??= []).push(payout); });
+    if (!mutate((d) => { (d.hostPayouts ??= []).push(payout); })) return; // offline read-only gate
     pushHostPayout(payout);
     toast('Payout recorded.');
   };
 
   const removeHostPayout = (id: string) => {
     if (!window.confirm('Delete this recorded payout? This cannot be undone.')) return;
-    mutate((d) => { d.hostPayouts = (d.hostPayouts ?? []).filter((p) => p.id !== id); });
+    if (!mutate((d) => { d.hostPayouts = (d.hostPayouts ?? []).filter((p) => p.id !== id); })) return; // offline read-only gate
     deleteHostPayout(id);
     toast('Payout deleted.');
   };

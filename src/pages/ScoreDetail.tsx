@@ -80,7 +80,7 @@ function ScoreDetailInner({ score }: { score: Score }) {
 
   const saveAdjustment = async () => {
     const legacyState = isLegacy ? await calcRef.current?.requestState() : null;
-    mutate((db2) => {
+    const applied = mutate((db2) => {
       const s = db2.scores.find((x) => x.id === score.id)!;
       if (calcCfg?.produces === 'full') {
         s.sv = liveD; s.eScore = liveE;
@@ -96,6 +96,7 @@ function ScoreDetailInner({ score }: { score: Score }) {
       s.enteredBy = 'admin-verification';
       pushScore(s);
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     toast(`Score adjusted to ${fmtScore(liveFinal)} — change is live on results.`);
   };
 

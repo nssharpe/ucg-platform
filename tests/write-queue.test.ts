@@ -166,6 +166,43 @@ describe('WriteQueue', () => {
     expect(calls[0].error).toBe(err);
   });
 
+  it('a rollback sync scheduled from onPermanentFailure waits for the queue to drain', async () => {
+    // Mirrors the supabase.ts wiring: onPermanentFailure schedules a sync
+    // behind writeQueue.run(). run() is called re-entrantly from inside the
+    // process loop (where onPermanentFailure fires), so it must return the
+    // in-flight run promise, and that promise must resolve only AFTER every
+    // remaining pending entry has been dealt with — otherwise the sync would
+    // wipe the optimistic state of a write that succeeds moments later.
+    const events: string[] = [];
+    let bAttempts = 0;
+    let syncRuns = 0;
+    const q = new WriteQueue({
+      executor: async (op): Promise<ExecResult> => {
+        if (op.table === 'a') return { error: { code: '42501', message: 'permission denied for table a' } };
+        bAttempts++;
+        events.push(`b-attempt-${bAttempts}`);
+        return bAttempts < 2 ? { error: new Error('transient hiccup') } : { error: null };
+      },
+      delay: noDelay, storage: memStorage().store,
+    });
+    let syncScheduled = false;
+    q.setOnPermanentFailure(() => {
+      events.push('permanent');
+      if (syncScheduled) return; // coalesce, as the real wiring does
+      syncScheduled = true;
+      void q.run().then(() => { syncRuns++; events.push('sync'); });
+    });
+
+    q.enqueue(upsert('a')); // permanent-fails on first attempt
+    q.enqueue(upsert('b')); // transient-fails once, then succeeds
+    await q.run();
+    await Promise.resolve(); // let the sync .then callback flush
+
+    expect(events).toEqual(['permanent', 'b-attempt-1', 'b-attempt-2', 'sync']);
+    expect(syncRuns).toBe(1); // exactly one sync for the burst
+    expect(q.getState()).toMatchObject({ pending: 0, failed: 0 });
+  });
+
   it('setOnPermanentFailure registers the callback used by process()', async () => {
     const calls: unknown[] = [];
     const q = new WriteQueue({

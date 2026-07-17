@@ -36,7 +36,7 @@ export function Seasons() {
     const coachFee = parseFloat(draft.coachFee);
     const clubFee = parseFloat(draft.clubFee);  // W12 task 2
     if (isNaN(athleteFee) || isNaN(coachFee) || isNaN(clubFee)) { toast('Fees must be numbers.'); return; }
-    mutate((d) => {
+    const applied = mutate((d) => {
       const x = d.seasons.find((y) => y.id === s.id)!;
       x.name = draft.name.trim() || x.name;
       x.startsOn = draft.startsOn || x.startsOn;
@@ -46,6 +46,7 @@ export function Seasons() {
       x.clubFee = clubFee;  // W12 task 2
       pushSeason(x);
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     setEditingId(null);
     toast('Season updated.');
   };
@@ -191,12 +192,13 @@ export function Seasons() {
                         <>
                           {' '}
                           <button className="btn small ghost" data-tip="Copy fees, waivers & levels into a new season" onClick={() => {
-                            mutate((d) => {
+                            const applied = mutate((d) => {
                               const yr = +s.startsOn.slice(0, 4) + 1;
                               const next = { ...s, id: `s${yr - 1999}`, name: `${yr}–${String(yr + 1).slice(2)}`, startsOn: `${yr}-07-01`, endsOn: `${yr + 1}-06-30`, active: false, current: false };
                               d.seasons.push(next);
                               pushSeason(next);
                             });
+                            if (!applied) return; // offline read-only gate
                             toast('Season copied — update fees & waiver, then mark purchasable.');
                           }}>Copy → next year</button>
                         </>

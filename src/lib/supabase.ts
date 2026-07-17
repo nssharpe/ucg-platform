@@ -116,16 +116,38 @@ if (supabase) writeQueue.setExecutor(executeWriteOp);
 // Supabase (store.ts's syncFromSupabase, the same function boot hydration
 // uses) — imported dynamically to avoid a static import cycle with store.ts
 // (which imports isSupabaseConfigured/loadAll from this module).
-let rollbackSyncTimer: ReturnType<typeof setTimeout> | null = null;
+// The sync must NOT run while other queued writes are still pending: it
+// reassigns the whole local db from the server, so syncing mid-queue would
+// wipe the optimistic state of writes that are about to succeed (e.g. a batch
+// where one line hits RLS while another is in transient backoff) — a new
+// divergence introduced by the rollback itself. So: wait for the queue to
+// fully drain (every entry succeeded, was removed as permanent, or settled to
+// 'failed'), then sync once. Coalesced: permanent failures arriving while a
+// drain-then-sync is already scheduled are covered by that same sync, because
+// writeQueue.run() re-entrantly returns the in-flight run promise, which only
+// resolves after the process loop has dealt with EVERY pending entry —
+// including ones enqueued or re-failed after this was scheduled.
+let rollbackSyncScheduled = false;
 function scheduleRollbackSync() {
-  // Coalesce: several permanent failures can land in the same tick (e.g. a
-  // batched save touching multiple tables) — one syncFromSupabase() covers
-  // all of them, so only schedule if nothing is already pending.
-  if (rollbackSyncTimer) return;
-  rollbackSyncTimer = setTimeout(() => {
-    rollbackSyncTimer = null;
-    void import('./store').then((m) => m.syncFromSupabase());
-  }, 250);
+  if (rollbackSyncScheduled) return;
+  rollbackSyncScheduled = true;
+  const waitForDrain = async (): Promise<void> => {
+    for (;;) {
+      await writeQueue.run();
+      // run() can also resolve early when the browser went offline mid-run
+      // (entries left pending, no attempts burned). Syncing then would wipe
+      // their optimistic state, so wait for the next queue notification
+      // (resume()/online, retry, …) and re-check until truly drained.
+      if (writeQueue.getState().pending === 0) return;
+      await new Promise<void>((resolve) => {
+        const unsub = writeQueue.subscribe(() => { unsub(); resolve(); });
+      });
+    }
+  };
+  void waitForDrain()
+    .then(() => import('./store'))
+    .then((m) => m.syncFromSupabase())
+    .finally(() => { rollbackSyncScheduled = false; });
 }
 
 function handlePermanentWriteFailure(entry: WriteQueueEntry, error: unknown): void {

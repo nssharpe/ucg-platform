@@ -99,12 +99,13 @@ function SurveyRow({
       answers: draft,
       updatedAt: new Date().toISOString(),
     };
-    mutate((d) => {
+    const applied = mutate((d) => {
       const list = d.sessionRequests ?? (d.sessionRequests = []);
       const idx = list.findIndex((r) => r.id === id);
       if (idx >= 0) list[idx] = row; else list.push(row);
       pushSessionRequest(row);
     });
+    if (!applied) return; // offline read-only gate — don't show "Answered"
     setSaved(true);
   };
 

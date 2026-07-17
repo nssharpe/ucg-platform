@@ -44,15 +44,16 @@ export interface CapacityConflictDialogProps {
 /** Waitlists every reg in `groups` (one WaitlistGroup row per cohort) and
  *  shrinks/drops the cart lines that referenced them. Shared by (a) and the
  *  overflow half of (c). Returns the set of waitlisted reg ids for the
- *  caller's toast copy. */
+ *  caller's toast copy, or null when the offline read-only gate refused the
+ *  mutation (nothing was waitlisted; callers must not toast success). */
 function waitlistGroups(
   groups: { key: { discipline: Registration['discipline']; levelId: string | null; sessionId: string | null }; regs: Registration[] }[],
   eventId: string,
   ownerKey: string,
   isClub: boolean,
-): Set<string> {
+): Set<string> | null {
   const waitlistedIds = new Set<string>();
-  mutate((d) => {
+  const applied = mutate((d) => {
     const existingGroups = d.waitlistGroups ?? [];
     const newGroups: WaitlistGroup[] = [];
     for (const g of groups) {
@@ -91,7 +92,7 @@ function waitlistGroups(
     d.carts[ownerKey] = nextCart;
     pushCart(ownerKey, nextCart, isClub);
   });
-  return waitlistedIds;
+  return applied ? waitlistedIds : null;
 }
 
 export function CapacityConflictDialog({
@@ -150,7 +151,7 @@ export function CapacityConflictDialog({
   const doWaitlistAll = () => {
     if (waitlistableAffected.length === 0) return;
     const groups = groupRegsByWaitlistKey(waitlistableAffected);
-    waitlistGroups(groups, eventId, ownerKey, isClub);
+    if (!waitlistGroups(groups, eventId, ownerKey, isClub)) return; // offline read-only gate
     const n = waitlistableAffected.length;
     onResolved(`${n} ${n === 1 ? 'athlete was' : 'athletes were'} added to the waitlist for ${eventName}. We'll email you if a spot opens up.${blockedNote}`);
     onClose();
@@ -173,7 +174,7 @@ export function CapacityConflictDialog({
   const confirmSplit = () => {
     if (!splitPreview || splitWaitlistable.length === 0) return;
     const groups = groupRegsByWaitlistKey(splitWaitlistable);
-    waitlistGroups(groups, eventId, ownerKey, isClub);
+    if (!waitlistGroups(groups, eventId, ownerKey, isClub)) return; // offline read-only gate
     const n = splitWaitlistable.length;
     const m = splitPreview.fits.length;
     const keptNote = splitBlocked.length > 0

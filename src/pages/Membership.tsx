@@ -201,7 +201,7 @@ function MembershipInner({ me }: { me: Athlete }) {
       (m) => m.status === 'active' || m.status === 'pending-club-payment' || m.clubCartPending || m.paidVia != null,
     );
 
-    mutate((d) => {
+    const applied = mutate((d) => {
       const p = d.people.find((x) => x.id === me.id)!;
 
       for (const t of selectedTypes) {
@@ -280,6 +280,7 @@ function MembershipInner({ me }: { me: Athlete }) {
         pushInvoice(invoice);
       }
     });
+    if (!applied) return; // offline read-only gate — no false success step/toast
 
     setStep('done');
 
@@ -314,7 +315,7 @@ function MembershipInner({ me }: { me: Athlete }) {
   // actually clears), not from here — it checks each target's prior
   // memberships itself, mirroring the once-only guard above.
   const addToCartAndCheckout = () => {
-    mutate((d) => {
+    const applied = mutate((d) => {
       const cart = d.carts[me.id] ?? (d.carts[me.id] = []);
       for (const t of selectedTypes) {
         const labelType = t === 'coach' ? 'Coach' : 'Athlete';
@@ -331,6 +332,7 @@ function MembershipInner({ me }: { me: Athlete }) {
         pushCartItem(me.id, item, false);
       }
     });
+    if (!applied) return; // offline read-only gate — don't route to checkout
     navigate('/cart/memberships');
   };
 

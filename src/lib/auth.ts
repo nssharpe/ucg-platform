@@ -67,11 +67,13 @@ async function onAuthenticated(user: Session['user']) {
       const person = db.people.find((p) => p.id === personId);
       if (person && person.kind === 'athlete' && person.memberships.length === 0) {
         const updated = { ...person, kind: 'coach' as const };
-        mutate((d) => {
+        const applied = mutate((d) => {
           const idx = d.people.findIndex((p) => p.id === personId);
           if (idx !== -1) d.people[idx] = updated;
         });
-        pushPerson(updated); // mirror to Supabase
+        // Skip the remote mirror if the local mutation was refused (offline
+        // read-only gate) — pushing remote-only would diverge from local.
+        if (applied) pushPerson(updated); // mirror to Supabase
       }
     } else {
       localStorage.removeItem('ucg-signup-kind');

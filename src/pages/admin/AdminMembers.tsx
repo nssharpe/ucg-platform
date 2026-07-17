@@ -58,7 +58,7 @@ function MergeAthletesModal({ onClose }: { onClose: () => void }) {
 
     const altClubsToAdd = (dup.altClubIds ?? []).filter((id) => !(primary.altClubIds ?? []).includes(id));
 
-    mutate((d) => {
+    const applied = mutate((d) => {
       // 1. Repoint registrations: move clean ones to primary
       for (const r of regsToMove) {
         const dr = d.registrations.find((x) => x.id === r.id);
@@ -108,6 +108,7 @@ function MergeAthletesModal({ onClose }: { onClose: () => void }) {
       d.people = d.people.filter((p) => p.id !== dup.id);
       deletePerson(dup.id);
     });
+    if (!applied) return; // offline read-only gate — no false merge report
 
     toast(
       `Merged ${dup.firstName} ${dup.lastName} into ${primary.firstName} ${primary.lastName}. ` +
@@ -191,7 +192,7 @@ function RevokeMembershipModal({ person, seasonId, onClose }: { person: Athlete;
   const [confirmed, setConfirmed] = useState(false);
 
   const doRevoke = () => {
-    mutate((d) => {
+    const applied = mutate((d) => {
       const dp = d.people.find((x) => x.id === person.id);
       if (!dp) return;
       const m = dp.memberships.find((x) => x.seasonId === seasonId);
@@ -202,6 +203,7 @@ function RevokeMembershipModal({ person, seasonId, onClose }: { person: Athlete;
         pushMembership(person.id, { ...m, status: 'none' });
       }
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     toast(`Membership revoked for ${person.firstName} ${person.lastName}.`);
     onClose();
   };
@@ -296,10 +298,11 @@ To activate it, sign up using <strong>this email address</strong> (${escapeHtml(
       status: 'pending',
       createdAt: new Date().toISOString(),
     };
-    mutate((d) => {
+    const applied = mutate((d) => {
       d.accountInvites = [...(d.accountInvites ?? []), invite];
       pushAccountInvite(invite);
     });
+    if (!applied) return; // offline read-only gate — don't email an invite that wasn't created
     const res = await sendInviteEmail(p);
     if (res.ok && res.sentCount > 0) {
       toast(`Setup invite emailed to ${p.email}.`);

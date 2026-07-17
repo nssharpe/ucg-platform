@@ -76,7 +76,7 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
     if (!clubChosen) { toast('Pick a club, or check "Independent Athlete".'); return; }
     if (!valid) { toast(`Name, email, date of birth, and ${stateLabel.toLowerCase()} are required.`); return; }
     const data = { ...draft, firstName: draft.firstName.trim(), lastName: draft.lastName.trim(), email: draft.email.trim() };
-    mutate((d) => {
+    const applied = mutate((d) => {
       if (person) {
         const i = d.people.findIndex((x) => x.id === person.id);
         d.people[i] = { ...d.people[i], ...data };
@@ -87,6 +87,7 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
         pushPerson(created);
       }
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     toast(person ? 'Person updated.' : `${data.kind === 'coach' ? 'Coach' : 'Athlete'} created — open their profile to manage memberships.`);
     onClose();
   };

@@ -28,7 +28,7 @@ export function Levels() {
     if (isNaN(vaults)) { toast('Vaults must be a number.'); return; }
     const svMax = draft.svMax === '' ? null : parseFloat(draft.svMax);
     if (draft.svMax !== '' && isNaN(svMax as number)) { toast('SV max must be a number or blank for Open.'); return; }
-    mutate((d) => {
+    const applied = mutate((d) => {
       const x = d.levels.find((y) => y.id === l.id)!;
       x.name = draft.name.trim();
       x.svMax = svMax;
@@ -36,6 +36,7 @@ export function Levels() {
       x.order = isNaN(order) ? l.order : order;
       pushLevel(x);
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     setEditingId(null);
     toast('Level saved.');
   };
@@ -43,20 +44,22 @@ export function Levels() {
   // W12 task 4: soft-delete (retire) instead of hard delete — preserves past events.
   const retireLevel = (l: Level) => {
     if (!window.confirm(`Retire level "${l.name}"? It will be hidden from new events but preserved on past events and results.`)) return;
-    mutate((d) => {
+    const applied = mutate((d) => {
       const x = d.levels.find((y) => y.id === l.id)!;
       x.retired = true;
       pushLevel(x);
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     toast(`"${l.name}" retired — won't appear in new events. Unretire it to restore.`);
   };
 
   const unretireLevel = (l: Level) => {
-    mutate((d) => {
+    const applied = mutate((d) => {
       const x = d.levels.find((y) => y.id === l.id)!;
       x.retired = false;
       pushLevel(x);
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     toast(`"${l.name}" restored.`);
   };
 
@@ -82,7 +85,7 @@ export function Levels() {
       id, discipline: disc as Level['discipline'], name: newDraft.name.trim(),
       svMax, vaults, order: isNaN(order) ? 99 : order,
     };
-    mutate((d) => { d.levels.push(newLevel); pushLevel(newLevel); });
+    if (!mutate((d) => { d.levels.push(newLevel); pushLevel(newLevel); })) return; // offline read-only gate
     setAddingDisc(null);
     toast(`Added "${newLevel.name}" to ${disc}.`);
   };

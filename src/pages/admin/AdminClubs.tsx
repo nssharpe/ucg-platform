@@ -30,13 +30,14 @@ export function AdminClubs() {
       managerIds: req.requesterPersonId ? [req.requesterPersonId] : [],
       email: '', allowClubPay: true, access: 'open',
     };
-    mutate((d) => {
+    const applied = mutate((d) => {
       d.clubs.push(club);
       pushClub(club);
       if (req.requesterPersonId) pushClubManager(id, req.requesterPersonId, true);
       const r = d.clubRequests.find((x) => x.id === req.id);
       if (r) { r.status = 'approved'; r.decidedAt = new Date().toISOString(); r.createdClubId = id; pushClubRequest(r); }
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     toast(`Created ${club.name} and made ${personName(req.requesterPersonId)} its manager.`);
   };
 

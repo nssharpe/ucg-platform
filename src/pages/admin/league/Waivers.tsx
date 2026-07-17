@@ -38,7 +38,7 @@ export function Waivers() {
       version: nextVersion(existing), body, contentHash: await sha256Hex(body),
       published: true, createdAt: new Date().toISOString(),
     };
-    mutate((d) => { (d.waiverDocuments ??= []).push(doc); });
+    if (!mutate((d) => { (d.waiverDocuments ??= []).push(doc); })) return; // offline read-only gate
     pushWaiverDocument(doc);
     setDrafts((p) => ({ ...p, [key]: doc.body }));
     toast(`${t} waiver v${doc.version} published.`);

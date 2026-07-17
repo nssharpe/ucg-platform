@@ -95,13 +95,13 @@ export function Promos() {
       usedCount: 0,
       restrictedToPersonId: draft.restrictAccount ? draft.restrictedToPersonId : null,
     };
-    mutate((d) => { d.coupons.push(coupon); pushCoupon(coupon); });
+    if (!mutate((d) => { d.coupons.push(coupon); pushCoupon(coupon); })) return; // offline read-only gate
     setDraft({ code: '', discountType: 'pct', value: '', appliesTo: 'any', appliesToEventId: null, startsAt: '', endsAt: '', maxUses: '', restrictAccount: false, restrictedToPersonId: null });
     toast(`Promo code "${code}" created.`);
   };
 
   const removeCoupon = (code: string) => {
-    mutate((d) => { d.coupons = d.coupons.filter((c) => c.code !== code); });
+    if (!mutate((d) => { d.coupons = d.coupons.filter((c) => c.code !== code); })) return; // offline read-only gate
     deleteCoupon(code);
     setConfirmDelete(null);
     toast(`Deleted promo code "${code}".`);
@@ -121,7 +121,7 @@ export function Promos() {
     if (editDraft.maxUses.trim() !== '' && (isNaN(maxUses as number) || (maxUses as number) < 1)) {
       toast('Max uses must be a positive integer or blank for unlimited.'); return;
     }
-    mutate((d) => {
+    const applied = mutate((d) => {
       const x = d.coupons.find((x) => x.code === c.code);
       if (!x) return;
       x.startsAt = editDraft.startsAt || null;
@@ -129,6 +129,7 @@ export function Promos() {
       x.maxUses = maxUses ?? null;
       pushCoupon(x);
     });
+    if (!applied) return; // offline read-only gate — no false success toast
     setEditingCode(null);
     toast(`Promo code "${c.code}" updated.`);
   };
