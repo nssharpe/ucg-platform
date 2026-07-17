@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { subscribeWriteQueue, getWriteQueueState, retryFailedWrites, discardFailedWrites } from '../lib/write-queue';
+import { isSupabaseConfigured } from '../lib/supabase';
 
 /**
  * Surfaces failed write-through saves. The write queue retries transient
@@ -9,7 +10,23 @@ import { subscribeWriteQueue, getWriteQueueState, retryFailedWrites, discardFail
  */
 export function WriteStatus() {
   const state = useSyncExternalStore(subscribeWriteQueue, getWriteQueueState, getWriteQueueState);
-  if (state.failed === 0) return null;
+  // Supabase-backed + offline: store.ts's mutate() is refusing NEW local edits
+  // (read-only-while-offline), independent of whether anything is failed/queued.
+  const offlineReadOnly = isSupabaseConfigured && !state.online;
+
+  if (state.failed === 0 && !offlineReadOnly) return null;
+
+  if (state.failed === 0) {
+    return (
+      <div className="writestatus" role="status" aria-live="polite">
+        <div className="writestatus-icon" aria-hidden>📴</div>
+        <div className="writestatus-body">
+          <div className="writestatus-title">You're offline — viewing only</div>
+          <div className="writestatus-detail">Changes are disabled until you reconnect.</div>
+        </div>
+      </div>
+    );
+  }
 
   const n = state.failed;
   const labels = state.failedLabels.slice(0, 3).join(', ');

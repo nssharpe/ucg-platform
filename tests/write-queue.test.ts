@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { WriteQueue, type WriteOp, type ExecResult, type WriteQueueEntry } from '../src/lib/write-queue';
+import {
+  WriteQueue, classifyWriteError, humanizeWriteError,
+  type WriteOp, type ExecResult, type WriteQueueEntry,
+} from '../src/lib/write-queue';
 
 // In-memory storage stub matching the queue's Storage interface.
 function memStorage() {
@@ -142,5 +145,125 @@ describe('WriteQueue', () => {
     q.enqueue(upsert('c'));
     await q.run();
     expect(order).toEqual(['a', 'b', 'c']);
+  });
+
+  it('removes a permanent failure immediately (no retry) and fires onPermanentFailure', async () => {
+    let attempts = 0;
+    const calls: Array<{ entry: WriteQueueEntry; error: unknown }> = [];
+    const err = { code: '42501', message: 'permission denied for table scores' };
+    const q = new WriteQueue({
+      executor: async (): Promise<ExecResult> => { attempts++; return { error: err }; },
+      delay: noDelay, storage: memStorage().store, maxAuto: 5,
+      onPermanentFailure: (entry, error) => calls.push({ entry, error }),
+    });
+    q.enqueue(upsert('scores'), 'scores');
+    await q.run();
+
+    expect(attempts).toBe(1); // no retry at all
+    expect(q.getState()).toMatchObject({ pending: 0, failed: 0 }); // gone, not 'failed'
+    expect(calls).toHaveLength(1);
+    expect(calls[0].entry.label).toBe('scores');
+    expect(calls[0].error).toBe(err);
+  });
+
+  it('setOnPermanentFailure registers the callback used by process()', async () => {
+    const calls: unknown[] = [];
+    const q = new WriteQueue({
+      executor: async (): Promise<ExecResult> => ({ error: { code: '23505', message: 'duplicate key' } }),
+      delay: noDelay, storage: memStorage().store,
+    });
+    q.setOnPermanentFailure((_entry, error) => calls.push(error));
+    q.enqueue(upsert('scores'));
+    await q.run();
+    expect(calls).toHaveLength(1);
+  });
+
+  it('a transient failure still retries up to the default budget (8) then fails', async () => {
+    let attempts = 0;
+    const q = new WriteQueue({
+      executor: async (): Promise<ExecResult> => { attempts++; return { error: new Error('network hiccup') }; },
+      delay: noDelay, storage: memStorage().store, // default maxAuto = 8
+    });
+    q.enqueue(upsert('scores'));
+    await q.run();
+    expect(attempts).toBe(8);
+    expect(q.getState()).toMatchObject({ pending: 0, failed: 1 });
+  });
+
+  it('does not burn an attempt or fire onPermanentFailure while offline', async () => {
+    let online = false;
+    let calls = 0;
+    const permCalls: unknown[] = [];
+    const q = new WriteQueue({
+      executor: async (): Promise<ExecResult> => { calls++; return { error: null }; },
+      delay: noDelay, storage: memStorage().store, isOnline: () => online,
+      onPermanentFailure: (_e, err) => permCalls.push(err),
+    });
+    q.enqueue(upsert('scores'));
+    await q.run();
+    expect(calls).toBe(0);
+    expect(permCalls).toHaveLength(0);
+    expect(q.getState()).toMatchObject({ pending: 1, online: false });
+
+    online = true;
+    q.resume();
+    await q.run();
+    expect(calls).toBe(1);
+  });
+});
+
+describe('classifyWriteError', () => {
+  const cases: Array<[string, unknown, 'permanent' | 'transient']> = [
+    ['RLS denial by code', { code: '42501', message: 'permission denied for table x' }, 'permanent'],
+    ['RLS denial by message only', { message: 'new row violates row-level security policy for table x' }, 'permanent'],
+    ['policy recursion 42P17', { code: '42P17', message: 'infinite recursion detected in policy' }, 'permanent'],
+    ['unique violation 23505', { code: '23505', message: 'duplicate key value violates unique constraint' }, 'permanent'],
+    ['foreign key violation 23503', { code: '23503', message: 'insert or update violates foreign key constraint' }, 'permanent'],
+    ['not-null violation 23502', { code: '23502', message: 'null value in column violates not-null constraint' }, 'permanent'],
+    ['constraint violation by message only', { message: 'new row violates check constraint "positive_amount"' }, 'permanent'],
+    ['PostgREST JWT/auth code', { code: 'PGRST301', message: 'JWT expired' }, 'permanent'],
+    ['HTTP 400', { status: 400, message: 'Bad Request' }, 'permanent'],
+    ['HTTP 401', { status: 401, message: 'Unauthorized' }, 'permanent'],
+    ['HTTP 403', { status: 403, message: 'Forbidden' }, 'permanent'],
+    ['HTTP 404', { status: 404, message: 'Not Found' }, 'permanent'],
+    ['HTTP 409', { status: 409, message: 'Conflict' }, 'permanent'],
+    ['HTTP 422', { status: 422, message: 'Unprocessable Entity' }, 'permanent'],
+    ['statusCode field (not status)', { statusCode: 403, message: 'nope' }, 'permanent'],
+    ['fetch TypeError', new TypeError('Failed to fetch'), 'transient'],
+    ['NetworkError message', { message: 'A NetworkError occurred' }, 'transient'],
+    ['Safari Load failed', { message: 'Load failed' }, 'transient'],
+    ['AbortError (timeout/cancel)', { name: 'AbortError', message: 'The operation was aborted' }, 'transient'],
+    ['HTTP 429', { status: 429, message: 'Too Many Requests' }, 'transient'],
+    ['HTTP 500', { status: 500, message: 'Internal Server Error' }, 'transient'],
+    ['HTTP 503', { status: 503, message: 'Service Unavailable' }, 'transient'],
+    ['null error', null, 'transient'],
+    ['undefined error', undefined, 'transient'],
+    ['unrecognized shape defaults transient', { message: 'something odd happened' }, 'transient'],
+    ['bare Error with unrelated message', new Error('kaboom'), 'transient'],
+  ];
+
+  it.each(cases)('%s', (_label, error, expected) => {
+    expect(classifyWriteError(error)).toBe(expected);
+  });
+});
+
+describe('humanizeWriteError', () => {
+  it('maps RLS/permission errors to a plain-English reason', () => {
+    expect(humanizeWriteError({ code: '42501', message: 'permission denied for table x' }))
+      .toBe("you don't have permission to make this change");
+    expect(humanizeWriteError({ message: 'new row violates row-level security policy for table x' }))
+      .toBe("you don't have permission to make this change");
+  });
+
+  it('maps integrity-constraint errors to a plain-English reason', () => {
+    expect(humanizeWriteError({ code: '23505', message: 'duplicate key value violates unique constraint' }))
+      .toBe('this change conflicts with existing data');
+    expect(humanizeWriteError({ message: 'new row violates check constraint "positive_amount"' }))
+      .toBe('this change conflicts with existing data');
+  });
+
+  it('falls back to the raw message for anything else', () => {
+    expect(humanizeWriteError({ message: 'something odd happened' })).toBe('something odd happened');
+    expect(humanizeWriteError(null)).toBe('Unknown error');
   });
 });

@@ -71,10 +71,17 @@ export interface WriteQueueOptions {
   /** Promise-based delay between retries (injected so tests run instantly). */
   delay?: (ms: number) => Promise<void>;
   isOnline?: () => boolean;
-  /** Auto-retry attempts before an entry is marked failed (needs manual retry). */
+  /** Auto-retry attempts before an entry is marked failed (needs manual retry).
+   *  Only applies to transient failures — permanent ones never retry. */
   maxAuto?: number;
   /** Backoff base in ms; doubles each attempt, capped at 30s. */
   backoffBase?: number;
+  /** Called when a write is classified 'permanent' (see classifyWriteError):
+   *  the entry has already been removed from the queue by the time this
+   *  fires — there is nothing left to retry or dismiss. Registered at boot
+   *  (supabase.ts) to toast the user and roll back local state via
+   *  syncFromSupabase(), since the optimistic local change is now known-wrong. */
+  onPermanentFailure?: (entry: WriteQueueEntry, error: unknown) => void;
 }
 
 const genId = (): string =>
@@ -82,11 +89,89 @@ const genId = (): string =>
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
 
-function stringifyError(error: unknown): string {
+export function stringifyError(error: unknown): string {
   if (error == null) return 'Unknown error';
   const e = error as { message?: unknown };
   if (typeof e.message === 'string') return e.message;
   try { return JSON.stringify(error); } catch { return String(error); }
+}
+
+/** Errors the queue treats as "the server rejected this write; retrying is
+ *  pointless" — RLS/privilege denials, policy recursion, integrity
+ *  violations, and JWT/auth failures, plus their HTTP-status equivalents. */
+type WriteErrorShape = {
+  code?: unknown;
+  message?: unknown;
+  status?: unknown;
+  statusCode?: unknown;
+  name?: unknown;
+};
+
+const NETWORK_MESSAGE_RE = /failed to fetch|network\s*error|load failed|network request failed/i;
+const RLS_MESSAGE_RE = /row-level security/i;
+const CONSTRAINT_MESSAGE_RE = /violates .*constraint/i;
+const INTEGRITY_CODE_RE = /^23\d{3}$/; // 23xxx: not_null/foreign_key/unique/check violations
+const AUTH_CODE_RE = /^PGRST3\d\d$/; // PostgREST JWT/auth error family
+const PERMANENT_HTTP_STATUS = new Set([400, 401, 403, 404, 409, 422]);
+
+/** Pure classifier — no I/O, safe to unit-test with plain objects. Unknown
+ *  shapes default to 'transient': that preserves today's retry behavior and
+ *  is the safe default (a real permanent failure just takes one extra retry
+ *  round to reach 'failed', vs. a misclassified transient failure being
+ *  dropped and rolled back for no reason). */
+export function classifyWriteError(error: unknown): 'permanent' | 'transient' {
+  if (error == null) return 'transient';
+  const e = error as WriteErrorShape;
+  const code = typeof e.code === 'string' ? e.code : undefined;
+  const message = typeof e.message === 'string' ? e.message : '';
+  const name = typeof e.name === 'string' ? e.name : undefined;
+  const status = typeof e.status === 'number' ? e.status
+    : typeof e.statusCode === 'number' ? e.statusCode
+    : undefined;
+
+  // Network/timeout/abort failures are always transient, even if some
+  // library also happened to attach an unrelated status/code field.
+  if (name === 'AbortError') return 'transient';
+  if (NETWORK_MESSAGE_RE.test(message)) return 'transient';
+
+  if (code === '42501' || code === '42P17') return 'permanent';
+  if (code && INTEGRITY_CODE_RE.test(code)) return 'permanent';
+  if (code && AUTH_CODE_RE.test(code)) return 'permanent';
+
+  if (status !== undefined) {
+    if (PERMANENT_HTTP_STATUS.has(status)) return 'permanent';
+    if (status === 429 || status >= 500) return 'transient';
+  }
+
+  if (RLS_MESSAGE_RE.test(message) || CONSTRAINT_MESSAGE_RE.test(message)) return 'permanent';
+
+  return 'transient';
+}
+
+/** Maps a raw write error to a short, user-facing reason for the
+ *  permanent-failure toast. Falls back to the raw message for anything not
+ *  specifically recognized. Pure, unit-tested alongside classifyWriteError. */
+export function humanizeWriteError(error: unknown): string {
+  const e = (error ?? {}) as WriteErrorShape;
+  const code = typeof e.code === 'string' ? e.code : undefined;
+  const message = typeof e.message === 'string' ? e.message : stringifyError(error);
+
+  if (code === '42501' || RLS_MESSAGE_RE.test(message)) {
+    return "you don't have permission to make this change";
+  }
+  if ((code && INTEGRITY_CODE_RE.test(code)) || CONSTRAINT_MESSAGE_RE.test(message)) {
+    return 'this change conflicts with existing data';
+  }
+  return message;
+}
+
+/** True unless the browser explicitly reports offline (navigator may be
+ *  absent, or expose a non-boolean onLine, outside a real browser — treat
+ *  that as online rather than wrongly locking the UI read-only). Shared by
+ *  the queue's own default isOnline and by store.ts's offline mutation gate. */
+export function isBrowserOnline(): boolean {
+  try { return typeof navigator === 'undefined' || navigator.onLine !== false; }
+  catch { return true; }
 }
 
 export class WriteQueue {
@@ -97,6 +182,7 @@ export class WriteQueue {
   private isOnline: () => boolean;
   private maxAuto: number;
   private backoffBase: number;
+  private onPermanentFailure?: (entry: WriteQueueEntry, error: unknown) => void;
   private runPromise: Promise<void> | null = null;
   private listeners = new Set<() => void>();
   private snapshot: WriteQueueState;
@@ -105,14 +191,14 @@ export class WriteQueue {
     this.executor = opts.executor ?? (async () => ({ error: new Error('write queue executor not configured') }));
     this.storage = opts.storage ?? defaultStorage();
     this.delay = opts.delay ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
-    // Assume online unless the browser explicitly reports offline. (navigator
-    // may be absent, or expose a non-boolean onLine, outside a real browser.)
-    this.isOnline = opts.isOnline ?? (() => {
-      try { return typeof navigator === 'undefined' || navigator.onLine !== false; }
-      catch { return true; }
-    });
-    this.maxAuto = opts.maxAuto ?? 5;
+    this.isOnline = opts.isOnline ?? isBrowserOnline;
+    // 8 attempts * backoff doubling (500ms.. capped 30s) ~= two minutes of
+    // automatic retrying before a TRANSIENT failure needs a manual Retry.
+    // Permanent failures (see classifyWriteError) never consume this budget —
+    // they're removed on the first attempt.
+    this.maxAuto = opts.maxAuto ?? 8;
     this.backoffBase = opts.backoffBase ?? 500;
+    this.onPermanentFailure = opts.onPermanentFailure;
     this.entries = this.storage.load();
     this.snapshot = this.computeSnapshot();
   }
@@ -120,6 +206,11 @@ export class WriteQueue {
   /** Register the real (Supabase) executor at boot. */
   setExecutor(executor: Executor) {
     this.executor = executor;
+  }
+
+  /** Register the permanent-failure callback at boot (see WriteQueueOptions). */
+  setOnPermanentFailure(cb: (entry: WriteQueueEntry, error: unknown) => void) {
+    this.onPermanentFailure = cb;
   }
 
   /** Enqueue a write and kick the processor. */
@@ -188,9 +279,24 @@ export class WriteQueue {
 
         entry.attempts++;
         entry.lastError = stringifyError(error);
+        const classification = classifyWriteError(error);
         reportError(error, 'write-queue', {
-          table: entry.op.table, kind: entry.op.kind, attempts: entry.attempts,
+          table: entry.op.table, kind: entry.op.kind, attempts: entry.attempts, classification,
         });
+
+        if (classification === 'permanent') {
+          // The server rejected this write for a reason retrying cannot fix —
+          // burning the auto-retry budget (or leaving it for a manual Retry)
+          // would just repeat the same rejection. Remove it now and let the
+          // caller (supabase.ts) toast + roll back the optimistic local state.
+          entry.status = 'failed';
+          const finished: WriteQueueEntry = { ...entry };
+          this.entries = this.entries.filter((e) => e.id !== finished.id);
+          this.persist();
+          this.notify();
+          this.onPermanentFailure?.(finished, error);
+          continue;
+        }
 
         if (entry.attempts >= this.maxAuto) {
           entry.status = 'failed';

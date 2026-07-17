@@ -4,6 +4,8 @@ import { useSyncExternalStore } from 'react';
 import type { DB } from './types';
 import { buildSeed } from './seed';
 import { isSupabaseConfigured, loadAll } from './supabase';
+import { isBrowserOnline } from './write-queue';
+import { pushToast } from './toast-bus';
 
 const LS_KEY = 'ucg-db-v1';
 // Bumped to 6 for the Meet→Event + apparatus rename: the persisted DB shape
@@ -40,12 +42,31 @@ export function getDB(): DB {
   return db;
 }
 
-/** Mutate the DB inside fn; persists + notifies subscribers (multi-tab safe). */
-export function mutate(fn: (db: DB) => void) {
+// Read-only while offline (Supabase-backed only — the localStorage-only
+// prototype mode has no remote to diverge from, so it stays writable). Every
+// push* call site invokes its remote write from INSIDE the mutate() callback
+// (e.g. `mutate((d) => { ...; pushClub(d.clubs[i]); })`), so refusing to run
+// fn at all here is a single choke point that guarantees BOTH no optimistic
+// local change AND no write ever gets enqueued for it — there's no path for
+// local/remote state to diverge from a blocked mutation.
+let offlineToastShown = false;
+window.addEventListener('online', () => { offlineToastShown = false; });
+
+/** Mutate the DB inside fn; persists + notifies subscribers (multi-tab safe).
+ *  Returns false (without applying fn) when Supabase-backed and offline. */
+export function mutate(fn: (db: DB) => void): boolean {
+  if (isSupabaseConfigured && !isBrowserOnline()) {
+    if (!offlineToastShown) {
+      offlineToastShown = true;
+      pushToast("You're offline — changes are disabled until you reconnect.", { variant: 'error' });
+    }
+    return false;
+  }
   fn(db);
   snapshotVersion++;
   persist();
   listeners.forEach((l) => l());
+  return true;
 }
 
 export function resetDemo() {

@@ -1,6 +1,7 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { ToastCtx, type ToastOptions } from './ui-hooks';
+import { subscribeToast } from '../lib/toast-bus';
 
 // ---- Toasts ----
 // Toasts persist until the user dismisses them (✕) — they never auto-expire, so
@@ -20,6 +21,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     const id = nextId.current++;
     setToasts((t) => [...t, { id, msg, variant: opts?.variant ?? 'info' }]);
   }, []);
+
+  // Let non-component code (write-queue boot wiring, the offline mutation
+  // gate in store.ts) surface a toast through this same provider via the
+  // imperative lib/toast-bus escape hatch, instead of a parallel toast system.
+  useEffect(() => subscribeToast(push), [push]);
 
   return (
     <ToastCtx.Provider value={push}>

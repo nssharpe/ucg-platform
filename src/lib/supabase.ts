@@ -10,7 +10,8 @@ import type {
   AccountInvite, AccountingCode, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, EventAdmin, HostPayout, Invoice, Level, Event, Membership, MembershipType, Payment, PaymentSnapshotLine, Region, Registration, RefundRequest, SanctionRequest, SanctionVote, Score, Season,
   WaiverDocument, WaiverSignature, WaitlistGroup, SessionRequest, CompetitionOrder, FinalsLineup, EventCheckin,
 } from './types';
-import { writeQueue, type WriteOp, type ExecResult } from './write-queue';
+import { writeQueue, humanizeWriteError, type WriteOp, type ExecResult, type WriteQueueEntry } from './write-queue';
+import { pushToast } from './toast-bus';
 import type { Database } from './database.types';
 import type { CapacityViolation } from './capacity';
 
@@ -107,6 +108,36 @@ async function executeWriteOp(op: WriteOp): Promise<ExecResult> {
 }
 
 if (supabase) writeQueue.setExecutor(executeWriteOp);
+
+// A PERMANENT write failure (RLS denial, integrity violation, etc. — see
+// classifyWriteError) means the optimistic local change in src/lib/store.ts
+// is now known to be wrong: the server never applied it and never will on
+// retry. There's no per-entry undo, so the rollback is a full reload from
+// Supabase (store.ts's syncFromSupabase, the same function boot hydration
+// uses) — imported dynamically to avoid a static import cycle with store.ts
+// (which imports isSupabaseConfigured/loadAll from this module).
+let rollbackSyncTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleRollbackSync() {
+  // Coalesce: several permanent failures can land in the same tick (e.g. a
+  // batched save touching multiple tables) — one syncFromSupabase() covers
+  // all of them, so only schedule if nothing is already pending.
+  if (rollbackSyncTimer) return;
+  rollbackSyncTimer = setTimeout(() => {
+    rollbackSyncTimer = null;
+    void import('./store').then((m) => m.syncFromSupabase());
+  }, 250);
+}
+
+function handlePermanentWriteFailure(entry: WriteQueueEntry, error: unknown): void {
+  const reason = humanizeWriteError(error);
+  pushToast(
+    `Couldn't save ${entry.label}: ${reason}. Your change was not saved and the page has been refreshed from the server.`,
+    { variant: 'error' },
+  );
+  scheduleRollbackSync();
+}
+
+if (supabase) writeQueue.setOnPermanentFailure(handlePermanentWriteFailure);
 
 /** Queue an upsert (chunked at execution time for arrays >500 rows). */
 function remoteUpsert(table: string, rows: Record<string, unknown>[], onConflict?: string) {
