@@ -29,7 +29,8 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
    - Offline stance: **read-only when offline** (decided; implementation with the
      write-queue hardening below).
    - Admin MFA: **implement the 2026-06-22 research doc's recommendations in
-     full, no phasing** (decided).
+     full, no phasing** (decided) — **built on `feat/mfa` 2026-07-17**, see
+     item 5's MFA/passkeys entry below for status + remaining Nate items.
    - Bug reports: **via email for now**, category-routed (site broken →
      nssharpe@gmail.com + jzsharpe@gmail.com; event/rule/policy question →
      `+ucghelp` aliases of both until real `info@unitedgymnastics.com`-style
@@ -97,8 +98,15 @@ these were explicitly deferred, not dropped:
 - **C** multi-club registration picker →
 - **D** codeless judge access (URL / 6-digit code / QR) →
 - **E** scoring config (1-vs-2 panels, calculator vs. simple entry).
-- Further out: MFA/passkeys ([research](research/2026-06-22-auth-2fa-passkeys.md)),
-  PDF certificates, external API.
+- ~~MFA/passkeys~~ **implemented on `feat/mfa` (2026-07-17)**, all three phases from the
+  [research doc](research/2026-06-22-auth-2fa-passkeys.md): TOTP opt-in (Profile page),
+  aal2-required admins (migration `20260717140238`, NOT yet applied), admin break-glass
+  reset (`admin-reset-mfa`), and passkey (webauthn) as an additional factor — the SDK
+  supports it but **the project's Supabase Auth has WebAuthn MFA disabled server-side**
+  (confirmed live: enroll returns "MFA enroll is disabled for WebAuthn"); 👤 Nate: flip it
+  on in the dashboard (Auth → Multi-Factor Authentication) if passkeys should go live, and
+  apply the aal2 migration staging-then-prod once the branch is reviewed/merged.
+- Further out: PDF certificates, external API.
 
 ## 6. Proposed additions (Claude, 2026-07-16 — NOT yet committed; Nate to triage)
 
