@@ -19,3 +19,7 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+// Injected by vite.config.ts `define` at build time — short git SHA + build
+// timestamp, used for the version stamp and "Report a problem" payload.
+declare const __BUILD_INFO__: { sha: string; date: string };

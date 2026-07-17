@@ -1827,6 +1827,22 @@ export async function fetchSignRequest(token: string): Promise<FnReturns<'get_wa
   return (data as FnReturns<'get_waiver_sign_request'> | null)?.[0] ?? null;
 }
 
+/** Submit an in-app "Report a problem" note (nav-drawer entry point, any
+ *  signed-in user). The server derives the reporter's identity from the JWT
+ *  (never trusts a client-sent name/email) and routes the email by category. */
+export async function reportProblem(args: {
+  category: 'bug' | 'question' | 'unsure';
+  description: string;
+  route: string;
+  appVersion: string;
+  recentErrors: { message: string; at: string }[];
+}): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('report-problem', { body: args });
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  return data as { ok: boolean; error?: string };
+}
+
 /** The published waiver doc for a season+type (latest published version). */
 export async function fetchPublishedWaiver(seasonId: string, waiverType: string) {
   if (!supabase) return null;
