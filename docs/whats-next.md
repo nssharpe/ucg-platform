@@ -15,8 +15,10 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
 1. ~~Grant `finance_admin`~~ **done 2026-07-16** (Nate granted all relevant users).
 2. **Verify the P3 refund prerequisites landed:** "UCG - Main" flagged
    `clubs.is_league_host` + `refund_manager` granted to whoever reviews refunds.
-3. **Confirm the host-payout "owed" formula with Julia** — the P6 payout card
-   provisionally uses *event net revenue*; adjust `src/lib/finance.ts` when she answers.
+3. ~~Confirm the host-payout "owed" formula with Julia~~ **answered + shipped
+   2026-07-17**: owed = event gross collected (registrations + add-ons, before
+   service/admin fees), refunds NOT deducted (hosts handle their own refunds;
+   league-hosted events get no payout). `src/lib/finance.ts` updated.
 4. **Supabase Pro upgrade** (backups/PITR) — deliberately deferred 2026-07-04; a hard
    pre-flight gate in the [go-live checklist](stripe-go-live-checklist.md). Interim
    insurance: daily dumps via `scripts/backup-db.mjs` (runbook in
@@ -41,14 +43,10 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
 
 ## 2. Launch blockers (🤖 buildable now)
 
-0. **Fix `camp_survey` world-readability** (found by the 2026-07-17 Supabomb pass —
-   [results](research/2026-07-17-supabomb-scan-results.md)): `registrations` has a
-   `using(true)` public-read policy, and the emv2-P2 `camp_survey` column (minors'
-   bedtime/gender/roommate answers) rides on it → anonymous-readable. Latent today
-   (no camps run yet) but **must fix before the first camp**. Fix = explicit column
-   list in `loadAll` excluding `camp_survey` + scoped SECURITY DEFINER read (mirrors
-   `event_host_roster`) + `revoke select (camp_survey) … from anon, authenticated`.
-   Auth/RLS — controller-reviewed.
+0. ~~Fix `camp_survey` world-readability~~ **FIXED 2026-07-17** (migrations
+   `20260717205348` + `20260717211754`, applied staging + prod, anon-probe
+   verified on both; fix record in
+   [results](research/2026-07-17-supabomb-scan-results.md)).
 1. **Security hardening Phase 3** ([plan](plans/2026-07-02-security-hardening.md)):
    M1 coupon reservation at session-create, M2 tighter `cart_member_clubpush`
    WITH CHECK, M4 route the `people` self-insert-by-email branch through
@@ -61,7 +59,7 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
    in `scheduled-dispatch` (new `error_logs` rows since the last digest +
    every `payments` row stuck `pending` > 1h → email via Resend, at most once
    per UTC day). Runbook in `supabase/README.md` "Scheduled dispatch (pg_cron)".
-   Not yet deployed — controller still owns the deploy step.
+   Deployed to prod + staging 2026-07-17.
 4. **Privacy policy + ToS drafts** for counsel review, plus sign-up consent capture.
 5. **Run the Playwright E2E suite in CI** (staging project + specs exist; the deploy
    workflow doesn't run them yet).

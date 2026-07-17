@@ -461,8 +461,9 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
     + per-team session-timed finals reminders; only the admin-set
     `finals_lineup_deadline_at` nag + 10pm hard lock shipped. All P5 UI is gated on
     `event.kind === 'nationals'`.
-  - ⚠ Host-payout "owed" = event net revenue is **PROVISIONAL** pending Julia's
-    formula (`src/lib/finance.ts`).
+  - Host-payout "owed" formula CONFIRMED by Julia 2026-07-17: event gross collected
+    (registrations + add-ons, before service/admin fees), refunds NOT deducted
+    (hosts handle their own refunds) — implemented in `src/lib/finance.ts`.
   - 👤 Nate: grant `finance_admin` (Julia/bookkeeper); verify the P3 prereqs landed
     ("UCG - Main" `is_league_host` + `refund_manager` grants).
 - **Security hardening Phase 3** still TODO (`docs/plans/2026-07-02-security-hardening.md`).

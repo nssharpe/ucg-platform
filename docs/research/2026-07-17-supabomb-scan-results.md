@@ -57,9 +57,19 @@ participation/roster structure, not identities. Defensible by design.
 
 ## Finding to fix: `camp_survey` is world-readable (CONFIRMED, latent today)
 
+> **FIXED 2026-07-17** — migrations `20260717205348_camp_survey_scoped_read.sql`
+> (explicit `loadAll` column list, scoped `registration_camp_surveys()` RPC,
+> table-grant swap to an explicit column list excluding `camp_survey` — a bare
+> column REVOKE would have been a no-op against the Supabase bootstrap table
+> grant) + `20260717211754_camp_survey_rpc_revoke_anon.sql` (anon could still
+> EXECUTE the RPC via Supabase's default function privileges; data path was
+> already fail-closed). Applied staging + prod; anon-probe re-run on BOTH:
+> plain columns 200, `camp_survey` select → 42501, `select=*` → 42501,
+> RPC as anon → 42501. Details in `supabase/README.md` migration table.
+
 `registrations` carries a `camp_survey` jsonb column (added emv2 P2) holding camp
 overnight-accommodation answers: bedtime, noise level, **cabin gender
-preference, and a free-text roommate request** — for registrants who are often
+preference, and a free-text roommate request** — for registrants who are sometimes
 **minors**. The `public_read … using(true)` policy on `registrations` predates
 this column and was never re-evaluated when it was added, so **camp survey
 answers are readable by the anonymous internet** wherever populated.
