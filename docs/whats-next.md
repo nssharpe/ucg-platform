@@ -131,11 +131,15 @@ these were explicitly deferred, not dropped:
 
 Suggested from a post-emv2 read of the platform; none of these are in a spec yet:
 
-1. **Multi-manager freshness.** Realtime covers only `scores`; two managers editing one
-  club (or admin + manager) don't see each other's changes until reload. A
-  refetch-on-focus (or realtime) for `registrations`/`cart_items`/`memberships` heads
-  off "my change disappeared" reports — the watch-list trigger effectively fires the
-  moment clubs have two active managers, which club invites already enable.
+1. **Multi-manager freshness — shipped focus-refetch; realtime upgrade deferred.**
+  Realtime covers only `scores`; two managers editing one club (or admin + manager)
+  didn't see each other's changes until reload. `src/lib/focus-refresh.ts`
+  (`initFocusRefresh()`, wired at boot in `main.tsx`) now runs `syncFromSupabase()`
+  when a tab returns after being hidden/blurred/offline for ≥60s AND the last sync
+  was ≥60s ago, skipping while the write-queue is busy/offline/unconfigured. A true
+  realtime subscription on `registrations`/`cart_items`/`memberships` (push-based,
+  no wait for a tab to refocus) stays a follow-up if focus-refetch proves
+  insufficient in practice.
 2. **Payments reconciliation admin view.** Two known drifts have no surface: `payments`
   rows stuck `pending` (webhook missed/failed) and Stripe-Dashboard-issued refunds that
   never reflect into `payments.status`. A small admin card (and/or the daily digest
