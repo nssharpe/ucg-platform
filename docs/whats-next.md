@@ -63,8 +63,10 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
    per UTC day). Runbook in `supabase/README.md` "Scheduled dispatch (pg_cron)".
    Deployed to prod + staging 2026-07-17.
 4. **Privacy policy + ToS drafts** for counsel review, plus sign-up consent capture.
-5. **Run the Playwright E2E suite in CI** (staging project + specs exist; the deploy
-   workflow doesn't run them yet).
+5. ~~Run the Playwright E2E suite in CI~~ ✅ **shipped 2026-07-18** — non-blocking
+   `e2e` job in the deploy workflow (staging backend, `STAGING_ENV_FILE` secret,
+   HTML report artifact on failure). Deliberately outside `deploy`'s needs chain;
+   **flip to a blocking gate once it's proven stable on CI** (tracked here).
 6. **Hosting move** ([hosting-and-launch.md](hosting-and-launch.md)): Cloudflare Pages
    + custom domain (`registration.unitedgymnastics.org`) + `BrowserRouter` (retires the
    HashRouter auth-callback workarounds) + security headers (CSP/HSTS/…). 🤖 code;

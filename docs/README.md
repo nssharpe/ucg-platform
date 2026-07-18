@@ -83,12 +83,12 @@ Live build/tooling notes live in [`../CLAUDE.md`](../CLAUDE.md); open work is
 |------|---------|--------|
 | [sms-providers](research/2026-06-18-sms-providers.md) | Bulk-SMS provider options for the Communicate tool | 📓 research (Telnyx shipped) |
 | [stripe-plan](research/2026-06-18-stripe-plan.md) | Real payments: membership/meet/banquet, card-on-file, club cart | 📓 research → **shipped (S1–S5; see [stripe-integration spec](specs/2026-06-25-stripe-integration.md) + [go-live checklist](stripe-go-live-checklist.md))** |
-| [auth-2fa-passkeys](research/2026-06-22-auth-2fa-passkeys.md) | 2FA/passkey options (Supabase MFA: TOTP/SMS/WebAuthn) + phased recommendation | 📓 research |
-| [password-policy](research/2026-06-22-password-policy.md) | Password best practice (NIST) + Supabase policy settings | 📓 research |
-| [error-logging-observability](research/2026-06-22-error-logging-observability.md) | Error-log strategy (DB + admin search; Sentry optional) | 📓 research → **shipped (error_logs)** |
+| [auth-2fa-passkeys](research/2026-06-22-auth-2fa-passkeys.md) | 2FA/passkey options (Supabase MFA: TOTP/SMS/WebAuthn) + phased recommendation | 📓 research → **shipped (TOTP + passkey login option)** |
+| [password-policy](research/2026-06-22-password-policy.md) | Password best practice (NIST) + Supabase policy settings | 📓 research → **shipped**|
+| [error-logging-observability](research/2026-06-22-error-logging-observability.md) | Error-log strategy (DB + admin search; Sentry optional) | 📓 research → **shipped (error_logs) + "Report a Problem" widget** |
 | [admin-refresh-flash](research/2026-06-22-admin-refresh-flash.md) | Diagnosis + fix for the admin-page "access denied" flash on refresh | 📓 research → **shipped (rolesLoaded)** |
 | [security-review-options](research/2026-07-17-security-review-options.md) | Third-party security review market scan + scoped recommendation (~$5k ± $2k, 2-layer plan) | 📓 research — 👤 Nate chose Supabomb + internal review for now (gap accepted in go-live checklist) |
-| [supabomb-scan-results](research/2026-07-17-supabomb-scan-results.md) | First automated Supabase scan + manual anon-read RLS probe (prod+staging) | 📓 research → clean except **camp_survey world-readable** (queued fix, whats-next §0) |
+| [supabomb-scan-results](research/2026-07-17-supabomb-scan-results.md) | First automated Supabase scan + manual anon-read RLS probe (prod+staging) | 📓 research → **shipped** |
 
 ## What's next
 
