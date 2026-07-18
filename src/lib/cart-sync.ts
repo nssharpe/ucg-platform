@@ -39,6 +39,16 @@ export type CartRemovalResult = {
   keptRegIds: string[];
 };
 
+/** The user-facing toast copy for each removal outcome ('blocked-offline'
+ *  excluded — callers show nothing; mutate itself already toasted). */
+export const CART_REMOVAL_MESSAGE: Record<Exclude<CartRemovalResult['action'], 'blocked-offline'>, string> = {
+  'delete-registration': 'Removed from cart and canceled the registration.',
+  'revert-registration': 'Removed from cart — registration reverted to its prior state.',
+  'no-snapshot-remove-only': 'Removed from cart. This registration was changed before we could track a revert — please check it.',
+  'clear-membership-hold': 'Removed from cart — that unpaid membership request was canceled.',
+  'remove-only': 'Removed from cart.',
+};
+
 /**
  * Remove `item` from the cart owned by `ownerKey` (a clubId when `isClub`,
  * else a personId), syncing the underlying registration(s)/membership it

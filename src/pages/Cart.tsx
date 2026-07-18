@@ -5,7 +5,7 @@ import { useCapabilities } from '../lib/capabilities';
 import { useToast, useFmtDate } from '../components/ui-hooks';
 import { Badge, Modal } from '../components/ui';
 import { fmtMoney } from '../lib/scoring';
-import { removeCartItemWithSync, cleanupCrossClubCart } from '../lib/cart-sync';
+import { removeCartItemWithSync, cleanupCrossClubCart, CART_REMOVAL_MESSAGE } from '../lib/cart-sync';
 import { downloadCartInvoice, downloadReceipt, invoiceTotal } from '../lib/receipt';
 import { CartCheckout } from '../components/CartCheckout';
 import { CapacityConflictDialog } from '../components/CapacityConflictDialog';
@@ -270,13 +270,7 @@ function CartScope({
     const { action, keptRegIds } = removeCartItemWithSync(ownerKey, isClub, item);
     // Offline read-only gate: nothing was removed; mutate() already toasted.
     if (action === 'blocked-offline') return;
-    const message = {
-      'delete-registration': 'Removed from cart and canceled the registration.',
-      'revert-registration': 'Removed from cart — registration reverted to its prior state.',
-      'no-snapshot-remove-only': 'Removed from cart. This registration was changed before we could track a revert — please check it.',
-      'clear-membership-hold': 'Removed from cart — that unpaid membership request was canceled.',
-      'remove-only': 'Removed from cart.',
-    }[action];
+    const message = CART_REMOVAL_MESSAGE[action];
     const keptNote = keptRegIds.length > 0
       ? ` (${keptRegIds.length === 1 ? 'One registration was' : `${keptRegIds.length} registrations were`} kept — another cart line still covers ${keptRegIds.length === 1 ? 'it' : 'them'}.)`
       : '';
