@@ -35,6 +35,7 @@ import {
   priceForTypesDollars,
   processingFee,
   registrationChangeFeeDollars,
+  seasonPurchasableForCheckout,
   toCents,
   type MembershipRow,
   type MembershipType,
@@ -229,7 +230,7 @@ Deno.serve(async (req) => {
   if (seasonIds.length) {
     const { data: sr, error: sErr } = await db
       .from('seasons')
-      .select('id, name, athlete_fee, coach_fee, club_fee')
+      .select('id, name, athlete_fee, coach_fee, club_fee, current, launched_at')
       .in('id', seasonIds);
     if (sErr) return json({ ok: false, error: sErr.message }, 500);
     seasons = new Map((sr ?? []).map((s) => [s.id as string, s as SeasonFees]));
@@ -663,6 +664,11 @@ Deno.serve(async (req) => {
   for (const g of memGroups.values()) {
     const season = seasons.get(g.seasonId);
     if (!season) return json({ ok: false, error: `Unknown season ${g.seasonId}.` }, 400);
+    // F6: reject a membership targeting a season that's neither current nor a
+    // launched future season (unlaunched future, or a stale past season).
+    if (!seasonPurchasableForCheckout(season)) {
+      return json({ ok: false, error: `${season.name} isn't open for membership purchases yet.` }, 400);
+    }
     const types = Array.from(new Set(g.items.map((i) => i.ref_type as MembershipType)))
       .filter((t) => t === 'athlete' || t === 'coach');
     const existing = existingByPerson.get(g.targetPerson) ?? [];
@@ -688,6 +694,10 @@ Deno.serve(async (req) => {
     if (i.kind === 'membership' && i.ref_type === 'club' && i.ref_season_id) {
       const season = seasons.get(i.ref_season_id);
       if (!season) return json({ ok: false, error: `Unknown season ${i.ref_season_id}.` }, 400);
+      // F6: same current-or-launched-future gate as the athlete/coach path above.
+      if (!seasonPurchasableForCheckout(season)) {
+        return json({ ok: false, error: `${season.name} isn't open for membership purchases yet.` }, 400);
+      }
       const alreadyActive = clubId && clubMembershipSeasons.has(`${clubId}:${i.ref_season_id}`);
       pushLine(i.id, i.label, alreadyActive ? 0 : season.club_fee, 'club-membership');
       continue;

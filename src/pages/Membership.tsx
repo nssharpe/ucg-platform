@@ -10,6 +10,7 @@ import type { Athlete, InvoiceItem, Membership, MembershipType, WaiverDocument }
 import { GENERAL_WAIVER_TYPE } from '../lib/types';
 import { isMinorAt, expectedWaiverSignerName, waiverNameMatches } from '../lib/waivers-core';
 import { membershipHolds } from '../lib/capabilities-core';
+import { purchasableSeasons, isFutureSeason } from '../lib/season-lifecycle';
 import { sanitizeWaiverHtml } from '../lib/sanitize-html';
 import {
   offeredMembershipTypes,
@@ -57,7 +58,10 @@ function MembershipInner({ me }: { me: Athlete }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
-  const purchasable = db.seasons.filter((s) => s.active);
+  // F6 season lifecycle: only the current season and LAUNCHED future seasons
+  // are purchasable — a future season an admin hasn't launched yet must not
+  // appear here even if someone flipped its `active` flag early.
+  const purchasable = purchasableSeasons(db);
   const currentSeason = db.seasons.find((s) => s.current)!;
 
   // Honor ?season= param when returning from Profile (task 3)
@@ -404,8 +408,16 @@ function MembershipInner({ me }: { me: Athlete }) {
         </select>
       </Field>
 
-      {/* Task 8: non-current season warning */}
-      {!season.current && (
+      {/* Task 8: non-current season warning. F6: a launched FUTURE season gets
+          the sharper "next season" wording the spec calls for (unmissable —
+          it's easy to not notice the season dropdown changed); a past-but-
+          still-`active` season keeps the original generic wording. */}
+      {!season.current && isFutureSeason(db, season) && (
+        <div className="card card-pad" style={{ borderLeft: '4px solid var(--amber-600)', background: 'var(--amber-100)', marginBottom: 16 }}>
+          ⚠ <strong>Please be aware that you are purchasing a membership for next season</strong> ({season.name}, starts {season.startsOn}) — not the current one.
+        </div>
+      )}
+      {!season.current && !isFutureSeason(db, season) && (
         <div className="card card-pad" style={{ borderLeft: '4px solid var(--amber-600)', marginBottom: 16 }}>
           ⚠ You are purchasing for <strong>{season.name}</strong>, which is <em>not</em> the current season.
           It is valid {season.startsOn} through {season.endsOn}.

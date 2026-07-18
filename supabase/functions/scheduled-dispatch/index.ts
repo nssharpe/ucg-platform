@@ -25,6 +25,7 @@ import {
 } from '../_shared/waitlist-contacts.ts';
 import { toE164, sendSmsBatch } from '../_shared/telnyx.ts';
 import { digestDateKey, isDigestFireWindow, digestWindowStart, isStuckPayment } from '../_shared/digest-logic.ts';
+import { nextSeasonNagState, rolloverTarget, nagTargetSeason, type SeasonRow, type SeasonNagTier } from '../_shared/season-lifecycle.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -347,12 +348,29 @@ Deno.serve(async (req) => {
     failures.push('daily-digest:run');
   }
 
+  // g. F6 season lifecycle: escalating admin nag + automatic `current`
+  // rollover. Isolated in its own try/catch for the same reason as (b)/(d)/(f).
+  let seasonNagTier: SeasonNagTier = 'none';
+  let seasonNagSent = false;
+  let seasonRolledOverTo: string | null = null;
+  try {
+    const result = await runSeasonLifecycle(db, nowISO, appUrl);
+    seasonNagTier = result.nagTier;
+    seasonNagSent = result.nagSent;
+    seasonRolledOverTo = result.rolledOverTo;
+    failures.push(...result.failures);
+  } catch (err) {
+    console.error('scheduled-dispatch: season lifecycle failed', err);
+    failures.push('season-lifecycle:run');
+  }
+
   return json({
     ok: failures.length === 0,
     reminders3d, reminders1d, closures, ownerTaskReminders,
     waitlistPromoted, waitlistRequeued, waitlistCompleted,
     finalsNagEmailCount, finalsNagSmsCount, finalsLocked,
     digestSent, digestErrorCount, digestStuckPaymentCount,
+    seasonNagTier, seasonNagSent, seasonRolledOverTo,
     failures,
   });
 });
@@ -378,6 +396,28 @@ async function resolveSanctioningTeam(
     if (!EMAIL_RE.test(email) || seen.has(email) || !p.auth_user_id) continue;
     seen.add(email);
     out.push({ userId: p.auth_user_id as string, firstName: p.first_name ?? '', lastName: p.last_name ?? '', email });
+  }
+  return out;
+}
+
+/** admin-role people only (not Sanctioning Team) — season launch/rollover is
+ *  an admin-only concern. Same dedupe-by-lowercased-email idiom as
+ *  resolveSanctioningTeam, minus the userId (no caller needs it here). */
+async function resolveAdminRecipients(db: SupabaseClient): Promise<Recipient[]> {
+  const { data: roleRows } = await db.from('user_roles').select('user_id').eq('role', 'admin');
+  const ids = (roleRows ?? []).map((r: { user_id: string }) => r.user_id);
+  if (ids.length === 0) return [];
+  const { data: people } = await db
+    .from('people')
+    .select('auth_user_id, first_name, last_name, email')
+    .in('auth_user_id', ids);
+  const seen = new Set<string>();
+  const out: Recipient[] = [];
+  for (const p of people ?? []) {
+    const email = (p.email ?? '').trim().toLowerCase();
+    if (!EMAIL_RE.test(email) || seen.has(email)) continue;
+    seen.add(email);
+    out.push({ firstName: p.first_name ?? '', lastName: p.last_name ?? '', email });
   }
   return out;
 }
@@ -1170,6 +1210,126 @@ async function runDailyDigest(db: SupabaseClient, nowISO: string, appUrl: string
   }
 
   return { sent: true, errorCount, stuckPaymentCount: stuckRows.length, failures };
+}
+
+// g. F6 season lifecycle automation (2026-07-18): escalating admin nags while
+// the season starting the upcoming July 1 has no launched row (June 1 →
+// june1-tier, June 16 → june16-tier, June 24 through daily-past-July-1 →
+// daily-tier — see `nextSeasonNagState`), plus the automatic `current` flip
+// once that season IS launched and its window is reached (`rolloverTarget`).
+// Both derive from ONE `seasons` read so they see a consistent snapshot.
+// Isolated in its own try/catch at the call site, same as (b)/(d)/(f) above.
+const SEASON_NAG_KIND = 'season-launch-nag';
+const SEASON_ROLLOVER_KIND = 'season-rollover';
+
+interface SeasonLifecycleResult {
+  nagTier: SeasonNagTier;
+  nagSent: boolean;
+  rolledOverTo: string | null;
+  failures: string[];
+}
+
+async function runSeasonLifecycle(db: SupabaseClient, nowISO: string, appUrl: string): Promise<SeasonLifecycleResult> {
+  const failures: string[] = [];
+  const { data: seasonRows, error: seasonErr } = await db
+    .from('seasons')
+    .select('id, name, starts_on, ends_on, current, launched_at');
+  if (seasonErr) {
+    console.error('scheduled-dispatch: season-lifecycle failed to load seasons', seasonErr);
+    return { nagTier: 'none', nagSent: false, rolledOverTo: null, failures: ['season-lifecycle:query'] };
+  }
+  const seasons = (seasonRows ?? []) as SeasonRow[];
+  const seasonAdminUrl = `${appUrl}/#/admin/league/seasons`;
+
+  let adminEmails: string[] | null = null;
+  const getAdminEmails = async (): Promise<string[]> => {
+    if (adminEmails === null) adminEmails = (await resolveAdminRecipients(db)).map((r) => r.email);
+    return adminEmails;
+  };
+
+  // --- Escalating nag --------------------------------------------------
+  const tier = nextSeasonNagState(seasons, nowISO);
+  let nagSent = false;
+  if (tier !== 'none') {
+    const year = nowISO.slice(0, 4);
+    // june1/june16 fire ONCE per fiscal-year cycle (ref_id keyed by year);
+    // daily fires once per UTC day (ref_id keyed by calendar date) — mirrors
+    // the daily-digest date-key dedupe idiom.
+    const refId = tier === 'daily' ? `daily:${digestDateKey(nowISO)}` : `${tier}:${year}`;
+    const recipients = await getAdminEmails();
+    const claimed = await claimNotifications(db, SEASON_NAG_KIND, refId, recipients);
+    if (claimed.length > 0) {
+      const target = nagTargetSeason(seasons, nowISO);
+      const label = target ? target.name : `the ${year}–${String(Number(year) + 1).slice(2)} season`;
+      const subjectByTier: Record<'june1' | 'june16' | 'daily', string> = {
+        june1: `[UCG] Launch the ${label} season soon`,
+        june16: `[UCG] Reminder: launch the ${label} season`,
+        daily: `[UCG] ACTION NEEDED: launch the ${label} season`,
+      };
+      const html = renderEmail({
+        heading: 'Season launch needed',
+        bodyHtml: `<p>The <strong>${esc(label)}</strong> season starts July 1 and has not been launched yet.</p>
+<p>Until it's launched, events can't be created in it and its memberships aren't purchasable.${
+          tier === 'daily' ? ' <strong>The automatic rollover to this season on July 1 is also blocked until it’s launched.</strong>' : ''
+        }</p>`,
+        cta: { text: 'Open season admin', href: seasonAdminUrl },
+      });
+      const messages: EmailMessage[] = claimed.map((recipient) => ({ to: recipient, subject: subjectByTier[tier as 'june1' | 'june16' | 'daily'], html }));
+      const result = await sendBatch(messages);
+      if (!result.ok) {
+        console.error(`scheduled-dispatch: season nag send failed for ${refId}`, result.failed);
+        failures.push(`${SEASON_NAG_KIND}:${refId}`);
+        await releaseClaims(db, SEASON_NAG_KIND, refId, claimed);
+      } else {
+        nagSent = true;
+      }
+    }
+  }
+
+  // --- Automatic rollover ------------------------------------------------
+  let rolledOverTo: string | null = null;
+  const target = rolloverTarget(seasons, nowISO);
+  if (target) {
+    // Set the new current FIRST, then clear the old one: a crash between the
+    // two steps leaves TWO currents (harmless — the next 15-min run repairs
+    // it) rather than ZERO (which breaks every currentSeasonId consumer
+    // app-wide). Not a single-statement transaction because supabase-js has
+    // no raw-SQL escape hatch here; this two-step ordering is the documented
+    // fallback for exactly this trade-off (see F6 kickoff brief).
+    const { error: setErr } = await db.from('seasons').update({ current: true }).eq('id', target);
+    if (setErr) {
+      console.error('scheduled-dispatch: season rollover failed to set new current', setErr);
+      failures.push('season-rollover:set');
+    } else {
+      const { error: clearErr } = await db.from('seasons').update({ current: false }).neq('id', target).eq('current', true);
+      if (clearErr) {
+        console.error('scheduled-dispatch: season rollover failed to clear old current', clearErr);
+        failures.push('season-rollover:clear');
+      }
+      rolledOverTo = target;
+
+      const targetSeason = seasons.find((s) => s.id === target);
+      const targetLabel = targetSeason?.name ?? target;
+      const recipients = await getAdminEmails();
+      // Claim keyed by the target season id — fires once per rollover, ever.
+      const claimed = await claimNotifications(db, SEASON_ROLLOVER_KIND, target, recipients);
+      if (claimed.length > 0) {
+        const html = renderEmail({
+          heading: 'Season rolled over',
+          bodyHtml: `<p>The current season has automatically rolled over to <strong>${esc(targetLabel)}</strong>.</p>`,
+          cta: { text: 'Open season admin', href: seasonAdminUrl },
+        });
+        const result = await sendBatch(claimed.map((recipient) => ({ to: recipient, subject: `[UCG] The season has rolled over to ${targetLabel}`, html })));
+        if (!result.ok) {
+          console.error(`scheduled-dispatch: season rollover notice send failed for ${target}`, result.failed);
+          failures.push(`${SEASON_ROLLOVER_KIND}:${target}`);
+          await releaseClaims(db, SEASON_ROLLOVER_KIND, target, claimed);
+        }
+      }
+    }
+  }
+
+  return { nagTier: tier, nagSent, rolledOverTo, failures };
 }
 
 function formatCents(cents: number | null): string {
