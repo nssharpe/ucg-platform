@@ -1566,6 +1566,32 @@ export async function adminResetMfa(
   return data as { ok: boolean; removedCount?: number; error?: string };
 }
 
+/** Manifest returned by `admin-delete-person` — counts of what was deleted vs
+ *  anonymized, what was deliberately kept as-is, and whether the auth user /
+ *  the `people` row itself were removed (personDeleted: false = tombstoned
+ *  in place instead, because financial/competition/legal records still
+ *  reference this id). See supabase/functions/admin-delete-person/index.ts. */
+export interface AdminDeletePersonManifest {
+  deleted: Record<string, number>;
+  anonymized: Record<string, number>;
+  kept: string[];
+  authUserDeleted: boolean;
+  personDeleted: boolean;
+  alreadyTombstoned: boolean;
+}
+
+/** Admin-only, admin role required (NOT finance_admin): delete/anonymize a
+ *  person per F5 (GDPR/COPPA-adjacent data-deletion request). `confirmName`
+ *  must match the person's CURRENT full name — the server re-checks it. */
+export async function adminDeletePerson(
+  args: { personId: string; confirmName: string },
+): Promise<{ ok: boolean; manifest?: AdminDeletePersonManifest; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('admin-delete-person', { body: args });
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  return data as { ok: boolean; manifest?: AdminDeletePersonManifest; error?: string };
+}
+
 // ---------------------------------------------------------------------------
 // Client error log — durable, admin-searchable record of front-end errors.
 // ---------------------------------------------------------------------------

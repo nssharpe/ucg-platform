@@ -7,14 +7,18 @@ import { useToast } from '../components/ui-hooks';
 import { SHIRT_SIZES, DIETARY_OPTIONS, STATE_REGIONS, DISCIPLINES } from '../lib/types';
 import type { Athlete, ClubRequest, Gender, Region } from '../lib/types';
 import { GENERAL_WAIVER_TYPE } from '../lib/types';
-import { pushClubRequest, pushMembership, pushPerson, deleteRegistration, sendEmail, createWaiverLink, fetchPublishedWaiver, requestManagerAccess } from '../lib/supabase';
+import { pushClubRequest, pushMembership, pushPerson, deleteRegistration, sendEmail, createWaiverLink, fetchPublishedWaiver, requestManagerAccess, adminDeletePerson } from '../lib/supabase';
 import { getSession, useAuthLoading, useRolesLoaded } from '../lib/auth';
+import { syncFromSupabase } from '../lib/store';
 import { MfaSection } from './ProfileMfa';
 import { PasskeysSection } from './ProfilePasskeys';
 import { escapeHtml } from '../lib/sanitize-html';
 import { downloadWaiverProof, formatSignedAt } from '../lib/waiver-proof';
 import { isMinorAt } from '../lib/waivers-core';
 import { eventIsInPhase } from '../lib/events-core';
+import { collectPersonData } from '../lib/person-data';
+import { downloadPersonDataJson, downloadPersonDataPdf } from '../lib/person-export';
+import type { AdminDeletePersonManifest } from '../lib/supabase';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -145,6 +149,8 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   const [highlightMissing] = useState<boolean>(() => returnToMembership);
   const [clubReqOpen, setClubReqOpen] = useState(false);
   const [revokeSeasonId, setRevokeSeasonId] = useState<string | null>(null);
+  // F5: admin data export / delete-and-anonymize
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
   // "Independent Athlete" = no club (mainClubId null). Tracked locally so the
   // user can tick it before/instead of picking a club from the dropdown.
   // For an INCOMPLETE new athlete profile (studentStatus unset + no club) we
@@ -291,6 +297,34 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
             setRevokeSeasonId={setRevokeSeasonId}
           />
         </div>
+      )}
+
+      {/* F5: admin-operated data export / delete-and-anonymize. */}
+      {adminView && person && (
+        <div className="card card-pad" style={{ marginBottom: 16, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <strong style={{ fontSize: 13.5 }}>Data privacy</strong>
+          <button
+            className="btn small ghost"
+            onClick={() => {
+              const data = collectPersonData(db, pid);
+              downloadPersonDataJson(data);
+              downloadPersonDataPdf(data);
+              toast('Data export downloaded (JSON + PDF).');
+            }}
+          >
+            Export data
+          </button>
+          <button
+            className="btn small ghost"
+            style={{ color: 'var(--coral-700)', borderColor: 'var(--coral-700)' }}
+            onClick={() => setShowDeleteModal(true)}
+          >
+            Delete / anonymize…
+          </button>
+        </div>
+      )}
+      {showDeleteModal && person && (
+        <DeletePersonModal person={person} onClose={() => setShowDeleteModal(false)} />
       )}
 
       {/* Self-service only — MFA factors / passkeys belong to the auth session,
@@ -890,6 +924,90 @@ function RequestAdminRoleButton({ clubId, clubName }: { clubId: string; clubName
         Ask {clubName}'s managers for permission to manage its roster, registrations, and cart.
       </p>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// F5: admin-operated delete / anonymize (type-the-name confirmation)
+// ---------------------------------------------------------------------------
+function manifestSummaryLines(m: AdminDeletePersonManifest): string[] {
+  const lines: string[] = [];
+  const deletedTotal = Object.values(m.deleted).reduce((a, b) => a + b, 0);
+  lines.push(`Deleted ${deletedTotal} row(s): ${Object.entries(m.deleted).map(([k, v]) => `${k} ${v}`).join(', ')}`);
+  const anonTotal = Object.values(m.anonymized).reduce((a, b) => a + b, 0);
+  lines.push(`Anonymized ${anonTotal} label(s): ${Object.entries(m.anonymized).map(([k, v]) => `${k} ${v}`).join(', ')}`);
+  lines.push(`Kept as-is: ${m.kept.join(', ')}`);
+  lines.push(m.personDeleted
+    ? 'The person record itself was fully deleted (no financial/competition/waiver records referenced it).'
+    : 'The person record was scrubbed into a tombstone in place (financial, competition, or waiver records still reference it).');
+  lines.push(m.authUserDeleted ? 'Their login account was deleted.' : 'No login account was attached (or deletion failed — check error_logs).');
+  return lines;
+}
+
+function DeletePersonModal({ person, onClose }: { person: Athlete; onClose: () => void }) {
+  const toast = useToast();
+  const [typed, setTyped] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [manifest, setManifest] = useState<AdminDeletePersonManifest | null>(null);
+  const fullName = `${person.firstName} ${person.lastName}`.trim();
+  const canConfirm = typed.trim().toLowerCase() === fullName.toLowerCase() && !busy;
+
+  const doDelete = async () => {
+    setBusy(true);
+    const res = await adminDeletePerson({ personId: person.id, confirmName: typed.trim() });
+    setBusy(false);
+    if (!res.ok || !res.manifest) {
+      toast(`Delete failed: ${res.error ?? 'unknown error'}.`, { variant: 'error' });
+      return;
+    }
+    setManifest(res.manifest);
+    await syncFromSupabase();
+  };
+
+  if (manifest) {
+    return (
+      <Modal title="Delete / anonymize — complete" onClose={onClose}>
+        <ul style={{ margin: '0 0 12px', paddingLeft: 18, fontSize: 13.5, lineHeight: 1.7 }}>
+          {manifestSummaryLines(manifest).map((l, i) => <li key={i}>{l}</li>)}
+        </ul>
+        <button className="btn primary" onClick={onClose}>Done</button>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal title="Delete / anonymize this person?" onClose={onClose}>
+      <p style={{ marginTop: 0, fontSize: 14, color: 'var(--coral-700)', fontWeight: 600 }}>
+        This is irreversible. Their login account will be deleted immediately.
+      </p>
+      <p style={{ fontSize: 13.5 }}>
+        <strong>Deleted outright:</strong> never-paid registrations, their cart items, waitlist entries,
+        guardian signing links, pending/rejected refund requests, pending account invites, and any
+        per-event admin grants.
+      </p>
+      <p style={{ fontSize: 13.5 }}>
+        <strong>Retained but anonymized:</strong> paid registrations, scores, invoices, payments, and
+        approved refund requests stay on record for financial/competition history — only their name is
+        scrubbed out of purchase-line labels.
+      </p>
+      <p style={{ fontSize: 13.5 }}>
+        <strong>Kept as-is:</strong> signed waiver records (legal retention).
+      </p>
+      <Field label={`Type "${fullName}" to confirm`}>
+        <input className="input" value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={fullName} autoFocus />
+      </Field>
+      <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+        <button
+          className="btn primary"
+          style={{ background: 'var(--coral-700)', borderColor: 'var(--coral-700)' }}
+          disabled={!canConfirm}
+          onClick={doDelete}
+        >
+          {busy ? 'Deleting…' : 'Delete / anonymize'}
+        </button>
+        <button className="btn ghost" disabled={busy} onClick={onClose}>Cancel</button>
+      </div>
+    </Modal>
   );
 }
 
