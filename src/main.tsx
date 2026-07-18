@@ -7,11 +7,16 @@ import App from './App.tsx'
 import { ErrorBoundary } from './components/ErrorBoundary.tsx'
 import { setErrorReporter, reportError } from './lib/report-error.ts'
 import { logClientError } from './lib/supabase.ts'
+import { initFocusRefresh } from './lib/focus-refresh.ts'
 
 // Forward every reported error to the durable, admin-searchable error log.
 setErrorReporter((reported) => {
   void logClientError(reported);
 });
+
+// Multi-manager freshness (F3): refetch on a stale tab's return from the
+// background. No-op when Supabase isn't configured.
+initFocusRefresh();
 
 // Catch errors that don't flow through an error boundary or the write queue.
 window.addEventListener('error', (ev) => {
