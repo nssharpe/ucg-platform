@@ -1,11 +1,16 @@
-import { useState } from 'react';
-import { useDB, mutate } from '../../../lib/store';
+import { useMemo, useState } from 'react';
+import { isStuckPending } from '../../../lib/reconciliation';
+import { useDB, mutate, syncFromSupabase } from '../../../lib/store';
 import { useCapabilities } from '../../../lib/capabilities';
 import { useToast, useFmtDate } from '../../../components/ui-hooks';
-import { Badge, Field, Tabs } from '../../../components/ui';
+import { Badge, Field, Modal, Tabs } from '../../../components/ui';
 import { fmtMoney } from '../../../lib/scoring';
-import { pushAccountingCode, deleteAccountingCode, pushHostPayout, deleteHostPayout } from '../../../lib/supabase';
-import type { AccountingCode, Event, HostPayout } from '../../../lib/types';
+import {
+  pushAccountingCode, deleteAccountingCode, pushHostPayout, deleteHostPayout,
+  reconcileScan, reconcileRefulfill, reconcileMarkRefunded,
+  type ReconDriftRow,
+} from '../../../lib/supabase';
+import type { AccountingCode, Event, HostPayout, Payment } from '../../../lib/types';
 import {
   buildFinanceTxns, buildFinanceSummary, buildFinanceSummarySheet, buildFinanceTxnsSheet,
   txnInRange, defaultLeagueRange, defaultEventRange, hostPayoutOwedCents,
@@ -15,7 +20,7 @@ import {
 import { downloadWorkbook } from '../../../lib/xlsx-download';
 
 const LEAGUE_SCOPE = 'league';
-type Tab = 'summary' | 'transactions' | 'codes';
+type Tab = 'summary' | 'transactions' | 'codes' | 'recon';
 
 // --- small pure helpers (trivial UI formatting -- not aggregation logic, so
 // kept here rather than in finance.ts; see the task-brief judgment-call note
@@ -225,6 +230,7 @@ export function Finance() {
           { id: 'summary', label: 'Summary' },
           { id: 'transactions', label: 'Transactions' },
           { id: 'codes', label: 'Accounting codes' },
+          { id: 'recon', label: 'Reconciliation' },
         ]}
         active={tab}
         onChange={setTab}
@@ -258,6 +264,9 @@ export function Finance() {
         )}
         {tab === 'codes' && (
           <AccountingCodesTab accountingCodes={accountingCodes} onSave={saveAccountingCode} />
+        )}
+        {tab === 'recon' && (
+          <ReconciliationTab payments={payments} peopleById={peopleById} clubNameById={clubNameById} fmtDate={fmtDate} />
         )}
       </div>
     </div>
@@ -606,5 +615,275 @@ function AccountingCodesTab({
         </table>
       </div>
     </div>
+  );
+}
+
+// ---- Reconciliation tab (F4) ------------------------------------------------
+// Panel A (stuck-pending) reads straight off the already-loaded `db.payments`
+// store — admin/finance_admin already have blanket RLS read access to
+// `payments` (payments_self_read's is_admin() branch + the finance_admin
+// parity policy added in 20260716120000), so no server round trip is needed
+// just to LIST them; the reconcile-payments edge function is only invoked for
+// the actual re-fulfillment action. Panel B (Stripe drift) has no local
+// equivalent — it requires live Stripe lookups server-side — so it's scan-
+// on-click only via the edge function's 'scan' op, never auto-run on mount.
+
+const DRIFT_VERDICT_LABEL: Record<ReconDriftRow['verdict'], string> = {
+  'consistent': 'Consistent',
+  'dashboard-refund-drift-partial': 'Dashboard refund (partial) — not reflected',
+  'dashboard-refund-drift-full': 'Dashboard refund (full) — not reflected',
+  'record-ahead-of-stripe': 'Our records show MORE refunded than Stripe — needs manual review',
+};
+
+function ReconciliationTab({
+  payments, peopleById, clubNameById, fmtDate,
+}: {
+  payments: Payment[];
+  peopleById: Map<string, { name?: string; email?: string }>;
+  clubNameById: Map<string, string>;
+  fmtDate: (iso: string) => string;
+}) {
+  const toast = useToast();
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [scanned, setScanned] = useState(false);
+  const [driftRows, setDriftRows] = useState<ReconDriftRow[]>([]);
+  const [scanMeta, setScanMeta] = useState<{ scannedDays: number; scannedCount: number; truncated: boolean } | null>(null);
+  const [confirmMark, setConfirmMark] = useState<ReconDriftRow | null>(null);
+
+  // Lazy-initialized once (not read live during render) so this stays a pure
+  // render per the react-hooks/purity rule — an admin re-opening the tab gets
+  // a fresh mount anyway, and the 1h cutoff doesn't need second-level accuracy.
+  const [nowMs] = useState(() => Date.now());
+  const stuckPending = useMemo(
+    () => payments.filter((p) => isStuckPending(p.status, p.createdAt, nowMs)).sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+    [payments, nowMs],
+  );
+
+  const clubIdFor = (p: Payment): string | undefined => p.linesSnapshot?.find((l) => l.clubId)?.clubId;
+
+  const payerLabel = (p: Payment): string => {
+    const clubId = clubIdFor(p);
+    if (clubId) return clubNameById.get(clubId) ?? clubId;
+    const person = p.personId ? peopleById.get(p.personId) : undefined;
+    return person?.name ?? p.personId ?? '—';
+  };
+
+  const totalCents = (p: Payment): number => (p.amountSubtotal ?? 0) + (p.serviceFee ?? 0);
+
+  const runRefulfill = async (paymentId: string) => {
+    setBusyId(paymentId);
+    const res = await reconcileRefulfill(paymentId);
+    setBusyId(null);
+    if (!res.ok) {
+      toast(res.error ?? 'Could not re-run fulfillment.', { variant: 'error', persist: true });
+      return;
+    }
+    if (res.fulfilled) {
+      toast('Payment fulfilled.');
+      void syncFromSupabase();
+    } else {
+      const message = res.verdict === 'stripe-expired'
+        ? 'Stripe shows this checkout session as expired — nothing to fulfill.'
+        : res.verdict === 'amount-mismatch'
+          ? 'What Stripe collected does not match this payment’s recorded amount — not fulfilled. This needs manual review (see error_logs).'
+          : `Stripe does not show this session as paid (status: ${res.stripePaymentStatus ?? 'unknown'}) — not fulfilled.`;
+      toast(message, { variant: 'error', persist: true });
+    }
+  };
+
+  const runScan = async () => {
+    setScanning(true);
+    const res = await reconcileScan();
+    setScanning(false);
+    setScanned(true);
+    if (!res.ok) {
+      toast(res.error ?? 'Could not scan for refund drift.', { variant: 'error', persist: true });
+      return;
+    }
+    setDriftRows(res.driftRows ?? []);
+    setScanMeta({
+      scannedDays: res.scannedDays ?? 90,
+      scannedCount: res.scannedCount ?? 0,
+      truncated: !!res.truncated,
+    });
+  };
+
+  const confirmMarkRefunded = async (note: string) => {
+    if (!confirmMark) return;
+    setBusyId(confirmMark.id);
+    const res = await reconcileMarkRefunded(confirmMark.id, note);
+    setBusyId(null);
+    setConfirmMark(null);
+    if (!res.ok) {
+      toast(res.error ?? 'Could not record the reconciliation note.', { variant: 'error', persist: true });
+      return;
+    }
+    toast(res.statusChanged ? 'Marked refunded — status updated.' : 'Reconciliation note recorded.');
+    setDriftRows((rows) => rows.filter((r) => r.id !== confirmMark.id));
+    void syncFromSupabase();
+  };
+
+  return (
+    <div>
+      <div className="card card-pad" style={{ marginBottom: 18 }}>
+        <h3 className="card-title" style={{ marginBottom: 4 }}>Stuck pending ({stuckPending.length})</h3>
+        <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginTop: 0, marginBottom: 12 }}>
+          Payments still <code>pending</code> more than an hour after creation — the Stripe webhook may have been
+          missed or failed. Re-running fulfillment re-checks the Stripe session first and only completes the order
+          if Stripe confirms it was actually paid.
+        </p>
+        {stuckPending.length === 0 ? (
+          <p style={{ fontSize: 13.5, color: 'var(--ink-soft)' }}>No stuck-pending payments.</p>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>Created</th><th>Payer / club</th><th className="num">Amount</th><th>Session</th><th />
+                </tr>
+              </thead>
+              <tbody>
+                {stuckPending.map((p) => (
+                  <tr key={p.id}>
+                    <td>{fmtDate(p.createdAt)}</td>
+                    <td>{payerLabel(p)}</td>
+                    <td className="num">{fmtMoney(totalCents(p) / 100)}</td>
+                    <td style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>
+                      {p.stripeSessionId ? p.stripeSessionId : <Badge tone="info">Free order</Badge>}
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="btn small primary"
+                        disabled={busyId === p.id}
+                        onClick={() => void runRefulfill(p.id)}
+                      >
+                        {busyId === p.id ? 'Working…' : 'Re-run fulfillment'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="card card-pad">
+        <h3 className="card-title" style={{ marginBottom: 4 }}>Stripe refund drift</h3>
+        <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginTop: 0, marginBottom: 12 }}>
+          Finds paid orders (last 90 days) where Stripe shows a refund our records don't account for — typically a
+          refund issued directly in the Stripe Dashboard, which never reflects into our system. Runs live Stripe
+          lookups, so this is on-demand only.
+        </p>
+        <button type="button" className="btn primary" disabled={scanning} onClick={() => void runScan()} style={{ marginBottom: 14 }}>
+          {scanning ? 'Scanning…' : 'Scan for refund drift'}
+        </button>
+
+        {scanMeta && (
+          <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', marginTop: 0 }}>
+            Checked {scanMeta.scannedCount} paid payment{scanMeta.scannedCount === 1 ? '' : 's'} from the last {scanMeta.scannedDays} days.
+            {scanMeta.truncated ? ' More rows exist than could be checked in one scan — run again to cover the rest.' : ''}
+          </p>
+        )}
+
+        {scanned && driftRows.length === 0 && (
+          <p style={{ fontSize: 13.5, color: 'var(--ink-soft)' }}>No drift found.</p>
+        )}
+
+        {driftRows.length > 0 && (
+          <div style={{ overflowX: 'auto' }}>
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>Date</th><th>Payer</th><th>Verdict</th>
+                  <th className="num">Our records</th><th className="num">Stripe shows</th><th />
+                </tr>
+              </thead>
+              <tbody>
+                {driftRows.map((r) => {
+                  const person = r.personId ? peopleById.get(r.personId) : undefined;
+                  const actionable = r.verdict === 'dashboard-refund-drift-full' || r.verdict === 'dashboard-refund-drift-partial';
+                  return (
+                    <tr key={r.id}>
+                      <td>{fmtDate(r.createdAt)}</td>
+                      <td>{person?.name ?? r.personId ?? '—'}</td>
+                      <td>
+                        <Badge tone={r.verdict === 'record-ahead-of-stripe' ? 'warn' : 'err'}>
+                          {DRIFT_VERDICT_LABEL[r.verdict]}
+                        </Badge>
+                      </td>
+                      <td className="num">{fmtMoney(r.ourApprovedRefundedCents / 100)}</td>
+                      <td className="num">{fmtMoney(r.stripeRefundedCents / 100)}</td>
+                      <td>
+                        {actionable && (
+                          <button
+                            type="button"
+                            className="btn small primary"
+                            disabled={busyId === r.id}
+                            onClick={() => setConfirmMark(r)}
+                          >
+                            Mark refunded
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {confirmMark && (
+        <MarkRefundedDialog
+          row={confirmMark}
+          busy={busyId === confirmMark.id}
+          onCancel={() => setConfirmMark(null)}
+          onConfirm={confirmMarkRefunded}
+        />
+      )}
+    </div>
+  );
+}
+
+function MarkRefundedDialog({
+  row, busy, onCancel, onConfirm,
+}: {
+  row: ReconDriftRow;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: (note: string) => void;
+}) {
+  const [note, setNote] = useState('');
+  return (
+    <Modal title="Mark refunded" onClose={onCancel}>
+      <p style={{ fontSize: 14 }}>
+        Stripe shows <strong>{fmtMoney(row.stripeRefundedCents / 100)}</strong> refunded on this payment (our records
+        show {fmtMoney(row.ourApprovedRefundedCents / 100)}).
+      </p>
+      <p style={{ fontSize: 13.5, color: 'var(--coral-700)', fontWeight: 600 }}>
+        This only aligns bookkeeping — it does NOT reverse the athlete's registration, membership, or invoice.
+        Dashboard refunds bypass the in-app reversal flow entirely; if the registration/membership also needs to be
+        undone, do that separately.
+      </p>
+      <Field label="Note (optional)">
+        <textarea
+          className="input"
+          rows={3}
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="e.g. confirmed with Stripe Dashboard, event cancelled…"
+        />
+      </Field>
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 18 }}>
+        <button className="btn ghost" onClick={onCancel} disabled={busy}>Cancel</button>
+        <button className="btn primary" onClick={() => onConfirm(note)} disabled={busy}>
+          {busy ? 'Working…' : 'Mark refunded'}
+        </button>
+      </div>
+    </Modal>
   );
 }

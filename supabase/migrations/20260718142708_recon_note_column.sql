@@ -1,0 +1,13 @@
+-- F4: payments reconciliation admin view + actions (spec
+-- docs/specs/2026-07-18-session-queue-e2e-ci-tests-freshness-recon-export-seasons.md
+-- §F4). Adds a bookkeeping-only note column to `payments` so the new
+-- `reconcile-payments` edge function's `mark-refunded` op can record a
+-- CONFIRMED Stripe-Dashboard-side refund (found via the `scan` op) without
+-- inventing a new status value or a new audit table. `payments.status`'s
+-- check constraint (20260625231808) already allows 'refunded' — that value
+-- is reused for a FULL drift refund; a PARTIAL drift refund leaves status
+-- alone (there is no partial-refunded status) and relies on this note for
+-- the record. Never written by any client — only the service-role
+-- reconcile-payments function (mirrors `refund_requests` in having no RLS
+-- write policy for authenticated clients).
+alter table payments add column if not exists recon_note text;
