@@ -784,7 +784,7 @@ function ReconciliationTab({
         {scanMeta && (
           <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', marginTop: 0 }}>
             Checked {scanMeta.scannedCount} paid payment{scanMeta.scannedCount === 1 ? '' : 's'} from the last {scanMeta.scannedDays} days.
-            {scanMeta.truncated ? ' More rows exist than could be checked in one scan — run again to cover the rest.' : ''}
+            {scanMeta.truncated ? ' Only the newest 100 could be checked — older payments in the window were NOT scanned; spot-check those against the Stripe Dashboard directly.' : ''}
           </p>
         )}
 
