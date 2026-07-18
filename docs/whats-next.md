@@ -150,8 +150,13 @@ Suggested from a post-emv2 read of the platform; none of these are in a spec yet
 3. **Season rollover runbook/tooling.** Memberships, club memberships, and waivers are
   per-season; the first season boundary will otherwise be an ad-hoc manual scramble
   (what expires, what re-gates, what carries over). Decide + script it before it happens.
-4. **User data export + delete.** Pairs with the legal/retention work (§2.4) — we hold
-  minors' PII; counsel will likely require it anyway.
+4. ~~User data export + delete~~ ✅ **shipped 2026-07-18** (admin-operated) —
+  Profile "Data privacy" card (admin view): JSON+PDF export via pure
+  `collectPersonData` (completeness locked by a test over every `DB`
+  collection), and delete/anonymize via `admin-delete-person` (admin-only,
+  AAL-guarded, staging-smoke-tested both hard-delete and tombstone paths;
+  waiver signatures retained pending counsel — revisit with §2.4). Self-serve
+  export/delete deferred unless counsel requires it.
 5. ~~Component tests~~ ✅ **shipped 2026-07-18** — jsdom + Testing Library in
   `tests/components/` (17 tests): cart-sync removal/revert semantics (real
   `removeCartItemWithSync` + shared `CART_REMOVAL_MESSAGE`), RegistrationEditor

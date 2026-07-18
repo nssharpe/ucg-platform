@@ -468,7 +468,13 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   nav-drawer entry, any signed-in caller; verify_jwt true; reporter identity resolved
   server-side from the JWT, never the client payload; routes bug/question/unsure to a
   hardcoded recipient map at the top of the function — update it there if the
-  recipients change). Notify-style functions allow any signed-in caller and resolve
+  recipients change), `reconcile-payments` (2026-07-18: admin/finance_admin + AAL;
+  scan stuck-pending + Stripe refund drift / guarded refulfill / mark-refunded —
+  Finance "Reconciliation" tab), `admin-delete-person` (2026-07-18: admin-only + AAL;
+  GDPR-ish delete/anonymize — tombstones the `people` row in place when financial/
+  waiver rows reference it, scrubs denormalized names from invoice/snapshot labels,
+  keeps waiver_signatures pending counsel; export side is client-only
+  `collectPersonData`/`person-export.ts`). Notify-style functions allow any signed-in caller and resolve
   recipients server-side; only `send-email`/`send-sms` are admin-gated. `scheduled-dispatch`
   also runs the daily "anything wrong?" digest (`daily-digest` kind, new error_logs +
   stuck-pending-payments summary, hardcoded recipient list in the function, at most
