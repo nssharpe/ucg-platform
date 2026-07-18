@@ -27,7 +27,7 @@ const roleListeners = new Set<() => void>();
 // highest level reachable given the account's verified factors. When they
 // differ (aal1 → aal2 available) the App-level interstitial (Gate/App.tsx)
 // challenges for the second factor before rendering protected UI.
-let aal: { currentLevel: AalLevel; nextLevel: AalLevel } = { currentLevel: null, nextLevel: null };
+let aal: { currentLevel: AalLevel; nextLevel: AalLevel; methods: string[] } = { currentLevel: null, nextLevel: null, methods: [] };
 const aalListeners = new Set<() => void>();
 function notifyAal() { aalListeners.forEach((l) => l()); }
 
@@ -35,12 +35,21 @@ function notifyAal() { aalListeners.forEach((l) => l()); }
  *  sign-in, after an MFA verify/unenroll, and on every session change — those
  *  are exactly the events that can move currentLevel/nextLevel. */
 export async function refreshAal(): Promise<void> {
-  if (!isSupabaseConfigured || !supabase) { aal = { currentLevel: null, nextLevel: null }; notifyAal(); return; }
-  if (!session) { aal = { currentLevel: null, nextLevel: null }; notifyAal(); return; }
+  if (!isSupabaseConfigured || !supabase) { aal = { currentLevel: null, nextLevel: null, methods: [] }; notifyAal(); return; }
+  if (!session) { aal = { currentLevel: null, nextLevel: null, methods: [] }; notifyAal(); return; }
   const { data, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+  // `methods` = the session's amr entries (how this session authenticated,
+  // e.g. 'password' / 'passkey' / 'totp'); amr claims live on the SESSION in
+  // GoTrue, so a token refresh keeps the original 'passkey' entry — the
+  // passkey step-up exemption (needsMfaStepUp) survives refreshes.
   aal = error || !data
-    ? { currentLevel: null, nextLevel: null }
-    : { currentLevel: data.currentLevel as AalLevel, nextLevel: data.nextLevel as AalLevel };
+    ? { currentLevel: null, nextLevel: null, methods: [] }
+    : {
+        currentLevel: data.currentLevel as AalLevel,
+        nextLevel: data.nextLevel as AalLevel,
+        // SDK types entries as string | AMREntry — normalize to the method string.
+        methods: (data.currentAuthenticationMethods ?? []).map((m) => (typeof m === 'string' ? m : m.method)),
+      };
   notifyAal();
 }
 
@@ -168,11 +177,13 @@ export function getMyRoles(): string[] {
   return roles;
 }
 
-/** Reactive Authenticator Assurance Level — { currentLevel, nextLevel }.
- *  currentLevel === nextLevel === null while unconfigured/signed-out; both
- *  'aal1' for a no-factor account; 'aal1'/'aal2' when a step-up is available
- *  but not yet presented. See `needsMfaStepUp` (mfa-core.ts) for the gate. */
-export function useAal(): { currentLevel: AalLevel; nextLevel: AalLevel } {
+/** Reactive Authenticator Assurance Level — { currentLevel, nextLevel,
+ *  methods }. currentLevel === nextLevel === null while unconfigured/
+ *  signed-out; both 'aal1' for a no-factor account; 'aal1'/'aal2' when a
+ *  step-up is available but not yet presented. `methods` carries the
+ *  session's amr entries (e.g. 'password', 'passkey') for the passkey
+ *  step-up exemption. See `needsMfaStepUp` (mfa-core.ts) for the gate. */
+export function useAal(): { currentLevel: AalLevel; nextLevel: AalLevel; methods: string[] } {
   return useSyncExternalStore(
     (cb) => { aalListeners.add(cb); return () => aalListeners.delete(cb); },
     () => aal,

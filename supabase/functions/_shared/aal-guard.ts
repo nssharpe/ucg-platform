@@ -16,7 +16,7 @@
 //
 // Fail-closed: factor-list failure → 500 deny; unreadable aal claim with a
 // verified factor present → 403 deny.
-import { jwtAalClaim, callerAalSatisfies } from './jwt-aal.ts';
+import { jwtAalClaim, jwtAmrMethods, callerAalSatisfies } from './jwt-aal.ts';
 
 /** Structural slice of the service-role client — avoids coupling to the
  *  supabase-js import URL each function happens to use. */
@@ -59,7 +59,7 @@ export async function requireAalForEnrolledCaller(
   const { data, error } = await adminClient.auth.admin.mfa.listFactors({ userId });
   if (error) return deny({ ok: false, error: 'Could not verify your session security level.' }, 500);
   const hasVerifiedFactor = (data?.factors ?? []).some((f) => f.status === 'verified');
-  if (!callerAalSatisfies(jwtAalClaim(token), hasVerifiedFactor)) {
+  if (!callerAalSatisfies(jwtAalClaim(token), hasVerifiedFactor, jwtAmrMethods(token))) {
     return deny({
       ok: false,
       error: 'This action requires a two-factor-verified session — sign in again and complete your 2FA challenge.',

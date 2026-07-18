@@ -238,7 +238,11 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   "confirm my account → flashes a page" report.
 - **MFA / aal2 (2026-07-17):** TOTP opt-in (`ProfileMfa.tsx`); App.tsx renders the
   `MfaChallenge` step-up interstitial when `needsMfaStepUp` (`mfa-core.ts`) — no-factor
-  accounts (incl. seeded dev/E2E users) never see it. `is_admin()` returns true only on
+  accounts (incl. seeded dev/E2E users) never see it. **Passkey exemption (2026-07-18):
+  a passkey sign-in session (amr method `'passkey'`, still aal1 in GoTrue) skips the
+  TOTP step-up — enforced in LOCKSTEP at three layers (`needsMfaStepUp`,
+  `is_admin()` migration `20260718093940`, `_shared/jwt-aal.ts`); never change one
+  without the others or passkey-signed-in enrolled admins lock out.** `is_admin()` returns true only on
   an aal2 JWT once the caller has a verified factor (`20260717140238`). **Privileged
   edge functions MUST call `_shared/aal-guard.ts` `requireAalForEnrolledCaller` right
   after their role gate** — service-role clients bypass the RLS-level hardening (9 fns

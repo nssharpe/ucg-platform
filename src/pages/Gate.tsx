@@ -73,8 +73,9 @@ function AuthGate() {
     setPasskeyBusy(false);
     // A successful ceremony lands the session via onAuthStateChange (auth.ts)
     // the same way signInWithPassword does — nothing else to do here. The
-    // resulting session is aal1; a TOTP-enrolled user still hits MfaChallenge
-    // for step-up (needsMfaStepUp, mfa-core.ts) — that's intended, not a bug.
+    // resulting session stays aal1 in GoTrue, but its amr contains 'passkey',
+    // which exempts it from the TOTP step-up (needsMfaStepUp, mfa-core.ts) —
+    // a passkey is already possession + user-verification (Nate, 2026-07-18).
     if (error) setErr(passkeySignInErrorMessage(error));
   };
 
