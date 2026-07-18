@@ -26,6 +26,13 @@ additional_redirect_urls = [
 ]
 jwt_expiry = 3600
 enable_refresh_token_rotation = true
+# Password policy (docs/research/2026-06-22-password-policy.md, adopted
+# 2026-07-17): length 10, no composition requirements. Was undeclared →
+# a config push regressed prod to the default 6 (2026-07-18, caught and
+# re-pushed same session). Leaked-password protection is a Pro feature —
+# planned at Pro upgrade, config key not available on free tier.
+minimum_password_length = 10
+password_requirements = ""
 
 [auth.mfa]
 max_enrolled_factors = 10
@@ -34,11 +41,27 @@ max_enrolled_factors = 10
 enroll_enabled = true
 verify_enabled = true
 
+# WebAuthn as an MFA factor (the Profile "Add a passkey" flow —
+# supabase.auth.mfa.webauthn.register / factorType 'webauthn'). This is a
+# SEPARATE feature from Authentication → Passkeys (passwordless sign-in via
+# auth.registerPasskey + the Relying Party settings), which does NOT gate the
+# MFA enroll endpoint. Undeclared here, every `supabase config push` reset it
+# to the default (disabled) → "MFA enroll is disabled for WebAuthn" on enroll
+# (observed live 2026-07-18). HOWEVER: enabling it is the PAID "Advanced MFA -
+# WebAuthn" add-on (CLI quote: "$75/month, then $10/month") — pending Nate's
+# spend decision. Declared false so pushes are deterministic; flip both to true
+# (and answer Y to the CLI's cost prompt) if/when approved.
+[auth.mfa.web_authn]
+enroll_enabled = false
+verify_enabled = false
+
 [auth.email]
 enable_signup = true
 double_confirm_changes = true
 enable_confirmations = true
-secure_password_change = false
+# Require the current password (or recent sign-in) to change password — was
+# true on remote until the same 2026-07-18 undeclared-key regression; keep true.
+secure_password_change = true
 max_frequency = "1m0s"
 otp_length = 8
 otp_expiry = 3600

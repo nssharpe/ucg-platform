@@ -1065,6 +1065,15 @@ async function runDailyDigest(db: SupabaseClient, nowISO: string, appUrl: string
   if (!isDigestFireWindow(nowISO)) {
     return { sent: false, errorCount: 0, stuckPaymentCount: 0, failures };
   }
+  // Staging guard (2026-07-18): staging's APP_PUBLIC_URL points at the local
+  // staging dev server (http://localhost:5177), so its digest would email a
+  // dead link daily — and staging's error_logs fill with E2E-run noise, so it
+  // WOULD fire near-daily. A digest whose CTA can't be opened is not an ops
+  // signal; skip on any localhost app URL. (To ever re-enable on staging,
+  // point its APP_PUBLIC_URL secret at a reachable URL.)
+  if (/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])/.test(appUrl)) {
+    return { sent: false, errorCount: 0, stuckPaymentCount: 0, failures };
+  }
 
   // Previous digest's send time (most recent notification_log row for this
   // kind, across any recipient/day) drives the reporting window.

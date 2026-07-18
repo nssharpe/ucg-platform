@@ -243,8 +243,13 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   edge functions MUST call `_shared/aal-guard.ts` `requireAalForEnrolledCaller` right
   after their role gate** — service-role clients bypass the RLS-level hardening (9 fns
   guarded; runbook in `supabase/README.md` "Auth: MFA"). Break-glass: `admin-reset-mfa`
-  (itself guarded) or the dashboard. WebAuthn UI ships but errors until Nate enables
-  WebAuthn MFA in the dashboard.
+  (itself guarded) or the dashboard. WebAuthn-as-MFA (the Profile "Add a passkey"
+  flow, `mfa.enroll` factorType 'webauthn') is a PAID Supabase add-on ("Advanced
+  MFA - WebAuthn", CLI quote 2026-07-18: "$75/month, then $10/month") — NOT the
+  free Authentication→Passkeys sign-in feature (`registerPasskey()` + Relying
+  Party settings), which does not gate MFA enroll. Pending Nate's spend decision;
+  `[auth.mfa.web_authn]` in config.toml is declared `false` until then (flipping
+  it true triggers the CLI's cost-confirmation prompt on push).
 - **App roles** (`user_roles.role`, enum `app_role`): `admin`, `sanctioning`,
   `regional_rep` (region via `regional_rep_regions`), `finance_admin`, `refund_manager`
   (emv2 P3). Capabilities: `isSanctioning`/`isRegionalRep`/`isFinanceAdmin`/
@@ -396,7 +401,12 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   and 400s template pushes). ⚠ `config push` pushes DEFAULTS for undeclared `[auth]`
   keys and AUTO-CONFIRMS under agent detection (closed stdin also defaults the prompt
   to Yes) — dry-run with `echo n | supabase config push --agent no` and read the diff
-  first; keep every config.toml key deliberate.
+  first; keep every config.toml key deliberate. ⚠⚠ `echo n` feeds ONE line: if an
+  EXTRA prompt appears first (e.g. the paid-add-on cost confirmation when enabling
+  `[auth.mfa.web_authn]`), it eats the `n` and the real push prompt EOF-defaults to
+  YES — bit us live 2026-07-18 (pushed min-password-length 6 + secure_password_change
+  false to prod during a "dry run"; repaired same session). Pipe one `n` per
+  expected prompt (`printf 'n\nn\n'`) or count prompts from a prior run first.
   Full runbook + traps: `supabase/README.md` "Auth email templates".
 - Deploy: `supabase functions deploy <name> --project-ref wkyerxlgricfphopocoz`
   (sandbox disabled; no Docker; `_shared/` bundles automatically).
