@@ -259,8 +259,9 @@ export default function App() {
     // outside HashRouter, exactly like the auth-flash gate above. A
     // no-factor account (incl. every seeded dev/E2E user) has
     // nextLevel === 'aal1', so needsMfaStepUp is false and this never fires
-    // for them.
-    if (session && needsMfaStepUp(aal.currentLevel, aal.nextLevel)) return <MfaChallenge />;
+    // for them. A passkey sign-in (amr 'passkey' in aal.methods) is exempt —
+    // already a possession+user-verification factor (Nate, 2026-07-18).
+    if (session && needsMfaStepUp(aal.currentLevel, aal.nextLevel, aal.methods)) return <MfaChallenge />;
   } else if (!unlockedLocally) {
     return <Gate onUnlock={() => setUnlockedLocally(true)} />;
   }
