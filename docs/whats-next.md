@@ -140,10 +140,13 @@ Suggested from a post-emv2 read of the platform; none of these are in a spec yet
   realtime subscription on `registrations`/`cart_items`/`memberships` (push-based,
   no wait for a tab to refocus) stays a follow-up if focus-refetch proves
   insufficient in practice.
-2. **Payments reconciliation admin view.** Two known drifts have no surface: `payments`
-  rows stuck `pending` (webhook missed/failed) and Stripe-Dashboard-issued refunds that
-  never reflect into `payments.status`. A small admin card (and/or the daily digest
-  above) that lists both would close the loop between Stripe and the DB.
+2. ~~Payments reconciliation admin view~~ ✅ **shipped 2026-07-18** — "Reconciliation"
+  tab on `#/admin/finance` (admin + finance_admin): stuck-pending list with
+  guarded re-run-fulfillment, on-demand Stripe refund-drift scan with
+  mark-refunded (bookkeeping-only; server re-verifies against Stripe). Edge fn
+  `reconcile-payments` (AAL-guarded), migration `20260718142708` (`recon_note`),
+  staging-smoke-tested + deployed prod. Known limit: drift scan checks the
+  newest 100 paid payments per run (honest copy when truncated).
 3. **Season rollover runbook/tooling.** Memberships, club memberships, and waivers are
   per-season; the first season boundary will otherwise be an ad-hoc manual scramble
   (what expires, what re-gates, what carries over). Decide + script it before it happens.
