@@ -1883,6 +1883,74 @@ export async function fetchEventWaitlist(
   return data as { ok: boolean; canManage?: boolean; groups?: WaitlistQueueRow[]; error?: string };
 }
 
+// --- Payments reconciliation (F4) -------------------------------------------
+// admin/finance_admin only, enforced server-side. Read-only against Stripe;
+// writes go through the shared idempotent fulfillPayment core ('refulfill')
+// or a bookkeeping-only status/note update ('mark-refunded') — see
+// supabase/functions/reconcile-payments/index.ts for the full contract.
+
+/** One stuck-pending payment row from the 'scan' op. */
+export interface ReconStuckPendingRow {
+  id: string;
+  createdAt: string;
+  amountSubtotal: number | null;
+  serviceFee: number | null;
+  currency: string;
+  personId: string | null;
+  clubId: string | null;
+  stripeSessionId: string | null;
+}
+
+/** One Stripe-vs-our-records drift verdict from the 'scan' op. See
+ *  `src/lib/reconciliation.ts` for verdict semantics. */
+export interface ReconDriftRow {
+  id: string;
+  createdAt: string;
+  personId: string | null;
+  totalChargedCents: number;
+  ourApprovedRefundedCents: number;
+  stripeRefundedCents: number;
+  verdict: 'consistent' | 'dashboard-refund-drift-partial' | 'dashboard-refund-drift-full' | 'record-ahead-of-stripe';
+}
+
+/** Scan for stuck-pending payments (unconditional) and refund drift within
+ *  the last `days` (default 90, server-capped 365). On-demand only — never
+ *  call this automatically on mount (it does up to ~100 live Stripe lookups). */
+export async function reconcileScan(days?: number): Promise<{
+  ok: boolean; stuckPending?: ReconStuckPendingRow[]; driftRows?: ReconDriftRow[];
+  truncated?: boolean; scannedDays?: number; scannedCount?: number; error?: string;
+}> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('reconcile-payments', { body: { op: 'scan', days } });
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  return data as Awaited<ReturnType<typeof reconcileScan>>;
+}
+
+/** Re-run fulfillment for a stuck-pending payment (Panel A action). Re-checks
+ *  the Stripe session server-side FIRST; only fulfills if Stripe says paid.
+ *  Caller should `syncFromSupabase()` afterward on success. */
+export async function reconcileRefulfill(paymentId: string): Promise<{
+  ok: boolean; fulfilled?: boolean; verdict?: string; stripePaymentStatus?: string; stripeSessionStatus?: string; error?: string;
+}> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('reconcile-payments', { body: { op: 'refulfill', paymentId } });
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  return data as Awaited<ReturnType<typeof reconcileRefulfill>>;
+}
+
+/** Reflect a CONFIRMED Stripe-Dashboard-side refund into `payments` (Panel B
+ *  action) — bookkeeping alignment only; does NOT touch registrations/
+ *  memberships/invoices. Server re-verifies against Stripe before writing.
+ *  Caller should `syncFromSupabase()` afterward on success. */
+export async function reconcileMarkRefunded(paymentId: string, note?: string): Promise<{
+  ok: boolean; verdict?: string; statusChanged?: boolean; stripeRefundedCents?: number; ourApprovedRefundedCents?: number; error?: string;
+}> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('reconcile-payments', { body: { op: 'mark-refunded', paymentId, note } });
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  return data as Awaited<ReturnType<typeof reconcileMarkRefunded>>;
+}
+
 /** Token lookup for the guardian signing page via SECURITY DEFINER RPC
  *  (the table itself is not publicly readable). */
 export async function fetchSignRequest(token: string): Promise<FnReturns<'get_waiver_sign_request'>[number] | null> {
