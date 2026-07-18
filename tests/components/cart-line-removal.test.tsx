@@ -2,20 +2,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { useDB, getDB, mutate, resetDemo } from '../../src/lib/store';
-import { removeCartItemWithSync, type CartRemovalResult } from '../../src/lib/cart-sync';
+import { removeCartItemWithSync, CART_REMOVAL_MESSAGE } from '../../src/lib/cart-sync';
 import type { CartItem, Registration } from '../../src/lib/types';
-
-// Mirrors Cart.tsx's own action→message map (CartScope's removeItem) so this
-// harness's ✕ button surfaces the exact same toast copy the real page shows,
-// without mounting the full Stripe/router-entangled Cart.tsx tree.
-const MESSAGE: Record<CartRemovalResult['action'], string> = {
-  'delete-registration': 'Removed from cart and canceled the registration.',
-  'revert-registration': 'Removed from cart — registration reverted to its prior state.',
-  'no-snapshot-remove-only': 'Removed from cart. This registration was changed before we could track a revert — please check it.',
-  'clear-membership-hold': 'Removed from cart — that unpaid membership request was canceled.',
-  'remove-only': 'Removed from cart.',
-  'blocked-offline': '',
-};
 
 function CartHarness({ ownerKey }: { ownerKey: string }) {
   const db = useDB();
@@ -30,7 +18,7 @@ function CartHarness({ ownerKey }: { ownerKey: string }) {
             onClick={() => {
               const { action, keptRegIds } = removeCartItemWithSync(ownerKey, false, i);
               const el = document.getElementById('toast')!;
-              el.textContent = action === 'blocked-offline' ? '' : MESSAGE[action] + (keptRegIds.length ? ' kept' : '');
+              el.textContent = action === 'blocked-offline' ? '' : CART_REMOVAL_MESSAGE[action] + (keptRegIds.length ? ' kept' : '');
             }}
           >
             ✕
