@@ -1,7 +1,12 @@
 import { useState } from 'react';
 import { checkPassword } from '../lib/store';
 import { isSupabaseConfigured, supabase, emailHasAccount } from '../lib/supabase';
+import { passkeySignInErrorMessage } from '../lib/passkey-core';
 import primaryLogoWhite from '../assets/brand/primary-logo-white.svg';
+
+/** Browser support for the passkey ceremony — explicit-button only, never an
+ *  autofill/conditional-UI trigger. */
+const passkeysSupported = typeof window !== 'undefined' && typeof window.PublicKeyCredential !== 'undefined';
 
 // Keep in step with the Supabase password policy (Auth → Policies). See
 // docs/research/2026-06-22-password-policy.md.
@@ -56,8 +61,22 @@ function AuthGate() {
   const [err, setErr] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [passkeyBusy, setPasskeyBusy] = useState(false);
 
   const clearMsg = () => { setErr(null); setInfo(null); };
+
+  const passkeySignIn = async () => {
+    if (!supabase) return;
+    clearMsg();
+    setPasskeyBusy(true);
+    const { error } = await supabase.auth.signInWithPasskey();
+    setPasskeyBusy(false);
+    // A successful ceremony lands the session via onAuthStateChange (auth.ts)
+    // the same way signInWithPassword does — nothing else to do here. The
+    // resulting session is aal1; a TOTP-enrolled user still hits MfaChallenge
+    // for step-up (needsMfaStepUp, mfa-core.ts) — that's intended, not a bug.
+    if (error) setErr(passkeySignInErrorMessage(error));
+  };
 
   const forgotPassword = async () => {
     if (!supabase) return;
@@ -215,6 +234,19 @@ function AuthGate() {
             >
               Email me a sign-in link
             </button>
+            {isSupabaseConfigured && passkeysSupported && (
+              <button
+                type="button"
+                onClick={passkeySignIn}
+                disabled={passkeyBusy}
+                style={{
+                  background: 'none', border: 'none', padding: 0, cursor: passkeyBusy ? 'default' : 'pointer',
+                  color: 'var(--ice-200)', fontSize: 13, textDecoration: 'underline', opacity: passkeyBusy ? 0.6 : 1,
+                }}
+              >
+                {passkeyBusy ? 'Waiting for your device…' : '🔑 Sign in with a passkey'}
+              </button>
+            )}
           </div>
         )}
         <button

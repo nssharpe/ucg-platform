@@ -243,13 +243,26 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   edge functions MUST call `_shared/aal-guard.ts` `requireAalForEnrolledCaller` right
   after their role gate** — service-role clients bypass the RLS-level hardening (9 fns
   guarded; runbook in `supabase/README.md` "Auth: MFA"). Break-glass: `admin-reset-mfa`
-  (itself guarded) or the dashboard. WebAuthn-as-MFA (the Profile "Add a passkey"
-  flow, `mfa.enroll` factorType 'webauthn') is a PAID Supabase add-on ("Advanced
-  MFA - WebAuthn", CLI quote 2026-07-18: "$75/month, then $10/month") — NOT the
-  free Authentication→Passkeys sign-in feature (`registerPasskey()` + Relying
-  Party settings), which does not gate MFA enroll. Pending Nate's spend decision;
-  `[auth.mfa.web_authn]` in config.toml is declared `false` until then (flipping
-  it true triggers the CLI's cost-confirmation prompt on push).
+  (itself guarded) or the dashboard. WebAuthn-as-MFA (`mfa.enroll` factorType
+  'webauthn') is a PAID Supabase add-on ("Advanced MFA - WebAuthn", CLI quote
+  2026-07-18: "$75/month, then $10/month") — declined; `[auth.mfa.web_authn]` in
+  config.toml stays `false` (flipping it true triggers the CLI's cost-confirmation
+  prompt on push). The old Profile "Add a passkey" MFA-enroll UI was removed
+  2026-07-18 (no account could ever have enrolled one).
+- **Passkey SIGN-IN (free, shipped 2026-07-18):** a SEPARATE feature from the paid
+  MFA add-on above — `auth.signInWithPasskey()`/`auth.registerPasskey()`/
+  `auth.passkey.*`, fully typed in the installed SDK, opted into via
+  `experimental.passkey: true` on the client (`src/lib/supabase.ts`). "Sign in
+  with a passkey" on `Gate.tsx` (sign-in mode, feature-detected on
+  `window.PublicKeyCredential`); management (list/rename/remove/add) in the
+  Profile "Passkeys" card (`src/pages/ProfilePasskeys.tsx`, separate from the
+  Two-factor authentication card). Yields an aal1 session — a TOTP-enrolled user
+  still hits `MfaChallenge` for step-up, which is intended. `[auth.passkey]`/
+  `[auth.webauthn]` declared in config.toml mirroring the prod dashboard (RP
+  display "UCG Events", RP ID `nssharpe.github.io`, origin
+  `https://nssharpe.github.io`) so an undeclared-key `config push` can't
+  silently disable it. E2E: `e2e/passkey.spec.ts` uses Playwright's CDP virtual
+  authenticator; skips cleanly today because staging's RP ID isn't `localhost`.
 - **App roles** (`user_roles.role`, enum `app_role`): `admin`, `sanctioning`,
   `regional_rep` (region via `regional_rep_regions`), `finance_admin`, `refund_manager`
   (emv2 P3). Capabilities: `isSanctioning`/`isRegionalRep`/`isFinanceAdmin`/

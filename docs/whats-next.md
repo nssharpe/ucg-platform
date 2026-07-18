@@ -110,15 +110,17 @@ these were explicitly deferred, not dropped:
 - **D** codeless judge access (URL / 6-digit code / QR) →
 - **E** scoring config (1-vs-2 panels, calculator vs. simple entry).
 - ~~MFA/passkeys~~ ✅ **shipped 2026-07-17** (merged to main; migration applied
-  staging+prod; 9 guarded edge functions deployed), all three phases from the
-  [research doc](research/2026-06-22-auth-2fa-passkeys.md): TOTP opt-in (Profile),
+  staging+prod; 9 guarded edge functions deployed): TOTP opt-in (Profile),
   aal2-required admins (hardened `is_admin()` + step-up challenge at sign-in +
   the edge-function AAL guard on every privileged function), admin break-glass
-  reset (`admin-reset-mfa`; dashboard = last-admin fallback), passkey support in
-  the UI. Two 👤 remainders: (1) **enable WebAuthn MFA** in the dashboard (Auth →
-  Multi-Factor Authentication) if passkeys should go live — until then "Add a
-  passkey" errors server-side; (2) **enroll your own TOTP factor** (and Julia's)
-  so admin accounts actually get the aal2 protection.
+  reset (`admin-reset-mfa`; dashboard = last-admin fallback).
+- ~~Passkey sign-in (free feature)~~ ✅ **shipped 2026-07-18** — `Gate.tsx`
+  "Sign in with a passkey" + a Profile "Passkeys" management card
+  (`src/pages/ProfilePasskeys.tsx`), using Supabase's free Passkeys sign-in API
+  (distinct from the paid "Advanced MFA - WebAuthn" add-on, which stays
+  declined — its dead Profile "Add a passkey" MFA-enroll UI was removed in the
+  same change). 👤 remainder: **enroll your own TOTP factor** (and Julia's) so
+  admin accounts actually get the aal2 protection.
 - Further out: PDF certificates, external API.
 
 ## 6. Proposed additions (Claude, 2026-07-16 — NOT yet committed; Nate to triage)

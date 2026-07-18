@@ -369,21 +369,39 @@ are issued as account roles via the admin User Roles page.
 
 ## Auth: MFA / aal2-for-admins (added 2026-07-17)
 
-TOTP (+ passkey, if the SDK/project support it) MFA is opt-in for everyone via
-Profile → "Two-factor authentication" (`src/pages/ProfileMfa.tsx`), enroll/
-challenge/verify through `supabase.auth.mfa.*` / `supabase.auth.webauthn.*`.
-Design doc: `docs/research/2026-06-22-auth-2fa-passkeys.md`.
+TOTP MFA is opt-in for everyone via Profile → "Two-factor authentication"
+(`src/pages/ProfileMfa.tsx`), enroll/challenge/verify through
+`supabase.auth.mfa.*`. Design doc: `docs/research/2026-06-22-auth-2fa-passkeys.md`
+(predates the passkey-as-MFA-is-paid finding below — mentally drop its
+passkey-as-a-factor references).
 
-> **Passkey-as-MFA is a PAID add-on (found 2026-07-18):** the Profile "Add a
-> passkey" flow uses `mfa.enroll` factorType `webauthn`, gated by Supabase's
-> "Advanced MFA - WebAuthn" add-on (CLI cost prompt: "$75/month, then
-> $10/month"). It is NOT enabled by the free **Authentication → Passkeys**
-> dashboard page — that configures the separate passwordless *sign-in* feature
-> (`auth.registerPasskey()` + Relying Party settings) which our app doesn't
-> call. Until the add-on is purchased, enroll fails with "MFA enroll is
-> disabled for WebAuthn". `[auth.mfa.web_authn]` is declared `false` in
-> config.toml so pushes stay deterministic; to enable: flip both keys to
-> `true`, push (answer the cost prompt), done — no app change needed.
+> **Passkey-as-MFA is a PAID add-on (found 2026-07-18) — the old Profile "Add a
+> passkey" MFA-enroll flow was removed 2026-07-18.** It used `mfa.enroll`
+> factorType `webauthn`, gated by Supabase's "Advanced MFA - WebAuthn" add-on
+> (CLI cost prompt: "$75/month, then $10/month"); the add-on was never
+> purchased, so no account could ever have enrolled one. `[auth.mfa.web_authn]`
+> stays declared `false` in config.toml so pushes stay deterministic; to
+> enable the paid factor in the future: flip both keys to `true`, push (answer
+> the cost prompt), and re-add the enroll UI — no other app change needed.
+>
+> **Passkey SIGN-IN is the separate FREE feature (shipped 2026-07-18)** —
+> `auth.signInWithPasskey()`/`auth.registerPasskey()`/`auth.passkey.*`
+> (Relying Party settings on the dashboard's Authentication → Passkeys page),
+> opted into via `experimental.passkey: true` on the client
+> (`src/lib/supabase.ts`). "Sign in with a passkey" lives on `Gate.tsx`;
+> management (list/rename/remove/add) lives in the Profile "Passkeys" card
+> (`src/pages/ProfilePasskeys.tsx`, separate from the MFA card). Declared in
+> config.toml as `[auth.passkey]` (`enabled`) and `[auth.webauthn]`
+> (`rp_display_name`/`rp_id`/`rp_origins`), mirroring the prod dashboard (RP
+> display "UCG Events", RP ID `nssharpe.github.io`, origin
+> `https://nssharpe.github.io`) — declared so an undeclared-key `config push`
+> can't silently disable it, the same trap that hit `[auth.mfa.web_authn]` and
+> the password policy. Yields an aal1 session, so a TOTP-enrolled user still
+> hits the step-up challenge below after a passkey sign-in — intended, not a
+> bug. E2E: `e2e/passkey.spec.ts` drives a real ceremony via Playwright's CDP
+> virtual authenticator, but skips cleanly on staging today (its RP ID isn't
+> `localhost`, so the browser refuses the ceremony) — future insurance once
+> staging is configured for the E2E origin.
 
 - **Sign-in step-up:** `App.tsx` renders `MfaChallenge` (outside the router,
   like the existing auth-flash gate) whenever the live session is `aal1` but

@@ -21,7 +21,9 @@ export function AdminMfaNag() {
     let cancelled = false;
     supabase.auth.mfa.listFactors().then(({ data, error }) => {
       if (cancelled || error) return;
-      setHasFactor(data.totp.length > 0 || data.webauthn.length > 0);
+      // Only TOTP can ever be a verified factor here — WebAuthn-as-MFA-factor
+      // (the paid add-on) was never enabled server-side.
+      setHasFactor(data.totp.length > 0);
     });
     return () => { cancelled = true; };
   }, [caps.isAdmin]);
