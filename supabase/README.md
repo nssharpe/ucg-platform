@@ -374,6 +374,17 @@ Profile → "Two-factor authentication" (`src/pages/ProfileMfa.tsx`), enroll/
 challenge/verify through `supabase.auth.mfa.*` / `supabase.auth.webauthn.*`.
 Design doc: `docs/research/2026-06-22-auth-2fa-passkeys.md`.
 
+> **Passkey-as-MFA is a PAID add-on (found 2026-07-18):** the Profile "Add a
+> passkey" flow uses `mfa.enroll` factorType `webauthn`, gated by Supabase's
+> "Advanced MFA - WebAuthn" add-on (CLI cost prompt: "$75/month, then
+> $10/month"). It is NOT enabled by the free **Authentication → Passkeys**
+> dashboard page — that configures the separate passwordless *sign-in* feature
+> (`auth.registerPasskey()` + Relying Party settings) which our app doesn't
+> call. Until the add-on is purchased, enroll fails with "MFA enroll is
+> disabled for WebAuthn". `[auth.mfa.web_authn]` is declared `false` in
+> config.toml so pushes stay deterministic; to enable: flip both keys to
+> `true`, push (answer the cost prompt), done — no app change needed.
+
 - **Sign-in step-up:** `App.tsx` renders `MfaChallenge` (outside the router,
   like the existing auth-flash gate) whenever the live session is `aal1` but
   the account has a verified factor (`nextLevel === 'aal2'`) —
