@@ -26,9 +26,16 @@ const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 
 export const isSupabaseConfigured = Boolean(url && anonKey);
 
-/** Null until env vars are provided — callers must guard on isSupabaseConfigured. */
+/** Null until env vars are provided — callers must guard on isSupabaseConfigured.
+ *  `experimental.passkey` opts into the free Passkeys sign-in API
+ *  (signInWithPasskey/registerPasskey/auth.passkey.*) — disabled by default in
+ *  the SDK. This is the FREE passwordless sign-in feature, distinct from the
+ *  paid "Advanced MFA - WebAuthn" factor (auth.mfa.enroll factorType
+ *  'webauthn', which stays declined — see docs/CLAUDE.md Auth patterns). */
 export const supabase: SupabaseClient | null = isSupabaseConfigured
-  ? createClient(url!, anonKey!, { auth: { persistSession: true, autoRefreshToken: true } })
+  ? createClient(url!, anonKey!, {
+      auth: { persistSession: true, autoRefreshToken: true, experimental: { passkey: true } },
+    })
   : null;
 
 // ---------------------------------------------------------------------------

@@ -1,13 +1,16 @@
-// Two-factor authentication (TOTP + optional passkey) section for the
-// self-service Profile page. Not shown in adminView — MFA factors belong to
-// the signed-in auth session, not to an arbitrary person record an admin is
-// editing (docs/research/2026-06-22-auth-2fa-passkeys.md Phase A/C).
+// Two-factor authentication (TOTP) section for the self-service Profile
+// page. Not shown in adminView — MFA factors belong to the signed-in auth
+// session, not to an arbitrary person record an admin is editing (docs/
+// research/2026-06-22-auth-2fa-passkeys.md Phase A/C). Passkey SIGN-IN lives
+// in the separate ProfilePasskeys.tsx card — this file only ever dealt with
+// WebAuthn as an MFA *factor* (the paid "Advanced MFA - WebAuthn" add-on,
+// which Nate declined and which was never actually enabled server-side, so
+// no account could ever have enrolled one — that UI is removed below).
 import { useEffect, useState } from 'react';
 import type { Factor } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { refreshAal } from '../lib/auth';
-import { TOTP_FRIENDLY_NAME, PASSKEY_FRIENDLY_NAME } from '../lib/mfa-core';
-import { getWebauthnApi } from '../lib/webauthn-api';
+import { TOTP_FRIENDLY_NAME } from '../lib/mfa-core';
 import { Modal } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 
@@ -25,8 +28,6 @@ export function MfaSection() {
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<Factor | null>(null);
-  const [passkeyBusy, setPasskeyBusy] = useState(false);
-  const [passkeyErr, setPasskeyErr] = useState<string | null>(null);
 
   const loadFactors = async () => {
     if (!supabase) return;
@@ -53,12 +54,10 @@ export function MfaSection() {
 
   const verifiedFactors = (factors ?? []).filter((f) => f.status === 'verified');
   const unverifiedTotp = (factors ?? []).filter((f) => f.status === 'unverified' && f.factor_type === 'totp');
-  const unverifiedWebauthn = (factors ?? []).filter((f) => f.status === 'unverified' && f.factor_type === 'webauthn');
 
   const startTotpEnroll = async () => {
     if (!supabase) return;
     setBusy(true);
-    setPasskeyErr(null);
     // Supabase 422s on a duplicate friendly_name for the same user — clean up
     // any abandoned unverified TOTP factor from a prior enroll attempt first.
     for (const f of unverifiedTotp) {
@@ -121,30 +120,6 @@ export function MfaSection() {
     await refreshAal();
   };
 
-  const addPasskey = async () => {
-    if (!supabase) return;
-    setPasskeyBusy(true);
-    setPasskeyErr(null);
-    // Clean up an abandoned unverified passkey factor first (mirrors the TOTP
-    // path — register() only auto-cleans up on ITS OWN failure, not a prior
-    // one still sitting unverified from an earlier abandoned attempt).
-    for (const f of unverifiedWebauthn) {
-      await supabase.auth.mfa.unenroll({ factorId: f.id });
-    }
-    const webauthn = getWebauthnApi(supabase);
-    if (!webauthn) { setPasskeyBusy(false); setPasskeyErr('Passkeys are not available in this client.'); return; }
-    const { data, error } = await webauthn.register({ friendlyName: PASSKEY_FRIENDLY_NAME });
-    setPasskeyBusy(false);
-    if (error || !data) {
-      setPasskeyErr(error?.message ?? 'Could not add a passkey.');
-      await loadFactors();
-      return;
-    }
-    toast('Passkey added — you can use it at sign-in.');
-    await loadFactors();
-    await refreshAal();
-  };
-
   return (
     <div className="card card-pad" style={{ marginBottom: 16 }}>
       <h3 className="card-title">Two-factor authentication</h3>
@@ -156,7 +131,7 @@ export function MfaSection() {
           {verifiedFactors.map((f) => (
             <div key={f.id} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
               <span style={{ fontSize: 13, fontWeight: 500 }}>
-                {f.factor_type === 'webauthn' ? '🔑' : '📱'} {f.friendly_name ?? f.factor_type}
+                📱 {f.friendly_name ?? f.factor_type}
               </span>
               <span style={{ fontSize: 12, color: 'var(--ink-soft)' }}>
                 Added {new Date(f.created_at).toLocaleDateString()}
@@ -169,8 +144,7 @@ export function MfaSection() {
 
       {verifiedFactors.length === 0 && (
         <p style={{ fontSize: 13.5, color: 'var(--ink-soft)', marginTop: 0 }}>
-          Add a second step to sign-in with an authenticator app (Google Authenticator, Authy, 1Password, …) or a
-          device passkey (Face ID / Touch ID / Windows Hello).
+          Add a second step to sign-in with an authenticator app (Google Authenticator, Authy, 1Password, …).
         </p>
       )}
 
@@ -208,15 +182,8 @@ export function MfaSection() {
         </div>
       )}
 
-      <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--line)' }}>
-        <button className="btn ghost small" disabled={passkeyBusy} onClick={addPasskey}>
-          {passkeyBusy ? 'Waiting for your device…' : '🔑 Add a passkey (Face ID / Touch ID / Windows Hello)'}
-        </button>
-        {passkeyErr && <p style={{ fontSize: 12.5, color: 'var(--coral-600)', marginTop: 6 }}>{passkeyErr}</p>}
-      </div>
-
       <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', marginTop: 16, marginBottom: 0 }}>
-        If you lose your authenticator or passkey device, a league admin can reset two-factor authentication for
+        If you lose your authenticator, a league admin can reset two-factor authentication for
         your account — contact one to regain access.
       </p>
 

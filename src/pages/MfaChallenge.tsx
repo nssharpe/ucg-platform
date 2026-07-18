@@ -4,11 +4,17 @@
 // src/lib/mfa-core.ts). Blocks ALL protected UI until the second factor is
 // verified — a seeded dev/E2E user with no factors never reaches this (their
 // nextLevel stays 'aal1', so needsMfaStepUp is false for them).
+//
+// Only TOTP is a real MFA factor here — WebAuthn-as-MFA-factor (the paid
+// "Advanced MFA - WebAuthn" add-on) was never enabled server-side, so no
+// account could ever have a verified webauthn factor to challenge. Passkey
+// SIGN-IN (Gate.tsx) is a separate, free feature and yields an aal1 session —
+// a TOTP-enrolled user still lands here after a passkey sign-in, which is the
+// intended step-up behavior, not a bug.
 import { useEffect, useState } from 'react';
 import type { Factor } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { refreshAal } from '../lib/auth';
-import { getWebauthnApi } from '../lib/webauthn-api';
 import primaryLogoWhite from '../assets/brand/primary-logo-white.svg';
 
 export function MfaChallenge() {
@@ -17,7 +23,6 @@ export function MfaChallenge() {
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [mode, setMode] = useState<'totp' | 'webauthn'>('totp');
 
   useEffect(() => {
     let cancelled = false;
@@ -27,7 +32,6 @@ export function MfaChallenge() {
       if (cancelled) return;
       if (error) { setLoadErr(error.message); return; }
       setFactors(data.all.filter((f) => f.status === 'verified'));
-      if (data.totp.length === 0 && data.webauthn.length > 0) setMode('webauthn');
     })();
     return () => { cancelled = true; };
   }, []);
@@ -35,7 +39,6 @@ export function MfaChallenge() {
   if (!supabase) return null;
 
   const totpFactor = (factors ?? []).find((f) => f.factor_type === 'totp');
-  const webauthnFactor = (factors ?? []).find((f) => f.factor_type === 'webauthn');
 
   const verifyTotp = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,18 +61,6 @@ export function MfaChallenge() {
     await refreshAal();
   };
 
-  const verifyPasskey = async () => {
-    if (!supabase || !webauthnFactor) return;
-    setBusy(true);
-    setErr(null);
-    const webauthn = getWebauthnApi(supabase);
-    if (!webauthn) { setBusy(false); setErr('Passkeys are not available in this client.'); return; }
-    const { error } = await webauthn.authenticate({ factorId: webauthnFactor.id });
-    setBusy(false);
-    if (error) { setErr(error.message); return; }
-    await refreshAal();
-  };
-
   const signOut = async () => {
     if (!supabase) return;
     await supabase.auth.signOut();
@@ -84,19 +75,6 @@ export function MfaChallenge() {
           <div className="gate-err">{loadErr}</div>
         ) : !factors ? (
           <p className="gate-note">Loading…</p>
-        ) : mode === 'webauthn' && webauthnFactor ? (
-          <>
-            <p className="gate-note" style={{ marginBottom: 16 }}>Use your passkey to finish signing in.</p>
-            <button type="button" className="btn primary" disabled={busy} onClick={verifyPasskey} style={{ width: '100%', justifyContent: 'center' }}>
-              {busy ? 'Waiting for your device…' : '🔑 Use passkey'}
-            </button>
-            {err && <div className="gate-err">{err}</div>}
-            {totpFactor && (
-              <button type="button" className="btn ghost" style={{ width: '100%', justifyContent: 'center', marginTop: 10, color: 'var(--ice-200)', border: '1px solid rgba(219, 235, 237, 0.35)', background: 'transparent' }} onClick={() => setMode('totp')}>
-                Use my authenticator app code instead
-              </button>
-            )}
-          </>
         ) : totpFactor ? (
           <form onSubmit={verifyTotp}>
             <p className="gate-note" style={{ marginBottom: 12, textAlign: 'left' }}>
@@ -114,11 +92,6 @@ export function MfaChallenge() {
               {busy ? 'Verifying…' : 'Verify →'}
             </button>
             {err && <div className="gate-err">{err}</div>}
-            {webauthnFactor && (
-              <button type="button" className="btn ghost" style={{ width: '100%', justifyContent: 'center', marginTop: 10, color: 'var(--ice-200)', border: '1px solid rgba(219, 235, 237, 0.35)', background: 'transparent' }} onClick={() => setMode('webauthn')}>
-                Use my passkey instead
-              </button>
-            )}
           </form>
         ) : (
           <p className="gate-err">No verified factor found — contact a league admin.</p>

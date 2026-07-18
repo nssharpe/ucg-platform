@@ -55,6 +55,20 @@ verify_enabled = true
 enroll_enabled = false
 verify_enabled = false
 
+# Passkeys — passwordless SIGN-IN (auth.signInWithPasskey/.registerPasskey),
+# the FREE feature. Separate from [auth.mfa.web_authn] above (that's the paid
+# MFA add-on). Configured live on the prod dashboard 2026-07-17ish (RP display
+# "UCG Events", RP ID nssharpe.github.io, origin https://nssharpe.github.io) —
+# declared here so an undeclared-key `config push` can't silently reset/disable
+# it (the exact trap that hit auth.mfa.web_authn and the password policy).
+[auth.passkey]
+enabled = true
+
+[auth.webauthn]
+rp_display_name = "UCG Events"
+rp_id = "nssharpe.github.io"
+rp_origins = ["https://nssharpe.github.io"]
+
 [auth.email]
 enable_signup = true
 double_confirm_changes = true
