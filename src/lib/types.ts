@@ -45,6 +45,11 @@ export interface Season {
   clubFee: number; // club membership fee for the season (e.g. 109)
   active: boolean; // purchasable now
   current: boolean;
+  /** F6 season lifecycle: set once an admin has finished the season's details
+   *  and flipped it live — launched ⇒ its memberships are purchasable and
+   *  events may be created in it (see season-lifecycle.ts). null = not
+   *  launched. */
+  launchedAt?: string | null;
 }
 
 export interface Level {

@@ -42,13 +42,26 @@ export function processingFee(subtotalCents: number): number {
   return Math.ceil(subtotalCents * 0.03) + 30;
 }
 
-/** Minimal season slice the membership pricing needs (snake_case DB columns). */
+/** Minimal season slice the membership pricing needs (snake_case DB columns).
+ *  `current`/`launched_at` back the F6 season-lifecycle purchase gate below —
+ *  mirrors `seasonIsLaunched`/`purchasableSeasons` in src/lib/season-lifecycle.ts
+ *  (re-implemented, not imported — same reason as the rest of this file). */
 export interface SeasonFees {
   id: string;
   name: string;
   athlete_fee: number;
   coach_fee: number;
   club_fee: number;
+  current: boolean;
+  launched_at: string | null;
+}
+
+/** F6: a membership line may only target the CURRENT season or a LAUNCHED
+ *  future season — never an unlaunched future season or a past season an
+ *  admin never flagged current/launched (defense in depth; the client UI
+ *  already restricts the offered seasons to this same set). */
+export function seasonPurchasableForCheckout(season: SeasonFees): boolean {
+  return season.current || !!season.launched_at;
 }
 
 /** Minimal membership slice the pricing needs (snake_case DB columns). */

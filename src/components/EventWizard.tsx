@@ -5,6 +5,7 @@ import { pushEvent } from '../lib/supabase';
 import { useCapabilities } from '../lib/capabilities';
 import { scaffoldNationalsConfig } from '../lib/nationals-adapter';
 import { toDatetimeLocalValue } from '../lib/events-core';
+import { eventCreationBlocked } from '../lib/season-lifecycle';
 import { normalizeExternalUrl } from '../lib/url';
 import { Combo, Field, Modal } from './ui';
 import { useToast } from './ui-hooks';
@@ -258,6 +259,10 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
     if (!hostClubId) return setError('Pick a host club.');
     if (!city.trim() || !state) return setError('City and state are required.');
     if (!startDate || !endDate || endDate < startDate) return setError('End date must be on or after the start date.');
+    // F6 season lifecycle: an event's season is derived from its start date —
+    // block creating (or re-dating) it into a season that isn't launched yet.
+    const seasonBlock = eventCreationBlocked(db, startDate);
+    if (seasonBlock.blocked) return setError(seasonBlock.reason ?? 'That season is not yet available for events.');
     if (!regOpens || !regCloses || regCloses.slice(0, 10) > startDate) return setError('Registration must close on or before the event start date.');
     if (regOpens >= regCloses) return setError('Registration must open before it closes.');
     if (disciplines.length === 0) return setError('Select at least one discipline.');

@@ -5,6 +5,7 @@ import { useToast } from '../../../components/ui-hooks';
 import type { Season } from '../../../lib/types';
 import { pushSeason } from '../../../lib/supabase';
 import { fmtMoney } from '../../../lib/scoring';
+import { seasonIsLaunched } from '../../../lib/season-lifecycle';
 
 // ---------- Seasons ----------
 type SeasonEditState = {
@@ -51,6 +52,33 @@ export function Seasons() {
     toast('Season updated.');
   };
 
+  // F6 season lifecycle: launching a season is a one-way, admin-confirmed
+  // flip. Once launched, its memberships become purchasable (alongside a
+  // "next season" warning where relevant) and events may be created in it.
+  // There's no un-launch action — same one-way-door pattern as other admin
+  // "go live" flips in this codebase.
+  const launch = (s: Season) => {
+    const ok = window.confirm(
+      `Launch ${s.name}?\n\n` +
+      `Before launching, confirm:\n` +
+      `  • Dates are correct (${s.startsOn} → ${s.endsOn})\n` +
+      `  • Fees are set (Athlete ${fmtMoney(s.athleteFee)} / Coach ${fmtMoney(s.coachFee)} / Club ${fmtMoney(s.clubFee)})\n` +
+      `  • The season's waiver is published\n\n` +
+      `Launching enables:\n` +
+      `  • Memberships purchasable for this season\n` +
+      `  • Events may be created with a start date in this season\n\n` +
+      `This cannot be undone.`,
+    );
+    if (!ok) return;
+    const applied = mutate((d) => {
+      const x = d.seasons.find((y) => y.id === s.id)!;
+      x.launchedAt = new Date().toISOString();
+      pushSeason(x);
+    });
+    if (!applied) return; // offline read-only gate — no false success toast
+    toast(`${s.name} launched.`);
+  };
+
   return (
     <div className="card" style={{ overflow: 'hidden' }}>
       <table className="tbl">
@@ -64,6 +92,7 @@ export function Seasons() {
             <th className="num">Club fee</th>
             <th>Purchasable</th>
             <th>Current</th>
+            <th>Launched</th>
             <th />
           </tr>
         </thead>
@@ -152,6 +181,9 @@ export function Seasons() {
                         {s.current ? 'Yes' : 'No'}
                       </label>
                     </td>
+                    <td>
+                      {seasonIsLaunched(s) ? <Badge tone="ok">Launched</Badge> : <Badge tone="warn">Not launched</Badge>}
+                    </td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       <button className="btn small primary" onClick={() => saveEdit(s)}>Save</button>{' '}
                       <button className="btn small ghost" onClick={() => setEditingId(null)}>Cancel</button>
@@ -185,6 +217,11 @@ export function Seasons() {
                           })}>Set current</button>
                         )
                       }
+                    </td>
+                    <td>
+                      {seasonIsLaunched(s)
+                        ? <Badge tone="ok">Launched</Badge>
+                        : <button className="btn small primary" onClick={() => launch(s)}>Launch season</button>}
                     </td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       <button className="btn small ghost" onClick={() => startEdit(s)}>Edit</button>
