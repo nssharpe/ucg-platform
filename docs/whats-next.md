@@ -54,7 +54,9 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
    insert rate-limit, token entropy check).
 2. **Rate limiting / CAPTCHA** on sign-up and the public email-sending functions
    (`request-guardian-waiver`, `notify-club-cart`, `request-manager-access`) —
-   these can spam from the verified naigc.org domain today.
+   these can spam from the verified naigc.org domain today. **DEFERRED to
+   just-before-launch (Nate, 2026-07-18):** CAPTCHA interferes with dev/E2E
+   testing paths; keep it on the go-live checklist rather than building now.
 3. **Daily "anything wrong?" digest** — SHIPPED 2026-07-17: `daily-digest` kind
    in `scheduled-dispatch` (new `error_logs` rows since the last digest +
    every `payments` row stuck `pending` > 1h → email via Resend, at most once
@@ -127,29 +129,29 @@ these were explicitly deferred, not dropped:
 
 Suggested from a post-emv2 read of the platform; none of these are in a spec yet:
 
-- **Multi-manager freshness.** Realtime covers only `scores`; two managers editing one
+1. **Multi-manager freshness.** Realtime covers only `scores`; two managers editing one
   club (or admin + manager) don't see each other's changes until reload. A
   refetch-on-focus (or realtime) for `registrations`/`cart_items`/`memberships` heads
   off "my change disappeared" reports — the watch-list trigger effectively fires the
   moment clubs have two active managers, which club invites already enable.
-- **Payments reconciliation admin view.** Two known drifts have no surface: `payments`
+2. **Payments reconciliation admin view.** Two known drifts have no surface: `payments`
   rows stuck `pending` (webhook missed/failed) and Stripe-Dashboard-issued refunds that
   never reflect into `payments.status`. A small admin card (and/or the daily digest
   above) that lists both would close the loop between Stripe and the DB.
-- **Season rollover runbook/tooling.** Memberships, club memberships, and waivers are
+3. **Season rollover runbook/tooling.** Memberships, club memberships, and waivers are
   per-season; the first season boundary will otherwise be an ad-hoc manual scramble
   (what expires, what re-gates, what carries over). Decide + script it before it happens.
-- **User data export + delete.** Pairs with the legal/retention work (§2.4) — we hold
+4. **User data export + delete.** Pairs with the legal/retention work (§2.4) — we hold
   minors' PII; counsel will likely require it anyway.
-- **Component tests** (Vitest + jsdom + Testing Library) for the money-adjacent UI
+5. **Component tests** (Vitest + jsdom + Testing Library) for the money-adjacent UI
   semantics that are hand-verified today: cart-sync removal/revert, RegistrationEditor
   change-fee derivation, membership-hold rendering.
-- **In-app help / host & manager guides.** The feature surface is now large (hosting,
+6. **In-app help / host & manager guides.** The feature surface is now large (hosting,
   waitlists, add-ons, refunds, finance). Short task-oriented docs (or contextual help
   links) reduce Julia-as-support and make fall-season onboarding of hosts cheaper.
-- **Privacy-friendly analytics + Web Vitals** (Plausible/PostHog) once real users
+7. **Privacy-friendly analytics + Web Vitals** (Plausible/PostHog) once real users
   arrive; optional Sentry for stack traces with releases.
-- **Data-layer scale path** — no action yet; act on the documented triggers (boot
+8. **Data-layer scale path** — no action yet; act on the documented triggers (boot
   payload > ~2MB, admin boot > 3s mid-tier mobile, first localStorage quota error):
   per-page queries for `scores`/`registrations` first.
 
