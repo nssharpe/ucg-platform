@@ -182,12 +182,20 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
     `VITE_DEV_AUTH_*` are blank, inject a worst-case topbar via `preview_eval` instead.
 
 ## Tests
-- Vitest, **node environment** (`vitest.config.ts`, no app plugins). Tests in
-  `tests/**/*.test.ts` cover the **pure** logic: scoring engines (`src/scoring/*`),
-  `src/lib/capabilities-core.ts` (split from React hooks so it imports zero runtime
-  deps), `src/lib/pricing.ts`. Run: `npm test` / `npx vitest run`.
+- Vitest, **node environment by default** (`vitest.config.ts`, no app plugins). Tests
+  in `tests/**/*.test.{ts,tsx}` cover the **pure** logic: scoring engines
+  (`src/scoring/*`), `src/lib/capabilities-core.ts` (split from React hooks so it
+  imports zero runtime deps), `src/lib/pricing.ts`. Run: `npm test` / `npx vitest run`.
 - Scoring tests encode ground-truth values from the original NAIGC calculators — they
-  lock in port correctness. No DOM/component tests yet (would need jsdom + @testing-library).
+  lock in port correctness.
+- **Component tests (since 2026-07-18):** `tests/components/*.test.tsx` (jsdom via the
+  per-file `// @vitest-environment jsdom` docblock — environmentMatchGlobs is
+  deprecated; RTL cleanup is registered explicitly in `tests/components/setup.ts`
+  because `globals: false` disables RTL auto-cleanup). vitest.config force-blanks
+  `VITE_SUPABASE_URL`/`ANON_KEY` via `define` so the Supabase client stays inert
+  (vitest loads `.env.local` even without app plugins). Cover the money-adjacent UI
+  semantics: cart ✕ removal/revert (via real `removeCartItemWithSync` + shared
+  `CART_REMOVAL_MESSAGE`), RegistrationEditor change-fee derivation, hold badges.
 - **E2E (Playwright, since 2026-07-04):** `npm run test:e2e` — smoke specs in `e2e/`
   (kept OUT of `tests/` so vitest doesn't pick them up) run chromium against a vite
   server in `--mode staging` on port 5178 (auto-started; reuses if running). Covers

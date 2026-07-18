@@ -145,9 +145,10 @@ Suggested from a post-emv2 read of the platform; none of these are in a spec yet
   (what expires, what re-gates, what carries over). Decide + script it before it happens.
 4. **User data export + delete.** Pairs with the legal/retention work (§2.4) — we hold
   minors' PII; counsel will likely require it anyway.
-5. **Component tests** (Vitest + jsdom + Testing Library) for the money-adjacent UI
-  semantics that are hand-verified today: cart-sync removal/revert, RegistrationEditor
-  change-fee derivation, membership-hold rendering.
+5. ~~Component tests~~ ✅ **shipped 2026-07-18** — jsdom + Testing Library in
+  `tests/components/` (17 tests): cart-sync removal/revert semantics (real
+  `removeCartItemWithSync` + shared `CART_REMOVAL_MESSAGE`), RegistrationEditor
+  change-fee derivation (real component), membership-hold badge rendering.
 6. **In-app help / host & manager guides.** The feature surface is now large (hosting,
   waitlists, add-ons, refunds, finance). Short task-oriented docs (or contextual help
   links) reduce Julia-as-support and make fall-season onboarding of hosts cheaper.
