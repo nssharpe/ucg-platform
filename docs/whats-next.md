@@ -147,9 +147,15 @@ Suggested from a post-emv2 read of the platform; none of these are in a spec yet
   `reconcile-payments` (AAL-guarded), migration `20260718142708` (`recon_note`),
   staging-smoke-tested + deployed prod. Known limit: drift scan checks the
   newest 100 paid payments per run (honest copy when truncated).
-3. **Season rollover runbook/tooling.** Memberships, club memberships, and waivers are
-  per-season; the first season boundary will otherwise be an ad-hoc manual scramble
-  (what expires, what re-gates, what carries over). Decide + script it before it happens.
+3. ~~Season rollover runbook/tooling~~ ✅ **shipped 2026-07-18 as full automation**
+  (Nate's spec): `seasons.launched_at` state + admin "Launch season" action
+  (Seasons page); event creation blocked into unlaunched seasons (EventWizard);
+  escalating admin nags via `scheduled-dispatch` (June 1 / June 16 / daily from
+  June 24, continuing past July 1 until launched); automatic `current` flip on
+  July 1 (fail-loud — never invents a season); launched future-season
+  memberships purchasable with a "next season" warning, enforced server-side
+  in `create-checkout-session`. Migration `20260718200055` applied staging+prod
+  (backfill verified both).
 4. ~~User data export + delete~~ ✅ **shipped 2026-07-18** (admin-operated) —
   Profile "Data privacy" card (admin view): JSON+PDF export via pure
   `collectPersonData` (completeness locked by a test over every `DB`

@@ -108,7 +108,7 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   `supabase/migrations/` — **the authoritative migration list + per-migration narrative +
   schema/RLS model is `supabase/README.md`**; keep its table updated with every migration
   (detail goes THERE, not here). All migrations through
-  `20260716120000_emv2_p6_finance_foundations.sql` are applied. Security hardening:
+  `20260718200055_season_launched_at.sql` are applied (staging + prod). Security hardening:
   Phase 1+2 applied; Phase 3 TODO (`docs/plans/2026-07-02-security-hardening.md`).
 - New migrations: `supabase migration new <name>` (timestamp filename format is required).
   Apply via `supabase db push` — network is sandbox-blocked, run with sandbox disabled.
@@ -458,7 +458,10 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   verify_jwt true), `scheduled-dispatch` (pg_cron every 15 min; sanction-vote
   reminders + event-owner task escalations (`owner-task` kind, emv2 P1 §B4) +
   waitlist promotion sweep (emv2 P4 T7 — FIFO promote/requeue/complete, runbook in
-  `supabase/README.md`); verify_jwt STAYS true + requires the `x-cron-secret` header
+  `supabase/README.md`) + season lifecycle (F6 2026-07-18: `season-launch-nag`
+  escalating admin emails + automatic July-1 `current` rollover — pure logic
+  `src/lib/season-lifecycle.ts` MIRRORED in `_shared/season-lifecycle.ts`, keep in
+  lockstep); verify_jwt STAYS true + requires the `x-cron-secret` header
   matching its `CRON_SECRET` secret — the runtime's env service key ≠ the legacy JWT,
   bit us 2026-07-08), `manage-waitlist` (emv2 P4 T7: `promote`/`requeue` override =
   admin/sanctioning only, `list` = + host-club managers/event-admin grantees;
