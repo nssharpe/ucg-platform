@@ -64,6 +64,12 @@ export type JudgeSubmitResult =
  *  nonsense score. No real UCG score approaches this on any level/apparatus. */
 const MAX_SCORE_FIELD = 50;
 
+/** Cap on free-form string fields (`source`/`calc`) — real values are short
+ *  enum-ish labels ('manual', 'wag-open-calc', …). */
+const MAX_LABEL_LENGTH = 40;
+/** Cap on the serialized `calcState` jsonb an anonymous submit may store. */
+const MAX_CALC_STATE_CHARS = 20_000;
+
 function isValidScoreNumber(n: unknown): n is number {
   return typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= MAX_SCORE_FIELD;
 }
@@ -104,8 +110,18 @@ export function validateJudgeSubmit(
   if (!isValidNullableScoreNumber(payload.deductions)) return { ok: false, error: 'Invalid deductions.' };
   if (!isValidNullableScoreNumber(payload.eScore)) return { ok: false, error: 'Invalid E-score.' };
   if (!isValidNullableScoreNumber(payload.final)) return { ok: false, error: 'Invalid final score.' };
-  if (payload.source != null && typeof payload.source !== 'string') return { ok: false, error: 'Invalid source.' };
-  if (payload.calc != null && typeof payload.calc !== 'string') return { ok: false, error: 'Invalid calc.' };
+  if (payload.source != null && (typeof payload.source !== 'string' || payload.source.length > MAX_LABEL_LENGTH)) return { ok: false, error: 'Invalid source.' };
+  if (payload.calc != null && (typeof payload.calc !== 'string' || payload.calc.length > MAX_LABEL_LENGTH)) return { ok: false, error: 'Invalid calc.' };
+  // calcState is stored verbatim (jsonb) on an anonymous submit — cap its
+  // serialized size so a code holder can't bloat the scores table with
+  // megabyte payloads. Real CalcStateV2 blobs are well under this.
+  if (payload.calcState != null) {
+    let serialized: string;
+    try { serialized = JSON.stringify(payload.calcState); } catch { return { ok: false, error: 'Invalid calculator state.' }; }
+    if (serialized === undefined || serialized.length > MAX_CALC_STATE_CHARS) {
+      return { ok: false, error: 'Invalid calculator state.' };
+    }
+  }
 
   // The id is ALWAYS recomputed here -- any `id` the client sent is ignored
   // (not even read above), so it can never steer a write onto a different

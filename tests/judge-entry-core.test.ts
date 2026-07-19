@@ -98,6 +98,15 @@ describe('validateJudgeSubmit', () => {
     expect(validateJudgeSubmit(eventId, { regId: '', apparatus: 'vault' }, reg()).ok).toBe(false);
     expect(validateJudgeSubmit(eventId, { regId: 'reg-1', apparatus: '' }, reg()).ok).toBe(false);
   });
+
+  it('rejects oversized free-form fields (anonymous storage-bloat guard)', () => {
+    const base = { regId: 'reg-1', apparatus: 'vault', sv: 4.2, deductions: 0.5, final: 3.7 };
+    expect(validateJudgeSubmit(eventId, { ...base, source: 'x'.repeat(41) }, reg()).ok).toBe(false);
+    expect(validateJudgeSubmit(eventId, { ...base, calc: 'x'.repeat(41) }, reg()).ok).toBe(false);
+    expect(validateJudgeSubmit(eventId, { ...base, calcState: { blob: 'x'.repeat(20_001) } }, reg()).ok).toBe(false);
+    // A realistic calcState stays accepted.
+    expect(validateJudgeSubmit(eventId, { ...base, calcState: { v: 2, entries: [1, 2, 3] } }, reg()).ok).toBe(true);
+  });
 });
 
 describe('isValidAccessCode', () => {
