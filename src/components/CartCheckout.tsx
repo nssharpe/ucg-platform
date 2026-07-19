@@ -201,7 +201,7 @@ export function CartCheckout({
             <span>{fmtMoney(freeSummary.subtotal)}</span>
           </div>
           {stage.couponCode && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 4, color: 'var(--green-600)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 4, color: 'var(--teal-900)' }}>
               <span>Coupon {stage.couponCode}</span>
               <span>−{fmtMoney(freeSummary.discount)}</span>
             </div>
@@ -256,7 +256,7 @@ export function CartCheckout({
         </div>
         {stage.couponCode && (
           summary.discount > 0
-            ? <p style={{ color: 'var(--green-600)', fontSize: 13, margin: '6px 0 0' }}>Code {stage.couponCode} applied.</p>
+            ? <p style={{ color: 'var(--teal-900)', fontSize: 13, margin: '6px 0 0' }}>Code {stage.couponCode} applied.</p>
             : <p style={{ color: 'var(--coral-600)', fontSize: 13, margin: '6px 0 0' }}>Code {stage.couponCode} didn’t apply — it may be invalid, expired, or not valid for these items.</p>
         )}
         <div style={{ borderTop: '1px solid var(--line)', margin: '10px 0 0', paddingTop: 10, fontSize: 14 }}>
@@ -265,7 +265,7 @@ export function CartCheckout({
             <span>{fmtMoney(summary.subtotal)}</span>
           </div>
           {summary.discount > 0 && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 4, color: 'var(--green-600)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 4, color: 'var(--teal-900)' }}>
               <span>Coupon {stage.couponCode}</span>
               <span>−{fmtMoney(summary.discount)}</span>
             </div>

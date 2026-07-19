@@ -136,7 +136,7 @@ function EligibleTeamsSection({ event, scope }: { event: Event; scope: Nationals
                           return (
                             <span
                               key={a.code}
-                              style={{ marginRight: 10, fontWeight: eligible ? 700 : 400, color: eligible ? 'var(--green-600)' : 'var(--ink)' }}
+                              style={{ marginRight: 10, fontWeight: eligible ? 700 : 400, color: eligible ? 'var(--teal-900)' : 'var(--ink)' }}
                             >
                               {a.code}: {count}{eligible ? ' ✓' : ''}
                             </span>

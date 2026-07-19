@@ -1041,7 +1041,7 @@ export function SanctionVotePage() {
             <h3 className="card-title">Vote Tally</h3>
             <div style={{ display: 'flex', gap: 16, margin: '12px 0' }}>
               <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--green-600)' }}>{tally.approvals}</div>
+                <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--teal-900)' }}>{tally.approvals}</div>
                 <div style={{ fontSize: 12, color: 'var(--ink-soft)' }}>Approve</div>
               </div>
               <div style={{ textAlign: 'center' }}>
@@ -1060,7 +1060,7 @@ export function SanctionVotePage() {
             <div style={{ fontSize: 14 }}>
               <strong>Status: </strong>
               {tally.decided ? (
-                <span style={{ color: tally.outcome === 'approved' ? 'var(--green-600)' : 'var(--coral-600)' }}>
+                <span style={{ color: tally.outcome === 'approved' ? 'var(--teal-900)' : 'var(--coral-600)' }}>
                   {tally.outcome.charAt(0).toUpperCase() + tally.outcome.slice(1)}
                 </span>
               ) : (

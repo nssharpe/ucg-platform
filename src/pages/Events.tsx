@@ -2480,7 +2480,7 @@ function SquadBuilder({ event, session }: { event: Event; session: EventSession 
               </select>
             </div>
           ))}
-          {holding.length === 0 && <p style={{ color: 'var(--green-600)', fontWeight: 600, fontSize: 13.5 }}>✓ Everyone placed</p>}
+          {holding.length === 0 && <p style={{ color: 'var(--teal-900)', fontWeight: 600, fontSize: 13.5 }}>✓ Everyone placed</p>}
         </div>
 
         {session.squads.filter((q) => !q.holding).map((q) => (

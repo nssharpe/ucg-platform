@@ -52,10 +52,6 @@
   --coral-700: #b23a1f; /* AA-compliant text (~4.9:1) on --coral-100 */
   --coral-100: #fde4dd;
   --white: #fcfcfc;
-  --green-600: #2e7d52;
-  --green-100: #ddefe4;
-  --amber-600: #b97324;
-  --amber-100: #f8ecd9;
 
   /* New brand accents — FILLS ONLY unless noted; see docs/specs/2026-07-08-ucg-rebrand.md
      §"Approved color pairings" before using any of these as text on a light surface.
@@ -67,6 +63,8 @@
   --purple: #adbae9; /* Purple (brand secondary) — pale accent fill; --navy-800 text OK for badge fills only */
   --teal-900: #184b56; /* Dark Blue Green (brand secondary) — OK as text on white/light-blue */
   --gold: #f6c328; /* Golden Yellow (brand secondary) — accent fill; --navy-800 text OK for badge fills only */
+  --gold-100: #faebbc; /* Golden Yellow tint — warning-card fill, paired with default --ink text (2026-07-19) */
+  --leaf: #c0e388; /* Expressive-palette green — qualification-highlight fill, paired with --teal-900 text (2026-07-19) */
 
   --bg: var(--ice-200);
   --surface: var(--white);
@@ -774,7 +772,7 @@ option { color: var(--ink); background: #fff; }
 .sp-chip:hover { border-color: var(--navy-600); }
 .sp-chip:active { transform: scale(0.96); }
 .sp-chip.on, .sp-chip.sel { background: var(--navy-800); border-color: var(--navy-800); color: var(--white); }
-.sp-chip.contrib { background: var(--green-600); border-color: var(--green-600); color: var(--white); }
+.sp-chip.contrib { background: var(--teal-900); border-color: var(--teal-900); color: var(--white); }
 .sp-chip.excluded { background: var(--coral-500); border-color: var(--coral-500); color: var(--white); text-decoration: line-through; }
 
 .sp-check { margin-bottom: 4px; }
@@ -794,7 +792,7 @@ option { color: var(--ink); background: #fff; }
 .sp-strip-value.accent { color: var(--coral-500); }
 
 .sp-warn {
-  background: var(--coral-100); color: var(--coral-600);
+  background: var(--gold-100); color: var(--ink);
   border-radius: var(--radius-sm); padding: 9px 13px; font-size: 13.5px; font-weight: 600;
   display: flex; flex-direction: column; gap: 3px;
 }
@@ -859,7 +857,7 @@ option { color: var(--ink); background: #fff; }
 .res-legend .res-medal { font-size: 11px; }
 .res-qual-dot {
   display: inline-block; width: 11px; height: 11px; border-radius: 3px;
-  background: var(--green-100); border: 1px solid var(--green-600); margin-left: 8px;
+  background: var(--leaf); border: 1px solid var(--teal-900); margin-left: 8px;
 }
 .res-group-header {
   display: flex;
@@ -885,8 +883,8 @@ option { color: var(--ink); background: #fff; }
 .res-medal-3, .res-tbl td.res-medal-3 { color: #b06e3a; font-weight: 800; }
 .res-place { font-size: 10px; vertical-align: super; font-weight: 800; }
 /* Qualifier highlighting (green tint, as in prelims/qualifier tabs) */
-.res-tbl td.res-qual { background: var(--green-100); }
-.res-tbl td.res-qual a { color: var(--green-600); }
+.res-tbl td.res-qual { background: var(--leaf); }
+.res-tbl td.res-qual a { color: var(--teal-900); }
 
 /* mobile */
 @media (max-width: 860px) {
