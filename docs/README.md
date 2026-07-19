@@ -97,6 +97,9 @@ Live build/tooling notes live in [`../CLAUDE.md`](../CLAUDE.md); open work is
 passes, emv2 residuals, the feature roadmap, and proposed additions. Update it
 there; don't grow rival lists here or in CLAUDE.md.
 
+**Archived (2026-07-19):** completed items have been moved to
+[`archive/whats-next-completed-2026-07.md`](archive/whats-next-completed-2026-07.md).
+
 ## Branches
 All feature work is merged to `main` — there are no outstanding feature branches. (The
 6/18 event-management and feedback branches were fully merged and have been deleted.)
