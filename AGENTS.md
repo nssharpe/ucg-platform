@@ -5,7 +5,7 @@ Supabase backend (env-gated). Deploys via GitHub Actions on push to `main`.
 
 **Keep this file lean.** It's loaded into every session AND every subagent.
 Operative rules only — feature history/narratives go in `docs/specs/`, `docs/plans/`,
-and git history (full pre-trim version: `docs/archive/CLAUDE-md-as-of-2026-07-02.md`).
+and git history (full pre-trim version: `docs/archive/Codex-md-as-of-2026-07-02.md`).
 When the post-commit doc sweep touches this file, UPDATE-in-place or move detail out;
 never append changelog paragraphs.
 
@@ -108,7 +108,7 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   `supabase/migrations/` — **the authoritative migration list + per-migration narrative +
   schema/RLS model is `supabase/README.md`**; keep its table updated with every migration
   (detail goes THERE, not here). All migrations through
-  `20260718200055_season_launched_at.sql` are applied (staging + prod). Security hardening:
+  `20260711023234_fix_refund_manager_read_recursion.sql` are applied. Security hardening:
   Phase 1+2 applied; Phase 3 TODO (`docs/plans/2026-07-02-security-hardening.md`).
 - New migrations: `supabase migration new <name>` (timestamp filename format is required).
   Apply via `supabase db push` — network is sandbox-blocked, run with sandbox disabled.
@@ -148,12 +148,12 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   the old Dropbox path broke npm shims and locked `dist/`; never move it back).
 - Verify a build by grepping for "files generated" AND confirming `dist/index.html`'s
   script refs exist under `dist/assets` — never trust the piped exit code alone.
-- Launch configs (`.claude/launch.json`): `ucg-dev` (5173), `ucg-preview` (5176,
+- Launch configs (`.Codex/launch.json`): `ucg-dev` (5173), `ucg-preview` (5176,
   `--strictPort`), `ucg-staging` (5177, `--mode staging` → the staging Supabase
   project via `.env.staging.local`). If you run `vite preview` (serves `dist/`):
   rebuild first and clear the service worker or it serves the previous bundle.
 - **Destructive-command guard (PreToolUse hook, 2026-07-11):**
-  `scripts/destructive-command-guard.mjs` (wired in `.claude/settings.json`)
+  `scripts/destructive-command-guard.mjs` (wired in `.Codex/settings.json`)
   denies catastrophic Bash commands (recursive delete of roots/repo/.git, remote
   `supabase db reset`, force-push to main) and downgrades other destructive ones
   to ask. Pattern-based — a quoted "rm -rf" in e.g. a commit message can
@@ -182,20 +182,12 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
     `VITE_DEV_AUTH_*` are blank, inject a worst-case topbar via `preview_eval` instead.
 
 ## Tests
-- Vitest, **node environment by default** (`vitest.config.ts`, no app plugins). Tests
-  in `tests/**/*.test.{ts,tsx}` cover the **pure** logic: scoring engines
-  (`src/scoring/*`), `src/lib/capabilities-core.ts` (split from React hooks so it
-  imports zero runtime deps), `src/lib/pricing.ts`. Run: `npm test` / `npx vitest run`.
+- Vitest, **node environment** (`vitest.config.ts`, no app plugins). Tests in
+  `tests/**/*.test.ts` cover the **pure** logic: scoring engines (`src/scoring/*`),
+  `src/lib/capabilities-core.ts` (split from React hooks so it imports zero runtime
+  deps), `src/lib/pricing.ts`. Run: `npm test` / `npx vitest run`.
 - Scoring tests encode ground-truth values from the original NAIGC calculators — they
-  lock in port correctness.
-- **Component tests (since 2026-07-18):** `tests/components/*.test.tsx` (jsdom via the
-  per-file `// @vitest-environment jsdom` docblock — environmentMatchGlobs is
-  deprecated; RTL cleanup is registered explicitly in `tests/components/setup.ts`
-  because `globals: false` disables RTL auto-cleanup). vitest.config force-blanks
-  `VITE_SUPABASE_URL`/`ANON_KEY` via `define` so the Supabase client stays inert
-  (vitest loads `.env.local` even without app plugins). Cover the money-adjacent UI
-  semantics: cart ✕ removal/revert (via real `removeCartItemWithSync` + shared
-  `CART_REMOVAL_MESSAGE`), RegistrationEditor change-fee derivation, hold badges.
+  lock in port correctness. No DOM/component tests yet (would need jsdom + @testing-library).
 - **E2E (Playwright, since 2026-07-04):** `npm run test:e2e` — smoke specs in `e2e/`
   (kept OUT of `tests/` so vitest doesn't pick them up) run chromium against a vite
   server in `--mode staging` on port 5178 (auto-started; reuses if running). Covers
@@ -205,13 +197,12 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   state is documented in `supabase/README.md`; keep specs in sync with it.
 
 ## Docs
-- `README.md` overview; `docs/README.md` index; **`docs/whats-next.md` = the
-  authoritative open-work list** (reconciled 2026-07-19; completed items archived);
-  `supabase/README.md` backend schema/RLS/migration table; `docs/specs/` design
+- `README.md` overview; `docs/README.md` index + **the authoritative "What's next"
+  list**; `supabase/README.md` backend schema/RLS/migration table; `docs/specs/` design
   specs; `docs/plans/` implementation plans (do NOT recreate `docs/superpowers/`);
   `docs/stripe-go-live-checklist.md`.
 - **Keep docs current after every commit** — a `PostToolUse` hook fires after `git commit`
-  reminding you to sweep README/CLAUDE.md/docs/supabase-README in the same session.
+  reminding you to sweep README/AGENTS.md/docs/supabase-README in the same session.
   For THIS file that means update-in-place, keep it lean, push detail into specs/plans.
 
 ## Auth patterns
@@ -244,37 +235,6 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   signup-confirmation/magic-link/recovery URL token — `hasLikelySession()` alone misses
   that case (no prior localStorage entry yet), which is exactly what caused the
   "confirm my account → flashes a page" report.
-- **MFA / aal2 (2026-07-17):** TOTP opt-in (`ProfileMfa.tsx`); App.tsx renders the
-  `MfaChallenge` step-up interstitial when `needsMfaStepUp` (`mfa-core.ts`) — no-factor
-  accounts (incl. seeded dev/E2E users) never see it. **Passkey exemption (2026-07-18):
-  a passkey sign-in session (amr method `'passkey'`, still aal1 in GoTrue) skips the
-  TOTP step-up — enforced in LOCKSTEP at three layers (`needsMfaStepUp`,
-  `is_admin()` migration `20260718093940`, `_shared/jwt-aal.ts`); never change one
-  without the others or passkey-signed-in enrolled admins lock out.** `is_admin()` returns true only on
-  an aal2 JWT once the caller has a verified factor (`20260717140238`). **Privileged
-  edge functions MUST call `_shared/aal-guard.ts` `requireAalForEnrolledCaller` right
-  after their role gate** — service-role clients bypass the RLS-level hardening (9 fns
-  guarded; runbook in `supabase/README.md` "Auth: MFA"). Break-glass: `admin-reset-mfa`
-  (itself guarded) or the dashboard. WebAuthn-as-MFA (`mfa.enroll` factorType
-  'webauthn') is a PAID Supabase add-on ("Advanced MFA - WebAuthn", CLI quote
-  2026-07-18: "$75/month, then $10/month") — declined; `[auth.mfa.web_authn]` in
-  config.toml stays `false` (flipping it true triggers the CLI's cost-confirmation
-  prompt on push). The old Profile "Add a passkey" MFA-enroll UI was removed
-  2026-07-18 (no account could ever have enrolled one).
-- **Passkey SIGN-IN (free, shipped 2026-07-18):** a SEPARATE feature from the paid
-  MFA add-on above — `auth.signInWithPasskey()`/`auth.registerPasskey()`/
-  `auth.passkey.*`, fully typed in the installed SDK, opted into via
-  `experimental.passkey: true` on the client (`src/lib/supabase.ts`). "Sign in
-  with a passkey" on `Gate.tsx` (sign-in mode, feature-detected on
-  `window.PublicKeyCredential`); management (list/rename/remove/add) in the
-  Profile "Passkeys" card (`src/pages/ProfilePasskeys.tsx`, separate from the
-  Two-factor authentication card). Yields an aal1 session — a TOTP-enrolled user
-  still hits `MfaChallenge` for step-up, which is intended. `[auth.passkey]`/
-  `[auth.webauthn]` declared in config.toml mirroring the prod dashboard (RP
-  display "UCG Events", RP ID `nssharpe.github.io`, origin
-  `https://nssharpe.github.io`) so an undeclared-key `config push` can't
-  silently disable it. E2E: `e2e/passkey.spec.ts` uses Playwright's CDP virtual
-  authenticator; skips cleanly today because staging's RP ID isn't `localhost`.
 - **App roles** (`user_roles.role`, enum `app_role`): `admin`, `sanctioning`,
   `regional_rep` (region via `regional_rep_regions`), `finance_admin`, `refund_manager`
   (emv2 P3). Capabilities: `isSanctioning`/`isRegionalRep`/`isFinanceAdmin`/
@@ -326,15 +286,6 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   in place — a `useMemo`/`useEffect` keyed on a nested `db.*` path NEVER sees local
   mutations (only a full `syncFromSupabase()` reload reassigns). Read `db.*` directly
   each render; audit for this trap when touching store consumers.
-- **`mutate()` returns `boolean` (offline read-only gate, 2026-07-17):** when Supabase
-  is configured and the browser is offline, `mutate()` REFUSES the write (toasts, returns
-  `false`) so local state never diverges from a queue that isn't accepting new work. Any
-  call site whose continuation presumes success (success toast, modal close, navigate,
-  a `push*` OUTSIDE the callback) MUST guard on the return value — every existing site
-  was swept 2026-07-17. Write-queue side: `classifyWriteError` makes RLS/integrity/auth
-  failures 'permanent' (no retry; boot-wired toast + drain-then-`syncFromSupabase()`
-  rollback in `supabase.ts`); non-React code toasts via `pushToast` (`lib/toast-bus.ts`),
-  the imperative escape hatch into the same ToastProvider.
 - **New DB collection plumbing:** add to `types.ts` (`DB.<x>`), `rowTo<X>` +
   `push<X>`/`delete<X>` in `supabase.ts`, and the `loadAll` Promise.all + map +
   conditional spread. `from('<new_table>')` typechecks even if absent from `database.types`.
@@ -426,12 +377,7 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   and 400s template pushes). ⚠ `config push` pushes DEFAULTS for undeclared `[auth]`
   keys and AUTO-CONFIRMS under agent detection (closed stdin also defaults the prompt
   to Yes) — dry-run with `echo n | supabase config push --agent no` and read the diff
-  first; keep every config.toml key deliberate. ⚠⚠ `echo n` feeds ONE line: if an
-  EXTRA prompt appears first (e.g. the paid-add-on cost confirmation when enabling
-  `[auth.mfa.web_authn]`), it eats the `n` and the real push prompt EOF-defaults to
-  YES — bit us live 2026-07-18 (pushed min-password-length 6 + secure_password_change
-  false to prod during a "dry run"; repaired same session). Pipe one `n` per
-  expected prompt (`printf 'n\nn\n'`) or count prompts from a prior run first.
+  first; keep every config.toml key deliberate.
   Full runbook + traps: `supabase/README.md` "Auth email templates".
 - Deploy: `supabase functions deploy <name> --project-ref wkyerxlgricfphopocoz`
   (sandbox disabled; no Docker; `_shared/` bundles automatically).
@@ -458,35 +404,14 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   verify_jwt true), `scheduled-dispatch` (pg_cron every 15 min; sanction-vote
   reminders + event-owner task escalations (`owner-task` kind, emv2 P1 §B4) +
   waitlist promotion sweep (emv2 P4 T7 — FIFO promote/requeue/complete, runbook in
-  `supabase/README.md`) + season lifecycle (F6 2026-07-18: `season-launch-nag`
-  escalating admin emails + automatic July-1 `current` rollover — pure logic
-  `src/lib/season-lifecycle.ts` MIRRORED in `_shared/season-lifecycle.ts`, keep in
-  lockstep); verify_jwt STAYS true + requires the `x-cron-secret` header
+  `supabase/README.md`); verify_jwt STAYS true + requires the `x-cron-secret` header
   matching its `CRON_SECRET` secret — the runtime's env service key ≠ the legacy JWT,
   bit us 2026-07-08), `manage-waitlist` (emv2 P4 T7: `promote`/`requeue` override =
   admin/sanctioning only, `list` = + host-club managers/event-admin grantees;
   verify_jwt true), `request-refund` / `process-refund`
   (emv2 P3 refund request + review/Stripe-processing; both `verify_jwt: true` — the
-  no-verify-jwt trio above is UNCHANGED), `report-problem` (in-app "Report a problem"
-  nav-drawer entry, any signed-in caller; verify_jwt true; reporter identity resolved
-  server-side from the JWT, never the client payload; routes bug/question/unsure to a
-  hardcoded recipient map at the top of the function — update it there if the
-  recipients change), `reconcile-payments` (2026-07-18: admin/finance_admin + AAL;
-  scan stuck-pending + Stripe refund drift / guarded refulfill / mark-refunded —
-  Finance "Reconciliation" tab), `admin-delete-person` (2026-07-18: admin-only + AAL;
-  GDPR-ish delete/anonymize — tombstones the `people` row in place when financial/
-  waiver rows reference it, scrubs denormalized names from invoice/snapshot labels,
-  keeps waiver_signatures pending counsel; export side is client-only
-  `collectPersonData`/`person-export.ts`), `judge-entry` (2026-07-19, branch
-  `feat/judge-access-codes` — awaiting review, not yet deployed: codeless judge
-  access — anonymous `unlock`/`submit` ops resolve a `judge_access_codes`
-  code/token to an event and write `scores` server-side; validation in
-  `_shared/judge-entry-core.ts`; verify_jwt true, NOT in the no-verify-jwt trio).
-  Notify-style functions allow any signed-in caller and resolve
-  recipients server-side; only `send-email`/`send-sms` are admin-gated. `scheduled-dispatch`
-  also runs the daily "anything wrong?" digest (`daily-digest` kind, new error_logs +
-  stuck-pending-payments summary, hardcoded recipient list in the function, at most
-  one per UTC day; runbook in `supabase/README.md`). (`send-receipt`
+  no-verify-jwt trio above is UNCHANGED). Notify-style functions allow any signed-in caller and resolve
+  recipients server-side; only `send-email`/`send-sms` are admin-gated. (`send-receipt`
   was removed 2026-07-04 — dead code, never called from `src/`; `stripe-webhook`'s own
   `emailReceipt()` is the actual live receipt path — since emv2 P0 it also renders each
   purchased event's `confirmation_email.bodyHtml` above the receipt, cc's the event
@@ -498,23 +423,27 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   `partitionByConsent` (`src/lib/sms-send.ts`) excludes only explicit `false`, treating
   `undefined`/`true` as eligible. Migration `20260704015417` backfilled everyone to
   `true` EXCEPT anyone who'd already sent a STOP reply (matched against `sms_messages`).
+
 ## Deferred / TODO
-**The single authoritative open-work list is `docs/whats-next.md`** (reconciled
-2026-07-19) — update it there; don't grow a rival list here. Operative notes only:
-- **Event management v2 (Julia's 2026-07-06 requirements) is COMPLETE** — P0–P6 all
-  shipped to main + prod (last: P6 finance dashboards, 2026-07-16). Spec:
-  `docs/specs/2026-07-06-event-management-v2-requirements.md`; phase-by-phase history
-  lives in the spec, `docs/README.md` tables, memory, and git — not here.
-  Operative residuals (also in whats-next §4):
-  - **§L.2 DEFERRED per Julia** (her section incomplete): the session-assignment tool
-    + per-team session-timed finals reminders; only the admin-set
-    `finals_lineup_deadline_at` nag + 10pm hard lock shipped. All P5 UI is gated on
-    `event.kind === 'nationals'`.
-  - Host-payout "owed" formula CONFIRMED by Julia 2026-07-17: event gross collected
-    (registrations + add-ons, before service/admin fees), refunds NOT deducted
-    (hosts handle their own refunds) — implemented in `src/lib/finance.ts`.
-  - 👤 Nate: grant `finance_admin` (Julia/bookkeeper); verify the P3 prereqs landed
-    ("UCG - Main" `is_league_host` + `refund_manager` grants).
-- **Security hardening Phase 3** still TODO (`docs/plans/2026-07-02-security-hardening.md`).
-- **UI/UX review fixes** not started (`docs/plans/2026-07-04-uiux-review-fixes.md`) —
-  money-story task O1 first; ⚠️-marked tasks need the fable money review.
+**The single authoritative open-work list is `docs/README.md` → "What's next"** —
+update it there; don't grow a rival list here. Operative notes only:
+- Feedback tracker (`docs/plans/2026-06-28-feedback-tracker.md`): Cohort A + B1–B4, B6,
+  B7, B8 all shipped; **B5** (finance dashboards) is absorbed by event-management v2.
+- **Event management v2** (Julia's 2026-07-06 requirements): digest + gap analysis in
+  `docs/specs/2026-07-06-event-management-v2-requirements.md`; raw materials in
+  `docs/reference/` (every "NAIGC" there reads as UCG — Nate 2026-07-06). Phasing
+  V2-P0…P6 approved + all §N7 questions answered by Julia 2026-07-06. P0–P3 shipped
+  (P2 = per-unit add-ons + camps, 2026-07-10; P3 = in-app refunds, 2026-07-11 — decisions
+  in spec §E3/§G/§H). **P4 capacity & sessions** (waitlists, by-session registration,
+  branch `feat/emv2-p4`) T1–T6 done: capacity/session engine + DB plumbing, event config
+  UI, checkout enforcement + hold stamping, by-session reg picker, cart hold countdown +
+  capacity-conflict dialog (waitlist-whole-group / pick-a-different-session / deliberate
+  split) + waitlist visibility (2026-07-12). T7 (2026-07-13) completes P4 on the branch:
+  FIFO promotion sweep in `scheduled-dispatch` (blocked-dimension bookkeeping — no
+  queue-jumping within a contended cap), new `manage-waitlist` edge fn (admin/sanctioning
+  promote-past-cap override + requeue; `list` backs the event-page Waitlist card for
+  hosts, since `waitlist_groups` RLS only exposes a group to its own club/person),
+  Complete-checkout flow on Club.tsx/MyRegistrations.tsx, `waitlistPosition` helper.
+  **P4 SHIPPED 2026-07-13**: migrations applied staging+prod; `create-checkout-session`/
+  `scheduled-dispatch`/`manage-waitlist` deployed to prod (verify_jwt true, trio
+  re-checked); merged to main. Next: V2-P5 nationals ops.

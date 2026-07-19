@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node C:/dev/ucg-platform/scripts/destructive-command-guard.mjs",
+            "statusMessage": "Destructive-command guard…"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"let s='';process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>{try{const t=JSON.parse(s);if(((t.tool_input&&t.tool_input.command)||'').includes('git commit'))process.stdout.write(JSON.stringify({hookSpecificOutput:{hookEventName:'PostToolUse',additionalContext:'DOC SWEEP REMINDER: a git commit just ran. Before continuing, check whether this change made any docs stale (README.md, CLAUDE.md, docs/README.md, supabase/README.md, and relevant files under docs/specs and docs/plans) and update them this same session. Skip only if the commit was docs-only or clearly has no documentation impact.'}}))}catch(e){}})\"",
+            "statusMessage": "Checking docs after commit…"
+          }
+        ]
+      }
+    ]
+  }
+}

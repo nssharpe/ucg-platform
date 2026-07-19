@@ -86,6 +86,7 @@ const AdminClubs = lazy(() => loaders.Admin().then((m) => ({ default: m.AdminClu
 const AdminLeague = lazy(() => loaders.Admin().then((m) => ({ default: m.AdminLeague })));
 const Communicate = lazy(() => loaders.Admin().then((m) => ({ default: m.Communicate })));
 const WaiverSign = lazy(() => import('./pages/WaiverSign'));
+const JudgeAccess = lazy(() => import('./pages/JudgeAccess'));
 const ManagerAccessReview = lazy(() => import('./pages/ManagerAccessReview'));
 const SetPassword = lazy(() => import('./pages/SetPassword'));
 const MyRegistrations = lazy(() => import('./pages/MyRegistrations').then((m) => ({ default: m.MyRegistrations })));
@@ -304,7 +305,12 @@ export default function App() {
               <Route path="/events/:slug/nationals" element={<RequireAccount><Nationals /></RequireAccount>} />
               <Route path="/meets/:slug/manage" element={<MeetManageRedirect />} />
               <Route path="/meets/:slug/nationals" element={<MeetNationalsRedirect />} />
-              <Route path="/judge" element={<RequireAccount><Judge /></RequireAccount>} />
+              {/* Public (no RequireAccount): an anonymous device that unlocked with a
+                  judge access code must reach this page. Judge.tsx itself gates score
+                  entry — privileged users (admin/host) get their normal path, everyone
+                  else needs a stored code-unlock for the selected event. */}
+              <Route path="/judge" element={<Judge />} />
+              <Route path="/judge/access/:token" element={<JudgeAccess />} />
               <Route path="/scores/:scoreId" element={<RequireAccount><ScoreDetail /></RequireAccount>} />
               <Route path="/admin/members" element={<RequireAdmin><AdminMembers /></RequireAdmin>} />
               <Route path="/admin/members/:personId" element={<RequireAdmin><AdminProfile /></RequireAdmin>} />

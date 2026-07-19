@@ -893,6 +893,27 @@ export interface DB {
    *  Phase 6 T1, spec §M) -- payouts happen outside Stripe. Admin/
    *  finance_admin editable. */
   hostPayouts?: HostPayout[];
+  /** Codeless judge access codes — one ACTIVE (non-revoked) row per event
+   *  (2026-07-19). Only readable by admin/host/event-admin (RLS mirrors
+   *  is_event_host); an anonymous judge never reads this collection, they
+   *  resolve access through the `judge-entry` Edge Function instead. */
+  judgeAccessCodes?: JudgeAccessCode[];
+}
+
+/** A codeless judge access code: URL, 6-digit `code`, and QR are three forms
+ *  of the same `token`-carrying link. A device that unlocks with either can
+ *  enter scores for ANY discipline/apparatus at `eventId` — no per-judge
+ *  identity. Generated client-side (host UI) via `crypto.getRandomValues`;
+ *  "Regenerate" revokes the old row (`revokedAt`) before inserting a new one
+ *  — never hard-deleted, so the audit trail survives. */
+export interface JudgeAccessCode {
+  id: string;
+  eventId: string;
+  token: string;
+  code: string;
+  createdBy?: string | null;
+  createdAt?: string;
+  revokedAt?: string | null;
 }
 
 /** A per-event admin grant: `userId` holds the same host-level access to
