@@ -94,8 +94,8 @@ event, unlock on a second device, enter a score).
 - PDF certificates, external API.
 
 **Residual from shipped work:**
-- 👤 **Enroll your own TOTP factor** (and Julia's) so admin accounts actually get the
-  aal2 protection (shipped MFA feature, 2026-07-17).
+- ~~Enroll TOTP factors~~ ✅ **done 2026-07-19** — Nate + Julia both enrolled; admin
+  accounts now get the aal2 protection.
 
 ## 6. Proposed additions (Claude, 2026-07-16 — NOT yet committed; Nate to triage)
 
