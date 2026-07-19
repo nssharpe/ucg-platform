@@ -394,12 +394,12 @@ function ClubMembershipReview({ club, season, isCurrent, isFuture, onConfirm, on
   return (
     <Modal title={`Review club info — ${season.name} membership`} onClose={onClose}>
       {!isCurrent && isFuture && (
-        <div className="card card-pad" style={{ borderLeft: '4px solid var(--amber-600)', background: 'var(--amber-100)', marginBottom: 12 }}>
+        <div className="card card-pad" style={{ borderLeft: '4px solid var(--gold)', background: 'var(--gold-100)', marginBottom: 12 }}>
           ⚠ <strong>Please be aware that you are purchasing a membership for next season</strong> ({season.name}, starts {season.startsOn}) — not the current one.
         </div>
       )}
       {!isCurrent && !isFuture && (
-        <div className="card card-pad" style={{ borderLeft: '4px solid var(--amber-600)', marginBottom: 12 }}>
+        <div className="card card-pad" style={{ borderLeft: '4px solid var(--gold)', marginBottom: 12 }}>
           ⚠ You are purchasing for <strong>{season.name}</strong>, which is not the current season.
         </div>
       )}

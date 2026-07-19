@@ -277,7 +277,7 @@ function DiscSection({ disc, event, athlete, levels, draft, onChange, allAthlete
             <p
               role="alert"
               style={{
-                fontSize: 13, color: 'var(--coral-700)', background: 'var(--coral-100)',
+                fontSize: 13, color: 'var(--navy-800)', background: 'var(--coral-100)',
                 borderRadius: 6, padding: '8px 10px', marginBottom: 10,
               }}
             >

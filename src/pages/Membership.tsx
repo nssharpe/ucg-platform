@@ -413,12 +413,12 @@ function MembershipInner({ me }: { me: Athlete }) {
           it's easy to not notice the season dropdown changed); a past-but-
           still-`active` season keeps the original generic wording. */}
       {!season.current && isFutureSeason(db, season) && (
-        <div className="card card-pad" style={{ borderLeft: '4px solid var(--amber-600)', background: 'var(--amber-100)', marginBottom: 16 }}>
+        <div className="card card-pad" style={{ borderLeft: '4px solid var(--gold)', background: 'var(--gold-100)', marginBottom: 16 }}>
           ⚠ <strong>Please be aware that you are purchasing a membership for next season</strong> ({season.name}, starts {season.startsOn}) — not the current one.
         </div>
       )}
       {!season.current && !isFutureSeason(db, season) && (
-        <div className="card card-pad" style={{ borderLeft: '4px solid var(--amber-600)', marginBottom: 16 }}>
+        <div className="card card-pad" style={{ borderLeft: '4px solid var(--gold)', marginBottom: 16 }}>
           ⚠ You are purchasing for <strong>{season.name}</strong>, which is <em>not</em> the current season.
           It is valid {season.startsOn} through {season.endsOn}.
         </div>
@@ -538,7 +538,7 @@ function MembershipInner({ me }: { me: Athlete }) {
                         </select>
                       </Field>
                       {existingForSeason.some((m) => m.status === 'active') && (
-                        <p style={{ color: 'var(--green-600)', fontSize: 13, margin: '4px 0 0' }}>
+                        <p style={{ color: 'var(--teal-900)', fontSize: 13, margin: '4px 0 0' }}>
                           Your existing {season.name} membership is credited toward this price.
                         </p>
                       )}
@@ -670,7 +670,7 @@ function MembershipInner({ me }: { me: Athlete }) {
                 {(caps.isAdmin || caps.actingAsAdmin) && (
                   <button
                     className="btn ghost"
-                    style={{ borderColor: 'var(--amber-600)', color: 'var(--amber-700)' }}
+                    style={{ borderColor: 'var(--gold)', color: 'var(--warn)' }}
                     onClick={() => complete('comp')}
                     title="Admin override: grant membership at $0 (comp). Creates $0 invoice, sets paidVia: comp."
                   >

@@ -42,6 +42,35 @@ Secondary:
   navy `--navy-800` text (~7.5:1); `.badge.warn` → gold `--gold` (`#F6C328`) bg +
   navy text (~8.8:1); `.badge.err`/`.member-banner.warn` → red-orange `--coral-500`
   (`#F4694A`) bg + navy text (~4.8:1). All three AA-pass. See `src/index.css`.
+- **Applied 2026-07-19 (second pass) — the remaining off-palette warning/success
+  colors** (`--amber-100`/`--amber-600`, `--green-100`/`--green-600`, both retired,
+  plus one `--coral-100`/`--coral-700` pairing) aligned to brand:
+  - **New token `--gold-100` (`#FAEBBC`)** — a Golden Yellow tint, paired with
+    default `--ink` (navy) text, ~12.2:1. Used for warning callout cards (season-
+    mismatch notices in Club.tsx/Membership.tsx) and the scoring-panel warning box
+    (`.sp-warn`, was coral-100/coral-600 at a failing 3.1:1 — now fixed).
+  - **New token `--leaf` (`#C0E388`)**, from the Expressive palette (not the core
+    guide), paired with `--teal-900` (Dark Blue Green) text, ~6.6:1. Used for the
+    results qualification highlight (`.res-tbl td.res-qual`, `.res-qual-dot`) — was
+    a failing 4.2:1 link-on-green; chosen deliberately as the one "add energy" case
+    per the guide's own framing of the Expressive range, with the core-palette
+    alternative (`--ice-200` + `--teal-900`, 7.8:1, loses the green "qualified"
+    connotation) considered and declined by Nate.
+  - **`--teal-900` (already-approved Dark Blue Green on white)** extended to every
+    plain-text positive/success usage previously on the retired `--green-600`
+    (`.sp-chip.contrib` fill+white-text flipped to teal-900 too; ~9.3:1).
+  - RegistrationEditor's "registration refunded" alert: kept the `--coral-100`
+    fill, swapped `--coral-700` text → `--navy-800` (~11.9:1) for consistency with
+    the rest of the coral-100-fill callouts, which already used default ink text.
+  - `Membership.tsx`'s admin-override button also had a pre-existing undefined-
+    token bug (`var(--amber-700)`, never defined) discovered while retiring the
+    amber family — fixed to `var(--warn)` (the kept freestanding-warning-text
+    token, row 7 below) rather than left dangling.
+- **Kept as a documented functional deviation:** `--warn` (`#B45309`) as
+  freestanding warning TEXT with no fill (inline sentences on white cards) — no
+  brand color passes AA as text-on-white at that role (Golden Yellow is ~1.6:1),
+  and filling every such usage into a `--gold-100` card isn't always layout-
+  appropriate. Revisit per-site if the guide's palette grows a usable amber.
 
 ## Typography
 
