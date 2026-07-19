@@ -47,7 +47,7 @@
   --ice-100: #eef5f7;
   --ice-200: #dbebee; /* Light Blue (brand primary) */
   --ice-300: #c3dadf;
-  --coral-500: #f4694a; /* Red Orange (brand secondary) */
+  --coral-500: #f4694a; /* Red Orange (brand secondary) — --navy-800 text OK for badge fills (2026-07-19) */
   --coral-600: #e2553b;
   --coral-700: #b23a1f; /* AA-compliant text (~4.9:1) on --coral-100 */
   --coral-100: #fde4dd;
@@ -58,11 +58,15 @@
   --amber-100: #f8ecd9;
 
   /* New brand accents — FILLS ONLY unless noted; see docs/specs/2026-07-08-ucg-rebrand.md
-     §"Approved color pairings" before using any of these as text on a light surface. */
+     §"Approved color pairings" before using any of these as text on a light surface.
+     --purple/--gold/--coral-500 are also approved as STATUS-BADGE fills carrying
+     --navy-800 text (2026-07-19: .badge.ok/.warn/.err, .member-banner.ok/.warn) —
+     that's the one sanctioned exception to "never text"; don't use them as
+     freestanding text color elsewhere without checking the approved-pairings list. */
   --bluegreen: #a5c8cf; /* Blue Green (brand primary) — muted accent fill, never text */
-  --purple: #adbae9; /* Purple (brand secondary) — pale accent fill, never text */
+  --purple: #adbae9; /* Purple (brand secondary) — pale accent fill; --navy-800 text OK for badge fills only */
   --teal-900: #184b56; /* Dark Blue Green (brand secondary) — OK as text on white/light-blue */
-  --gold: #f6c328; /* Golden Yellow (brand secondary) — accent fill, never text on light bg */
+  --gold: #f6c328; /* Golden Yellow (brand secondary) — accent fill; --navy-800 text OK for badge fills only */
 
   --bg: var(--ice-200);
   --surface: var(--white);
@@ -272,8 +276,8 @@ option { color: var(--ink); background: #fff; }
   padding: 6px 12px;
   border-radius: 99px;
 }
-.member-banner.ok { background: var(--green-100); color: var(--green-600); }
-.member-banner.warn { background: var(--coral-100); color: var(--coral-700); }
+.member-banner.ok { background: var(--purple); color: var(--navy-800); }
+.member-banner.warn { background: var(--coral-500); color: var(--navy-800); }
 .member-banner a { color: inherit; }
 
 /* membership badges live in the topbar, left of the cart; one inline row */
@@ -410,9 +414,9 @@ option { color: var(--ink); background: #fff; }
   border-radius: 99px;
   white-space: nowrap;
 }
-.badge.ok { background: var(--green-100); color: var(--green-600); }
-.badge.warn { background: var(--amber-100); color: var(--amber-600); }
-.badge.err { background: var(--coral-100); color: var(--coral-700); }
+.badge.ok { background: var(--purple); color: var(--navy-800); }
+.badge.warn { background: var(--gold); color: var(--navy-800); }
+.badge.err { background: var(--coral-500); color: var(--navy-800); }
 .badge.info { background: var(--ice-200); color: var(--navy-700); }
 .badge.navy { background: var(--navy-800); color: var(--ice-200); }
 

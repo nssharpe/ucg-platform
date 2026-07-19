@@ -35,6 +35,13 @@ Secondary:
 - WCAG AA still applies on top of brand rules (CLAUDE.md hard requirement). The pale
   accents (blue-green, purple, yellow) are FILL colors: put navy text on them, never
   use them as text on light surfaces.
+- **Applied 2026-07-19 — status badges/banners now use the `(yellow | purple |
+  red-orange) bg + navy` small-text rule above** (previously ad hoc green-100/
+  green-600, amber-100/amber-600, coral-100/coral-700 pairs unrelated to the brand
+  palette): `.badge.ok`/`.member-banner.ok` → purple `--purple` (`#ADBAE9`) bg +
+  navy `--navy-800` text (~7.5:1); `.badge.warn` → gold `--gold` (`#F6C328`) bg +
+  navy text (~8.8:1); `.badge.err`/`.member-banner.warn` → red-orange `--coral-500`
+  (`#F4694A`) bg + navy text (~4.8:1). All three AA-pass. See `src/index.css`.
 
 ## Typography
 

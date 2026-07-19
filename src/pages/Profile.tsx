@@ -104,6 +104,17 @@ function effectiveRoles(p: Athlete): { athlete: boolean; coach: boolean } {
   return { athlete: p.kind !== 'coach', coach: p.kind === 'coach' };
 }
 
+// Admin-header role label (T3a): derived from the same effective-roles logic
+// as `effectiveRoles` above, rather than the raw `p.kind` field, so a member
+// with both roles reads as "athlete/coach" instead of just their legacy kind.
+function adminRoleLabel(p: Athlete): string {
+  const roles = effectiveRoles(p);
+  if (roles.athlete && roles.coach) return 'athlete/coach';
+  if (roles.athlete) return 'athlete';
+  if (roles.coach) return 'coach';
+  return p.kind;
+}
+
 // ---------------------------------------------------------------------------
 // Main Profile component
 // ---------------------------------------------------------------------------
@@ -285,7 +296,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
       </div>
       <p className="page-sub">
         {adminView
-          ? <><code>#/admin/members/{p.id}</code> · {p.kind} · {p.email}</>
+          ? <>{adminRoleLabel(p)} · {p.email}</>
           : 'Your competition levels, contact info, and event-day details.'}
       </p>
 
@@ -1084,9 +1095,20 @@ function AdminMembershipControls({
     setRevokeSeasonId(null);
   };
 
+  // T3b: only show CURRENT and FUTURE seasons on the admin member profile —
+  // past seasons clutter the card with nothing actionable. "Future" = starts
+  // on/after the current season (so a season already marked `current` never
+  // gets excluded by its own comparison). If no season is currently marked
+  // `current` (e.g. mid-rollover), fall back to "hasn't ended yet" by date.
+  const currentSeason = db.seasons.find((s) => s.current);
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const visibleSeasons = db.seasons.filter((s) =>
+    currentSeason ? s.startsOn >= currentSeason.startsOn : s.endsOn >= todayIso
+  );
+
   return (
     <>
-      {[...db.seasons].sort((a, b) => {
+      {[...visibleSeasons].sort((a, b) => {
         if (a.current && !b.current) return -1;
         if (!a.current && b.current) return 1;
         return b.startsOn.localeCompare(a.startsOn); // newest → oldest

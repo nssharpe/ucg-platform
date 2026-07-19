@@ -76,6 +76,50 @@ export function moveInSections(
   return next;
 }
 
+/** Pure drop-target resolver for the drag UI's `onDragEnd` (B2 component):
+ *  given the CURRENT `sections` (before removal), the dragged `regId`, the
+ *  section index being dropped into (`toSection`), and what's under the
+ *  pointer (`overId` — either another registration id or a section
+ *  container), returns the index to pass to `moveInSections` as `toIndex`.
+ *
+ *  Container drops (`overIsContainer`) always append (index = post-removal
+ *  length). Cross-section item drops use the hovered item's index in the
+ *  POST-removal target section (removing `regId` doesn't touch a section it
+ *  wasn't in, so pre/post-removal indices already agree there).
+ *
+ *  Same-section item drops are the tricky case (this is the fix for the
+ *  "dragging down snaps back" bug): the hovered item's index must be read
+ *  from the ORIGINAL (pre-removal) section, matching dnd-kit's `arrayMove`
+ *  semantics (remove, then insert at the target's original slot). Using the
+ *  post-removal index instead re-derives the dragged item's OWN original
+ *  slot for a downward drag — e.g. `[A,B,C]` dragging A over B: post-removal
+ *  is `[B,C]`, `indexOf(B)===0`, which re-inserts A at index 0 ⇒ `[A,B,C]`,
+ *  a no-op. Reading B's index in the ORIGINAL `[A,B,C]` (index 1) instead
+ *  yields the correct `[B,A,C]`. Upward same-section drags happen to work
+ *  either way (removing a LATER item doesn't shift an EARLIER item's index),
+ *  which is why only downward drags exhibited the bug. */
+export function computeDropIndex(
+  sections: string[][],
+  regId: string,
+  toSection: number,
+  overId: string,
+  overIsContainer: boolean,
+): number {
+  const target = sections[toSection] ?? [];
+  const postRemoval = target.filter((id) => id !== regId);
+
+  if (overIsContainer) return postRemoval.length;
+
+  const fromSection = sections.findIndex((sec) => sec.includes(regId));
+  if (fromSection === toSection) {
+    const idx = target.indexOf(overId);
+    return idx >= 0 ? idx : postRemoval.length;
+  }
+
+  const idx = postRemoval.indexOf(overId);
+  return idx >= 0 ? idx : postRemoval.length;
+}
+
 /** Reconcile a persisted `sections` shape (or `undefined` — no row saved yet)
  *  against the CURRENT eligible registration-id set for an apparatus column
  *  (B2 UI, spec §E6): drop ids no longer eligible (refunded, apparatus
