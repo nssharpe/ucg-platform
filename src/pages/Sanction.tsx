@@ -398,7 +398,7 @@ export function SanctionRequestForm() {
             </span>
           </label>
           {!accessibleAccepted && (
-            <p style={{ fontSize: 13, color: 'var(--red)', marginTop: 6 }}>
+            <p style={{ fontSize: 13, color: 'var(--coral-600)', marginTop: 6 }}>
               Events must be accessible to all divisions to be sanctioned. If your event cannot meet this requirement, please contact{' '}
               <a href="mailto:info@naigc.org">info@naigc.org</a> to discuss alternatives.
             </p>
@@ -621,7 +621,7 @@ export function SanctionRequestForm() {
           <input className="input" value={certTypedName} onChange={(e) => setCertTypedName(e.target.value)} placeholder="Your full name" />
         </Field>
 
-        {error && <p style={{ color: 'var(--red)', fontWeight: 600, marginTop: 8 }}>{error}</p>}
+        {error && <p style={{ color: 'var(--coral-600)', fontWeight: 600, marginTop: 8 }}>{error}</p>}
 
         <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
           <button className="btn primary" onClick={submit} disabled={!accessibleAccepted}>Submit Sanction Request</button>
@@ -662,11 +662,11 @@ export function SanctioningQueue() {
   };
 
   const statusBadge = (status: string) => {
-    const colors: Record<string, string> = {
-      voting: 'var(--blue)', approved: 'var(--green)', rejected: 'var(--red)',
-      submitted: 'var(--amber)', withdrawn: 'var(--ink-soft)',
+    const tones: Record<string, 'ok' | 'warn' | 'err' | 'info' | 'navy'> = {
+      voting: 'info', approved: 'ok', rejected: 'err',
+      submitted: 'warn', withdrawn: 'navy',
     };
-    return <span className="badge" style={{ background: colors[status] ?? 'var(--ink-soft)' }}>{status}</span>;
+    return <Badge tone={tones[status] ?? 'info'}>{status}</Badge>;
   };
 
   return (
@@ -977,9 +977,7 @@ export function SanctionVotePage() {
           Review: {String(p.eventName ?? 'Sanction Request')}
         </h1>
         {isDecided && (
-          <span className="badge" style={{ background: request.status === 'approved' ? 'var(--green)' : 'var(--red)' }}>
-            {request.status}
-          </span>
+          <Badge tone={request.status === 'approved' ? 'ok' : 'err'}>{request.status}</Badge>
         )}
       </div>
 
@@ -1043,11 +1041,11 @@ export function SanctionVotePage() {
             <h3 className="card-title">Vote Tally</h3>
             <div style={{ display: 'flex', gap: 16, margin: '12px 0' }}>
               <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--green)' }}>{tally.approvals}</div>
+                <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--green-600)' }}>{tally.approvals}</div>
                 <div style={{ fontSize: 12, color: 'var(--ink-soft)' }}>Approve</div>
               </div>
               <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--red)' }}>{tally.rejections}</div>
+                <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--coral-600)' }}>{tally.rejections}</div>
                 <div style={{ fontSize: 12, color: 'var(--ink-soft)' }}>Reject</div>
               </div>
               <div style={{ textAlign: 'center' }}>
@@ -1062,11 +1060,11 @@ export function SanctionVotePage() {
             <div style={{ fontSize: 14 }}>
               <strong>Status: </strong>
               {tally.decided ? (
-                <span style={{ color: tally.outcome === 'approved' ? 'var(--green)' : 'var(--red)' }}>
+                <span style={{ color: tally.outcome === 'approved' ? 'var(--green-600)' : 'var(--coral-600)' }}>
                   {tally.outcome.charAt(0).toUpperCase() + tally.outcome.slice(1)}
                 </span>
               ) : (
-                <span style={{ color: 'var(--amber)' }}>Pending</span>
+                <span style={{ color: 'var(--warn)' }}>Pending</span>
               )}
               {!tally.decided && request.deadlineAt && (
                 <span style={{ color: 'var(--ink-soft)', marginLeft: 8, fontSize: 13 }}>
@@ -1092,7 +1090,7 @@ export function SanctionVotePage() {
                     key={v}
                     className={`btn ${voteChoice === v ? 'primary' : 'ghost'}`}
                     onClick={() => setVoteChoice(v)}
-                    style={v === 'reject' && voteChoice === v ? { background: 'var(--red)' } : undefined}
+                    style={v === 'reject' && voteChoice === v ? { background: 'var(--coral-600)' } : undefined}
                   >
                     {v.charAt(0).toUpperCase() + v.slice(1)}
                   </button>
@@ -1122,11 +1120,7 @@ export function SanctionVotePage() {
                       <tr key={v.id}>
                         <td>{voter ? `${voter.firstName} ${voter.lastName}` : v.voterUserId.slice(0, 8)}</td>
                         <td>
-                          <span className="badge" style={{
-                            background: v.vote === 'approve' ? 'var(--green)' : v.vote === 'reject' ? 'var(--red)' : 'var(--ink-soft)',
-                          }}>
-                            {v.vote}
-                          </span>
+                          <Badge tone={v.vote === 'approve' ? 'ok' : v.vote === 'reject' ? 'err' : 'navy'}>{v.vote}</Badge>
                         </td>
                         <td>{v.comment ?? '—'}</td>
                         <td>{new Date(v.votedAt).toLocaleString()}</td>
