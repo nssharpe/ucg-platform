@@ -11,6 +11,7 @@ import { fmtScore } from '../lib/scoring';
 import { calcForLevel } from '../lib/calculators';
 import type { CalcMessage } from '../lib/calculators';
 import { computeScoring, isCalcStateV2 } from '../scoring';
+import { combinePanels } from '../scoring/panels';
 import { ScoringPanel } from '../components/scoring/ScoringPanel';
 import { CalcPanel } from '../components/CalcPanel';
 import type { CalcPanelHandle } from '../components/CalcPanel';
@@ -125,6 +126,37 @@ function ScoreDetailInner({ score }: { score: Score }) {
           </div>
         </div>
       </div>
+
+      {(score.deductions2 != null || score.eScore2 != null) && (() => {
+        const usesEScore = score.eScore2 != null;
+        const combined = combinePanels({
+          deductions: score.deductions, deductions2: score.deductions2,
+          eScore: score.eScore, eScore2: score.eScore2,
+        });
+        return (
+          <div className="card card-pad" style={{ marginBottom: 16 }}>
+            <h3 className="card-title" style={{ marginBottom: 8 }}>Two-judge panel</h3>
+            <div className="grid cols-3">
+              <ScoreStat
+                label={usesEScore ? 'Judge 1 — E-score' : 'Judge 1 — deductions'}
+                value={fmtScore(usesEScore ? score.eScore : score.deductions)}
+              />
+              <ScoreStat
+                label={usesEScore ? 'Judge 2 — E-score' : 'Judge 2 — deductions'}
+                value={fmtScore(usesEScore ? score.eScore2 : score.deductions2)}
+              />
+              <ScoreStat
+                label={usesEScore ? 'Average E-score' : 'Average deductions'}
+                value={fmtScore(usesEScore ? combined.eScore : combined.deductions)}
+                accent
+              />
+            </div>
+            <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '8px 0 0' }}>
+              This event uses 2 judge panels — the final score is derived from the average of both judges' execution values.
+            </p>
+          </div>
+        );
+      })()}
 
       {isNative || isLegacy ? (
         <>

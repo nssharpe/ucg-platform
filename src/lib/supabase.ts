@@ -329,6 +329,7 @@ const eventToRow = (m: Event) => ({
   competition_order_locked: m.competitionOrderLocked ?? false,
   finals_roster_locked: m.finalsRosterLocked ?? false,
   finals_lineup_deadline_at: m.finalsLineupDeadlineAt || null,
+  scoring_config: m.scoringConfig ?? null,
 });
 
 const sessionToRow = (eventId: string, s: Event['sessions'][number]) => ({
@@ -390,6 +391,8 @@ const scoreToRow = (s: Score) => ({
   adjust_note: s.adjustNote ?? null, adjusted_at: s.adjustedAt ?? null,
   entered_by: s.enteredBy, entered_at: s.enteredAt, flashed: s.flashed,
   scratched: s.scratched ?? false,
+  // Second judge panel's raw execution inputs (2026-07-19 scoring config).
+  deductions2: s.deductions2 ?? null, e_score2: s.eScore2 ?? null,
 });
 export const rowToScore = (r: Row<'scores'>): Score => ({
   id: r.id, eventId: r.event_id, sessionId: r.session_id ?? '', regId: r.reg_id ?? '', apparatus: r.apparatus as Score['apparatus'],
@@ -401,6 +404,8 @@ export const rowToScore = (r: Row<'scores'>): Score => ({
   ...(r.adjust_note != null ? { adjustNote: r.adjust_note } : {}),
   ...(r.adjusted_at != null ? { adjustedAt: r.adjusted_at } : {}),
   ...(r.scratched ? { scratched: true } : {}),
+  ...((r as { deductions2?: number | string | null }).deductions2 != null ? { deductions2: Number((r as { deductions2?: number | string | null }).deductions2) } : {}),
+  ...((r as { e_score2?: number | string | null }).e_score2 != null ? { eScore2: Number((r as { e_score2?: number | string | null }).e_score2) } : {}),
 });
 
 // cart_items: one row per item, owner = club_id or person_id
@@ -1855,6 +1860,8 @@ export async function judgeSubmitScore(args: {
   token: string; regId: string; apparatus: string;
   sv: number | null; deductions: number | null; eScore?: number | null; final: number | null;
   source?: string; calc?: string; calcState?: unknown; flashed?: boolean; scratched?: boolean;
+  /** Second judge panel's raw execution inputs (2026-07-19 scoring config). */
+  deductions2?: number | null; eScore2?: number | null;
 }): Promise<{ ok: boolean; error?: string }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('judge-entry', { body: { op: 'submit', ...args } });
@@ -2229,6 +2236,9 @@ export async function loadAll(): Promise<DB | null> {
         : {}),
       ...((r as { finals_roster_locked?: boolean | null }).finals_roster_locked
         ? { finalsRosterLocked: true }
+        : {}),
+      ...((r as { scoring_config?: Event['scoringConfig'] | null }).scoring_config
+        ? { scoringConfig: (r as { scoring_config?: Event['scoringConfig'] | null }).scoring_config as Event['scoringConfig'] }
         : {}),
     }));
 

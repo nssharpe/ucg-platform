@@ -24,6 +24,12 @@ export interface JudgeSubmitPayload {
   calcState?: unknown;
   flashed?: unknown;
   scratched?: unknown;
+  /** Second judge panel's raw execution inputs (event.scoringConfig.panels
+   *  === 2, 2026-07-19) — passed through verbatim (same bounds as
+   *  deductions/eScore), never averaged server-side; the CLIENT (Judge.tsx)
+   *  computes and sends the already-averaged `final`. */
+  deductions2?: unknown;
+  eScore2?: unknown;
 }
 
 /** The minimal registration slice the validator needs, already scoped to the
@@ -46,6 +52,8 @@ export interface ValidatedJudgeScore {
   sv: number | null;
   deductions: number | null;
   eScore: number | null;
+  deductions2: number | null;
+  eScore2: number | null;
   final: number | null;
   source: string | null;
   calc: string | null;
@@ -109,6 +117,8 @@ export function validateJudgeSubmit(
   if (!isValidNullableScoreNumber(payload.sv)) return { ok: false, error: 'Invalid start value.' };
   if (!isValidNullableScoreNumber(payload.deductions)) return { ok: false, error: 'Invalid deductions.' };
   if (!isValidNullableScoreNumber(payload.eScore)) return { ok: false, error: 'Invalid E-score.' };
+  if (!isValidNullableScoreNumber(payload.deductions2)) return { ok: false, error: 'Invalid second judge deductions.' };
+  if (!isValidNullableScoreNumber(payload.eScore2)) return { ok: false, error: 'Invalid second judge E-score.' };
   if (!isValidNullableScoreNumber(payload.final)) return { ok: false, error: 'Invalid final score.' };
   if (payload.source != null && (typeof payload.source !== 'string' || payload.source.length > MAX_LABEL_LENGTH)) return { ok: false, error: 'Invalid source.' };
   if (payload.calc != null && (typeof payload.calc !== 'string' || payload.calc.length > MAX_LABEL_LENGTH)) return { ok: false, error: 'Invalid calc.' };
@@ -135,6 +145,8 @@ export function validateJudgeSubmit(
       sv: (payload.sv as number | null | undefined) ?? null,
       deductions: (payload.deductions as number | null | undefined) ?? null,
       eScore: (payload.eScore as number | null | undefined) ?? null,
+      deductions2: (payload.deductions2 as number | null | undefined) ?? null,
+      eScore2: (payload.eScore2 as number | null | undefined) ?? null,
       final: (payload.final as number | null | undefined) ?? null,
       source: typeof payload.source === 'string' ? payload.source : null,
       calc: typeof payload.calc === 'string' ? payload.calc : null,

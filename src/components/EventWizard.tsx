@@ -4,13 +4,13 @@ import { mutate, useDB } from '../lib/store';
 import { pushEvent } from '../lib/supabase';
 import { useCapabilities } from '../lib/capabilities';
 import { scaffoldNationalsConfig } from '../lib/nationals-adapter';
-import { toDatetimeLocalValue } from '../lib/events-core';
+import { toDatetimeLocalValue, scoringConfigOf } from '../lib/events-core';
 import { eventCreationBlocked } from '../lib/season-lifecycle';
 import { normalizeExternalUrl } from '../lib/url';
 import { Combo, Field, Modal } from './ui';
 import { useToast } from './ui-hooks';
 import { APPARATUS, DISCIPLINES, SHIRT_SIZES, STATE_REGIONS } from '../lib/types';
-import type { Discipline, Level, Event, EventSession, EventStatus } from '../lib/types';
+import type { Discipline, Level, Event, EventSession, EventStatus, ScoringConfig } from '../lib/types';
 
 const TIMEZONES = [
   'America/New_York', 'America/Chicago', 'America/Denver', 'America/Phoenix',
@@ -206,6 +206,10 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
   const [registrationMode, setRegistrationMode] = useState<'by-discipline' | 'by-session'>(
     editEvent?.registrationMode ?? 'by-discipline',
   );
+  // Scoring config (PM decision 2026-07-19): judge panels + default entry mode.
+  const initialScoringConfig = scoringConfigOf(editEvent);
+  const [scoringPanels, setScoringPanels] = useState<1 | 2>(initialScoringConfig.panels);
+  const [scoringEntryMode, setScoringEntryMode] = useState<ScoringConfig['entryMode']>(initialScoringConfig.entryMode);
   // Publication state (B4: Draft/Live only — the real-time phase is derived
   // from regOpens/regCloses/startDate/endDate, not manually set).
   const [status, setStatus] = useState<EventStatus>(editEvent?.status ?? 'live');
@@ -416,6 +420,7 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
             nationalsConfig: scaffoldNationalsConfig(db.levels, orderedDisciplines, finalsLevelIds.filter((id) => allCompetingLevelIds.includes(id))),
           }
         : { kind: 'standard' as const }),
+      scoringConfig: { panels: scoringPanels, entryMode: scoringEntryMode },
     };
     if (isEdit) {
       const applied = mutate((d) => { const idx = d.events.findIndex((m) => m.id === event.id); if (idx >= 0) d.events[idx] = event; pushEvent(event); });
@@ -846,6 +851,40 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
           )}
         </div>
       )}
+
+      {sectionTitle('Scoring')}
+      <div className="card card-pad" style={{ marginBottom: 10 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Judge panels</div>
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
+            <input type="radio" name="scoringPanels" checked={scoringPanels === 1} onChange={() => setScoringPanels(1)} />
+            1 judge panel (default)
+          </label>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
+            <input type="radio" name="scoringPanels" checked={scoringPanels === 2} onChange={() => setScoringPanels(2)} />
+            2 judge panels
+          </label>
+        </div>
+        <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '6px 0 0' }}>
+          With 2 panels, each judge enters their own execution evaluation and the two are averaged into the final score.
+        </p>
+      </div>
+      <div className="card card-pad" style={{ marginBottom: 10 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Default entry mode</div>
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
+            <input type="radio" name="scoringEntryMode" checked={scoringEntryMode === 'calculator'} onChange={() => setScoringEntryMode('calculator')} />
+            Calculator (default)
+          </label>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
+            <input type="radio" name="scoringEntryMode" checked={scoringEntryMode === 'simple'} onChange={() => setScoringEntryMode('simple')} />
+            Simple entry (manual)
+          </label>
+        </div>
+        <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '6px 0 0' }}>
+          Judges can still switch modes per score at the judges' table — this just sets which one opens by default.
+        </p>
+      </div>
 
       {sectionTitle('Status')}
       <div style={{ display: 'flex', gap: 16, marginBottom: 6 }}>

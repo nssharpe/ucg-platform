@@ -228,6 +228,16 @@ export interface NationalsConfig {
   svCaps?: Record<string, number>;
 }
 
+/** Per-event scoring config (PM decision 2026-07-19). `panels: 2` means each
+ *  judge enters their own execution evaluation (deductions or E-score) and
+ *  the two are averaged into the final via `combinePanels`
+ *  (src/scoring/panels.ts) — the per-score judge override toggle (manual vs
+ *  calculator entry) stays available either way. */
+export interface ScoringConfig {
+  panels: 1 | 2;
+  entryMode: 'calculator' | 'simple';
+}
+
 export interface Event {
   id: string;
   slug: string;
@@ -321,6 +331,12 @@ export interface Event {
   /** Sanctioning-team member assigned to shepherd this event (event-mgmt v2
    *  §B3). Absent ⇒ unassigned. */
   owner?: { userId?: string; name: string; email: string };
+  /** Per-event scoring config (PM decision 2026-07-19): how many judge panels
+   *  score each routine, and which entry mode is offered by default. Absent ⇒
+   *  `DEFAULT_SCORING_CONFIG` (`{panels:1, entryMode:'calculator'}`) — use the
+   *  `scoringConfigOf` accessor (src/lib/events-core.ts) rather than reading
+   *  this field directly, so callers get the default without repeating it. */
+  scoringConfig?: ScoringConfig;
   /** The event owner's 7-item task checklist (§B4). Keyed by task id. */
   ownerChecklist?: OwnerChecklist;
   /** "Set Competition Order" lock flag (event-mgmt v2 P5 §E6). Once true,
@@ -632,6 +648,13 @@ export interface Score {
   sv: number | null; // start value / D-score
   deductions: number | null; // total E deductions (for capped levels: final = sv - deductions)
   eScore?: number | null; // E-score out of 10 (open scoring: final = sv + eScore)
+  /** Second judge panel's raw execution inputs (event.scoringConfig.panels === 2,
+   *  2026-07-19). `combinePanels` (src/scoring/panels.ts) averages these against
+   *  `deductions`/`eScore` into the effective execution value the final derives
+   *  from; absent/null when only one panel is configured or judge 2 hasn't
+   *  entered yet. */
+  deductions2?: number | null;
+  eScore2?: number | null;
   final: number | null;
   source?: 'manual' | 'mag-calc' | 'wag-open-calc' | 'masters-calc' | 'wag-sv-calc' | 'tnt-calc';
   /** Which embedded calculator produced this score (CalcKind), if any. */

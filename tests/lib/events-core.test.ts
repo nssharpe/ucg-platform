@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deriveEventPhase, eventIsInPhase, canStillEditRegistration, toDatetimeLocalValue, eventIsRefundEligible, type EventPhaseInput } from '../../src/lib/events-core';
+import { deriveEventPhase, eventIsInPhase, canStillEditRegistration, toDatetimeLocalValue, eventIsRefundEligible, scoringConfigOf, DEFAULT_SCORING_CONFIG, type EventPhaseInput } from '../../src/lib/events-core';
 
 function event(overrides: Partial<EventPhaseInput> = {}): EventPhaseInput {
   return {
@@ -139,5 +139,18 @@ describe('eventIsRefundEligible (event-mgmt v2 Phase 3, spec §H)', () => {
 
   it('is not eligible when the host club is not found at all', () => {
     expect(eventIsRefundEligible({ hostClubId: 'club-nonexistent' }, clubs)).toBe(false);
+  });
+});
+
+describe('scoringConfigOf (per-event scoring config, 2026-07-19)', () => {
+  it('defaults to 1 panel / calculator entry when the event has no scoringConfig', () => {
+    expect(scoringConfigOf({})).toEqual(DEFAULT_SCORING_CONFIG);
+    expect(scoringConfigOf(undefined)).toEqual(DEFAULT_SCORING_CONFIG);
+    expect(scoringConfigOf(null)).toEqual(DEFAULT_SCORING_CONFIG);
+  });
+
+  it('returns the event-configured value when present', () => {
+    expect(scoringConfigOf({ scoringConfig: { panels: 2, entryMode: 'simple' } }))
+      .toEqual({ panels: 2, entryMode: 'simple' });
   });
 });
