@@ -36,11 +36,11 @@ export function AdminMfaNag() {
   };
 
   return (
-    // `.badge.err` (coral), not `.warn` (amber) — amber-100/amber-600 only
-    // measures ~3.25:1 for this sentence-length body text (verified live via a
-    // contrast probe), below the 4.5:1 AA bar; the coral pairing used
-    // elsewhere for body-length copy (e.g. Profile.tsx's missing-fields
-    // banner) measures ~4.92:1.
+    // `.badge.err` (coral), not `.warn` (gold) — kept deliberately: this is an
+    // urgency/error nag, not a mild warning, so the coral-500/navy-800 pairing
+    // (~4.8:1, AA-pass for this sentence-length body text) is the right tone
+    // even though gold/navy-800 (~8.8:1, 2026-07-19 rebrand) now has higher
+    // contrast than coral does.
     <div
       className="badge err"
       style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderRadius: 6, marginBottom: 16 }}

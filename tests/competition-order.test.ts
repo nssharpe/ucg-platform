@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  sectionCap, splitIntoSections, flattenSections, sectionsValid, moveInSections, reconcileSections,
+  sectionCap, splitIntoSections, flattenSections, sectionsValid, moveInSections, reconcileSections, computeDropIndex,
 } from '../src/lib/competition-order';
 
 describe('sectionCap', () => {
@@ -133,6 +133,62 @@ describe('moveInSections', () => {
     const snapshot = sections.map((s) => [...s]);
     moveInSections(sections, 'a', 1, 0);
     expect(sections).toEqual(snapshot);
+  });
+});
+
+describe('computeDropIndex + moveInSections (drag-down bug regression, T1)', () => {
+  // Helper mirroring the component's onDragEnd wiring: resolve toIndex via
+  // computeDropIndex, then apply it through moveInSections, same as
+  // CompetitionOrderCard.onDragEnd.
+  const drop = (sections: string[][], regId: string, toSection: number, overId: string, overIsContainer = false) => {
+    const toIndex = computeDropIndex(sections, regId, toSection, overId, overIsContainer);
+    return moveInSections(sections, regId, toSection, toIndex);
+  };
+
+  it('same-section DOWN drag actually moves the item (the reported bug)', () => {
+    const sections = [['a', 'b', 'c']];
+    // Drag 'a' down onto 'b'.
+    expect(drop(sections, 'a', 0, 'b')).toEqual([['b', 'a', 'c']]);
+  });
+
+  it('same-section UP drag moves the item', () => {
+    const sections = [['a', 'b', 'c']];
+    // Drag 'c' up onto 'a'.
+    expect(drop(sections, 'c', 0, 'a')).toEqual([['c', 'a', 'b']]);
+  });
+
+  it('adjacent swap DOWN (2-item section)', () => {
+    const sections = [['a', 'b']];
+    expect(drop(sections, 'a', 0, 'b')).toEqual([['b', 'a']]);
+  });
+
+  it('adjacent swap UP (2-item section)', () => {
+    const sections = [['a', 'b']];
+    expect(drop(sections, 'b', 0, 'a')).toEqual([['b', 'a']]);
+  });
+
+  it('cross-section move inserts before the hovered item', () => {
+    const sections = [['a', 'b'], ['c', 'd']];
+    // Drag 'a' from section 0 onto 'd' in section 1.
+    expect(drop(sections, 'a', 1, 'd')).toEqual([['b'], ['c', 'a', 'd']]);
+  });
+
+  it('drop on a section container appends to the end', () => {
+    const sections = [['a', 'b'], ['c']];
+    // Drag 'a' from section 0 into the (empty-drop-target) container of section 1.
+    expect(drop(sections, 'a', 1, 'co-sec-VT-1', true)).toEqual([['b'], ['c', 'a']]);
+  });
+
+  it('drop on a section container appends even when the section already has items', () => {
+    const sections = [['a'], ['b', 'c']];
+    expect(drop(sections, 'a', 1, 'co-sec-VT-1', true)).toEqual([[], ['b', 'c', 'a']]);
+  });
+
+  it('no-op drop on self (same id) leaves the section unchanged', () => {
+    const sections = [['a', 'b', 'c']];
+    // computeDropIndex called with overId === regId — mirrors what onDragEnd
+    // would compute if it didn't early-return on overId === regId.
+    expect(drop(sections, 'b', 0, 'b')).toEqual([['a', 'b', 'c']]);
   });
 });
 

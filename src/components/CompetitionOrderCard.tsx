@@ -13,7 +13,7 @@ import { pushCompetitionOrder } from '../lib/supabase';
 import { APPARATUS } from '../lib/types';
 import type { Event, CompetitionOrder, Level } from '../lib/types';
 import {
-  sectionCap, splitIntoSections, flattenSections, sectionsValid, moveInSections, reconcileSections,
+  sectionCap, splitIntoSections, flattenSections, sectionsValid, moveInSections, reconcileSections, computeDropIndex,
 } from '../lib/competition-order';
 import { Field, Badge } from './ui';
 
@@ -192,9 +192,7 @@ function ApparatusColumn({
     if (toSection < 0) return;
 
     const overIsContainer = containerId(apparatus, toSection) === overId;
-    const targetPostRemoval = sections[toSection].filter((id) => id !== regId);
-    const overIdx = overIsContainer ? targetPostRemoval.length : targetPostRemoval.indexOf(overId);
-    const toIndex = overIdx >= 0 ? overIdx : targetPostRemoval.length;
+    const toIndex = computeDropIndex(sections, regId, toSection, overId, overIsContainer);
 
     persist(moveInSections(sections, regId, toSection, toIndex));
   };
