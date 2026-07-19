@@ -79,21 +79,16 @@ these were explicitly deferred, not dropped:
 
 ## 5. Feature roadmap
 
-**In progress (2026-07-19):**
-
-- **B** Typed-membership residuals: athlete-gate registration (canRegister requires an
-  athlete-type membership) + per-type admin grant/revoke; single General waiver per
-  season CONFIRMED as final.
-- **D** Codeless judge access: ONE access code per event (URL / 6-digit / QR forms of
-  the same token), no per-judge identity — an unlocked device can enter scores for any
-  discipline/apparatus at that event. **Implemented 2026-07-19 on branch
-  `feat/judge-access-codes`** (migration `20260719120000_judge_access_codes.sql`,
-  edge fn `judge-entry`, host "Judge access" card on the event host page,
-  `/judge/access/:token` public unlock page) — build/lint/vitest all green;
-  awaiting the adversarial money/auth/RLS-flavored review before merge + the
-  migration/function deploy (neither has run yet).
-- **E** Scoring config: per-EVENT setting — 1-or-2 judge panels (2 = average the two
-  execution scores) + default entry mode calculator-vs-simple.
+~~B, C, D, E~~ — ✅ **ALL SHIPPED 2026-07-19** (merged to main; migrations
+`20260719120000_judge_access_codes` + `20260719130000_event_scoring_config`
+applied staging + prod; `judge-entry` deployed both): **B** athlete-gated
+registration + per-type admin grant/revoke (single General waiver confirmed
+final); **C** was already complete; **D** codeless judge access (one code per
+event, URL/6-digit/QR, host "Judge access" card, public unlock page, anonymous
+score writes via `judge-entry`); **E** per-event scoring config (1-or-2 judge
+panels with averaged execution + calculator-vs-simple default entry mode).
+Residual 👤: happy-path smoke of D on staging (generate a code on a live
+event, unlock on a second device, enter a score).
 
 **Further out:**
 - PDF certificates, external API.
