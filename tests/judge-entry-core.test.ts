@@ -1,0 +1,125 @@
+import { describe, it, expect } from 'vitest';
+import {
+  validateJudgeSubmit, isValidAccessCode, isValidAccessToken,
+  type JudgeRegistrationLite,
+} from '../supabase/functions/_shared/judge-entry-core';
+
+const eventId = 'evt-1';
+
+function reg(overrides: Partial<JudgeRegistrationLite> = {}): JudgeRegistrationLite {
+  return {
+    id: 'reg-1', eventId, sessionId: 'sess-1', apparatus: ['vault', 'bars'], refunded: false,
+    ...overrides,
+  };
+}
+
+describe('validateJudgeSubmit', () => {
+  it('accepts a valid score and recomputes the id server-side', () => {
+    const result = validateJudgeSubmit(eventId, {
+      regId: 'reg-1', apparatus: 'vault', sv: 4.2, deductions: 0.5, eScore: null, final: 3.7,
+      source: 'manual',
+    }, reg());
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.score.id).toBe('evt-1|reg-1|vault');
+      expect(result.score.eventId).toBe(eventId);
+      expect(result.score.regId).toBe('reg-1');
+      expect(result.score.sessionId).toBe('sess-1');
+      expect(result.score.sv).toBe(4.2);
+      expect(result.score.deductions).toBe(0.5);
+      expect(result.score.final).toBe(3.7);
+    }
+  });
+
+  it('ignores any client-supplied id — always derives it from eventId/regId/apparatus', () => {
+    const result = validateJudgeSubmit(eventId, {
+      // @ts-expect-error — id is not part of JudgeSubmitPayload; simulate a forged extra field
+      id: 'evt-1|someone-elses-reg|floor',
+      regId: 'reg-1', apparatus: 'vault', sv: 4.2, deductions: 0.5, final: 3.7,
+    }, reg());
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.score.id).toBe('evt-1|reg-1|vault');
+  });
+
+  it('rejects a registration that belongs to a different event', () => {
+    const result = validateJudgeSubmit(eventId, {
+      regId: 'reg-1', apparatus: 'vault', sv: 4.2, deductions: 0.5, final: 3.7,
+    }, reg({ eventId: 'evt-OTHER' }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/does not belong to this event/);
+  });
+
+  it('rejects a refunded registration', () => {
+    const result = validateJudgeSubmit(eventId, {
+      regId: 'reg-1', apparatus: 'vault', sv: 4.2, deductions: 0.5, final: 3.7,
+    }, reg({ refunded: true }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/refunded/);
+  });
+
+  it('rejects a missing registration (not found server-side)', () => {
+    const result = validateJudgeSubmit(eventId, {
+      regId: 'reg-ghost', apparatus: 'vault', sv: 4.2, deductions: 0.5, final: 3.7,
+    }, null);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/not found/);
+  });
+
+  it('rejects an apparatus the athlete is not registered for', () => {
+    const result = validateJudgeSubmit(eventId, {
+      regId: 'reg-1', apparatus: 'floor', sv: 4.2, deductions: 0.5, final: 3.7,
+    }, reg());
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/not registered for that apparatus/);
+  });
+
+  it.each([
+    ['negative sv', { sv: -1 }],
+    ['non-finite sv', { sv: Infinity }],
+    ['sv over the sanity cap', { sv: 950 }],
+    ['NaN deductions', { deductions: Number.NaN }],
+    ['negative final', { final: -0.01 }],
+    ['non-numeric eScore', { eScore: '9.5' as unknown as number }],
+  ])('rejects out-of-bounds numeric field: %s', (_label, patch) => {
+    const result = validateJudgeSubmit(eventId, {
+      regId: 'reg-1', apparatus: 'vault', sv: 4.2, deductions: 0.5, final: 3.7, ...patch,
+    }, reg());
+    expect(result.ok).toBe(false);
+  });
+
+  it('allows null score fields (a score in progress)', () => {
+    const result = validateJudgeSubmit(eventId, {
+      regId: 'reg-1', apparatus: 'vault', sv: null, deductions: null, eScore: null, final: null,
+    }, reg());
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects a missing regId or apparatus', () => {
+    expect(validateJudgeSubmit(eventId, { regId: '', apparatus: 'vault' }, reg()).ok).toBe(false);
+    expect(validateJudgeSubmit(eventId, { regId: 'reg-1', apparatus: '' }, reg()).ok).toBe(false);
+  });
+});
+
+describe('isValidAccessCode', () => {
+  it('accepts exactly 6 digits', () => {
+    expect(isValidAccessCode('123456')).toBe(true);
+  });
+  it('rejects anything else', () => {
+    expect(isValidAccessCode('12345')).toBe(false);
+    expect(isValidAccessCode('1234567')).toBe(false);
+    expect(isValidAccessCode('12a456')).toBe(false);
+    expect(isValidAccessCode(123456)).toBe(false);
+    expect(isValidAccessCode(undefined)).toBe(false);
+  });
+});
+
+describe('isValidAccessToken', () => {
+  it('accepts a long hex string', () => {
+    expect(isValidAccessToken('a1b2c3d4e5f6a1b2c3d4e5f6')).toBe(true);
+  });
+  it('rejects short or non-hex input', () => {
+    expect(isValidAccessToken('short')).toBe(false);
+    expect(isValidAccessToken('zzzzzzzzzzzzzzzzzzzzzzzz')).toBe(false);
+    expect(isValidAccessToken(undefined)).toBe(false);
+  });
+});

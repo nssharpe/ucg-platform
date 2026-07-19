@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
-import { pushScore } from '../lib/supabase';
+import { pushScore, judgeUnlock, judgeSubmitScore } from '../lib/supabase';
 import { Badge, Field } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 import { APPARATUS } from '../lib/types';
@@ -12,6 +12,7 @@ import { computeScoring, initScoring, isCalcStateV2 } from '../scoring';
 import { ScoringPanel } from '../components/scoring/ScoringPanel';
 import { useCapabilities } from '../lib/capabilities';
 import { eventIsInPhase } from '../lib/events-core';
+import { loadJudgeAccessMap, saveJudgeAccess, withJudgeAccess } from '../lib/judge-access-storage';
 
 /** Tablet-first judge pad. The level's scoring panel is built into the scoring
  *  view — judges build the routine natively and the score posts live.
@@ -33,6 +34,40 @@ export function Judge() {
   const apparatusDefs = session ? APPARATUS[session.discipline] : [];
   const [apparatus, setApparatus] = useState(apparatusDefs[0]?.code ?? '');
   const [flash, setFlash] = useState<{ name: string; score: number } | null>(null);
+
+  // Codeless judge access (2026-07-19): a device that unlocked with an
+  // event's access code/link/QR can score that event with no signed-in
+  // identity at all — see docs/specs (judge access codes). `accessMap` is
+  // eventId -> token, persisted in localStorage across visits.
+  const [accessMap, setAccessMap] = useState(() => loadJudgeAccessMap());
+  const [code, setCode] = useState('');
+  const [codeError, setCodeError] = useState('');
+  const [unlocking, setUnlocking] = useState(false);
+  const [posting, setPosting] = useState(false);
+  const privileged = caps.isAdmin || caps.managedClubIds.length > 0;
+  const unlockedForEvent = !!eventRec && !!accessMap[eventRec.id];
+  const canScore = privileged || unlockedForEvent;
+
+  const unlockWithCode = async () => {
+    const trimmed = code.trim();
+    if (!/^\d{6}$/.test(trimmed)) { setCodeError('Enter the 6-digit code exactly as given.'); return; }
+    setUnlocking(true); setCodeError('');
+    const res = await judgeUnlock({ code: trimmed });
+    setUnlocking(false);
+    if (!res.ok || !res.eventId || !res.token) { setCodeError(res.error ?? 'Invalid or expired code.'); return; }
+    saveJudgeAccess(res.eventId, res.token);
+    setAccessMap((m) => withJudgeAccess(m, res.eventId!, res.token!));
+    setEventId(res.eventId);
+    const unlockedEvent = db.events.find((m) => m.id === res.eventId);
+    if (unlockedEvent) { setSessionId(unlockedEvent.sessions[0]?.id ?? ''); setApparatus(APPARATUS[unlockedEvent.sessions[0]?.discipline]?.[0]?.code ?? ''); }
+    setCode('');
+    toast('Judge access unlocked for this event.');
+  };
+
+  // Non-privileged (code-unlocked) users only see events they've actually
+  // unlocked — the full roster is public info but there's no reason to dead-
+  // end them on an event they have no code for.
+  const selectableEvents = privileged ? db.events : db.events.filter((m) => accessMap[m.id]);
 
   const regs = useMemo(() => {
     if (!eventRec || !session) return [];
@@ -116,7 +151,7 @@ export function Judge() {
 
   const close = () => { setActiveReg(null); setSv(''); setDed(''); setExecDed(''); setCalcSt(null); };
 
-  const submit = () => {
+  const submit = async () => {
     if (!active || finalScore == null) return;
     const athleteName = `${activeAthlete!.firstName} ${activeAthlete!.lastName}`;
     let fields: Partial<Score>;
@@ -130,33 +165,74 @@ export function Judge() {
       };
     }
     const calcState = calcCfg && calcSt != null ? { v: 2 as const, kind: calcCfg.kind, state: calcSt } : undefined;
-    const applied = mutate((d) => {
-      const id = `${eventRec.id}|${active.id}|${apparatus}`;
-      d.scores = d.scores.filter((s) => s.id !== id);
-      const score = {
-        id, eventId: eventRec.id, sessionId: session.id, regId: active.id, apparatus,
-        sv: fields.sv ?? null, deductions: fields.deductions ?? null, eScore: fields.eScore ?? null,
-        final: finalScore, source: fields.source,
-        calc: calcCfg?.kind, calcState,
-        enteredBy: 'judge-you', enteredAt: new Date().toISOString(), flashed: true,
-      };
-      d.scores.push(score);
-      pushScore(score);
-    });
-    if (!applied) return; // offline read-only gate — no false "Score posted"
+    const id = `${eventRec.id}|${active.id}|${apparatus}`;
+    const base = {
+      id, eventId: eventRec.id, sessionId: session.id, regId: active.id, apparatus,
+      sv: fields.sv ?? null, deductions: fields.deductions ?? null, eScore: fields.eScore ?? null,
+      final: finalScore, source: fields.source,
+      calc: calcCfg?.kind, calcState, flashed: true,
+    };
+
+    if (privileged) {
+      const applied = mutate((d) => {
+        d.scores = d.scores.filter((s) => s.id !== id);
+        const score = { ...base, enteredBy: 'judge-you', enteredAt: new Date().toISOString() };
+        d.scores.push(score);
+        pushScore(score);
+      });
+      if (!applied) return; // offline read-only gate — no false "Score posted"
+    } else {
+      // Codeless judge: an anonymous/unprivileged device can't write `scores`
+      // under RLS at all — the judge-entry Edge Function (service role) does
+      // the real write; this is a push-free LOCAL mutate for instant UI only
+      // (never calls pushScore, which would try — and fail RLS — to enqueue
+      // the same write again).
+      const token = accessMap[eventRec.id];
+      if (!token) { toast('Judge access for this event has expired — enter the code again.', { variant: 'error' }); return; }
+      setPosting(true);
+      const res = await judgeSubmitScore({
+        token, regId: active.id, apparatus,
+        sv: base.sv, deductions: base.deductions, eScore: base.eScore, final: base.final,
+        source: base.source, calc: base.calc, calcState: base.calcState, flashed: true,
+      });
+      setPosting(false);
+      if (!res.ok) { toast(res.error ?? 'Could not post the score.', { variant: 'error' }); return; }
+      mutate((d) => {
+        d.scores = d.scores.filter((s) => s.id !== id);
+        d.scores.push({ ...base, enteredBy: 'judge-code', enteredAt: new Date().toISOString() });
+      });
+    }
     setFlash({ name: athleteName, score: finalScore });
     close();
     toast(`Score posted: ${athleteName} — ${fmtScore(finalScore)}`);
   };
 
-  // Score entry is for the event host / league admins. (RLS also blocks score
-  // writes for anyone without the privilege; this is the matching UI gate.)
-  if (!caps.isAdmin && caps.managedClubIds.length === 0) {
+  // Score entry is for the event host / league admins, OR a device that
+  // unlocked this event with its judge access code (RLS also blocks score
+  // writes for anyone without one of those; this is the matching UI gate).
+  if (!canScore) {
     return (
       <div className="card card-pad" style={{ maxWidth: 520 }}>
         <h2 className="display" style={{ fontSize: 22 }}>Score entry is restricted</h2>
-        <p>Only the event host and league admins can enter scores. Judges receive a
-          dedicated access code from the event host (coming soon).</p>
+        <p>Only the event host, league admins, and unlocked judge devices can enter scores.</p>
+        <div style={{ marginTop: 16, maxWidth: 260 }}>
+          <Field label="Have a judge access code?" hint="Enter the 6-digit code from the event host, or open the link/QR they gave you.">
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                type="text" inputMode="numeric" className="input" maxLength={6}
+                style={{ fontSize: 20, fontWeight: 700, letterSpacing: '0.15em', textAlign: 'center' }}
+                value={code}
+                onChange={(e) => { setCode(e.target.value.replace(/\D/g, '').slice(0, 6)); setCodeError(''); }}
+                onKeyDown={(e) => { if (e.key === 'Enter') unlockWithCode(); }}
+                placeholder="000000"
+              />
+              <button className="btn primary" disabled={unlocking || code.trim().length !== 6} onClick={unlockWithCode}>
+                {unlocking ? 'Checking…' : 'Unlock'}
+              </button>
+            </div>
+          </Field>
+          {codeError && <p style={{ color: 'var(--coral-600)', fontSize: 13, marginTop: 6 }}>{codeError}</p>}
+        </div>
       </div>
     );
   }
@@ -174,7 +250,7 @@ export function Judge() {
             <input type="text" className="input" value={eventRec.name} readOnly disabled data-tip="Locked to the event you opened score entry from" />
           ) : (
             <select className="input" value={eventId} onChange={(e) => { setEventId(e.target.value); const m = db.events.find((x) => x.id === e.target.value)!; setSessionId(m.sessions[0].id); setApparatus(APPARATUS[m.sessions[0].discipline][0].code); close(); }}>
-              {db.events.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+              {selectableEvents.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
             </select>
           )}
         </Field>
@@ -229,8 +305,8 @@ export function Judge() {
               <Readout label="D" value={outcome?.d} />
               <Readout label="E" value={outcome?.e} />
               <Readout label="Final" value={outcome?.final} accent />
-              <button className="btn primary" style={{ fontSize: 16, padding: '12px 28px' }} disabled={finalScore == null} onClick={submit}>
-                Post & flash score →
+              <button className="btn primary" style={{ fontSize: 16, padding: '12px 28px' }} disabled={finalScore == null || posting} onClick={submit}>
+                {posting ? 'Posting…' : 'Post & flash score →'}
               </button>
             </div>
           ) : (
@@ -302,8 +378,8 @@ export function Judge() {
                     </div>
                   )}
                 </div>
-                <button className="btn primary" style={{ fontSize: 16, padding: '12px 28px' }} disabled={finalScore == null || svError} onClick={submit}>
-                  Post & flash score →
+                <button className="btn primary" style={{ fontSize: 16, padding: '12px 28px' }} disabled={finalScore == null || svError || posting} onClick={submit}>
+                  {posting ? 'Posting…' : 'Post & flash score →'}
                 </button>
               </div>
             </>

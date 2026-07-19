@@ -7,7 +7,7 @@
 // block the UI) and are no-ops when `isSupabaseConfigured` is false.
 import { createClient, type SupabaseClient, type RealtimePostgresChangesPayload, type PostgrestError } from '@supabase/supabase-js';
 import type {
-  AccountInvite, AccountingCode, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, EventAdmin, HostPayout, Invoice, Level, Event, Membership, MembershipType, Payment, PaymentSnapshotLine, Region, Registration, RefundRequest, SanctionRequest, SanctionVote, Score, Season,
+  AccountInvite, AccountingCode, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, EventAdmin, HostPayout, Invoice, JudgeAccessCode, Level, Event, Membership, MembershipType, Payment, PaymentSnapshotLine, Region, Registration, RefundRequest, SanctionRequest, SanctionVote, Score, Season,
   WaiverDocument, WaiverSignature, WaitlistGroup, SessionRequest, CompetitionOrder, FinalsLineup, EventCheckin,
 } from './types';
 import { writeQueue, humanizeWriteError, type WriteOp, type ExecResult, type WriteQueueEntry } from './write-queue';
@@ -531,6 +531,22 @@ const rowToWaitlistGroup = (r: {
   status: r.status as WaitlistGroup['status'], queuedAt: r.queued_at, notifiedAt: r.notified_at,
   holdExpiresAt: r.hold_expires_at, createdAt: r.created_at,
 });
+// judge_access_codes is not yet in the generated database.types.ts (this
+// migration hasn't been applied/regenerated against at write time) — inline
+// row type like rowToWaitlistGroup. Clients (event hosts/admins) write this
+// table directly (Generate/Regenerate/Revoke), so both directions are
+// implemented here.
+const judgeAccessCodeToRow = (c: JudgeAccessCode) => ({
+  id: c.id, event_id: c.eventId, token: c.token, code: c.code,
+  created_by: c.createdBy ?? null, revoked_at: c.revokedAt ?? null,
+});
+const rowToJudgeAccessCode = (r: {
+  id: string; event_id: string; token: string; code: string;
+  created_by: string | null; created_at: string; revoked_at: string | null;
+}): JudgeAccessCode => ({
+  id: r.id, eventId: r.event_id, token: r.token, code: r.code,
+  createdBy: r.created_by, createdAt: r.created_at, revokedAt: r.revoked_at,
+});
 // session_requests is not yet in the generated database.types.ts (this
 // migration hasn't been applied/regenerated against at write time) — inline
 // row type like rowToWaitlistGroup. Unlike waitlist_groups, clients may
@@ -666,6 +682,10 @@ export function deleteClubMembership(id: string) { remoteDelete('club_membership
  *  all other transitions are service-role. No client DELETE policy exists.
  *  Later P4 tasks add the actual queue-join/cancel call sites. */
 export function pushWaitlistGroup(g: WaitlistGroup) { remoteUpsert('waitlist_groups', [waitlistGroupToRow(g)]); }
+export function pushJudgeAccessCode(c: JudgeAccessCode) { remoteUpsert('judge_access_codes', [judgeAccessCodeToRow(c)]); }
+/** "Revoke" — targeted column UPDATE (not a full upsert) so it doesn't fight
+ *  a concurrent write to the same row. Matches RLS's separate update policy. */
+export function revokeJudgeAccessCode(id: string) { remoteUpdate('judge_access_codes', id, { revoked_at: new Date().toISOString() }); }
 /** Cancel a waitlist group (event-mgmt v2 P4 T6 "Leave waitlist" — self or
  *  club-manager): the only client-writable status transition on an EXISTING
  *  row. Must go through the targeted `remoteUpdate` column-update, NOT
@@ -1813,6 +1833,35 @@ export async function notifyManagerAccessDenied(token: string): Promise<{ ok: bo
   return data as { ok: boolean; sentCount?: number; error?: string };
 }
 
+// ---------------------------------------------------------------------------
+// Judge — codeless access (2026-07-19) — Edge Function invokers
+// ---------------------------------------------------------------------------
+/** No-login unlock: resolve a 6-digit code or a long access token to an
+ *  event + the long token (always store THAT, never the short code — the
+ *  code isn't globally unique). Called anonymously from the `/judge/access/
+ *  :token` link, a scanned QR, or the inline code field on `/judge`. */
+export async function judgeUnlock(args: { code?: string; token?: string }): Promise<{ ok: boolean; eventId?: string; token?: string; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('judge-entry', { body: { op: 'unlock', ...args } });
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  return data as { ok: boolean; eventId?: string; token?: string; error?: string };
+}
+
+/** No-login score submission for a codeless-unlocked device — the server
+ *  re-validates everything (token active, registration/apparatus match,
+ *  numeric bounds) via judge-entry-core.ts and stamps `entered_by` itself;
+ *  nothing here is trusted, this is just the wire shape. */
+export async function judgeSubmitScore(args: {
+  token: string; regId: string; apparatus: string;
+  sv: number | null; deductions: number | null; eScore?: number | null; final: number | null;
+  source?: string; calc?: string; calcState?: unknown; flashed?: boolean; scratched?: boolean;
+}): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('judge-entry', { body: { op: 'submit', ...args } });
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  return data as { ok: boolean; error?: string };
+}
+
 /** Admin/club-manager mints a no-login waiver signing link for a member (tied to
  *  their athlete record). Returns the link to email and/or copy. */
 export async function createWaiverLink(args: {
@@ -2031,6 +2080,7 @@ export async function loadAll(): Promise<DB | null> {
       clubRequestsR, appSettingsR, accountInvitesR, sanctionRequestsR, sanctionVotesR,
       waiverDocsR, waiverSigsR, clubMembershipsR, paymentsR, eventAdminsR, refundRequestsR, waitlistGroupsR,
       sessionRequestsR, competitionOrdersR, finalsLineupsR, eventCheckinsR, accountingCodesR, hostPayoutsR,
+      judgeAccessCodesR,
     ] = await Promise.all([
       supabase.from('seasons').select('*'),
       supabase.from('levels').select('*'),
@@ -2066,6 +2116,7 @@ export async function loadAll(): Promise<DB | null> {
       supabase.from('event_checkins').select('*'),      // emv2 P5 E1; tolerated if absent
       supabase.from('accounting_codes').select('*'),    // emv2 P6 T1; tolerated if absent
       supabase.from('host_payouts').select('*'),        // emv2 P6 T1; tolerated if absent
+      supabase.from('judge_access_codes').select('*'),  // 2026-07-19; RLS-empty for non-hosts, tolerated if absent
     ]);
 
     // club_requests may not exist on a pre-0005 DB — tolerate its error, fail on the rest.
@@ -2273,6 +2324,8 @@ export async function loadAll(): Promise<DB | null> {
       .map(rowToAccountingCode);
     const hostPayouts: HostPayout[] = (hostPayoutsR.error ? [] : hostPayoutsR.data ?? [])
       .map(rowToHostPayout);
+    const judgeAccessCodes: JudgeAccessCode[] = (judgeAccessCodesR.error ? [] : judgeAccessCodesR.data ?? [])
+      .map(rowToJudgeAccessCode);
 
     return {
       seasons, levels, clubs, people, events, registrations, scores, invoices, coupons,
@@ -2294,6 +2347,7 @@ export async function loadAll(): Promise<DB | null> {
       ...(eventCheckins.length ? { eventCheckins } : {}),
       ...(accountingCodes.length ? { accountingCodes } : {}),
       ...(hostPayouts.length ? { hostPayouts } : {}),
+      ...(judgeAccessCodes.length ? { judgeAccessCodes } : {}),
     };
   } catch (e) {
     console.error('[supabase] loadAll threw:', e);

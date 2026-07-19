@@ -27,7 +27,7 @@ const ALL_DB_COLLECTIONS: Record<keyof DB, true> = {
   sanctionVotes: true, waiverDocuments: true, waiverSignatures: true, clubMemberships: true,
   payments: true, eventAdmins: true, refundRequests: true, waitlistGroups: true,
   sessionRequests: true, competitionOrders: true, finalsLineups: true, eventCheckins: true,
-  accountingCodes: true, hostPayouts: true,
+  accountingCodes: true, hostPayouts: true, judgeAccessCodes: true,
 };
 export const ALL_DB_COLLECTION_KEYS = Object.keys(ALL_DB_COLLECTIONS) as (keyof DB)[];
 
@@ -45,6 +45,7 @@ export const EXCLUDED_COLLECTIONS: Partial<Record<keyof DB, string>> = {
   finalsLineups: "club-scoped roster (regIds array); the athlete's own data is already covered via registrations/scores",
   accountingCodes: 'admin bookkeeping config — no person link',
   hostPayouts: 'operational payout record; createdBy is the staffer who RECORDED it, not the export subject — no subject-person FK',
+  judgeAccessCodes: 'operational security artifact (event access code/token); createdBy is the host who GENERATED it, not the export subject — no subject-person FK',
 };
 
 /** Every piece of data the app holds about one person, gathered for the

@@ -14,14 +14,14 @@ import { NationalsDashboard, type NationalsDashboardScope } from '../components/
 import { EventCheckinAdminCard } from '../components/EventCheckinCard';
 import { EventStatusBadge } from './Home';
 import { APPARATUS, SHIRT_SIZES } from '../lib/types';
-import type { Athlete, CartItem, Discipline, Event, EventAdmin, EventSession, Registration } from '../lib/types';
+import type { Athlete, CartItem, Discipline, Event, EventAdmin, EventSession, JudgeAccessCode, Registration } from '../lib/types';
 import { DisciplineIcon } from '../components/DisciplineIcon';
 import { SizedAddonPicker } from '../components/AddonPickers';
 import {
   deleteRegistration, fetchCampSurveys, fetchEventCollectedTotal, fetchEventHostAddons, fetchEventHostRoster, fetchEventWaitlist, findPersonForHost, grantEventAdmin,
   hostDeleteRegistration, hostUpsertRegistration, insuranceCertificateUrl,
-  listSanctioningTeam, manageWaitlist, markMedalsReceived, pushCart, pushEvent, pushEventSessions, pushRegistration,
-  revokeEventAdmin, syncSynchroPartnerLevelRemote, uploadInsuranceCertificate,
+  listSanctioningTeam, manageWaitlist, markMedalsReceived, pushCart, pushEvent, pushEventSessions, pushJudgeAccessCode, pushRegistration,
+  revokeEventAdmin, revokeJudgeAccessCode, syncSynchroPartnerLevelRemote, uploadInsuranceCertificate,
 } from '../lib/supabase';
 import type { HostRosterRow, SanctioningTeamMember, WaitlistQueueRow } from '../lib/supabase';
 import { summarizeRoster, levelNameResolver } from '../lib/host-page';
@@ -597,6 +597,110 @@ export function EventAdminsCard({ event, toast }: { event: Event; toast: (msg: s
           {busy ? 'Adding…' : 'Add admin'}
         </button>
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// JudgeAccessCard — codeless judge access (2026-07-19)
+// ---------------------------------------------------------------------------
+// ONE active code per event: URL, 6-digit code, and QR are three forms of the
+// same long `token` — a device that unlocks with any of them can enter
+// scores for ANY discipline/apparatus at this event, no per-judge identity
+// (see supabase/functions/judge-entry + src/pages/Judge.tsx). Writes go
+// through the normal client RLS path (judge_access_codes' insert/update
+// policies mirror is_event_host, same reach as this whole host page), unlike
+// event_admins' RPC-only model — there's no cross-account lookup here to
+// gate, just this event's own row.
+function randomAccessToken(): string {
+  const bytes = new Uint8Array(20); // 40 hex chars — well over the 16-char floor
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+function randomSixDigitCode(): string {
+  const arr = new Uint32Array(1);
+  crypto.getRandomValues(arr);
+  return String(arr[0] % 1_000_000).padStart(6, '0');
+}
+
+function JudgeAccessCard({ event, toast }: { event: Event; toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void }) {
+  const db = useDB();
+  const active = (db.judgeAccessCodes ?? []).find((c) => c.eventId === event.id && !c.revokedAt);
+  const [busy, setBusy] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+
+  const appUrl = window.location.origin + import.meta.env.BASE_URL.replace(/\/$/, '');
+  const link = active ? `${appUrl}/#/judge/access/${active.token}` : '';
+
+  useEffect(() => {
+    // No synchronous setState here (CLAUDE.md ESLint trap) — when there's no
+    // active code, `link` is '' and the QR <img> is never rendered anyway
+    // (nested under `{active ? ... : ...}` below), so a stale qrDataUrl from
+    // a previous code is harmless; it's overwritten as soon as the next
+    // active code's QR resolves.
+    if (!link) return;
+    let cancelled = false;
+    import('qrcode')
+      .then((QRCode) => QRCode.toDataURL(link, { margin: 1, width: 220 }))
+      .then((dataUrl) => { if (!cancelled) setQrDataUrl(dataUrl); })
+      .catch(() => { if (!cancelled) setQrDataUrl(null); });
+    return () => { cancelled = true; };
+  }, [link]);
+
+  const generate = () => {
+    setBusy(true);
+    mutate((d) => {
+      const now = new Date().toISOString();
+      const list = d.judgeAccessCodes ?? (d.judgeAccessCodes = []);
+      // One ACTIVE code per event (mirrors the DB's partial unique index) —
+      // revoke any existing active row before inserting the new one.
+      const prior = list.find((c) => c.eventId === event.id && !c.revokedAt);
+      if (prior) { prior.revokedAt = now; revokeJudgeAccessCode(prior.id); }
+      const created: JudgeAccessCode = {
+        id: crypto.randomUUID(), eventId: event.id, token: randomAccessToken(), code: randomSixDigitCode(),
+        createdAt: now,
+      };
+      list.push(created);
+      pushJudgeAccessCode(created);
+    });
+    setBusy(false);
+    toast('Judge access code generated.');
+  };
+
+  const revoke = () => {
+    if (!active) return;
+    mutate((d) => {
+      const row = (d.judgeAccessCodes ?? []).find((c) => c.id === active.id);
+      if (row) row.revokedAt = new Date().toISOString();
+    });
+    revokeJudgeAccessCode(active.id);
+    toast('Judge access code revoked.');
+  };
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 18 }}>
+      <h3 className="card-title">Judge access</h3>
+      <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--ink-soft)' }}>
+        Anyone with this link, code, or QR can enter scores for any discipline/apparatus at this
+        event — no judge account needed. Revoke it anytime; regenerating invalidates the old one.
+      </p>
+      {active ? (
+        <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 40, letterSpacing: '0.12em' }}>{active.code}</div>
+            <div style={{ fontSize: 12, color: 'var(--ink-soft)', wordBreak: 'break-all', maxWidth: 320, marginTop: 4 }}>{link}</div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+              <button className="btn small ghost" disabled={busy} onClick={generate}>Regenerate</button>
+              <button className="btn small ghost" disabled={busy} onClick={revoke}>Revoke</button>
+            </div>
+          </div>
+          {qrDataUrl && (
+            <img src={qrDataUrl} alt="Judge access QR code" width={140} height={140} style={{ borderRadius: 8, border: '1px solid var(--line)' }} />
+          )}
+        </div>
+      ) : (
+        <button className="btn small primary" disabled={busy} onClick={generate}>Generate access code</button>
+      )}
     </div>
   );
 }
@@ -1294,6 +1398,8 @@ export function EventHostPage() {
       <HostExportCard event={event} rows={rosterRows} error={rosterError} toast={toast} />
 
       <EventAdminsCard event={event} toast={toast} />
+
+      <JudgeAccessCard event={event} toast={toast} />
 
       <div className="card card-pad" style={{ marginBottom: 18 }}>
         <h3 className="card-title">Competition setup</h3>
