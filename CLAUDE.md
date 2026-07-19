@@ -477,7 +477,12 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   GDPR-ish delete/anonymize — tombstones the `people` row in place when financial/
   waiver rows reference it, scrubs denormalized names from invoice/snapshot labels,
   keeps waiver_signatures pending counsel; export side is client-only
-  `collectPersonData`/`person-export.ts`). Notify-style functions allow any signed-in caller and resolve
+  `collectPersonData`/`person-export.ts`), `judge-entry` (2026-07-19, branch
+  `feat/judge-access-codes` — awaiting review, not yet deployed: codeless judge
+  access — anonymous `unlock`/`submit` ops resolve a `judge_access_codes`
+  code/token to an event and write `scores` server-side; validation in
+  `_shared/judge-entry-core.ts`; verify_jwt true, NOT in the no-verify-jwt trio).
+  Notify-style functions allow any signed-in caller and resolve
   recipients server-side; only `send-email`/`send-sms` are admin-gated. `scheduled-dispatch`
   also runs the daily "anything wrong?" digest (`daily-digest` kind, new error_logs +
   stuck-pending-payments summary, hardcoded recipient list in the function, at most
