@@ -99,6 +99,39 @@ describe('validateJudgeSubmit', () => {
     expect(validateJudgeSubmit(eventId, { regId: 'reg-1', apparatus: '' }, reg()).ok).toBe(false);
   });
 
+  it('accepts and passes through second-judge-panel fields (deductions2/eScore2)', () => {
+    const result = validateJudgeSubmit(eventId, {
+      regId: 'reg-1', apparatus: 'vault', sv: 4.2, deductions: 0.5, deductions2: 0.7, final: 3.55,
+    }, reg());
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.score.deductions2).toBe(0.7);
+      expect(result.score.eScore2).toBeNull();
+    }
+  });
+
+  it('allows null deductions2/eScore2 (panels:1, or judge 2 not entered yet)', () => {
+    const result = validateJudgeSubmit(eventId, {
+      regId: 'reg-1', apparatus: 'vault', sv: 4.2, deductions: 0.5, final: 3.7,
+    }, reg());
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.score.deductions2).toBeNull();
+      expect(result.score.eScore2).toBeNull();
+    }
+  });
+
+  it.each([
+    ['negative deductions2', { deductions2: -1 }],
+    ['non-finite eScore2', { eScore2: Infinity }],
+    ['eScore2 over the sanity cap', { eScore2: 950 }],
+  ])('rejects out-of-bounds second-judge-panel field: %s', (_label, patch) => {
+    const result = validateJudgeSubmit(eventId, {
+      regId: 'reg-1', apparatus: 'vault', sv: 4.2, deductions: 0.5, final: 3.7, ...patch,
+    }, reg());
+    expect(result.ok).toBe(false);
+  });
+
   it('rejects oversized free-form fields (anonymous storage-bloat guard)', () => {
     const base = { regId: 'reg-1', apparatus: 'vault', sv: 4.2, deductions: 0.5, final: 3.7 };
     expect(validateJudgeSubmit(eventId, { ...base, source: 'x'.repeat(41) }, reg()).ok).toBe(false);

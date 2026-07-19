@@ -1,6 +1,18 @@
 // Pure event-phase derivation (B4). Kept free of React/runtime deps for
 // Vitest coverage, mirroring capabilities-core.ts/pricing.ts.
-import type { Club, EventPhase } from './types';
+import type { Club, EventPhase, ScoringConfig } from './types';
+
+/** Default scoring config for an event with no `scoringConfig` set: one judge
+ *  panel, calculator entry (today's behavior before the 2026-07-19 per-event
+ *  scoring-config feature). */
+export const DEFAULT_SCORING_CONFIG: ScoringConfig = { panels: 1, entryMode: 'calculator' };
+
+/** Accessor for an event's effective scoring config — always use this rather
+ *  than reading `event.scoringConfig` directly, so an absent config reads as
+ *  the default instead of `undefined`. */
+export function scoringConfigOf(event: { scoringConfig?: ScoringConfig } | null | undefined): ScoringConfig {
+  return event?.scoringConfig ?? DEFAULT_SCORING_CONFIG;
+}
 
 export interface EventPhaseInput {
   regOpens: string;

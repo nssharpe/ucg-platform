@@ -53,6 +53,8 @@ interface Payload {
   sv?: number | null;
   deductions?: number | null;
   eScore?: number | null;
+  deductions2?: number | null;
+  eScore2?: number | null;
   final?: number | null;
   source?: string;
   calc?: string;
@@ -147,6 +149,7 @@ Deno.serve(async (req) => {
 
     const payload: JudgeSubmitPayload = {
       regId: a.regId, apparatus: a.apparatus, sv: a.sv, deductions: a.deductions, eScore: a.eScore,
+      deductions2: a.deductions2, eScore2: a.eScore2,
       final: a.final, source: a.source, calc: a.calc, calcState: a.calcState, flashed: a.flashed, scratched: a.scratched,
     };
     const result = validateJudgeSubmit(row.event_id, payload, reg);
@@ -157,6 +160,7 @@ Deno.serve(async (req) => {
       id: result.score.id, event_id: result.score.eventId, session_id: result.score.sessionId,
       reg_id: result.score.regId, apparatus: result.score.apparatus,
       sv: result.score.sv, deductions: result.score.deductions, e_score: result.score.eScore,
+      deductions2: result.score.deductions2, e_score2: result.score.eScore2,
       final: result.score.final, source: result.score.source ?? 'manual',
       calc: result.score.calc, calc_state: result.score.calcState,
       entered_by: `judge-code:${row.id}`, entered_at: now, flashed: result.score.flashed,

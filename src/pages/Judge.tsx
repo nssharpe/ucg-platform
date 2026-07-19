@@ -9,10 +9,25 @@ import type { Score } from '../lib/types';
 import { fmtScore } from '../lib/scoring';
 import { calcForLevel, calcSource, scoreFromOutcome, scoreDetailPath } from '../lib/calculators';
 import { computeScoring, initScoring, isCalcStateV2 } from '../scoring';
+import { combinePanels } from '../scoring/panels';
+import { round3 } from '../scoring/types';
 import { ScoringPanel } from '../components/scoring/ScoringPanel';
 import { useCapabilities } from '../lib/capabilities';
-import { eventIsInPhase } from '../lib/events-core';
+import { eventIsInPhase, scoringConfigOf } from '../lib/events-core';
 import { loadJudgeAccessMap, saveJudgeAccess, withJudgeAccess } from '../lib/judge-access-storage';
+
+/** Combines a single effective start value with EITHER an averaged E-score OR
+ *  averaged deductions into a final — the one code path both entry modes
+ *  (calculator-full vs SV/manual-deductions) and both panel counts (1 or 2)
+ *  feed through. Mirrors the per-kind engine formulas in src/scoring
+ *  (`final = round3(Math.max(0, d + e))` for full producers, `sv - deductions`
+ *  for d-only/manual). */
+function finalFromExecution(sv: number | null, deductions: number | null, eScore: number | null): number | null {
+  if (sv == null) return null;
+  if (eScore != null) return round3(Math.max(0, sv + eScore));
+  if (deductions != null) return round3(Math.max(0, sv - deductions));
+  return null;
+}
 
 /** Tablet-first judge pad. The level's scoring panel is built into the scoring
  *  view — judges build the routine natively and the score posts live.
@@ -89,6 +104,13 @@ export function Judge() {
   const [execDed, setExecDed] = useState('');
   const [override, setOverride] = useState(false);
   const [calcSt, setCalcSt] = useState<unknown>(null);
+  // Second judge panel (event.scoringConfig.panels === 2, 2026-07-19): a plain
+  // execution input (deductions or E-score, matching whichever field judge 1
+  // is using) — NOT a second full calculator instance, since only judge 1's
+  // routine build is persisted (Score has no calcState2 column). Averaged with
+  // judge 1's value via combinePanels; one alone still saves (score-in-progress).
+  const [ded2, setDed2] = useState('');
+  const [eScore2Raw, setEScore2Raw] = useState('');
 
   if (!eventRec || !session) {
     return (
@@ -99,6 +121,9 @@ export function Judge() {
       </div>
     );
   }
+
+  const scoringConfig = scoringConfigOf(eventRec);
+  const panels2 = scoringConfig.panels === 2;
 
   const active = regs.find((r) => r.id === activeReg);
   const activeAthlete = active && db.people.find((p) => p.id === active.athleteId);
@@ -126,10 +151,29 @@ export function Judge() {
   const dedNum = parseFloat(ded);
   const svError = !isNaN(svNum) && svMax != null && svNum > svMax;
 
+  // Judge 2's raw execution input, parsed. Only meaningful (rendered/used) when
+  // panels2; blank ⇒ null (judge 2 hasn't entered yet — judge 1's value alone
+  // still saves).
+  const ded2Num = ded2.trim() === '' ? null : parseFloat(ded2);
+  const eScore2Num = eScore2Raw.trim() === '' ? null : parseFloat(eScore2Raw);
+  const combined = panels2
+    ? combinePanels({
+        deductions: usingCalcFull ? null : (isNaN(dedNum) ? null : dedNum),
+        deductions2: usingCalcFull ? null : (ded2Num != null && !isNaN(ded2Num) ? ded2Num : null),
+        eScore: usingCalcFull ? (outcome?.e ?? null) : null,
+        eScore2: usingCalcFull ? (eScore2Num != null && !isNaN(eScore2Num) ? eScore2Num : null) : null,
+      })
+    : null;
+
+  // Effective sv/deductions/eScore feeding the ONE final-score code path
+  // (finalFromExecution) — panels2 substitutes the averaged pair in place of
+  // judge 1's raw value; panels:1 behaves exactly as before.
+  const svEffective = usingCalcFull ? (outcome?.d ?? null) : (isNaN(svNum) ? null : svNum);
+  const dedEffective = usingCalcFull ? null : (panels2 ? combined!.deductions : (isNaN(dedNum) ? null : dedNum));
+  const eScoreEffective = usingCalcFull ? (panels2 ? combined!.eScore : (outcome?.e ?? null)) : null;
+
   // What would post right now?
-  const finalScore = usingCalcFull
-    ? (outcome?.final ?? null)
-    : (!isNaN(svNum) && !isNaN(dedNum) ? Math.max(0, Math.round((svNum - dedNum) * 1000) / 1000) : null);
+  const finalScore = finalFromExecution(svEffective, dedEffective, eScoreEffective);
 
   const openScoring = (reg: typeof regs[number]) => {
     const sc = scoreFor(reg.id);
@@ -139,7 +183,12 @@ export function Judge() {
     setSv(sc?.sv?.toString() ?? '');
     setDed(sc?.deductions?.toString() ?? '');
     setExecDed('');
-    setOverride(false);
+    setDed2(sc?.deductions2 != null ? String(sc.deductions2) : '');
+    setEScore2Raw(sc?.eScore2 != null ? String(sc.eScore2) : '');
+    // A brand-new score at a 'simple' entry-mode event defaults to manual
+    // override; editing an existing score always restores exactly how it was
+    // posted (calc panel if it had one).
+    setOverride(!sc && scoringConfig.entryMode === 'simple');
     // Editing a score re-opens the panel exactly as it was posted.
     if (cfg && level) {
       const prior = sc?.calcState;
@@ -149,7 +198,10 @@ export function Judge() {
     }
   };
 
-  const close = () => { setActiveReg(null); setSv(''); setDed(''); setExecDed(''); setCalcSt(null); };
+  const close = () => {
+    setActiveReg(null); setSv(''); setDed(''); setExecDed(''); setCalcSt(null);
+    setDed2(''); setEScore2Raw('');
+  };
 
   const submit = async () => {
     if (!active || finalScore == null) return;
@@ -166,11 +218,15 @@ export function Judge() {
     }
     const calcState = calcCfg && calcSt != null ? { v: 2 as const, kind: calcCfg.kind, state: calcSt } : undefined;
     const id = `${eventRec.id}|${active.id}|${apparatus}`;
+    // Judge 2's RAW inputs are stored as-is (not averaged) — deductions2/
+    // eScore2 alongside judge 1's deductions/eScore — so ScoreDetail can show
+    // both panels; `final` above is already derived from the average.
     const base = {
       id, eventId: eventRec.id, sessionId: session.id, regId: active.id, apparatus,
       sv: fields.sv ?? null, deductions: fields.deductions ?? null, eScore: fields.eScore ?? null,
       final: finalScore, source: fields.source,
       calc: calcCfg?.kind, calcState, flashed: true,
+      ...(panels2 ? { deductions2: usingCalcFull ? null : ded2Num, eScore2: usingCalcFull ? eScore2Num : null } : {}),
     };
 
     if (privileged) {
@@ -194,6 +250,7 @@ export function Judge() {
         token, regId: active.id, apparatus,
         sv: base.sv, deductions: base.deductions, eScore: base.eScore, final: base.final,
         source: base.source, calc: base.calc, calcState: base.calcState, flashed: true,
+        ...(panels2 ? { deductions2: base.deductions2, eScore2: base.eScore2 } : {}),
       });
       setPosting(false);
       if (!res.ok) { toast(res.error ?? 'Could not post the score.', { variant: 'error' }); return; }
@@ -301,14 +358,32 @@ export function Judge() {
           )}
 
           {usingCalcFull ? (
-            <div style={{ display: 'flex', gap: 22, alignItems: 'center', flexWrap: 'wrap' }}>
-              <Readout label="D" value={outcome?.d} />
-              <Readout label="E" value={outcome?.e} />
-              <Readout label="Final" value={outcome?.final} accent />
-              <button className="btn primary" style={{ fontSize: 16, padding: '12px 28px' }} disabled={finalScore == null || posting} onClick={submit}>
-                {posting ? 'Posting…' : 'Post & flash score →'}
-              </button>
-            </div>
+            <>
+              {panels2 && (
+                <div className="grid cols-2" style={{ marginBottom: 10 }}>
+                  <Field label="Judge 1 — E-score" hint="From the calculator above.">
+                    <input type="text" readOnly value={outcome?.e != null ? outcome.e.toFixed(3) : ''} style={{ fontSize: 18, fontWeight: 700 }} placeholder="—" />
+                  </Field>
+                  <Field label="Judge 2 — E-score" hint="Second panel's execution score; averaged with judge 1's.">
+                    <input
+                      type="number" inputMode="decimal" step="0.05" min={0} max={10}
+                      style={{ fontSize: 18, fontWeight: 700 }}
+                      value={eScore2Raw}
+                      onChange={(e) => setEScore2Raw(e.target.value)}
+                      placeholder="0.00"
+                    />
+                  </Field>
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 22, alignItems: 'center', flexWrap: 'wrap' }}>
+                <Readout label="D" value={outcome?.d} />
+                <Readout label={panels2 ? 'Avg E' : 'E'} value={panels2 ? (combined?.eScore ?? undefined) : outcome?.e} />
+                <Readout label="Final" value={finalScore ?? undefined} accent />
+                <button className="btn primary" style={{ fontSize: 16, padding: '12px 28px' }} disabled={finalScore == null || posting} onClick={submit}>
+                  {posting ? 'Posting…' : 'Post & flash score →'}
+                </button>
+              </div>
+            </>
           ) : (
             <>
               <div className="grid cols-2">
@@ -362,6 +437,22 @@ export function Judge() {
                   </Field>
                 </div>
               )}
+              {panels2 && (
+                <div className="grid cols-2" style={{ marginBottom: 10 }}>
+                  <Field label="Judge 1 — total deductions" hint="From the fields above.">
+                    <input type="text" readOnly value={!isNaN(dedNum) ? dedNum.toFixed(3) : ''} style={{ fontSize: 18, fontWeight: 700 }} placeholder="—" />
+                  </Field>
+                  <Field label="Judge 2 — total deductions" hint="Second panel's total deductions; averaged with judge 1's.">
+                    <input
+                      type="number" inputMode="decimal" step="0.05" min={0}
+                      style={{ fontSize: 18, fontWeight: 700 }}
+                      value={ded2}
+                      onChange={(e) => setDed2(e.target.value)}
+                      placeholder="0.00"
+                    />
+                  </Field>
+                </div>
+              )}
               {svError && (
                 <div className="card card-pad" style={{ background: 'var(--coral-100)', border: 'none', marginBottom: 12, padding: 10, fontSize: 14 }}>
                   ⚠ SV {svNum.toFixed(1)} exceeds the {activeLevel!.name} cap of {svMax!.toFixed(1)}. Check the routine card.
@@ -372,9 +463,9 @@ export function Judge() {
                   <div style={{ fontFamily: 'var(--font-display)', fontSize: 44 }}>
                     {finalScore != null ? finalScore.toFixed(3) : '—'}
                   </div>
-                  {finalScore != null && !isNaN(svNum) && !isNaN(dedNum) && (
+                  {finalScore != null && !isNaN(svNum) && dedEffective != null && (
                     <div style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 2 }}>
-                      {svNum.toFixed(3)} (SV) − {dedNum.toFixed(3)} (total deductions)
+                      {svNum.toFixed(3)} (SV) − {dedEffective.toFixed(3)} ({panels2 ? 'avg total deductions' : 'total deductions'})
                     </div>
                   )}
                 </div>
