@@ -372,7 +372,17 @@ export function EventDetail() {
                 <button className="btn primary small" onClick={() => setSelfRegOpen(true)}>Register yourself →</button>
               )}
               {!caps.canRegister && caps.managedClubIds.length === 0 && (
-                <Badge tone="warn">Registration open</Badge>
+                caps.coachMembership?.status === 'active' ? (
+                  // A coach membership doesn't confer registration eligibility — say so
+                  // explicitly and point at the membership page (the "add athlete"
+                  // purchase path there already prices the coach→athlete difference).
+                  <>
+                    <Badge tone="warn">Athlete membership required to register</Badge>
+                    <Link className="btn small ghost" to="/membership">Get athlete membership →</Link>
+                  </>
+                ) : (
+                  <Badge tone="warn">Registration open</Badge>
+                )
               )}
             </div>
           ) : (

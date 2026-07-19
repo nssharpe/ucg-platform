@@ -32,10 +32,35 @@ export interface Capabilities {
   person: Athlete | null;
   managedClubIds: string[];
   isEventHost: (eventId: string) => boolean;
-  /** The acting person's current-season membership status. */
+  /** The acting person's current-season membership status, preferring the
+   *  ATHLETE-type row (falls back to the COACH-type row, then 'none'). This is
+   *  a generic "do they have SOME membership" summary for display — it does
+   *  NOT gate registration (use `canRegister`) and does NOT tell you which
+   *  type is active (use `athleteMembership`/`coachMembership` for that). */
   currentMembership: MembershipStatus;
+  /** The acting person's ATHLETE-type membership row for the current season,
+   *  or null if they hold none. A membership row with no `type` (legacy data
+   *  predating typed memberships) is treated as an athlete row — matching the
+   *  DB column default (`type` defaults to 'athlete', migration 0007). This is
+   *  the row that gates `canRegister` — competing requires an ACTIVE athlete
+   *  membership; a coach-only membership does not confer it. */
+  athleteMembership: Membership | null;
+  /** The acting person's COACH-type membership row for the current season, or
+   *  null if they hold none. Display-only (e.g. the topbar coach badge) — a
+   *  coach membership never gates competition registration. */
+  coachMembership: Membership | null;
+  /** True only when the acting person holds an ACTIVE athlete-type membership
+   *  for the current season. A coach-only membership does NOT grant this —
+   *  registering to compete always requires an athlete membership. */
   canRegister: boolean;
   impersonating: boolean;
+}
+
+/** Treats a membership row with no `type` (legacy data from before typed
+ *  memberships shipped) as an athlete row — this mirrors the DB column
+ *  default (`type` defaults to 'athlete', migration 20260618000007). */
+export function membershipTypeOf(m: Pick<Membership, 'type'>): 'athlete' | 'coach' {
+  return m.type === 'coach' ? 'coach' : 'athlete';
 }
 
 export function currentSeasonId(db: DB): string | null {
@@ -166,10 +191,13 @@ export function deriveCapabilities(
   const managedClubIds = personId
     ? db.clubs.filter((c) => c.managerIds.includes(personId)).map((c) => c.id)
     : [];
-  const membership = person && seasonId
-    ? person.memberships.find((m) => m.seasonId === seasonId)
-    : undefined;
-  const currentMembership: MembershipStatus = membership?.status ?? 'none';
+  const athleteMembership = person && seasonId
+    ? person.memberships.find((m) => m.seasonId === seasonId && membershipTypeOf(m) === 'athlete') ?? null
+    : null;
+  const coachMembership = person && seasonId
+    ? person.memberships.find((m) => m.seasonId === seasonId && membershipTypeOf(m) === 'coach') ?? null
+    : null;
+  const currentMembership: MembershipStatus = athleteMembership?.status ?? coachMembership?.status ?? 'none';
   return {
     signedIn,
     isAdmin,
@@ -189,6 +217,8 @@ export function deriveCapabilities(
       return !!event && managedClubIds.includes(event.hostClubId);
     },
     currentMembership,
-    canRegister: signedIn && currentMembership === 'active',
+    athleteMembership,
+    coachMembership,
+    canRegister: signedIn && athleteMembership?.status === 'active',
   };
 }

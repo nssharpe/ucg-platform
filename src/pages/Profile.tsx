@@ -5,7 +5,8 @@ import { useCapabilities } from '../lib/capabilities';
 import { Combo, Field, Modal, Badge } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 import { SHIRT_SIZES, DIETARY_OPTIONS, STATE_REGIONS, DISCIPLINES } from '../lib/types';
-import type { Athlete, ClubRequest, Gender, Region } from '../lib/types';
+import type { Athlete, ClubRequest, Gender, MembershipType, Region } from '../lib/types';
+import { membershipTypeOf } from '../lib/capabilities-core';
 import { GENERAL_WAIVER_TYPE } from '../lib/types';
 import { pushClubRequest, pushMembership, pushPerson, deleteRegistration, sendEmail, createWaiverLink, fetchPublishedWaiver, requestManagerAccess, adminDeletePerson } from '../lib/supabase';
 import { getSession, useAuthLoading, useRolesLoaded } from '../lib/auth';
@@ -107,6 +108,11 @@ function effectiveRoles(p: Athlete): { athlete: boolean; coach: boolean } {
 // Admin-header role label (T3a): derived from the same effective-roles logic
 // as `effectiveRoles` above, rather than the raw `p.kind` field, so a member
 // with both roles reads as "athlete/coach" instead of just their legacy kind.
+// AdminMembers.tsx's Type column (T2, typed-membership residuals) mirrors
+// this exact same derivation via its own local `localEffectiveRoles` — kept
+// local rather than imported cross-file to avoid breaking this file's
+// react-refresh/only-export-components constraint (Profile.tsx must only
+// export components).
 function adminRoleLabel(p: Athlete): string {
   const roles = effectiveRoles(p);
   if (roles.athlete && roles.coach) return 'athlete/coach';
@@ -159,7 +165,10 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   // When arriving from membership, track which fields were empty on arrival so we can highlight them
   const [highlightMissing] = useState<boolean>(() => returnToMembership);
   const [clubReqOpen, setClubReqOpen] = useState(false);
-  const [revokeSeasonId, setRevokeSeasonId] = useState<string | null>(null);
+  // Per-type revoke target (T2, typed-membership residuals) — athlete and
+  // coach memberships are independent rows, so the revoke confirmation needs
+  // to know WHICH type it's acting on.
+  const [revokeTarget, setRevokeTarget] = useState<{ seasonId: string; type: MembershipType } | null>(null);
   // F5: admin data export / delete-and-anonymize
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   // "Independent Athlete" = no club (mainClubId null). Tracked locally so the
@@ -304,8 +313,8 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
         <div className="card card-pad" style={{ marginBottom: 16, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <AdminMembershipControls
             personId={pid}
-            revokeSeasonId={revokeSeasonId}
-            setRevokeSeasonId={setRevokeSeasonId}
+            revokeTarget={revokeTarget}
+            setRevokeTarget={setRevokeTarget}
           />
         </div>
       )}
@@ -1022,24 +1031,28 @@ function DeletePersonModal({ person, onClose }: { person: Athlete; onClose: () =
   );
 }
 
+const MEMBERSHIP_TYPES: MembershipType[] = ['athlete', 'coach'];
+const membershipTypeLabel = (t: MembershipType) => (t === 'coach' ? 'Coach' : 'Athlete');
+
 function AdminMembershipControls({
   personId,
-  revokeSeasonId,
-  setRevokeSeasonId,
+  revokeTarget,
+  setRevokeTarget,
 }: {
   personId: string;
-  revokeSeasonId: string | null;
-  setRevokeSeasonId: (id: string | null) => void;
+  revokeTarget: { seasonId: string; type: MembershipType } | null;
+  setRevokeTarget: (v: { seasonId: string; type: MembershipType } | null) => void;
 }) {
   const db = useDB();
   const toast = useToast();
   const caps = useCapabilities();
   const person = db.people.find((x) => x.id === personId)!;
-  const roles = effectiveRoles(person);
   // Season for which the "pending waiver" link popup is open.
   const [waiverPopupSeason, setWaiverPopupSeason] = useState<string | null>(null);
 
   // A waiver is on file if a membership row records it, or a signature exists.
+  // Shared per season (the single General waiver, confirmed final) — NOT
+  // per-type, so this check stays season-only.
   const hasWaiverOnFile = (seasonId: string) =>
     person.memberships.some((x) => x.seasonId === seasonId && x.waiverSignedAt) ||
     (db.waiverSignatures ?? []).some((x) => x.personId === person.id && x.seasonId === seasonId);
@@ -1047,52 +1060,63 @@ function AdminMembershipControls({
   // Admin "Activate": if a waiver is already on file the membership goes active
   // immediately; otherwise it becomes "pending-waiver" (like a minor) and we open
   // the popup so the admin can email or copy a no-login signing link. Signing
-  // flips it to active via record-waiver-signature.
-  const activate = (seasonId: string) => {
+  // flips it to active via record-waiver-signature. Acts on ONLY the given
+  // type's row — athlete and coach memberships are independent (T2).
+  const activate = (seasonId: string, type: MembershipType) => {
     const seasonName = db.seasons.find((s) => s.id === seasonId)?.name ?? seasonId;
     const waiverOk = hasWaiverOnFile(seasonId);
-    const defaultType: 'athlete' | 'coach' = (roles.coach && !roles.athlete) ? 'coach' : 'athlete';
     const applied = mutate((d) => {
       const pid = d.people.find((x) => x.id === personId)!;
-      let em = pid.memberships.find((x) => x.seasonId === seasonId);
+      let em = pid.memberships.find((x) => x.seasonId === seasonId && membershipTypeOf(x) === type);
       const status = waiverOk ? 'active' : 'pending-waiver';
       if (em) { em.status = status; em.activatedByAdmin = true; if (!em.paidVia) em.paidVia = 'comp'; }
       else {
-        em = { seasonId, type: defaultType, status, waiverSignedAt: null, waiverSignedBy: null, paidVia: 'comp', activatedByAdmin: true };
+        em = { seasonId, type, status, waiverSignedAt: null, waiverSignedBy: null, paidVia: 'comp', activatedByAdmin: true };
         pid.memberships.push(em);
       }
       pushMembership(pid.id, em);
     });
     if (!applied) return; // offline read-only gate — no false success toast
-    if (waiverOk) toast(`Membership activated for ${seasonName}.`);
-    else { toast(`${seasonName} membership is pending a signed waiver.`); setWaiverPopupSeason(seasonId); }
+    if (waiverOk) toast(`${membershipTypeLabel(type)} membership activated for ${seasonName}.`);
+    else {
+      toast(`${seasonName} ${membershipTypeLabel(type).toLowerCase()} membership is pending a signed waiver.`);
+      setWaiverPopupSeason(seasonId);
+    }
   };
 
   const confirmRevoke = () => {
-    if (!revokeSeasonId) return;
+    if (!revokeTarget) return;
+    const { seasonId, type } = revokeTarget;
     let removedCount = 0;
     const applied = mutate((d) => {
       const personInDraft = d.people.find((x) => x.id === personId)!;
-      // Update membership status
-      const em = personInDraft.memberships.find((x) => x.seasonId === revokeSeasonId);
+      // Update membership status for ONLY this type's row.
+      const em = personInDraft.memberships.find((x) => x.seasonId === seasonId && membershipTypeOf(x) === type);
       if (em) {
         em.status = 'none';
         pushMembership(personInDraft.id, em);
       }
-      // Remove from upcoming events (draft, or live-and-not-yet-happened).
-      const openEventIds = new Set(
-        d.events
-          .filter((m) => m.status === 'draft' || eventIsInPhase(m, 'reg-open') || eventIsInPhase(m, 'reg-closed'))
-          .map((m) => m.id),
-      );
-      const toRemove = d.registrations.filter((r) => r.athleteId === personId && openEventIds.has(r.eventId));
-      removedCount = toRemove.length;
-      toRemove.forEach((r) => deleteRegistration(r.id));
-      d.registrations = d.registrations.filter((r) => !(r.athleteId === personId && openEventIds.has(r.eventId)));
+      // Removing from upcoming competitions only makes sense when revoking the
+      // ATHLETE membership — a coach membership doesn't gate registration, so
+      // revoking it must NOT touch the person's (or anyone else's) registrations.
+      if (type === 'athlete') {
+        // Remove from upcoming events (draft, or live-and-not-yet-happened).
+        const openEventIds = new Set(
+          d.events
+            .filter((m) => m.status === 'draft' || eventIsInPhase(m, 'reg-open') || eventIsInPhase(m, 'reg-closed'))
+            .map((m) => m.id),
+        );
+        const toRemove = d.registrations.filter((r) => r.athleteId === personId && openEventIds.has(r.eventId));
+        removedCount = toRemove.length;
+        toRemove.forEach((r) => deleteRegistration(r.id));
+        d.registrations = d.registrations.filter((r) => !(r.athleteId === personId && openEventIds.has(r.eventId)));
+      }
     });
     if (!applied) return; // offline read-only gate — no false success toast
-    toast(`Membership revoked; removed from ${removedCount} upcoming competition${removedCount !== 1 ? 's' : ''}.`);
-    setRevokeSeasonId(null);
+    toast(type === 'athlete'
+      ? `Athlete membership revoked; removed from ${removedCount} upcoming competition${removedCount !== 1 ? 's' : ''}.`
+      : 'Coach membership revoked.');
+    setRevokeTarget(null);
   };
 
   // T3b: only show CURRENT and FUTURE seasons on the admin member profile —
@@ -1112,59 +1136,69 @@ function AdminMembershipControls({
         if (a.current && !b.current) return -1;
         if (!a.current && b.current) return 1;
         return b.startsOn.localeCompare(a.startsOn); // newest → oldest
-      }).map((s) => {
-        const m = person.memberships.find((x) => x.seasonId === s.id);
-        const isActive = m?.status === 'active';
-        return (
-          <div key={s.id} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <strong style={{ fontSize: 13 }}>{s.name}{s.current ? ' (Current)' : ''}:</strong>
-            {isActive ? <Badge tone="ok">Active{m?.activatedByAdmin ? ' (admin)' : ''}</Badge>
-              : m?.status === 'pending-club-payment' ? <Badge tone="warn">Pending club</Badge>
-              : m?.status === 'pending-waiver' ? (
-                <button
-                  className="badge warn"
-                  data-tip="Awaiting a signed waiver — click to email or copy the signing link"
-                  style={{ cursor: 'pointer', border: 'none' }}
-                  onClick={() => setWaiverPopupSeason(s.id)}
-                >
-                  Pending waiver
-                </button>
-              ) : <Badge tone="err">None</Badge>}
-            {m?.waiverSignedAt && <span data-tip={`Signed by ${m.waiverSignedBy} · ${formatSignedAt(m.waiverSignedAt)}`} style={{ fontSize: 12, cursor: 'help' }}>📝</span>}
-            {m?.waiverSignedAt && (() => {
-              const sig = (db.waiverSignatures ?? []).find((x) => x.personId === person.id && x.seasonId === s.id);
-              if (!sig) return null;
-              const doc = (db.waiverDocuments ?? []).find((d) => d.id === sig.waiverDocumentId);
-              return (
-                <button className="btn small ghost" style={{ fontSize: 11 }}
-                  onClick={() => downloadWaiverProof(sig, doc?.version ?? 0, `${person.firstName} ${person.lastName}`, doc?.body)}>
-                  Download proof
-                </button>
-              );
-            })()}
-            {caps.actingAsAdmin && (
-              isActive ? (
-                <button className="btn small ghost" onClick={() => setRevokeSeasonId(s.id)}>Revoke</button>
-              ) : m?.status === 'pending-waiver' ? (
-                <button className="btn small ghost" onClick={() => setRevokeSeasonId(s.id)}>Cancel</button>
-              ) : (
-                <button className="btn small ghost" onClick={() => activate(s.id)}>Activate</button>
-              )
-            )}
-          </div>
-        );
-      })}
+      }).map((s) => (
+        <div key={s.id} style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
+          <strong style={{ fontSize: 13 }}>{s.name}{s.current ? ' (Current)' : ''}:</strong>
+          {MEMBERSHIP_TYPES.map((type) => {
+            const m = person.memberships.find((x) => x.seasonId === s.id && membershipTypeOf(x) === type);
+            const isActive = m?.status === 'active';
+            return (
+              <span key={type} style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                <span style={{ fontSize: 12, color: 'var(--ink-soft)' }}>{membershipTypeLabel(type)}:</span>
+                {isActive ? <Badge tone="ok">Active{m?.activatedByAdmin ? ' (admin)' : ''}</Badge>
+                  : m?.status === 'pending-club-payment' ? <Badge tone="warn">Pending club</Badge>
+                  : m?.status === 'pending-waiver' ? (
+                    <button
+                      className="badge warn"
+                      data-tip="Awaiting a signed waiver — click to email or copy the signing link"
+                      style={{ cursor: 'pointer', border: 'none' }}
+                      onClick={() => setWaiverPopupSeason(s.id)}
+                    >
+                      Pending waiver
+                    </button>
+                  ) : <Badge tone="err">None</Badge>}
+                {m?.waiverSignedAt && <span data-tip={`Signed by ${m.waiverSignedBy} · ${formatSignedAt(m.waiverSignedAt)}`} style={{ fontSize: 12, cursor: 'help' }}>📝</span>}
+                {m?.waiverSignedAt && (() => {
+                  // The waiver is a single per-season document — the proof
+                  // download is the same regardless of which type's row
+                  // triggered it, so this can key off (person, season) only.
+                  const sig = (db.waiverSignatures ?? []).find((x) => x.personId === person.id && x.seasonId === s.id);
+                  if (!sig) return null;
+                  const doc = (db.waiverDocuments ?? []).find((d) => d.id === sig.waiverDocumentId);
+                  return (
+                    <button className="btn small ghost" style={{ fontSize: 11 }}
+                      onClick={() => downloadWaiverProof(sig, doc?.version ?? 0, `${person.firstName} ${person.lastName}`, doc?.body)}>
+                      Download proof
+                    </button>
+                  );
+                })()}
+                {caps.actingAsAdmin && (
+                  isActive ? (
+                    <button className="btn small ghost" onClick={() => setRevokeTarget({ seasonId: s.id, type })}>Revoke</button>
+                  ) : m?.status === 'pending-waiver' ? (
+                    <button className="btn small ghost" onClick={() => setRevokeTarget({ seasonId: s.id, type })}>Cancel</button>
+                  ) : (
+                    <button className="btn small ghost" onClick={() => activate(s.id, type)}>Activate</button>
+                  )
+                )}
+              </span>
+            );
+          })}
+        </div>
+      ))}
 
-      {revokeSeasonId && (
-        <Modal title="Revoke membership?" onClose={() => setRevokeSeasonId(null)}>
+      {revokeTarget && (
+        <Modal title={`Revoke ${membershipTypeLabel(revokeTarget.type).toLowerCase()} membership?`} onClose={() => setRevokeTarget(null)}>
           <p style={{ marginTop: 0 }}>
-            Revoking this membership will remove <strong>{person.firstName} {person.lastName}</strong> from all future registered competitions.
+            {revokeTarget.type === 'athlete'
+              ? <>Revoking this membership will remove <strong>{person.firstName} {person.lastName}</strong> from all future registered competitions.</>
+              : <>Revoking this coach membership does not affect <strong>{person.firstName} {person.lastName}</strong>'s athlete registrations, if any.</>}
           </p>
           <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
             <button className="btn primary" style={{ background: 'var(--coral-600)', borderColor: 'var(--coral-600)' }} onClick={confirmRevoke}>
               Yes, revoke
             </button>
-            <button className="btn ghost" onClick={() => setRevokeSeasonId(null)}>Cancel</button>
+            <button className="btn ghost" onClick={() => setRevokeTarget(null)}>Cancel</button>
           </div>
         </Modal>
       )}

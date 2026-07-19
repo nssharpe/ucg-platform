@@ -5,11 +5,18 @@ import { Badge, Combo, Field, Modal } from '../../components/ui';
 import { useToast } from '../../components/ui-hooks';
 import { PersonForm } from '../../components/PersonForm';
 import { STATE_REGIONS } from '../../lib/types';
-import type { AccountInvite, Athlete } from '../../lib/types';
+import type { AccountInvite, Athlete, MembershipType } from '../../lib/types';
 import { randomPromoCode } from '../../lib/pricing';
 import { fetchAllRoles, pushAccountInvite, pushClubManager, pushMembership, pushRegistration, pushUserRole, deleteRegistration, sendEmail, pushPerson, deletePerson, adminResetMfa, type SendEmailResult } from '../../lib/supabase';
 import { escapeHtml } from '../../lib/sanitize-html';
 import { useCapabilities } from '../../lib/capabilities';
+import { membershipTypeOf } from '../../lib/capabilities-core';
+
+const membershipTypeLabel = (t: MembershipType) => (t === 'coach' ? 'Coach' : 'Athlete');
+function localEffectiveRoles(p: Athlete): { athlete: boolean; coach: boolean } {
+  if (p.roles) return p.roles;
+  return { athlete: p.kind !== 'coach', coach: p.kind === 'coach' };
+}
 
 // ---------- Merge Athletes modal ----------
 function MergeAthletesModal({ onClose }: { onClose: () => void }) {
@@ -187,7 +194,12 @@ function MergeAthletesModal({ onClose }: { onClose: () => void }) {
 }
 
 // ---------- Revoke membership confirmation modal (W13 task 6) ----------
-function RevokeMembershipModal({ person, seasonId, onClose }: { person: Athlete; seasonId: string; onClose: () => void }) {
+// T2 (typed-membership residuals): revokes ONLY the given type's row — athlete
+// and coach memberships are independent per season, so this must not touch
+// the other type's row.
+function RevokeMembershipModal({ person, seasonId, type, onClose }: {
+  person: Athlete; seasonId: string; type: MembershipType; onClose: () => void;
+}) {
   const toast = useToast();
   const [confirmed, setConfirmed] = useState(false);
 
@@ -195,33 +207,40 @@ function RevokeMembershipModal({ person, seasonId, onClose }: { person: Athlete;
     const applied = mutate((d) => {
       const dp = d.people.find((x) => x.id === person.id);
       if (!dp) return;
-      const m = dp.memberships.find((x) => x.seasonId === seasonId);
+      const m = dp.memberships.find((x) => x.seasonId === seasonId && membershipTypeOf(x) === type);
       if (m) {
         // Remove the membership — revoke means remove, not just mark inactive.
-        dp.memberships = dp.memberships.filter((x) => x.seasonId !== seasonId);
+        // Filter by (seasonId, type) ONLY — the other type's row for this
+        // season, if any, must survive.
+        dp.memberships = dp.memberships.filter((x) => !(x.seasonId === seasonId && membershipTypeOf(x) === type));
         // Push the updated person (removes membership server-side via replace).
         pushMembership(person.id, { ...m, status: 'none' });
       }
     });
     if (!applied) return; // offline read-only gate — no false success toast
-    toast(`Membership revoked for ${person.firstName} ${person.lastName}.`);
+    toast(`${membershipTypeLabel(type)} membership revoked for ${person.firstName} ${person.lastName}.`);
     onClose();
   };
 
   return (
-    <Modal title="Revoke membership" onClose={onClose}>
+    <Modal title={`Revoke ${membershipTypeLabel(type).toLowerCase()} membership`} onClose={onClose}>
       <p style={{ fontSize: 14, color: 'var(--ink-soft)', marginTop: 0 }}>
         <strong>Warning:</strong> This removes <strong>{person.firstName} {person.lastName}</strong>'s
-        membership for this season. They will be removed from all future registered competitions
-        in this season. This action cannot be easily undone — the member would need to re-register.
+        {' '}{membershipTypeLabel(type).toLowerCase()} membership for this season.
+        {type === 'athlete'
+          ? ' They will be removed from all future registered competitions in this season.'
+          : ' Their athlete registrations, if any, are unaffected.'}
+        {' '}This action cannot be easily undone — the member would need to re-register.
       </p>
       <label className="checkrow" style={{ margin: '12px 0' }}>
         <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
-        I understand this removes them from all future competitions this season.
+        {type === 'athlete'
+          ? 'I understand this removes them from all future competitions this season.'
+          : 'I understand this revokes their coach membership for this season.'}
       </label>
       <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
         <button className="btn danger" disabled={!confirmed} onClick={doRevoke}>
-          Revoke membership
+          Revoke {membershipTypeLabel(type).toLowerCase()} membership
         </button>
         <button className="btn ghost" onClick={onClose}>Cancel</button>
       </div>
@@ -277,7 +296,7 @@ export function AdminMembers() {
   const [editing, setEditing] = useState<Athlete | 'new' | null>(null);
   const [showMerge, setShowMerge] = useState(false);
   // W13 task 6: revoke confirmation
-  const [revoking, setRevoking] = useState<{ person: Athlete; seasonId: string } | null>(null);
+  const [revoking, setRevoking] = useState<{ person: Athlete; seasonId: string; type: MembershipType } | null>(null);
   // Auth-hardening Phase B: admin break-glass MFA reset confirmation
   const [resettingMfa, setResettingMfa] = useState<Athlete | null>(null);
   const season = db.seasons.find((s) => s.current)!;
@@ -331,6 +350,12 @@ To activate it, sign up using <strong>this email address</strong> (${escapeHtml(
       return;
     }
     const invite: AccountInvite = {
+      // react-hooks/purity false positive: this line only ever runs inside
+      // this async onClick-triggered handler, never during render — but the
+      // rule's whole-component reachability heuristic starts flagging it once
+      // the component's `rows` memo shape grows more elaborate (T2,
+      // typed-membership residuals — unrelated to this pre-existing code).
+      // eslint-disable-next-line react-hooks/purity
       id: `inv-${Date.now()}-${p.id.slice(0, 8)}`,
       personId: p.id,
       email: p.email,
@@ -358,15 +383,37 @@ To activate it, sign up using <strong>this email address</strong> (${escapeHtml(
       : `Resend failed: ${res.error ?? 'unknown error'}.`);
   };
 
+  // Precomputed here (inside the memo, not the JSX-mapping render callback
+  // below) so the per-row `roles`/`typeRows` derivation (T2, typed-membership
+  // residuals) stays alongside the rest of the row's derived view-model.
   const rows = useMemo(() => db.people
     .filter((p) => {
-      const m = p.memberships.find((x) => x.seasonId === season.id);
-      const status = m?.status === 'active' ? 'active' : m?.status === 'pending-club-payment' ? 'pending' : 'none';
+      const seasonMemberships = p.memberships.filter((x) => x.seasonId === season.id);
+      // Filter semantics (T2, typed-membership residuals): a person counts as
+      // 'active' for this coarse dropdown if ANY type (athlete or coach) is
+      // active for the season; 'pending' if any type is pending-club-payment
+      // (and none active); else 'none'. The Membership column below shows the
+      // full per-type breakdown.
+      const status = seasonMemberships.some((x) => x.status === 'active')
+        ? 'active'
+        : seasonMemberships.some((x) => x.status === 'pending-club-payment')
+          ? 'pending'
+          : 'none';
       if (filter !== 'all' && status !== filter) return false;
       const club = db.clubs.find((c) => c.id === p.mainClubId);
       return (p.firstName + ' ' + p.lastName + ' ' + p.email + ' ' + (club?.name ?? '')).toLowerCase().includes(q.toLowerCase());
     })
-    .sort((a, b) => a.lastName.localeCompare(b.lastName)), [db, q, filter, season.id]);
+    .sort((a, b) => a.lastName.localeCompare(b.lastName))
+    .map((p) => {
+      const roles = localEffectiveRoles(p);
+      const typeRows = (['athlete', 'coach'] as MembershipType[])
+        .filter((t) => roles[t])
+        .map((type) => ({
+          type,
+          m: p.memberships.find((x) => x.seasonId === season.id && membershipTypeOf(x) === type),
+        }));
+      return { p, roles, typeRows };
+    }), [db, q, filter, season.id]);
 
   return (
     <div>
@@ -402,8 +449,7 @@ To activate it, sign up using <strong>this email address</strong> (${escapeHtml(
             </tr>
           </thead>
           <tbody>
-            {rows.slice(0, 120).map((p) => {
-              const m = p.memberships.find((x) => x.seasonId === season.id);
+            {rows.slice(0, 120).map(({ p, roles, typeRows }) => {
               const club = db.clubs.find((c) => c.id === p.mainClubId);
               const isAdminUser = !!p.authUserId && adminUserIds.has(p.authUserId);
               const hasPendingInvite = (db.accountInvites ?? []).some(
@@ -412,27 +458,44 @@ To activate it, sign up using <strong>this email address</strong> (${escapeHtml(
               return (
                 <tr key={p.id}>
                   <td><Link to={`/admin/members/${p.id}`} style={{ fontWeight: 600 }}>{p.lastName}, {p.firstName}</Link></td>
-                  <td>{p.kind === 'coach' ? <Badge tone="navy">Coach</Badge> : 'Athlete'}</td>
+                  {/* Type column: derived from p.roles (fallback p.kind) — same
+                      rule as Profile's admin header (effectiveRoles/
+                      adminRoleLabel) — rather than the raw legacy p.kind, so a
+                      dual-role member reads as "Athlete/Coach" (T2). */}
+                  <td>
+                    {roles.coach && <Badge tone="navy">Coach</Badge>}
+                    {roles.coach && roles.athlete && ' '}
+                    {roles.athlete && (roles.coach ? <Badge tone="info">Athlete</Badge> : 'Athlete')}
+                  </td>
                   <td style={{ fontSize: 13.5 }}>{club?.name ?? <em>Independent</em>}</td>
                   <td>{club?.region ?? STATE_REGIONS[p.state] ?? 'Other'}</td>
                   <td>
-                    {m?.status === 'active' ? (
-                      <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
-                        <Badge tone="ok">Active</Badge>
-                        {/* W13 task 6: revoke via confirmation modal */}
-                        <button
-                          className="btn small ghost"
-                          style={{ fontSize: 11, padding: '1px 6px' }}
-                          onClick={() => setRevoking({ person: p, seasonId: season.id })}
-                        >
-                          Revoke
-                        </button>
-                      </span>
-                    ) : m?.status === 'pending-club-payment' ? (
-                      <Badge tone="warn">Pending</Badge>
-                    ) : (
-                      <Badge tone="err">None</Badge>
-                    )}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {typeRows.map(({ type, m }) => (
+                        <span key={type} style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                          {typeRows.length > 1 && (
+                            <span style={{ fontSize: 11, color: 'var(--ink-soft)' }}>{membershipTypeLabel(type)}:</span>
+                          )}
+                          {m?.status === 'active' ? (
+                            <>
+                              <Badge tone="ok">Active</Badge>
+                              {/* W13 task 6: revoke via confirmation modal */}
+                              <button
+                                className="btn small ghost"
+                                style={{ fontSize: 11, padding: '1px 6px' }}
+                                onClick={() => setRevoking({ person: p, seasonId: season.id, type })}
+                              >
+                                Revoke
+                              </button>
+                            </>
+                          ) : m?.status === 'pending-club-payment' ? (
+                            <Badge tone="warn">Pending</Badge>
+                          ) : (
+                            <Badge tone="err">None</Badge>
+                          )}
+                        </span>
+                      ))}
+                    </div>
                   </td>
                   <td style={{ fontSize: 12.5 }}>
                     {!p.authUserId ? (
@@ -489,6 +552,7 @@ To activate it, sign up using <strong>this email address</strong> (${escapeHtml(
         <RevokeMembershipModal
           person={revoking.person}
           seasonId={revoking.seasonId}
+          type={revoking.type}
           onClose={() => setRevoking(null)}
         />
       )}
