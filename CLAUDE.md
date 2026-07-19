@@ -206,7 +206,7 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
 
 ## Docs
 - `README.md` overview; `docs/README.md` index; **`docs/whats-next.md` = the
-  authoritative open-work list** (moved out of docs/README.md 2026-07-16);
+  authoritative open-work list** (reconciled 2026-07-19; completed items archived);
   `supabase/README.md` backend schema/RLS/migration table; `docs/specs/` design
   specs; `docs/plans/` implementation plans (do NOT recreate `docs/superpowers/`);
   `docs/stripe-go-live-checklist.md`.
@@ -495,7 +495,7 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   `true` EXCEPT anyone who'd already sent a STOP reply (matched against `sms_messages`).
 ## Deferred / TODO
 **The single authoritative open-work list is `docs/whats-next.md`** (reconciled
-2026-07-16) — update it there; don't grow a rival list here. Operative notes only:
+2026-07-19) — update it there; don't grow a rival list here. Operative notes only:
 - **Event management v2 (Julia's 2026-07-06 requirements) is COMPLETE** — P0–P6 all
   shipped to main + prod (last: P6 finance dashboards, 2026-07-16). Spec:
   `docs/specs/2026-07-06-event-management-v2-requirements.md`; phase-by-phase history

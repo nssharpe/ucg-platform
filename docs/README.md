@@ -7,12 +7,12 @@ Live build/tooling notes live in [`../CLAUDE.md`](../CLAUDE.md); open work is
 
 > **Status legend:** ✅ shipped to `main` (live) · 🟡 partial / on a branch ·
 > 📘 reference (ongoing) · 📓 research (informational, not a commitment).
-> Last reconciled with the codebase: **2026-07-16**.
+> Last reconciled with the codebase: **2026-07-19**.
 
 ## Reference docs
 - [`whats-next.md`](whats-next.md) — **the authoritative open-work list** (Nate
   actions, launch blockers, quality passes, emv2 residuals, feature roadmap,
-  proposed additions); reconciled 2026-07-16. Update it there, not rival copies.
+  proposed additions); reconciled 2026-07-19. Update it there, not rival copies.
 - [`production-readiness.md`](production-readiness.md) — **gap analysis by dimension**
   (UX, security, reliability, observability, legal) with steps split between Nate and
   Claude. The ordered list of what to do next is [`whats-next.md`](whats-next.md).
