@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
-import { clubHasActiveMembership, clubHasActiveMembershipForEvent, seasonForDate, membershipHolds, paidRegistrationClub } from '../lib/capabilities-core';
+import { clubHasActiveMembership, clubHasActiveMembershipForEvent, seasonForDate, membershipHolds, membershipTypeOf, paidRegistrationClub } from '../lib/capabilities-core';
 import { purchasableSeasons, isFutureSeason } from '../lib/season-lifecycle';
 import { eventIsInPhase, canStillEditRegistration, eventIsRefundEligible } from '../lib/events-core';
 import { Badge, Combo, Field, Modal } from '../components/ui';
@@ -1096,8 +1096,12 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
 
   const regsFor = (athleteId: string) => allRegs.filter((r) => r.athleteId === athleteId);
   const hasActiveReg = (athleteId: string) => regsFor(athleteId).length > 0;
+  // Registering to compete requires an ACTIVE ATHLETE-type membership — a
+  // coach-only membership does not qualify (typed-membership residuals, T1).
   const hasMembership = (athlete: Athlete) =>
-    !!athlete.memberships.find((m) => m.seasonId === season?.id && m.status === 'active');
+    !!athlete.memberships.find(
+      (m) => m.seasonId === season?.id && m.status === 'active' && membershipTypeOf(m) === 'athlete',
+    );
 
   // Split athletes into three groups
   const registered = athletes.filter((a) => hasActiveReg(a.id));
@@ -1889,9 +1893,10 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
       {/* Card 3: Members without membership */}
       {canManage && withoutMembership.length > 0 && (
         <div className="card card-pad" style={{ marginBottom: 18 }}>
-          <h3 className="card-title">No membership ({withoutMembership.length})</h3>
+          <h3 className="card-title">No athlete membership ({withoutMembership.length})</h3>
           <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 12 }}>
-            These athletes need an active membership before they can register for an event.{' '}
+            These athletes need an active ATHLETE membership before they can register for an event — a coach
+            membership alone doesn't qualify.{' '}
             <Link to="/membership">View membership options →</Link>
           </p>
           <table className="tbl">

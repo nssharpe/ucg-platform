@@ -5,6 +5,8 @@ import { Stat, Badge } from '../components/ui';
 import { useFmtDate } from '../components/ui-hooks';
 import { fmtMoney } from '../lib/scoring';
 import { deriveEventPhase, eventIsInPhase, type EventPhaseInput } from '../lib/events-core';
+import { offeredMembershipTypes } from '../lib/pricing';
+import { membershipTypeOf } from '../lib/capabilities-core';
 import logotypeAlt2 from '../assets/brand/logotype-alt2.svg';
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -352,7 +354,19 @@ function AthleteDashboard() {
   const season = db.seasons.find((s) => s.current)!;
   if (!me) return null;
 
-  const membership = me.memberships.find((m) => m.seasonId === season.id);
+  // Per-type rows for the "Hi {name}" card — a dual-role person's coach and
+  // athlete memberships are independent and must be shown separately (a
+  // single first-match badge would misreport a coach-only-active member as
+  // "no membership" or vice versa; typed-membership residuals T1).
+  const membershipItems = offeredMembershipTypes(
+    me.roles ?? { athlete: me.kind !== 'coach', coach: me.kind === 'coach' },
+  ).map((type) => ({
+    type,
+    label: type === 'coach' ? 'Coach' : 'Athlete',
+    row: me.memberships.find((m) => m.seasonId === season.id && membershipTypeOf(m) === type),
+  }));
+  const allMembershipsActive = membershipItems.length > 0
+    && membershipItems.every((it) => it.row?.status === 'active');
   const myRegs = db.registrations.filter((r) => r.athleteId === me.id && !r.refunded);
   const openEvents = db.events.filter((m) => eventIsInPhase(m, 'reg-open'));
 
@@ -362,14 +376,20 @@ function AthleteDashboard() {
 
   return (
     <>
-      {/* Membership CTA — prominent if no membership */}
-      {(!membership || membership.status !== 'active') && (
+      {/* Membership CTA — prominent unless the person can register to compete
+          (requires an ACTIVE ATHLETE membership; a coach membership alone
+          does not confer it, typed-membership residuals T1). */}
+      {!caps.canRegister && (
         <div className="card card-pad" style={{ marginBottom: 16, borderLeft: '4px solid var(--coral-500)' }}>
-          <h3 className="card-title">Get your {season.name} membership</h3>
+          <h3 className="card-title">Get your {season.name} athlete membership</h3>
           <p style={{ marginTop: 0, color: 'var(--ink-soft)' }}>
-            You need an active membership to register for events and compete.
+            {caps.coachMembership?.status === 'active'
+              ? 'Your coach membership is active, but you need an active ATHLETE membership to register for events and compete.'
+              : 'You need an active athlete membership to register for events and compete.'}
           </p>
-          <Link className="btn primary" to="/membership">Register for membership →</Link>
+          <Link className="btn primary" to="/membership">
+            {caps.coachMembership?.status === 'active' ? 'Add athlete membership →' : 'Register for membership →'}
+          </Link>
         </div>
       )}
 
@@ -377,22 +397,27 @@ function AthleteDashboard() {
         {/* Profile card */}
         <div className="card card-pad">
           <h3 className="card-title">Hi {me.firstName}</h3>
-          {membership?.status === 'active' ? (
-            <p style={{ marginTop: 0 }}>
-              <Badge tone="ok">✓ {season.name} member</Badge>
-              {membership.waiverSignedAt && (
-                <span style={{ color: 'var(--ink-soft)', fontSize: 13, marginLeft: 8 }}>
-                  Waiver signed {membership.waiverSignedAt.slice(0, 10)}
-                </span>
-              )}
-            </p>
-          ) : (
-            <p style={{ marginTop: 0 }}>
-              <Badge tone={membership?.status === 'pending-club-payment' ? 'warn' : 'err'}>
-                {membership?.status === 'pending-club-payment' ? 'Pending club payment' : 'No membership'}
-              </Badge>
-            </p>
-          )}
+          <p style={{ marginTop: 0, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+            {membershipItems.map((it) => (
+              <span key={it.type} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                {membershipItems.length > 1 && (
+                  <span style={{ fontSize: 12, color: 'var(--ink-soft)' }}>{it.label}:</span>
+                )}
+                {it.row?.status === 'active' ? (
+                  <Badge tone="ok">✓ {season.name} member</Badge>
+                ) : (
+                  <Badge tone={it.row?.status === 'pending-club-payment' ? 'warn' : 'err'}>
+                    {it.row?.status === 'pending-club-payment' ? 'Pending club payment' : 'No membership'}
+                  </Badge>
+                )}
+                {it.row?.waiverSignedAt && (
+                  <span style={{ color: 'var(--ink-soft)', fontSize: 13 }}>
+                    Waiver signed {it.row.waiverSignedAt.slice(0, 10)}
+                  </span>
+                )}
+              </span>
+            ))}
+          </p>
 
           {(mainClub || altClubs.length > 0) && (
             <div style={{ marginBottom: 12 }}>
@@ -411,7 +436,7 @@ function AthleteDashboard() {
 
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <Link className="btn primary" to="/membership">
-              {membership?.status === 'active' ? 'View membership' : 'Purchase membership →'}
+              {allMembershipsActive ? 'View membership' : 'Purchase membership →'}
             </Link>
             <Link className="btn ghost" to="/me">View profile</Link>
           </div>
@@ -468,7 +493,11 @@ function AthleteDashboard() {
                 {caps.canRegister ? (
                   <Link className="btn small primary" to={`/events/${m.slug}`}>Register →</Link>
                 ) : (
-                  <span style={{ fontSize: 13, color: 'var(--ink-soft)' }}>Membership required to register</span>
+                  <span style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
+                    {caps.coachMembership?.status === 'active'
+                      ? 'Athlete membership required to register'
+                      : 'Membership required to register'}
+                  </span>
                 )}
               </div>
             ))}

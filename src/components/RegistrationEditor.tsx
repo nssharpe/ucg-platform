@@ -33,6 +33,7 @@ import { changeIsEligible, regChangeHasDiff } from '../lib/pricing';
 import type { RegChangeState, RegDisciplineEntry } from '../lib/pricing';
 import { checkCapacity, hasCapacityConfig } from '../lib/capacity';
 import type { CapacityViolation } from '../lib/capacity';
+import { membershipTypeOf } from '../lib/capabilities-core';
 
 // Impure read lives at MODULE scope, outside React render — react-hooks/purity
 // only governs component/hook bodies (same pattern as Sanction.tsx's
@@ -106,10 +107,14 @@ function DiscSection({ disc, event, athlete, levels, draft, onChange, allAthlete
   // SY (Synchro) is an event within TNT, not its own discipline
   const synchroSelected = isTNT && draft.apparatus.includes('SY');
 
-  // Athletes with active memberships for the partner combo
+  // Athletes with an active ATHLETE-type membership for the partner combo —
+  // a coach-only membership doesn't make someone eligible to compete
+  // (typed-membership residuals T1).
   const partnerOptions = useMemo(() => {
     return allAthletes
-      .filter((a) => a.id !== athlete.id && a.memberships.some((m) => m.seasonId === season.id && m.status === 'active'))
+      .filter((a) => a.id !== athlete.id && a.memberships.some(
+        (m) => m.seasonId === season.id && m.status === 'active' && membershipTypeOf(m) === 'athlete',
+      ))
       .map((a) => ({ value: a.id, label: `${a.firstName} ${a.lastName}`, sub: a.email }));
   }, [allAthletes, athlete.id, season.id]);
 

@@ -141,6 +141,49 @@ const pAthleteActive = makePerson({
 });
 const pAthleteNone = makePerson({ id: 'p-athlete-none', kind: 'athlete', firstName: 'NoMembership' });
 
+// Typed-membership residuals (T1) fixtures: a coach-ONLY active member (no
+// athlete row at all), and a dual-role person with BOTH types active.
+const pCoachActiveOnly = makePerson({
+  id: 'p-coach-active-only',
+  kind: 'coach',
+  roles: { athlete: false, coach: true },
+  firstName: 'CoachOnly',
+  memberships: [
+    {
+      seasonId: 's1',
+      type: 'coach',
+      status: 'active',
+      waiverSignedAt: '2025-07-15',
+      waiverSignedBy: 'self',
+      paidVia: 'card',
+    },
+  ],
+});
+const pDualActive = makePerson({
+  id: 'p-dual-active',
+  kind: 'athlete',
+  roles: { athlete: true, coach: true },
+  firstName: 'Dual',
+  memberships: [
+    {
+      seasonId: 's1',
+      type: 'athlete',
+      status: 'active',
+      waiverSignedAt: '2025-07-15',
+      waiverSignedBy: 'self',
+      paidVia: 'card',
+    },
+    {
+      seasonId: 's1',
+      type: 'coach',
+      status: 'active',
+      waiverSignedAt: '2025-07-15',
+      waiverSignedBy: 'self',
+      paidVia: 'card',
+    },
+  ],
+});
+
 const clubA = makeClub({ id: 'club-A', name: 'Club A', shortName: 'CA', managerIds: ['p-coach'] });
 const clubB = makeClub({ id: 'club-B', name: 'Club B', shortName: 'CB', managerIds: [] });
 
@@ -149,7 +192,7 @@ const meetClubB = makeEvent({ id: 'meet-clubB', slug: 'meet-clubb', name: 'Event
 
 const db = makeDb({
   seasons: [s1],
-  people: [pAdmin, pCoach, pAthleteActive, pAthleteNone],
+  people: [pAdmin, pCoach, pAthleteActive, pAthleteNone, pCoachActiveOnly, pDualActive],
   clubs: [clubA, clubB],
   events: [meet1, meetClubB],
 });
@@ -257,6 +300,50 @@ describe('deriveCapabilities', () => {
     expect(caps.person).toBeNull();
     expect(caps.canRegister).toBe(false);
     expect(caps.managedClubIds).toEqual([]);
+  });
+
+  describe('8. typed-membership residuals (T1): registering requires an ATHLETE-type membership', () => {
+    it('coach-only member (active coach row, no athlete row) CANNOT register', () => {
+      const caps = deriveCapabilities(db, true, [], 'p-coach-active-only', null, 's1');
+
+      expect(caps.canRegister).toBe(false);
+      expect(caps.athleteMembership).toBeNull();
+    });
+
+    it('coach-only member still shows their ACTIVE coach membership (display unaffected)', () => {
+      const caps = deriveCapabilities(db, true, [], 'p-coach-active-only', null, 's1');
+
+      expect(caps.coachMembership?.status).toBe('active');
+      // Generic "any membership" summary falls back to the coach row when
+      // there's no athlete row.
+      expect(caps.currentMembership).toBe('active');
+    });
+
+    it('athlete-only member (active athlete row) CAN register', () => {
+      const caps = deriveCapabilities(db, true, [], 'p-athlete-active', null, 's1');
+
+      expect(caps.canRegister).toBe(true);
+      expect(caps.athleteMembership?.status).toBe('active');
+      expect(caps.coachMembership).toBeNull();
+    });
+
+    it('dual-role member with BOTH types active CAN register and shows both rows', () => {
+      const caps = deriveCapabilities(db, true, [], 'p-dual-active', null, 's1');
+
+      expect(caps.canRegister).toBe(true);
+      expect(caps.athleteMembership?.status).toBe('active');
+      expect(caps.coachMembership?.status).toBe('active');
+    });
+
+    it('a membership row with no `type` (legacy data) is treated as an athlete row', () => {
+      // pAthleteActive's fixture membership omits `type` entirely — this
+      // mirrors real pre-typed-membership data (DB column defaults to
+      // 'athlete'). Confirms canRegister still gates correctly on it.
+      const caps = deriveCapabilities(db, true, [], 'p-athlete-active', null, 's1');
+
+      expect(caps.athleteMembership).not.toBeNull();
+      expect(caps.canRegister).toBe(true);
+    });
   });
 });
 
