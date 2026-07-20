@@ -87,13 +87,17 @@ export function Seasons() {
   const ucgCell = (db: DB, s: Season, which: 'flipfest' | 'nationals') => {
     const existing = findUcgEvent(db, s, which);
     const to = `/admin/ucg-event/${which}/${s.id}`;
-    return existing
-      ? <Link className="btn small ghost" to={to}>Edit</Link>
-      : <Link className="btn small primary" to={to}>Create</Link>;
+    if (existing) return <Link className="btn small ghost" to={to}>Edit</Link>;
+    // No instance and the season already ended — nothing to create anymore.
+    if (s.endsOn < today) return <span style={{ color: 'var(--ink-soft)' }}>—</span>;
+    return <Link className="btn small primary" to={to}>Create</Link>;
   };
 
   return (
     <div className="card" style={{ overflow: 'hidden' }}>
+      {/* The table is wider than a phone — scroll it inside the card rather
+          than letting it stretch the page. */}
+      <div style={{ overflowX: 'auto' }}>
       <table className="tbl">
         <thead>
           <tr>
@@ -223,6 +227,7 @@ export function Seasons() {
           })}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

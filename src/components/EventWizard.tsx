@@ -519,7 +519,9 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
 
       {sectionTitle('Dates')}
       <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '0 0 8px' }}>
-        Dates &amp; times are in the time zone of the event location.
+        {isUcgHosted
+          ? 'All dates & times for UCG-hosted events are in Pacific Time (America/Los_Angeles).'
+          : 'Dates & times are in the time zone of the event location.'}
       </p>
       <div className="grid cols-3">
         <Field label="Start date"><input className="input" type="date" value={startDate} onChange={(e) => changeStart(e.target.value)} /></Field>

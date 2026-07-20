@@ -43,7 +43,9 @@ export function AdminMfaNag() {
     // contrast than coral does.
     <div
       className="badge err"
-      style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderRadius: 6, marginBottom: 16 }}
+      // whiteSpace overrides .badge's nowrap — the sentence must wrap on phones
+      // instead of stretching the page sideways.
+      style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderRadius: 6, marginBottom: 16, whiteSpace: 'normal' }}
     >
       <span style={{ flex: 1 }}>
         League admin accounts must enable two-factor authentication —{' '}

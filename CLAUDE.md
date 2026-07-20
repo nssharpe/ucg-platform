@@ -108,7 +108,9 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   `supabase/migrations/` — **the authoritative migration list + per-migration narrative +
   schema/RLS model is `supabase/README.md`**; keep its table updated with every migration
   (detail goes THERE, not here). All migrations through
-  `20260718200055_season_launched_at.sql` are applied (staging + prod). Security hardening:
+  `20260720142948` are applied (staging + prod); `20260720212144_events_ucg_hosted.sql`
+  is applied to STAGING only — prod `supabase db push` is on Nate (in-session CLI
+  pushes to prod were classifier-blocked 2026-07-20). Security hardening:
   Phase 1+2 applied; Phase 3 TODO (`docs/plans/2026-07-02-security-hardening.md`).
 - New migrations: `supabase migration new <name>` (timestamp filename format is required).
   Apply via `supabase db push` — network is sandbox-blocked, run with sandbox disabled.
