@@ -8,16 +8,17 @@ import { sha256Hex, nextVersion, certificateText } from '../../../lib/waivers-co
 import { downloadWaiverProof, formatSignedAt } from '../../../lib/waiver-proof';
 import { sanitizeWaiverHtml } from '../../../lib/sanitize-html';
 import { pushWaiverDocument } from '../../../lib/supabase';
+import { currentSeason } from '../../../lib/season-lifecycle';
 
 // ---------- Waivers ----------
 export function Waivers() {
   const db = useDB();
   const toast = useToast();
-  const currentSeason = db.seasons.find((s) => s.current) ?? db.seasons[0];
-  const [selectedSeasonId, setSelectedSeasonId] = useState(currentSeason?.id ?? '');
+  const activeSeason = currentSeason(db) ?? db.seasons[0];
+  const [selectedSeasonId, setSelectedSeasonId] = useState(activeSeason?.id ?? '');
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [signedQ, setSignedQ] = useState('');
-  const selectedSeason = db.seasons.find((s) => s.id === selectedSeasonId) ?? currentSeason;
+  const selectedSeason = db.seasons.find((s) => s.id === selectedSeasonId) ?? activeSeason;
 
   const docsFor = (t: WaiverType): WaiverDocument[] =>
     (db.waiverDocuments ?? [])
@@ -65,7 +66,7 @@ export function Waivers() {
           <select className="input" style={{ maxWidth: 200 }} value={selectedSeasonId}
             onChange={(e) => setSelectedSeasonId(e.target.value)}>
             {db.seasons.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}{s.current ? ' (current)' : ''}</option>
+              <option key={s.id} value={s.id}>{s.name}{s.id === activeSeason?.id ? ' (current)' : ''}</option>
             ))}
           </select>
         </Field>

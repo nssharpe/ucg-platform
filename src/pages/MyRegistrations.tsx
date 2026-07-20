@@ -19,6 +19,7 @@ import { RefundRequestDialog, type RefundRequestItem } from '../components/Refun
 import { SessionRequestSurveyCard } from '../components/SessionRequestSurvey';
 import { NationalsDashboard } from '../components/NationalsDashboard';
 import { EventCheckinCard } from '../components/EventCheckinCard';
+import { currentSeason } from '../lib/season-lifecycle';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -103,7 +104,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
     (db.carts[personId] ?? []).find((c) => c.kind === 'meet-entry' && c.label.startsWith(changeFeeLabel(event.name)));
   const changeFeePending = (event: Event) => !!changeFeePendingItem(event);
 
-  const season = db.seasons.find((s) => s.current)!;
+  const season = currentSeason(db)!;
 
   // Leave waitlist (event-mgmt v2 P4 T6, self-serve): cancels the reg's
   // waitlist group (status → 'cancelled' — the only client-writable

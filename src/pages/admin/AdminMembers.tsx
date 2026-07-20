@@ -11,6 +11,7 @@ import { fetchAllRoles, pushAccountInvite, pushClubManager, pushMembership, push
 import { escapeHtml } from '../../lib/sanitize-html';
 import { useCapabilities } from '../../lib/capabilities';
 import { membershipTypeOf } from '../../lib/capabilities-core';
+import { currentSeason } from '../../lib/season-lifecycle';
 
 const membershipTypeLabel = (t: MembershipType) => (t === 'coach' ? 'Coach' : 'Athlete');
 function localEffectiveRoles(p: Athlete): { athlete: boolean; coach: boolean } {
@@ -299,7 +300,7 @@ export function AdminMembers() {
   const [revoking, setRevoking] = useState<{ person: Athlete; seasonId: string; type: MembershipType } | null>(null);
   // Auth-hardening Phase B: admin break-glass MFA reset confirmation
   const [resettingMfa, setResettingMfa] = useState<Athlete | null>(null);
-  const season = db.seasons.find((s) => s.current)!;
+  const season = currentSeason(db)!;
 
   // Admin grants: which auth users hold the 'admin' role (admin reads all rows).
   const [adminUserIds, setAdminUserIds] = useState<Set<string>>(new Set());

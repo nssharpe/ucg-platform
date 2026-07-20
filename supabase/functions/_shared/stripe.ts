@@ -43,25 +43,33 @@ export function processingFee(subtotalCents: number): number {
 }
 
 /** Minimal season slice the membership pricing needs (snake_case DB columns).
- *  `current`/`launched_at` back the F6 season-lifecycle purchase gate below —
- *  mirrors `seasonIsLaunched`/`purchasableSeasons` in src/lib/season-lifecycle.ts
- *  (re-implemented, not imported — same reason as the rest of this file). */
+ *  `starts_on`/`ends_on`/`active` back the date-derived purchase gate below
+ *  (P3 2026-07-20 — "current"/"launched" are no longer stored flags) —
+ *  mirrors `purchasableSeasons`/`isFutureSeason` in
+ *  src/lib/season-lifecycle.ts (re-implemented, not imported — same reason as
+ *  the rest of this file). */
 export interface SeasonFees {
   id: string;
   name: string;
   athlete_fee: number;
   coach_fee: number;
   club_fee: number;
-  current: boolean;
-  launched_at: string | null;
+  active: boolean;
+  starts_on: string;
+  ends_on: string;
 }
 
-/** F6: a membership line may only target the CURRENT season or a LAUNCHED
- *  future season — never an unlaunched future season or a past season an
- *  admin never flagged current/launched (defense in depth; the client UI
- *  already restricts the offered seasons to this same set). */
-export function seasonPurchasableForCheckout(season: SeasonFees): boolean {
-  return season.current || !!season.launched_at;
+/** P3: a membership line may only target a season that's current-by-date
+ *  (today falls in [starts_on, ends_on]) or a FUTURE season (starts_on after
+ *  today) flagged `active` — never a past season, regardless of `active`
+ *  (defense in depth; the client UI already restricts the offered seasons to
+ *  this same set). `todayISO` is injectable for tests; defaults to now. */
+export function seasonPurchasableForCheckout(season: SeasonFees, todayISO?: string): boolean {
+  const d = (todayISO ?? new Date().toISOString()).slice(0, 10);
+  const currentByDate = !!(season.starts_on && season.ends_on && d >= season.starts_on && d <= season.ends_on);
+  if (currentByDate) return true;
+  const isFuture = !!(season.starts_on && season.starts_on > d);
+  return isFuture && season.active;
 }
 
 /** Minimal membership slice the pricing needs (snake_case DB columns). */

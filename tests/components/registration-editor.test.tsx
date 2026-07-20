@@ -22,7 +22,7 @@ function level(overrides: Partial<Level> = {}): Level {
 
 const season: Season = {
   id: 's26', name: '2025–26', startsOn: '2025-07-01', endsOn: '2026-06-30',
-  athleteFee: 35, coachFee: 20, clubFee: 109, active: true, current: true,
+  athleteFee: 35, coachFee: 20, clubFee: 109, active: true,
 };
 
 function event(overrides: Partial<Event> = {}): Event {

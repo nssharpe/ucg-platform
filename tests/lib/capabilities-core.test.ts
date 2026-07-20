@@ -44,7 +44,6 @@ function makeSeason(overrides: Partial<Season>): Season {
     athleteFee: 45,
     coachFee: 25,
     active: true,
-    current: true,
     ...overrides,
   };
 }
@@ -121,7 +120,7 @@ function makeEvent(overrides: Partial<Event>): Event {
 // clubs: club-A (managerIds: ['p-coach']), club-B (managerIds: [])
 // events: meet-1 (hosted by club-A)
 
-const s1 = makeSeason({ id: 's1', current: true });
+const s1 = makeSeason({ id: 's1' });
 
 const pAdmin = makePerson({ id: 'p-admin', kind: 'coach', firstName: 'Admin' });
 const pCoach = makePerson({ id: 'p-coach', kind: 'coach', firstName: 'Coach' });
@@ -317,7 +316,7 @@ describe('deriveCapabilities', () => {
 });
 
 describe('currentSeasonId', () => {
-  it('7. returns the id of the season flagged current', () => {
+  it('7. returns the id of the (derived) current season', () => {
     expect(currentSeasonId(db)).toBe('s1');
   });
 });

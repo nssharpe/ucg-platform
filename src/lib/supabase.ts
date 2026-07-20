@@ -218,19 +218,20 @@ function remoteReplace(table: string, match: Record<string, unknown>, rows: Reco
 // ---------------------------------------------------------------------------
 // Row mappers — DB row (snake_case, matches 0001_schema.sql) <-> TS shape
 // ---------------------------------------------------------------------------
+// P3 (2026-07-20): the app stops reading/writing `current`/`launched_at` —
+// "current" and "purchasable" are now derived from dates (see
+// src/lib/season-lifecycle.ts). The DB columns stay (no destructive
+// migration); they're just ignored here.
 const seasonToRow = (s: Season) => ({
   id: s.id, name: s.name, starts_on: s.startsOn, ends_on: s.endsOn,
   athlete_fee: s.athleteFee, coach_fee: s.coachFee, club_fee: s.clubFee,
-  active: s.active, current: s.current, launched_at: s.launchedAt ?? null,
+  active: s.active,
 });
-// `launched_at` is not yet in the generated database.types.ts (F6 migration
-// applied after codegen) — same inline-row-type splice pattern as
-// rowToClub/is_league_host above.
-const rowToSeason = (r: Row<'seasons'> & { launched_at?: string | null }): Season => ({
+const rowToSeason = (r: Row<'seasons'>): Season => ({
   id: r.id, name: r.name, startsOn: r.starts_on, endsOn: r.ends_on,
   athleteFee: Number(r.athlete_fee), coachFee: Number(r.coach_fee),
   clubFee: r.club_fee == null ? 109 : Number(r.club_fee),
-  active: r.active, current: r.current, launchedAt: r.launched_at ?? null,
+  active: r.active,
 });
 
 const levelToRow = (l: Level) => ({

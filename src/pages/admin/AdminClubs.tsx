@@ -7,12 +7,13 @@ import { ClubForm } from '../../components/ClubForm';
 import { STATE_REGIONS } from '../../lib/types';
 import type { Club, ClubRequest, Region } from '../../lib/types';
 import { pushClub, pushClubManager, pushClubRequest } from '../../lib/supabase';
+import { currentSeason } from '../../lib/season-lifecycle';
 
 // ---------- Clubs ----------
 export function AdminClubs() {
   const db = useDB();
   const toast = useToast();
-  const season = db.seasons.find((s) => s.current)!;
+  const season = currentSeason(db)!;
   const [editing, setEditing] = useState<Club | 'new' | null>(null);
   const [q, setQ] = useState('');
   const pending = db.clubRequests.filter((r) => r.status === 'pending');

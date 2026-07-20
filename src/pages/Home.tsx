@@ -7,6 +7,7 @@ import { fmtMoney } from '../lib/scoring';
 import { deriveEventPhase, eventIsInPhase, type EventPhaseInput } from '../lib/events-core';
 import { offeredMembershipTypes } from '../lib/pricing';
 import { membershipTypeOf } from '../lib/capabilities-core';
+import { currentSeason } from '../lib/season-lifecycle';
 import logotypeAlt2 from '../assets/brand/logotype-alt2.svg';
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -127,7 +128,8 @@ function Hero() {
 
 function AdminAttentionList() {
   const db = useDB();
-  const season = db.seasons.find((s) => s.current)!;
+  const season = currentSeason(db);
+  if (!season) return <p style={{ color: 'var(--ink-soft)' }}>No active season configured.</p>;
 
   // Under-18 athletes whose current-season membership is awaiting a guardian waiver.
   const pendingWaivers = db.people.filter((p) =>
@@ -186,7 +188,15 @@ function AdminAttentionList() {
 
 function AdminDashboard() {
   const db = useDB();
-  const season = db.seasons.find((s) => s.current)!;
+  const season = currentSeason(db);
+  if (!season) {
+    return (
+      <div className="card card-pad">
+        <h3 className="card-title">No active season</h3>
+        <p style={{ color: 'var(--ink-soft)' }}>There's no membership season configured right now — set one up in League Controls → Seasons &amp; fees.</p>
+      </div>
+    );
+  }
 
   const activeMembers = db.people.filter((p) =>
     p.memberships.some((m) => m.seasonId === season.id && m.status === 'active')
@@ -224,9 +234,10 @@ function AdminDashboard() {
 function ClubManagerCard({ clubId }: { clubId: string }) {
   const db = useDB();
   const fmtDate = useFmtDate();
-  const season = db.seasons.find((s) => s.current)!;
+  const season = currentSeason(db);
   const club = db.clubs.find((c) => c.id === clubId);
   if (!club) return null;
+  if (!season) return null; // no active season configured — nothing to show
 
   const roster = db.people.filter((p) => p.mainClubId === clubId);
   const active = roster.filter((p) => p.memberships.some((m) => m.seasonId === season.id && m.status === 'active'));
@@ -304,9 +315,10 @@ function ClubManagerCard({ clubId }: { clubId: string }) {
 function ClubManagerDashboard() {
   const caps = useCapabilities();
   const db = useDB();
-  const season = db.seasons.find((s) => s.current)!;
+  const season = currentSeason(db);
   const me = caps.person;
   if (!me) return null;
+  if (!season) return null; // no active season configured — nothing to show
 
   const membership = me.memberships.find((m) => m.seasonId === season.id);
 
@@ -351,8 +363,9 @@ function AthleteDashboard() {
   const fmtDate = useFmtDate();
   const caps = useCapabilities();
   const me = caps.person;
-  const season = db.seasons.find((s) => s.current)!;
+  const season = currentSeason(db);
   if (!me) return null;
+  if (!season) return null; // no active season configured — nothing to show
 
   // Per-type rows for the "Hi {name}" card — a dual-role person's coach and
   // athlete memberships are independent and must be shown separately (a

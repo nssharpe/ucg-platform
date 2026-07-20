@@ -10,6 +10,7 @@ import { useSession } from '../lib/auth';
 import { TopbarMembership } from './TopbarMembership';
 import { ReportProblemDialog } from './ReportProblemDialog';
 import { useNavHistory, useGoBack, labelFor } from '../lib/navHistory';
+import { currentSeason } from '../lib/season-lifecycle';
 
 /** "vSHA · YYYY-MM-DD" build stamp shown at the bottom of the sidebar. */
 const buildStampLabel = `v${__BUILD_INFO__.sha} · ${__BUILD_INFO__.date.slice(0, 10)}`;
@@ -111,12 +112,13 @@ export function Layout({ children }: { children: ReactNode }) {
   const goBack = useGoBack(); // null when no prior history
 
   const me = caps.person;
-  const season = db.seasons.find((s) => s.current)!;
+  const season = currentSeason(db);
   const myClubShort = me ? (db.clubs.find((c) => c.id === me.mainClubId)?.shortName
     || db.clubs.find((c) => c.id === me.mainClubId)?.name || 'your club') : 'your club';
   // Per-role membership status for the banner: a person who is an athlete and/or
-  // coach should see each offered type's status separately.
-  const membershipBannerItems = me ? offeredMembershipTypes(
+  // coach should see each offered type's status separately. No badges (rather
+  // than a crash) when no season is configured at all.
+  const membershipBannerItems = (me && season) ? offeredMembershipTypes(
     me.roles ?? { athlete: me.kind !== 'coach', coach: me.kind === 'coach' },
   ).map((type) => ({
     type,
@@ -217,7 +219,7 @@ export function Layout({ children }: { children: ReactNode }) {
           ) : null}
           <span className="crumb">{labelFor(loc.pathname)}</span>
           <div className="topbar-spacer" />
-          {me && (
+          {me && season && (
             <TopbarMembership
               items={membershipBannerItems}
               seasonName={season.name}

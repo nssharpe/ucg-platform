@@ -8,6 +8,7 @@ import { isSupabaseConfigured, sendEmail, sendSms, logComm, fetchCommLog, fetchS
 import { analyzeMessage, normalizeToGsm7 } from '../../lib/sms-segments';
 import { estimateSmsCost, partitionByConsent } from '../../lib/sms-send';
 import { classifyDeliveryStatus } from '../../lib/sms-inbound';
+import { currentSeason } from '../../lib/season-lifecycle';
 
 // ---------- Communicate ----------
 
@@ -21,7 +22,7 @@ interface SendRecord {
 export function Communicate() {
   const db = useDB();
   const toast = useToast();
-  const season = db.seasons.find((s) => s.current)!;
+  const season = currentSeason(db)!;
   // Default to NO audience selected to avoid accidental org-wide sends (2026-06-22).
   const [aud, setAud] = useState({ athletes: false, coaches: false, managers: false, clubEmails: false, withMembership: 'any' as 'any' | 'with' | 'without' });
   const [regions, setRegions] = useState<Region[]>([]);

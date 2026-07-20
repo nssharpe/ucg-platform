@@ -3,6 +3,7 @@
 // importable in a plain Node test environment. The React hooks that feed it the
 // live session/DB/impersonation live in capabilities.ts.
 import type { Athlete, DB, Event, Membership, MembershipStatus, Registration } from './types';
+import { currentSeason } from './season-lifecycle';
 
 export interface Capabilities {
   signedIn: boolean;
@@ -57,8 +58,11 @@ export function membershipTypeOf(m: Pick<Membership, 'type'>): 'athlete' | 'coac
   return m.type === 'coach' ? 'coach' : 'athlete';
 }
 
+/** The current-by-date season's id, or null if none qualifies (see
+ *  `currentSeason` in season-lifecycle.ts — P3 2026-07-20: "current" is no
+ *  longer a stored flag). */
 export function currentSeasonId(db: DB): string | null {
-  return db.seasons.find((s) => s.current)?.id ?? null;
+  return currentSeason(db)?.id ?? null;
 }
 
 /** The season whose [startsOn, endsOn] window contains `dateISO` (YYYY-MM-DD).

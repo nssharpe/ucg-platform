@@ -4,6 +4,7 @@ import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { useRolesLoaded } from '../lib/auth';
 import { seasonForDate, clubHasActiveMembershipForEvent, paidRegistrationClub } from '../lib/capabilities-core';
+import { currentSeason } from '../lib/season-lifecycle';
 import { eventIsInPhase } from '../lib/events-core';
 import { normalizeExternalUrl } from '../lib/url';
 import { Badge, Field, Modal, Tabs } from '../components/ui';
@@ -1901,7 +1902,7 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
   const [pendingRegs, setPendingRegs] = useState<Registration[] | null>(null);
   const [pendingAddonItems, setPendingAddonItems] = useState<CartItem[]>([]);
 
-  const season = db.seasons.find((s) => s.current)!;
+  const season = currentSeason(db)!;
   const existingRegs = db.registrations.filter(
     (r) => r.eventId === event.id && r.athleteId === athlete.id && !r.refunded,
   );
