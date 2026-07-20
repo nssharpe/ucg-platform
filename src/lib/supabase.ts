@@ -218,19 +218,20 @@ function remoteReplace(table: string, match: Record<string, unknown>, rows: Reco
 // ---------------------------------------------------------------------------
 // Row mappers — DB row (snake_case, matches 0001_schema.sql) <-> TS shape
 // ---------------------------------------------------------------------------
+// P3 (2026-07-20): the app stops reading/writing `current`/`launched_at` —
+// "current" and "purchasable" are now derived from dates (see
+// src/lib/season-lifecycle.ts). The DB columns stay (no destructive
+// migration); they're just ignored here.
 const seasonToRow = (s: Season) => ({
   id: s.id, name: s.name, starts_on: s.startsOn, ends_on: s.endsOn,
   athlete_fee: s.athleteFee, coach_fee: s.coachFee, club_fee: s.clubFee,
-  active: s.active, current: s.current, launched_at: s.launchedAt ?? null,
+  active: s.active,
 });
-// `launched_at` is not yet in the generated database.types.ts (F6 migration
-// applied after codegen) — same inline-row-type splice pattern as
-// rowToClub/is_league_host above.
-const rowToSeason = (r: Row<'seasons'> & { launched_at?: string | null }): Season => ({
+const rowToSeason = (r: Row<'seasons'>): Season => ({
   id: r.id, name: r.name, startsOn: r.starts_on, endsOn: r.ends_on,
   athleteFee: Number(r.athlete_fee), coachFee: Number(r.coach_fee),
   clubFee: r.club_fee == null ? 109 : Number(r.club_fee),
-  active: r.active, current: r.current, launchedAt: r.launched_at ?? null,
+  active: r.active,
 });
 
 const levelToRow = (l: Level) => ({
@@ -320,6 +321,7 @@ const eventToRow = (m: Event) => ({
   event_type: m.eventType ?? 'competition', sanction_id: m.sanctionId ?? null,
   camp_config: m.campConfig ?? null,
   kind: m.kind ?? 'standard', nationals_config: m.nationalsConfig ?? null,
+  ucg_hosted: m.ucgHosted ?? null,
   venue: m.venue ?? null, street_address: m.streetAddress ?? null, country: m.country ?? null,
   hotel_link: m.hotelLink ?? null, age_calc_at: m.ageCalcAt || null,
   late_reg: m.lateReg ?? null, director: m.director ?? null, capacity: m.capacity ?? null,
@@ -2215,6 +2217,9 @@ export async function loadAll(): Promise<DB | null> {
       ...(r.sanction_id ? { sanctionId: r.sanction_id } : {}),
       ...(r.camp_config ? { campConfig: r.camp_config as Event['campConfig'] } : {}),
       ...(r.kind && r.kind !== 'standard' ? { kind: r.kind as Event['kind'] } : {}),
+      ...((r as { ucg_hosted?: string | null }).ucg_hosted
+        ? { ucgHosted: (r as { ucg_hosted?: string | null }).ucg_hosted as Event['ucgHosted'] }
+        : {}),
       ...(r.nationals_config ? { nationalsConfig: r.nationals_config as unknown as Event['nationalsConfig'] } : {}),
       ...(r.venue ? { venue: r.venue } : {}),
       ...(r.street_address ? { streetAddress: r.street_address } : {}),

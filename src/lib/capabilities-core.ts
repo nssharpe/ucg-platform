@@ -3,11 +3,12 @@
 // importable in a plain Node test environment. The React hooks that feed it the
 // live session/DB/impersonation live in capabilities.ts.
 import type { Athlete, DB, Event, Membership, MembershipStatus, Registration } from './types';
+import { currentSeason } from './season-lifecycle';
 
 export interface Capabilities {
   signedIn: boolean;
-  /** True when the real signed-in user holds the 'admin' role, regardless of
-   *  impersonation. Use this to show the impersonation ("View as") control. */
+  /** True when the signed-in user holds the 'admin' role. Gates admin powers
+   *  in the UI (admin nav, edit buttons, grant/revoke). */
   isAdmin: boolean;
   /** True when the user is on the Sanctioning Team (or an admin). Gates the
    *  Sanctioning queue / vote pages. Admins are implicitly on the team. */
@@ -22,12 +23,7 @@ export interface Capabilities {
    *  3, spec §H). Admins are NOT implicitly refund managers — page gates use
    *  `isAdmin || isRefundManager` explicitly, matching isFinanceAdmin. */
   isRefundManager: boolean;
-  /** True only when the user is a real admin AND not currently impersonating
-   *  anyone. Use this to gate admin POWERS in the UI (admin nav, edit buttons,
-   *  grant/revoke) so that "View as (person)" faithfully shows what that
-   *  non-admin person would see. */
-  actingAsAdmin: boolean;
-  /** The acting person (impersonated target if an admin is impersonating). */
+  /** The acting (signed-in) person. */
   personId: string | null;
   person: Athlete | null;
   managedClubIds: string[];
@@ -53,7 +49,6 @@ export interface Capabilities {
    *  for the current season. A coach-only membership does NOT grant this —
    *  registering to compete always requires an athlete membership. */
   canRegister: boolean;
-  impersonating: boolean;
 }
 
 /** Treats a membership row with no `type` (legacy data from before typed
@@ -63,8 +58,11 @@ export function membershipTypeOf(m: Pick<Membership, 'type'>): 'athlete' | 'coac
   return m.type === 'coach' ? 'coach' : 'athlete';
 }
 
+/** The current-by-date season's id, or null if none qualifies (see
+ *  `currentSeason` in season-lifecycle.ts — P3 2026-07-20: "current" is no
+ *  longer a stored flag). */
 export function currentSeasonId(db: DB): string | null {
-  return db.seasons.find((s) => s.current)?.id ?? null;
+  return currentSeason(db)?.id ?? null;
 }
 
 /** The season whose [startsOn, endsOn] window contains `dateISO` (YYYY-MM-DD).
@@ -163,15 +161,12 @@ export function paidRegistrationClub(
   return hit ? hit.clubId : null;
 }
 
-/** Derive what the current (possibly impersonated) user can do.
- *  Impersonation only applies when the real user is an admin — a non-admin with
- *  a stray viewPersonId stays themselves. */
+/** Derive what the current signed-in user can do. */
 export function deriveCapabilities(
   db: DB,
   signedIn: boolean,
   roles: string[],
-  authPersonId: string | null,
-  viewPersonId: string | null,
+  personId: string | null,
   seasonId: string | null,
   /** Event ids where the signed-in auth user holds a per-event admin grant
    *  (`event_admins` rows, event-mgmt v2 §C) — makes isEventHost() true for
@@ -185,8 +180,6 @@ export function deriveCapabilities(
   const isFinanceAdmin = roles.includes('finance_admin');
   const isRegionalRep = roles.includes('regional_rep');
   const isRefundManager = roles.includes('refund_manager');
-  const impersonating = isAdmin && !!viewPersonId && viewPersonId !== authPersonId;
-  const personId = impersonating ? viewPersonId : authPersonId;
   const person = personId ? db.people.find((p) => p.id === personId) ?? null : null;
   const managedClubIds = personId
     ? db.clubs.filter((c) => c.managerIds.includes(personId)).map((c) => c.id)
@@ -205,11 +198,9 @@ export function deriveCapabilities(
     isFinanceAdmin,
     isRegionalRep,
     isRefundManager,
-    actingAsAdmin: isAdmin && !impersonating,
     personId,
     person,
     managedClubIds,
-    impersonating,
     isEventHost: (eventId: string) => {
       if (isAdmin) return true;
       if (eventAdminEventIds.includes(eventId)) return true;

@@ -116,10 +116,10 @@ export function useDB(): DB {
   return db;
 }
 
-// ---- Admin impersonation persona ----
-// Which club/athlete an admin is "viewing as". Capabilities (src/lib/capabilities.ts)
-// is the real permission source; this only drives admin impersonation + the
-// unconfigured-prototype identity. null = the default seed persona.
+// ---- Unconfigured-prototype identity ----
+// When Supabase isn't configured (password-gate demo mode), there is no real
+// auth session, so capabilities.ts grants full admin acting as this fixed
+// seed person. See capabilities.ts.
 export interface Persona {
   athleteId: string;
   clubId: string;
@@ -132,47 +132,9 @@ const DEFAULT_PERSONA: Persona = {
   hostClubId: 'club-6', // Ohio State, hosts Midwest Regional
 };
 
-const PERSON_KEY = 'ucg-view-person';
-let viewPersonId: string | null = sessionStorage.getItem(PERSON_KEY);
-const personaListeners = new Set<() => void>();
-
-/** The raw impersonation selection (null = default persona). */
-export function useViewPersonId(): string | null {
-  return useSyncExternalStore(
-    (cb) => { personaListeners.add(cb); return () => personaListeners.delete(cb); },
-    () => viewPersonId,
-  );
-}
-
-export function setViewPersonId(id: string | null) {
-  viewPersonId = id;
-  if (id) sessionStorage.setItem(PERSON_KEY, id);
-  else sessionStorage.removeItem(PERSON_KEY);
-  personaListeners.forEach((l) => l());
-}
-
-/** Non-reactive impersonation selection (null = no impersonation). */
-export function getViewPersonId(): string | null {
-  return viewPersonId;
-}
-
-/** Non-reactive persona snapshot. Falls back to the seed default if the
- *  selected person no longer exists (e.g. after a demo reset). */
+/** The fixed prototype identity (unconfigured-Supabase demo mode only). */
 export function getPersona(): Persona {
-  const person = viewPersonId ? db.people.find((p) => p.id === viewPersonId) : undefined;
-  if (!person) return DEFAULT_PERSONA;
-  return {
-    athleteId: person.id,
-    clubId: person.mainClubId ?? DEFAULT_PERSONA.clubId,
-    hostClubId: DEFAULT_PERSONA.hostClubId,
-  };
-}
-
-/** Reactive persona — tracks both the impersonation selection and DB changes. */
-export function usePersona(): Persona {
-  useViewPersonId();
-  useDB();
-  return getPersona();
+  return DEFAULT_PERSONA;
 }
 
 // ---- Password gate ----

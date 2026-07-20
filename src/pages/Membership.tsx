@@ -10,7 +10,7 @@ import type { Athlete, InvoiceItem, Membership, MembershipType, WaiverDocument }
 import { GENERAL_WAIVER_TYPE } from '../lib/types';
 import { isMinorAt, expectedWaiverSignerName, waiverNameMatches } from '../lib/waivers-core';
 import { membershipHolds } from '../lib/capabilities-core';
-import { purchasableSeasons, isFutureSeason } from '../lib/season-lifecycle';
+import { purchasableSeasons, isFutureSeason, currentSeason } from '../lib/season-lifecycle';
 import { sanitizeWaiverHtml } from '../lib/sanitize-html';
 import {
   offeredMembershipTypes,
@@ -19,12 +19,23 @@ import {
 } from '../lib/pricing';
 
 export function Membership() {
+  const db = useDB();
   const caps = useCapabilities();
   if (!caps.person) {
     return (
       <div className="card card-pad" style={{ maxWidth: 520 }}>
         <h2 className="display" style={{ fontSize: 22 }}>Finishing sign-in…</h2>
         <p>We're linking your account to your member profile. If this persists, refresh the page.</p>
+      </div>
+    );
+  }
+  // No current-by-date season, and no past season to fall back to (see
+  // `currentSeason` in season-lifecycle.ts) — nothing is purchasable yet.
+  if (!currentSeason(db)) {
+    return (
+      <div className="card card-pad" style={{ maxWidth: 520 }}>
+        <h2 className="display" style={{ fontSize: 22 }}>No active season</h2>
+        <p>There's no membership season configured right now. Check back soon.</p>
       </div>
     );
   }
@@ -58,17 +69,18 @@ function MembershipInner({ me }: { me: Athlete }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
-  // F6 season lifecycle: only the current season and LAUNCHED future seasons
-  // are purchasable — a future season an admin hasn't launched yet must not
-  // appear here even if someone flipped its `active` flag early.
+  // P3 (2026-07-20): purchasable = current-by-date season, plus any FUTURE
+  // season an admin has flipped `active` — a past season is never
+  // purchasable. `Membership()` (the wrapper above) already guarantees a
+  // current season exists before this component renders.
   const purchasable = purchasableSeasons(db);
-  const currentSeason = db.seasons.find((s) => s.current)!;
+  const activeSeason = currentSeason(db)!;
 
   // Honor ?season= param when returning from Profile (task 3)
   const seasonParam = searchParams.get('season');
   const initialSeasonId = (seasonParam && db.seasons.find((s) => s.id === seasonParam))
     ? seasonParam
-    : currentSeason.id;
+    : activeSeason.id;
 
   const [seasonId, setSeasonId] = useState(initialSeasonId);
   const season = db.seasons.find((s) => s.id === seasonId)!;
@@ -158,7 +170,7 @@ function MembershipInner({ me }: { me: Athlete }) {
   const subtotal = selPrice(selectedTypes);
 
   // Profile return URL — include season so we resume the right one (task 3)
-  const profileReturnUrl = `#/me?return=membership${seasonId !== currentSeason.id ? `&season=${seasonId}` : ''}`;
+  const profileReturnUrl = `#/me?return=membership${seasonId !== activeSeason.id ? `&season=${seasonId}` : ''}`;
 
   // Navigate back helpers (task 2)
   const goBack = () => {
@@ -399,7 +411,7 @@ function MembershipInner({ me }: { me: Athlete }) {
         <select className="input" value={seasonId} onChange={(e) => onSeasonChange(e.target.value)}>
           {purchasable.map((s) => (
             <option key={s.id} value={s.id}>
-              {s.name}{s.current ? ' (current season)' : ''}
+              {s.name}{s.id === activeSeason.id ? ' (current season)' : ''}
               {offeredTypes.length <= 1
                 ? ` — ${fmtMoney(s.athleteFee)}`
                 : ` — Athlete ${fmtMoney(s.athleteFee)} / Coach ${fmtMoney(s.coachFee)}`}
@@ -408,16 +420,16 @@ function MembershipInner({ me }: { me: Athlete }) {
         </select>
       </Field>
 
-      {/* Task 8: non-current season warning. F6: a launched FUTURE season gets
+      {/* Task 8: non-current season warning. An `active` FUTURE season gets
           the sharper "next season" wording the spec calls for (unmissable —
           it's easy to not notice the season dropdown changed); a past-but-
           still-`active` season keeps the original generic wording. */}
-      {!season.current && isFutureSeason(db, season) && (
+      {season.id !== activeSeason.id && isFutureSeason(db, season) && (
         <div className="card card-pad" style={{ borderLeft: '4px solid var(--gold)', background: 'var(--gold-100)', marginBottom: 16 }}>
           ⚠ <strong>Please be aware that you are purchasing a membership for next season</strong> ({season.name}, starts {season.startsOn}) — not the current one.
         </div>
       )}
-      {!season.current && !isFutureSeason(db, season) && (
+      {season.id !== activeSeason.id && !isFutureSeason(db, season) && (
         <div className="card card-pad" style={{ borderLeft: '4px solid var(--gold)', marginBottom: 16 }}>
           ⚠ You are purchasing for <strong>{season.name}</strong>, which is <em>not</em> the current season.
           It is valid {season.startsOn} through {season.endsOn}.
@@ -667,7 +679,7 @@ function MembershipInner({ me }: { me: Athlete }) {
                 </button>
 
                 {/* Task 4: Admin Payment Override */}
-                {(caps.isAdmin || caps.actingAsAdmin) && (
+                {caps.isAdmin && (
                   <button
                     className="btn ghost"
                     style={{ borderColor: 'var(--gold)', color: 'var(--warn)' }}

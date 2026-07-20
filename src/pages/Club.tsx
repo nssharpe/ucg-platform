@@ -3,7 +3,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { clubHasActiveMembership, clubHasActiveMembershipForEvent, seasonForDate, membershipHolds, membershipTypeOf, paidRegistrationClub } from '../lib/capabilities-core';
-import { purchasableSeasons, isFutureSeason } from '../lib/season-lifecycle';
+import { purchasableSeasons, isFutureSeason, currentSeason } from '../lib/season-lifecycle';
 import { eventIsInPhase, canStillEditRegistration, eventIsRefundEligible } from '../lib/events-core';
 import { Badge, Combo, Field, Modal } from '../components/ui';
 import { RefundRequestDialog, type RefundRequestItem } from '../components/RefundRequestDialog';
@@ -86,7 +86,7 @@ export function ClubPage({ view }: { view: ClubView }) {
   const [addingCoach, setAddingCoach] = useState(false);
   if (!club) return <p>Club not found.</p>;
 
-  const canManage = caps.actingAsAdmin || caps.managedClubIds.includes(club.id);
+  const canManage = caps.isAdmin || caps.managedClubIds.includes(club.id);
 
   const isMember = caps.personId
     ? (() => {
@@ -105,7 +105,7 @@ export function ClubPage({ view }: { view: ClubView }) {
 
   // Clubs the user can switch between from here: league admins see all clubs,
   // managers see the clubs they manage. Only shown when there's a real choice.
-  const switchableClubs = (caps.actingAsAdmin
+  const switchableClubs = (caps.isAdmin
     ? db.clubs
     : db.clubs.filter((c) => caps.managedClubIds.includes(c.id))
   ).slice().sort((a, b) => a.name.localeCompare(b.name));
@@ -129,7 +129,7 @@ export function ClubPage({ view }: { view: ClubView }) {
         {club.shortName && club.shortName !== club.name && <><strong>{club.shortName}</strong> · </>}
         {club.state} · {club.region} region · <a href={`mailto:${club.email}`}>{club.email}</a> ·
         {rosterSize} member{rosterSize !== 1 ? 's' : ''}
-        {caps.actingAsAdmin && <> · <Link to="/admin/clubs">all clubs</Link></>}
+        {caps.isAdmin && <> · <Link to="/admin/clubs">all clubs</Link></>}
       </p>
 
       {managerNames.length > 0 && (
@@ -237,11 +237,11 @@ function ClubMembershipCard({ club }: { club: Club }) {
   const navigate = useNavigate();
   const [reviewSeason, setReviewSeason] = useState<string | null>(null);
 
-  const isAdmin = caps.actingAsAdmin;
+  const isAdmin = caps.isAdmin;
   const canManage = isAdmin || caps.managedClubIds.includes(club.id);
-  const currentSeason = db.seasons.find((s) => s.current);
-  // F6 season lifecycle: only the current season and LAUNCHED future seasons
-  // are purchasable here.
+  const activeSeason = currentSeason(db);
+  // P3: only the current-by-date season and `active` future seasons are
+  // purchasable here.
   const seasons = purchasableSeasons(db).slice().sort((a, b) => a.startsOn.localeCompare(b.startsOn));
   const seasonName = (id: string) => db.seasons.find((s) => s.id === id)?.name ?? id;
 
@@ -290,15 +290,15 @@ function ClubMembershipCard({ club }: { club: Club }) {
     navigate('/cart');
   };
 
-  const currentActive = currentSeason ? clubHasActiveMembership(db, club.id, currentSeason.id) : false;
+  const currentActive = activeSeason ? clubHasActiveMembership(db, club.id, activeSeason.id) : false;
 
   return (
     <div className="card card-pad" style={{ marginBottom: 18 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
         <h3 className="card-title" style={{ margin: 0 }}>Club membership</h3>
-        {currentSeason && (currentActive
-          ? <Badge tone="ok">✓ Active · {currentSeason.name}</Badge>
-          : <Badge tone="err">Not active · {currentSeason?.name}</Badge>)}
+        {activeSeason && (currentActive
+          ? <Badge tone="ok">✓ Active · {activeSeason.name}</Badge>
+          : <Badge tone="err">Not active · {activeSeason?.name}</Badge>)}
       </div>
       <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginTop: 0 }}>
         A club must hold an active membership for a season before its athletes can register or it can host that season.
@@ -312,7 +312,7 @@ function ClubMembershipCard({ club }: { club: Club }) {
           return (
             <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 14, padding: '4px 0', borderBottom: '1px solid var(--line)' }}>
               <span style={{ minWidth: 150 }}>
-                {s.name}{s.current ? ' (current season)' : isFutureSeason(db, s) ? ' (next season)' : ' (upcoming season)'}
+                {s.name}{activeSeason?.id === s.id ? ' (current season)' : isFutureSeason(db, s) ? ' (next season)' : ' (upcoming season)'}
               </span>
               {active ? <Badge tone="ok">Active</Badge> : inCart ? <Badge tone="info">In cart</Badge> : <Badge tone="warn">None</Badge>}
               <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
@@ -334,7 +334,7 @@ function ClubMembershipCard({ club }: { club: Club }) {
         <ClubMembershipReview
           club={club}
           season={db.seasons.find((s) => s.id === reviewSeason)!}
-          isCurrent={!!db.seasons.find((s) => s.id === reviewSeason)?.current}
+          isCurrent={activeSeason?.id === reviewSeason}
           isFuture={isFutureSeason(db, db.seasons.find((s) => s.id === reviewSeason)!)}
           onConfirm={() => addToCart(reviewSeason)}
           onClose={() => setReviewSeason(null)}
@@ -498,7 +498,7 @@ function Roster({ clubId, canManage }: { clubId: string; canManage: boolean }) {
   };
   const [sortCol, setSortCol] = useState<SortCol>('lastName');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
-  const season = db.seasons.find((s) => s.current)!;
+  const season = currentSeason(db)!;
 
   // useCallback (not a plain inline function) so it has a stable reference
   // across renders and can be honestly included in `sorted`'s useMemo deps
@@ -997,7 +997,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   const openEvents = db.events.filter((m) => eventIsInPhase(m, 'reg-open') || eventIsInPhase(m, 'reg-closed'));
   const [eventId, setEventId] = useState(openEvents.find((m) => eventIsInPhase(m, 'reg-open'))?.id ?? openEvents[0]?.id);
   const event = db.events.find((m) => m.id === eventId);
-  const season = db.seasons.find((s) => s.current)!;
+  const season = currentSeason(db)!;
   // B4.2: past the event's last-date-to-edit, only an admin or the event's
   // HOST club may still edit (client-side UX only — registrations_edit_lockout
   // enforces this server-side regardless).

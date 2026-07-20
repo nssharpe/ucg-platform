@@ -108,7 +108,9 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   `supabase/migrations/` — **the authoritative migration list + per-migration narrative +
   schema/RLS model is `supabase/README.md`**; keep its table updated with every migration
   (detail goes THERE, not here). All migrations through
-  `20260718200055_season_launched_at.sql` are applied (staging + prod). Security hardening:
+  `20260720142948` are applied (staging + prod); `20260720212144_events_ucg_hosted.sql`
+  is applied to STAGING only — prod `supabase db push` is on Nate (in-session CLI
+  pushes to prod were classifier-blocked 2026-07-20). Security hardening:
   Phase 1+2 applied; Phase 3 TODO (`docs/plans/2026-07-02-security-hardening.md`).
 - New migrations: `supabase migration new <name>` (timestamp filename format is required).
   Apply via `supabase db push` — network is sandbox-blocked, run with sandbox disabled.
@@ -458,8 +460,11 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   verify_jwt true), `scheduled-dispatch` (pg_cron every 15 min; sanction-vote
   reminders + event-owner task escalations (`owner-task` kind, emv2 P1 §B4) +
   waitlist promotion sweep (emv2 P4 T7 — FIFO promote/requeue/complete, runbook in
-  `supabase/README.md`) + season lifecycle (F6 2026-07-18: `season-launch-nag`
-  escalating admin emails + automatic July-1 `current` rollover — pure logic
+  `supabase/README.md`) + season lifecycle nag (`season-launch-nag`: escalating admin
+  emails to CREATE the next season row — P3 2026-07-20 retired the old automatic
+  July-1 `current` rollover, since "current"/"launched" are no longer stored flags,
+  everything derives from today's date vs. each season's `[startsOn, endsOn]` window,
+  spec `docs/specs/2026-07-20-season-card-ucg-events-and-cleanups.md` — pure logic
   `src/lib/season-lifecycle.ts` MIRRORED in `_shared/season-lifecycle.ts`, keep in
   lockstep); verify_jwt STAYS true + requires the `x-cron-secret` header
   matching its `CRON_SECRET` secret — the runtime's env service key ≠ the legacy JWT,

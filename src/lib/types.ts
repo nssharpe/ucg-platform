@@ -43,13 +43,11 @@ export interface Season {
   athleteFee: number;
   coachFee: number;
   clubFee: number; // club membership fee for the season (e.g. 109)
-  active: boolean; // purchasable now
-  current: boolean;
-  /** F6 season lifecycle: set once an admin has finished the season's details
-   *  and flipped it live — launched ⇒ its memberships are purchasable and
-   *  events may be created in it (see season-lifecycle.ts). null = not
-   *  launched. */
-  launchedAt?: string | null;
+  /** Admin toggle for a FUTURE season only — "purchasable early". A
+   *  current-by-date season is always purchasable regardless of this flag; a
+   *  past season is never purchasable regardless of this flag (P3 2026-07-20
+   *  — see season-lifecycle.ts `purchasableSeasons`). */
+  active: boolean;
 }
 
 export interface Level {
@@ -278,6 +276,13 @@ export interface Event {
   /** 'nationals' unlocks the prelim/finals + qualification/awards features and is
    *  creatable only by a UCG admin. Absent ⇒ 'standard'. */
   kind?: 'standard' | 'nationals';
+  /** Set when this event IS a UCG-hosted instance (FlipFest camp or Nationals
+   *  championship) created from the Seasons & fees "Create" flow
+   *  (`src/lib/ucg-event-templates.ts`) rather than a sanctioned club event.
+   *  Absent ⇒ a regular sanctioned event. Pins the timezone to
+   *  America/Los_Angeles and hides the Nationals-kind checkbox in
+   *  `EventWizard` regardless of which value it holds. */
+  ucgHosted?: 'flipfest' | 'nationals';
   /** Present on Nationals events: the qualification/awards configuration. */
   nationalsConfig?: NationalsConfig;
   /** Competition (default) or a camp (NAIGC-hosted, individual-only reg). */

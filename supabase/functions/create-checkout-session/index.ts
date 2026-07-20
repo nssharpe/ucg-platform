@@ -230,7 +230,7 @@ Deno.serve(async (req) => {
   if (seasonIds.length) {
     const { data: sr, error: sErr } = await db
       .from('seasons')
-      .select('id, name, athlete_fee, coach_fee, club_fee, current, launched_at')
+      .select('id, name, athlete_fee, coach_fee, club_fee, active, starts_on, ends_on')
       .in('id', seasonIds);
     if (sErr) return json({ ok: false, error: sErr.message }, 500);
     seasons = new Map((sr ?? []).map((s) => [s.id as string, s as SeasonFees]));
@@ -664,8 +664,8 @@ Deno.serve(async (req) => {
   for (const g of memGroups.values()) {
     const season = seasons.get(g.seasonId);
     if (!season) return json({ ok: false, error: `Unknown season ${g.seasonId}.` }, 400);
-    // F6: reject a membership targeting a season that's neither current nor a
-    // launched future season (unlaunched future, or a stale past season).
+    // P3: reject a membership targeting a season that's neither current-by-date
+    // nor an `active` future season (a past season, or an inactive future one).
     if (!seasonPurchasableForCheckout(season)) {
       return json({ ok: false, error: `${season.name} isn't open for membership purchases yet.` }, 400);
     }
@@ -694,7 +694,7 @@ Deno.serve(async (req) => {
     if (i.kind === 'membership' && i.ref_type === 'club' && i.ref_season_id) {
       const season = seasons.get(i.ref_season_id);
       if (!season) return json({ ok: false, error: `Unknown season ${i.ref_season_id}.` }, 400);
-      // F6: same current-or-launched-future gate as the athlete/coach path above.
+      // P3: same current-by-date-or-active-future gate as the athlete/coach path above.
       if (!seasonPurchasableForCheckout(season)) {
         return json({ ok: false, error: `${season.name} isn't open for membership purchases yet.` }, 400);
       }

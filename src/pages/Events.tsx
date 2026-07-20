@@ -4,6 +4,7 @@ import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { useRolesLoaded } from '../lib/auth';
 import { seasonForDate, clubHasActiveMembershipForEvent, paidRegistrationClub } from '../lib/capabilities-core';
+import { currentSeason } from '../lib/season-lifecycle';
 import { eventIsInPhase } from '../lib/events-core';
 import { normalizeExternalUrl } from '../lib/url';
 import { Badge, Field, Modal, Tabs } from '../components/ui';
@@ -80,9 +81,7 @@ const COLUMNS: { key: SortKey; label: string }[] = [
  *  MyRegistrations.tsx. Admins can sanction a new event via the wizard. */
 export function Events() {
   const db = useDB();
-  const caps = useCapabilities();
   const fmtDate = useFmtDate();
-  const [wizardOpen, setWizardOpen] = useState(false);
   const [tab, setTab] = useState<'upcoming' | 'past'>('upcoming');
   const [q, setQ] = useState('');
   // Single sort state. `null` dir ⇒ apply the tab-appropriate default (date asc for
@@ -128,10 +127,6 @@ export function Events() {
     <div>
       <h1 className="page-title display">Events</h1>
       <p className="page-sub">Current and Past UCG Hosted (Nationals, FlipFest, etc.) and UCG Sanctioned (Regular Season Meets) Events</p>
-      {caps.isAdmin && (
-        <button className="btn primary" style={{ marginBottom: 18 }} onClick={() => setWizardOpen(true)}>+ Sanction New Event</button>
-      )}
-      {wizardOpen && <EventWizard onClose={() => setWizardOpen(false)} />}
 
       <Tabs
         tabs={[{ id: 'upcoming' as const, label: 'Upcoming' }, { id: 'past' as const, label: 'Past' }]}
@@ -1901,7 +1896,7 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
   const [pendingRegs, setPendingRegs] = useState<Registration[] | null>(null);
   const [pendingAddonItems, setPendingAddonItems] = useState<CartItem[]>([]);
 
-  const season = db.seasons.find((s) => s.current)!;
+  const season = currentSeason(db)!;
   const existingRegs = db.registrations.filter(
     (r) => r.eventId === event.id && r.athleteId === athlete.id && !r.refunded,
   );

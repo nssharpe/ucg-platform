@@ -2,15 +2,15 @@ import { NavLink, Link, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import primaryLogoWhite from '../assets/brand/primary-logo-white.svg';
-import { useDB, useViewPersonId, setViewPersonId } from '../lib/store';
+import { useDB } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { offeredMembershipTypes } from '../lib/pricing';
 import { useSession } from '../lib/auth';
-import { Combo } from './ui';
 import { TopbarMembership } from './TopbarMembership';
 import { ReportProblemDialog } from './ReportProblemDialog';
 import { useNavHistory, useGoBack, labelFor } from '../lib/navHistory';
+import { currentSeason } from '../lib/season-lifecycle';
 
 /** "vSHA · YYYY-MM-DD" build stamp shown at the bottom of the sidebar. */
 const buildStampLabel = `v${__BUILD_INFO__.sha} · ${__BUILD_INFO__.date.slice(0, 10)}`;
@@ -48,7 +48,7 @@ function navFor(caps: ReturnType<typeof useCapabilities>): NavGroup[] {
       { to: '/sanctioning', label: 'Sanctioning Queue' },
     ]});
   }
-  if (caps.actingAsAdmin) {
+  if (caps.isAdmin) {
     groups.push({ group: 'League', items: [
       { to: '/admin/members', label: 'Members' },
       { to: '/admin/clubs', label: 'Clubs' },
@@ -107,31 +107,24 @@ export function Layout({ children }: { children: ReactNode }) {
       document.body.style.overflow = prevOverflow;
     };
   }, [navOpen]);
-  const viewPersonId = useViewPersonId();
   const session = useSession();
   useNavHistory(); // record each page visit into the module-level stack
   const goBack = useGoBack(); // null when no prior history
 
   const me = caps.person;
-  const season = db.seasons.find((s) => s.current)!;
+  const season = currentSeason(db);
   const myClubShort = me ? (db.clubs.find((c) => c.id === me.mainClubId)?.shortName
     || db.clubs.find((c) => c.id === me.mainClubId)?.name || 'your club') : 'your club';
   // Per-role membership status for the banner: a person who is an athlete and/or
-  // coach should see each offered type's status separately.
-  const membershipBannerItems = me ? offeredMembershipTypes(
+  // coach should see each offered type's status separately. No badges (rather
+  // than a crash) when no season is configured at all.
+  const membershipBannerItems = (me && season) ? offeredMembershipTypes(
     me.roles ?? { athlete: me.kind !== 'coach', coach: me.kind === 'coach' },
   ).map((type) => ({
     type,
     label: type === 'coach' ? 'Coach' : 'Athlete',
     status: me.memberships.find((m) => m.seasonId === season.id && m.type === type)?.status ?? 'none',
   })) : [];
-
-  // Admin-only "view as (person)" impersonation.
-  const personOptions = db.people.map((p) => ({
-    value: p.id,
-    label: `${p.firstName} ${p.lastName}`,
-    sub: `${p.kind}${p.mainClubId ? ` · ${db.clubs.find((c) => c.id === p.mainClubId)?.shortName ?? ''}` : ''}`,
-  }));
 
   return (
     <div className="shell">
@@ -158,50 +151,6 @@ export function Layout({ children }: { children: ReactNode }) {
         ))}
 
         <div className="role-card">
-          {caps.isAdmin && (
-            <>
-              <label>View as (admin)</label>
-              <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                {/* Wrapper overrides combo-list to open upward so it stays on-screen,
-                    and darkens combo-item text for readability. */}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <style>{`
-                    .role-card .combo .combo-list {
-                      top: auto;
-                      bottom: calc(100% + 4px);
-                      max-height: min(240px, 60vh);
-                    }
-                    .role-card .combo .combo-item {
-                      color: var(--navy-800);
-                    }
-                    .role-card .combo .combo-item .sub {
-                      color: var(--navy-600);
-                    }
-                  `}</style>
-                  <Combo
-                    options={personOptions}
-                    value={viewPersonId}
-                    onChange={(v) => setViewPersonId(v)}
-                    placeholder="View as person…"
-                  />
-                </div>
-                {viewPersonId && (
-                  <button
-                    type="button"
-                    className="btn ghost"
-                    title="Stop viewing as this person"
-                    onClick={() => setViewPersonId(null)}
-                    style={{ padding: '2px 8px' }}
-                  >✕</button>
-                )}
-              </div>
-            </>
-          )}
-          {caps.impersonating && me && (
-            <div className="persona" style={{ marginTop: caps.isAdmin ? 8 : 0 }}>
-              Viewing as <strong>{me.firstName} {me.lastName}</strong>
-            </div>
-          )}
           {isSupabaseConfigured && session && (
             <button
               type="button"
@@ -270,7 +219,7 @@ export function Layout({ children }: { children: ReactNode }) {
           ) : null}
           <span className="crumb">{labelFor(loc.pathname)}</span>
           <div className="topbar-spacer" />
-          {me && (
+          {me && season && (
             <TopbarMembership
               items={membershipBannerItems}
               seasonName={season.name}
@@ -292,7 +241,7 @@ export function Layout({ children }: { children: ReactNode }) {
                 {(me.firstName?.[0] ?? '').toUpperCase()}{(me.lastName?.[0] ?? '').toUpperCase()}
               </span>
               <span className="topbar-user-name">
-                {caps.impersonating ? 'Viewing as ' : ''}{me.firstName} {me.lastName}
+                {me.firstName} {me.lastName}
               </span>
             </Link>
           ) : isSupabaseConfigured && !session ? (

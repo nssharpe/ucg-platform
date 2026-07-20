@@ -7,6 +7,7 @@ import { useToast } from '../components/ui-hooks';
 import { SHIRT_SIZES, DIETARY_OPTIONS, STATE_REGIONS, DISCIPLINES } from '../lib/types';
 import type { Athlete, ClubRequest, Gender, MembershipType, Region } from '../lib/types';
 import { membershipTypeOf } from '../lib/capabilities-core';
+import { currentSeason } from '../lib/season-lifecycle';
 import { GENERAL_WAIVER_TYPE } from '../lib/types';
 import { pushClubRequest, pushMembership, pushPerson, deleteRegistration, sendEmail, createWaiverLink, fetchPublishedWaiver, requestManagerAccess, adminDeletePerson } from '../lib/supabase';
 import { getSession, useAuthLoading, useRolesLoaded } from '../lib/auth';
@@ -1124,21 +1125,23 @@ function AdminMembershipControls({
   // on/after the current season (so a season already marked `current` never
   // gets excluded by its own comparison). If no season is currently marked
   // `current` (e.g. mid-rollover), fall back to "hasn't ended yet" by date.
-  const currentSeason = db.seasons.find((s) => s.current);
+  const activeSeason = currentSeason(db);
   const todayIso = new Date().toISOString().slice(0, 10);
   const visibleSeasons = db.seasons.filter((s) =>
-    currentSeason ? s.startsOn >= currentSeason.startsOn : s.endsOn >= todayIso
+    activeSeason ? s.startsOn >= activeSeason.startsOn : s.endsOn >= todayIso
   );
 
   return (
     <>
       {[...visibleSeasons].sort((a, b) => {
-        if (a.current && !b.current) return -1;
-        if (!a.current && b.current) return 1;
+        const aCurrent = a.id === activeSeason?.id;
+        const bCurrent = b.id === activeSeason?.id;
+        if (aCurrent && !bCurrent) return -1;
+        if (!aCurrent && bCurrent) return 1;
         return b.startsOn.localeCompare(a.startsOn); // newest → oldest
       }).map((s) => (
         <div key={s.id} style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
-          <strong style={{ fontSize: 13 }}>{s.name}{s.current ? ' (Current)' : ''}:</strong>
+          <strong style={{ fontSize: 13 }}>{s.name}{s.id === activeSeason?.id ? ' (Current)' : ''}:</strong>
           {MEMBERSHIP_TYPES.map((type) => {
             const m = person.memberships.find((x) => x.seasonId === s.id && membershipTypeOf(x) === type);
             const isActive = m?.status === 'active';
@@ -1172,7 +1175,7 @@ function AdminMembershipControls({
                     </button>
                   );
                 })()}
-                {caps.actingAsAdmin && (
+                {caps.isAdmin && (
                   isActive ? (
                     <button className="btn small ghost" onClick={() => setRevokeTarget({ seasonId: s.id, type })}>Revoke</button>
                   ) : m?.status === 'pending-waiver' ? (

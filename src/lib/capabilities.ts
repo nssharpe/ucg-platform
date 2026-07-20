@@ -1,12 +1,13 @@
-// React hooks that feed the live session/DB/impersonation into the pure
-// capability derivation (capabilities-core.ts). Replaces the prototype's
-// single-role useRole() switcher.
+// React hooks that feed the live session/DB into the pure capability
+// derivation (capabilities-core.ts). Replaces the prototype's single-role
+// useRole() switcher.
 //
 // When Supabase is not configured (password-gate prototype), there is no real
-// session, so we grant full admin tied to the selected persona — this keeps the
-// local-seed demo fully explorable while real auth governs the configured app.
+// session, so we grant full admin tied to the fixed seed persona — this keeps
+// the local-seed demo fully explorable while real auth governs the configured
+// app.
 import type { DB } from './types';
-import { getDB, getPersona, getViewPersonId, useDB, usePersona, useViewPersonId } from './store';
+import { getDB, getPersona, useDB } from './store';
 import { getSession, getMyRoles, useMyRoles, useSession } from './auth';
 import { isSupabaseConfigured } from './supabase';
 import { type Capabilities, currentSeasonId, deriveCapabilities } from './capabilities-core';
@@ -31,7 +32,7 @@ function authPersonId(db: DB, uid: string | undefined | null, email: string | un
 /** Event ids where the signed-in auth user holds a per-event admin grant
  *  (event_admins rows, event-mgmt v2 §C). Grants are auth-uid-scoped, so this
  *  parallels authPersonId() — keyed to the session uid, not the acting
- *  (possibly impersonated) person. */
+ *  person. */
 function eventAdminEventIds(db: DB, uid: string | undefined | null): string[] {
   if (!uid) return [];
   return (db.eventAdmins ?? []).filter((ea) => ea.userId === uid).map((ea) => ea.eventId);
@@ -42,15 +43,13 @@ export function useCapabilities(): Capabilities {
   const db = useDB();
   const session = useSession();
   const roles = useMyRoles();
-  useViewPersonId();
-  const persona = usePersona();
   const season = currentSeasonId(db);
 
   if (!isSupabaseConfigured) {
-    return deriveCapabilities(db, true, ['admin'], persona.athleteId, null, season);
+    return deriveCapabilities(db, true, ['admin'], getPersona().athleteId, season);
   }
   const personId = authPersonId(db, session?.user?.id, session?.user?.email);
-  return deriveCapabilities(db, !!session, roles, personId, getViewPersonId(), season,
+  return deriveCapabilities(db, !!session, roles, personId, season,
     eventAdminEventIds(db, session?.user?.id));
 }
 
@@ -58,10 +57,10 @@ export function getCapabilities(): Capabilities {
   const db = getDB();
   const season = currentSeasonId(db);
   if (!isSupabaseConfigured) {
-    return deriveCapabilities(db, true, ['admin'], getPersona().athleteId, null, season);
+    return deriveCapabilities(db, true, ['admin'], getPersona().athleteId, season);
   }
   const session = getSession();
   const personId = authPersonId(db, session?.user?.id, session?.user?.email);
-  return deriveCapabilities(db, !!session, getMyRoles(), personId, getViewPersonId(), season,
+  return deriveCapabilities(db, !!session, getMyRoles(), personId, season,
     eventAdminEventIds(db, session?.user?.id));
 }

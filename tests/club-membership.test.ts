@@ -1,11 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { clubHasActiveMembership, clubHasActiveMembershipForEvent, clubMembershipGateApplies, seasonForDate } from '../src/lib/capabilities-core';
 import type { DB } from '../src/lib/types';
 
 const db = {
   seasons: [
-    { id: 's26', name: '2025–26', startsOn: '2025-07-01', endsOn: '2026-06-30', athleteFee: 35, coachFee: 20, clubFee: 109, active: true, current: true },
-    { id: 's27', name: '2026–27', startsOn: '2026-07-01', endsOn: '2027-06-30', athleteFee: 40, coachFee: 20, clubFee: 109, active: true, current: false },
+    { id: 's26', name: '2025–26', startsOn: '2025-07-01', endsOn: '2026-06-30', athleteFee: 35, coachFee: 20, clubFee: 109, active: true },
+    { id: 's27', name: '2026–27', startsOn: '2026-07-01', endsOn: '2027-06-30', athleteFee: 40, coachFee: 20, clubFee: 109, active: true },
   ],
   clubMemberships: [
     { id: 'cm1', clubId: 'c1', seasonId: 's26', status: 'active', grantedByAdmin: true, createdAt: '2025-07-01' },
@@ -68,7 +68,16 @@ describe('seasonForDate', () => {
     expect(seasonForDate(db, '2026-07-31')).toBe('s27');
     expect(seasonForDate(db, '2025-09-01')).toBe('s26');
   });
-  it('falls back to the current season when no window matches', () => {
-    expect(seasonForDate(db, '2020-01-01')).toBe('s26');
+  it('falls back to the current (P3: date-derived) season when no window matches', () => {
+    // No stored `current` flag anymore — seasonForDate's fallback is
+    // `currentSeasonId`, which derives from the real clock. Pin "today"
+    // inside s26's window so the fallback is deterministic.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-09-01T00:00:00Z'));
+    try {
+      expect(seasonForDate(db, '2020-01-01')).toBe('s26');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

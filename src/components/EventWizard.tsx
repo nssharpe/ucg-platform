@@ -10,12 +10,8 @@ import { normalizeExternalUrl } from '../lib/url';
 import { Combo, Field, Modal } from './ui';
 import { useToast } from './ui-hooks';
 import { APPARATUS, DISCIPLINES, SHIRT_SIZES, STATE_REGIONS } from '../lib/types';
+import { timezoneForState } from '../lib/timezone';
 import type { Discipline, Level, Event, EventSession, EventStatus, ScoringConfig } from '../lib/types';
-
-const TIMEZONES = [
-  'America/New_York', 'America/Chicago', 'America/Denver', 'America/Phoenix',
-  'America/Los_Angeles', 'America/Anchorage', 'Pacific/Honolulu',
-];
 
 const slugify = (name: string) => name.toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
@@ -94,125 +90,154 @@ interface EventWizardProps {
   onClose: () => void;
   /** When provided, the wizard edits this event rather than creating a new one. */
   editEvent?: Event;
+  /** When provided (and `editEvent` is absent), prefills every field from this
+   *  partial event the same way `editEvent` does, but SAVES AS CREATE (a
+   *  brand-new event, not an update) — the FlipFest/Nationals "Create" flow
+   *  (`src/lib/ucg-event-templates.ts`, `src/pages/admin/UcgEvent.tsx`).
+   *  Mutually exclusive with `editEvent` (editEvent wins if both are passed). */
+  template?: Partial<Event>;
 }
 
-export function EventWizard({ onClose, editEvent }: EventWizardProps) {
+export function EventWizard({ onClose, editEvent, template }: EventWizardProps) {
   const db = useDB();
   const caps = useCapabilities();
   const toast = useToast();
   const navigate = useNavigate();
-  // Initial sessions get keys 1..N (no ref read during render); the key counter
-  // starts at N+1 so subsequently-added sessions get fresh, non-colliding keys.
-  const initialSessions = editEvent ? sessionsTodrafts(editEvent.sessions) : [];
+  // `seedEvt` feeds every field initializer below (like `editEvent` alone
+  // used to) whether we're editing a real event or prefilling from a
+  // FlipFest/Nationals template on create; `isEdit`/save-mode stays keyed on
+  // `editEvent` alone.
+  const seedEvt = editEvent ?? (template as Event | undefined);
+  const isEdit = !!editEvent;
+  // FlipFest/Nationals events pin their own timezone and kind — the admin
+  // never picks either (spec 2026-07-20 §FlipFest/Nationals model).
+  const isUcgHosted = !!seedEvt?.ucgHosted;
+
+  const defaultStart = addDays(new Date().toISOString().slice(0, 10), 60);
+  const seedStartDate = seedEvt?.startDate ?? defaultStart;
+  // Initial sessions: a real event's (edit) or template's own sessions if it
+  // provided any; else, for a template that only specifies disciplines (e.g.
+  // Nationals), fall back to the same per-discipline default-session
+  // templates `toggleDiscipline` uses below. Keys are 1..N (no ref read
+  // during render); the key counter starts at N+1 so later additions don't collide.
+  const initialSessions: SessionDraft[] = seedEvt?.sessions?.length
+    ? sessionsTodrafts(seedEvt.sessions)
+    : (() => {
+        let key = 1;
+        return (seedEvt?.disciplines ?? []).flatMap((d) => defaultSessions(db.levels, d, seedStartDate, () => key++));
+      })();
   const keyRef = useRef(initialSessions.length + 1);
   const nextKey = () => keyRef.current++;
 
-  const isEdit = !!editEvent;
-
   // Nationals (admin only): adds prelim/finals phases + qualification config.
-  const [kind, setKind] = useState<'standard' | 'nationals'>(editEvent?.kind ?? 'standard');
-  const [finalsLevelIds, setFinalsLevelIds] = useState<string[]>(editEvent?.nationalsConfig?.finalsLevelIds ?? []);
+  const [kind, setKind] = useState<'standard' | 'nationals'>(seedEvt?.kind ?? 'standard');
+  const [finalsLevelIds, setFinalsLevelIds] = useState<string[]>(seedEvt?.nationalsConfig?.finalsLevelIds ?? []);
 
   // Basics
-  const [name, setName] = useState(editEvent?.name ?? '');
-  const [hostClubId, setHostClubId] = useState<string | null>(editEvent?.hostClubId ?? null);
-  const [city, setCity] = useState(editEvent?.city ?? '');
-  const [state, setState] = useState(editEvent?.state ?? '');
-  const [timezone, setTimezone] = useState(editEvent?.timezone ?? 'America/New_York');
+  const [name, setName] = useState(seedEvt?.name ?? '');
+  const [hostClubId, setHostClubId] = useState<string | null>(seedEvt?.hostClubId ?? null);
+  const [city, setCity] = useState(seedEvt?.city ?? '');
+  const [state, setState] = useState(seedEvt?.state ?? '');
   // Location detail (event-mgmt v2 §A)
-  const [venue, setVenue] = useState(editEvent?.venue ?? '');
-  const [streetAddress, setStreetAddress] = useState(editEvent?.streetAddress ?? '');
-  const [country, setCountry] = useState(editEvent?.country ?? 'United States');
-  const [hotelLink, setHotelLink] = useState(editEvent?.hotelLink ?? '');
+  const [venue, setVenue] = useState(seedEvt?.venue ?? '');
+  const [streetAddress, setStreetAddress] = useState(seedEvt?.streetAddress ?? '');
+  const [country, setCountry] = useState(seedEvt?.country ?? 'United States');
+  // Timezone is derived from location, not user-selected (2026-07-20). An
+  // existing event keeps its stored zone until the admin changes the state,
+  // which recomputes it for consistency going forward. FlipFest/Nationals
+  // events are always America/Los_Angeles regardless of venue state.
+  const [timezone, setTimezone] = useState(
+    seedEvt?.timezone ?? (isUcgHosted ? 'America/Los_Angeles' : timezoneForState(state, seedEvt?.country ?? 'United States')),
+  );
+  const [hotelLink, setHotelLink] = useState(seedEvt?.hotelLink ?? '');
   // Dates
-  const defaultStart = addDays(new Date().toISOString().slice(0, 10), 60);
-  const [startDate, setStartDate] = useState(editEvent?.startDate ?? defaultStart);
-  const [endDate, setEndDate] = useState(editEvent?.endDate ?? defaultStart);
+  const [startDate, setStartDate] = useState(seedEvt?.startDate ?? defaultStart);
+  const [endDate, setEndDate] = useState(seedEvt?.endDate ?? defaultStart);
   // Stored reg dates are timestamptz columns (return with seconds + a 'Z'),
   // which datetime-local can't render — normalize to YYYY-MM-DDTHH:MM so the
   // edit wizard shows (and round-trips) them instead of blanking the field.
-  const [regOpens, setRegOpens] = useState(editEvent ? toDatetimeLocalValue(editEvent.regOpens) : `${new Date().toISOString().slice(0, 10)}T12:00`);
-  const [regCloses, setRegCloses] = useState(editEvent ? toDatetimeLocalValue(editEvent.regCloses) : `${addDays(defaultStart, -14)}T23:59`);
+  const [regOpens, setRegOpens] = useState(seedEvt?.regOpens ? toDatetimeLocalValue(seedEvt.regOpens) : `${new Date().toISOString().slice(0, 10)}T12:00`);
+  const [regCloses, setRegCloses] = useState(seedEvt?.regCloses ? toDatetimeLocalValue(seedEvt.regCloses) : `${addDays(defaultStart, -14)}T23:59`);
   const regClosesDirty = useRef(isEdit);
   // Last date to edit (B4): optional edit-lockout, past which only an admin
   // or the event's host club may still edit a registration.
-  const [hasEditLockout, setHasEditLockout] = useState(!!editEvent?.lastDateToEdit);
-  const [lastDateToEdit, setLastDateToEdit] = useState(editEvent?.lastDateToEdit ? toDatetimeLocalValue(editEvent.lastDateToEdit) : `${addDays(defaultStart, -7)}T23:59`);
+  const [hasEditLockout, setHasEditLockout] = useState(!!seedEvt?.lastDateToEdit);
+  const [lastDateToEdit, setLastDateToEdit] = useState(seedEvt?.lastDateToEdit ? toDatetimeLocalValue(seedEvt.lastDateToEdit) : `${addDays(defaultStart, -7)}T23:59`);
   // Finals lineup deadline (event-mgmt v2 P5 §L.3, nationals only): scheduled-dispatch
   // nags club managers at/after this instant and hard-locks finals rosters 1h later.
-  const [hasFinalsDeadline, setHasFinalsDeadline] = useState(!!editEvent?.finalsLineupDeadlineAt);
-  const [finalsLineupDeadlineAt, setFinalsLineupDeadlineAt] = useState(editEvent?.finalsLineupDeadlineAt ? toDatetimeLocalValue(editEvent.finalsLineupDeadlineAt) : `${addDays(defaultStart, -1)}T21:00`);
+  const [hasFinalsDeadline, setHasFinalsDeadline] = useState(!!seedEvt?.finalsLineupDeadlineAt);
+  const [finalsLineupDeadlineAt, setFinalsLineupDeadlineAt] = useState(seedEvt?.finalsLineupDeadlineAt ? toDatetimeLocalValue(seedEvt.finalsLineupDeadlineAt) : `${addDays(defaultStart, -1)}T21:00`);
   // Age-calculation date (event-mgmt v2 §A): applies to all events, not just camps.
-  const [hasAgeCalcAt, setHasAgeCalcAt] = useState(!!editEvent?.ageCalcAt);
-  const [ageCalcAt, setAgeCalcAt] = useState(editEvent?.ageCalcAt ? toDatetimeLocalValue(editEvent.ageCalcAt) : `${defaultStart}T00:00`);
+  const [hasAgeCalcAt, setHasAgeCalcAt] = useState(!!seedEvt?.ageCalcAt);
+  const [ageCalcAt, setAgeCalcAt] = useState(seedEvt?.ageCalcAt ? toDatetimeLocalValue(seedEvt.ageCalcAt) : `${defaultStart}T00:00`);
   // Fees
-  const [entryFee, setEntryFee] = useState(String(editEvent?.entryFee ?? 60));
-  const [secondFee, setSecondFee] = useState(String(editEvent?.secondDisciplineFee ?? 30));
+  const [entryFee, setEntryFee] = useState(String(seedEvt?.entryFee ?? 60));
+  const [secondFee, setSecondFee] = useState(String(seedEvt?.secondDisciplineFee ?? 30));
   // Banquet
-  const [hasBanquet, setHasBanquet] = useState(!!editEvent?.banquet);
-  const [banquetName, setBanquetName] = useState(editEvent?.banquet?.name ?? 'Banquet');
-  const [banquetPrice, setBanquetPrice] = useState(String(editEvent?.banquet?.price ?? 45));
-  const [banquetLastPurchaseAt, setBanquetLastPurchaseAt] = useState(editEvent?.banquet?.lastPurchaseAt ?? '');
+  const [hasBanquet, setHasBanquet] = useState(!!seedEvt?.banquet);
+  const [banquetName, setBanquetName] = useState(seedEvt?.banquet?.name ?? 'Banquet');
+  const [banquetPrice, setBanquetPrice] = useState(String(seedEvt?.banquet?.price ?? 45));
+  const [banquetLastPurchaseAt, setBanquetLastPurchaseAt] = useState(seedEvt?.banquet?.lastPurchaseAt ?? '');
   // T-shirt add-on
-  const [hasTshirt, setHasTshirt] = useState(!!editEvent?.tshirtAddon);
-  const [tshirtPrice, setTshirtPrice] = useState(String(editEvent?.tshirtAddon?.price ?? 25));
-  const [tshirtSizes, setTshirtSizes] = useState<string[]>(editEvent?.tshirtAddon?.sizes ?? [...SHIRT_SIZES]);
-  const [tshirtLastPurchaseAt, setTshirtLastPurchaseAt] = useState(editEvent?.tshirtAddon?.lastPurchaseAt ?? '');
+  const [hasTshirt, setHasTshirt] = useState(!!seedEvt?.tshirtAddon);
+  const [tshirtPrice, setTshirtPrice] = useState(String(seedEvt?.tshirtAddon?.price ?? 25));
+  const [tshirtSizes, setTshirtSizes] = useState<string[]>(seedEvt?.tshirtAddon?.sizes ?? [...SHIRT_SIZES]);
+  const [tshirtLastPurchaseAt, setTshirtLastPurchaseAt] = useState(seedEvt?.tshirtAddon?.lastPurchaseAt ?? '');
   // Banner add-on
-  const [hasBanner, setHasBanner] = useState(!!editEvent?.bannerAddon);
-  const [bannerPrice, setBannerPrice] = useState(String(editEvent?.bannerAddon?.price ?? 30));
-  const [bannerLastPurchaseAt, setBannerLastPurchaseAt] = useState(editEvent?.bannerAddon?.lastPurchaseAt ?? '');
+  const [hasBanner, setHasBanner] = useState(!!seedEvt?.bannerAddon);
+  const [bannerPrice, setBannerPrice] = useState(String(seedEvt?.bannerAddon?.price ?? 30));
+  const [bannerLastPurchaseAt, setBannerLastPurchaseAt] = useState(seedEvt?.bannerAddon?.lastPurchaseAt ?? '');
   // Change fee
-  const [hasChangeFee, setHasChangeFee] = useState(!!editEvent?.changeFee);
-  const [changeFeeAmount, setChangeFeeAmount] = useState(String(editEvent?.changeFee?.amount ?? 15));
+  const [hasChangeFee, setHasChangeFee] = useState(!!seedEvt?.changeFee);
+  const [changeFeeAmount, setChangeFeeAmount] = useState(String(seedEvt?.changeFee?.amount ?? 15));
   const [changeFeeStartsAt, setChangeFeeStartsAt] = useState(
-    editEvent?.changeFee?.startsAt ?? `${addDays(defaultStart, -21)}T00:00`,
+    seedEvt?.changeFee?.startsAt ?? `${addDays(defaultStart, -21)}T00:00`,
   );
   // Late registration (event-mgmt v2 §A): fee is added ON TOP of the entry fee.
-  const [hasLateReg, setHasLateReg] = useState(!!editEvent?.lateReg);
+  const [hasLateReg, setHasLateReg] = useState(!!seedEvt?.lateReg);
   const [lateRegStartsAt, setLateRegStartsAt] = useState(
-    editEvent?.lateReg?.startsAt ?? `${addDays(defaultStart, -14)}T00:00`,
+    seedEvt?.lateReg?.startsAt ?? `${addDays(defaultStart, -14)}T00:00`,
   );
-  const [lateRegFee, setLateRegFee] = useState(String(editEvent?.lateReg?.fee ?? 20));
+  const [lateRegFee, setLateRegFee] = useState(String(seedEvt?.lateReg?.fee ?? 20));
   // Director contact (event-mgmt v2 §A): general to competitions + camps.
-  const [directorName, setDirectorName] = useState(editEvent?.director?.name ?? '');
-  const [directorEmail, setDirectorEmail] = useState(editEvent?.director?.email ?? '');
-  const [directorCc, setDirectorCc] = useState(editEvent?.director?.ccOnConfirmation ?? false);
+  const [directorName, setDirectorName] = useState(seedEvt?.director?.name ?? '');
+  const [directorEmail, setDirectorEmail] = useState(seedEvt?.director?.email ?? '');
+  const [directorCc, setDirectorCc] = useState(seedEvt?.director?.ccOnConfirmation ?? false);
   // Capacity (event-mgmt v2 §A): enforced server-side at checkout (src/lib/capacity.ts
   // mirrored in supabase/functions/_shared/capacity.ts).
-  const [capacityTotal, setCapacityTotal] = useState(String(editEvent?.capacity?.total ?? ''));
+  const [capacityTotal, setCapacityTotal] = useState(String(seedEvt?.capacity?.total ?? ''));
   const [capacityPerDiscipline, setCapacityPerDiscipline] = useState<Partial<Record<Discipline, string>>>(
     () => Object.fromEntries(
-      DISCIPLINES.map((d) => [d, editEvent?.capacity?.perDiscipline?.[d] != null ? String(editEvent.capacity.perDiscipline[d]) : '']),
+      DISCIPLINES.map((d) => [d, seedEvt?.capacity?.perDiscipline?.[d] != null ? String(seedEvt.capacity.perDiscipline[d]) : '']),
     ) as Partial<Record<Discipline, string>>,
   );
   const [capacityPerLevel, setCapacityPerLevel] = useState<Record<string, string>>(
     () => Object.fromEntries(
-      Object.entries(editEvent?.capacity?.perLevel ?? {}).map(([id, n]) => [id, String(n)]),
+      Object.entries(seedEvt?.capacity?.perLevel ?? {}).map(([id, n]) => [id, String(n)]),
     ),
   );
   // Confirmation email override (event-mgmt v2 §A)
-  const [hasConfirmationEmail, setHasConfirmationEmail] = useState(!!editEvent?.confirmationEmail);
-  const [confirmationBodyHtml, setConfirmationBodyHtml] = useState(editEvent?.confirmationEmail?.bodyHtml ?? '');
-  const [confirmationFromAlias, setConfirmationFromAlias] = useState(editEvent?.confirmationEmail?.fromAlias ?? '');
-  const [confirmationReplyTo, setConfirmationReplyTo] = useState(editEvent?.confirmationEmail?.replyTo ?? '');
+  const [hasConfirmationEmail, setHasConfirmationEmail] = useState(!!seedEvt?.confirmationEmail);
+  const [confirmationBodyHtml, setConfirmationBodyHtml] = useState(seedEvt?.confirmationEmail?.bodyHtml ?? '');
+  const [confirmationFromAlias, setConfirmationFromAlias] = useState(seedEvt?.confirmationEmail?.fromAlias ?? '');
+  const [confirmationReplyTo, setConfirmationReplyTo] = useState(seedEvt?.confirmationEmail?.replyTo ?? '');
   const [confirmationPreview, setConfirmationPreview] = useState(false);
   // Disciplines & sessions
-  const [disciplines, setDisciplines] = useState<Discipline[]>(editEvent?.disciplines ?? []);
+  const [disciplines, setDisciplines] = useState<Discipline[]>(seedEvt?.disciplines ?? []);
   const [sessions, setSessions] = useState<SessionDraft[]>(initialSessions);
   // Registration mode (event-mgmt v2 P4 T4): competitions only — camps always
   // register per-athlete, no session choice.
-  const isCamp = editEvent?.eventType === 'camp';
+  const isCamp = seedEvt?.eventType === 'camp';
   const [registrationMode, setRegistrationMode] = useState<'by-discipline' | 'by-session'>(
-    editEvent?.registrationMode ?? 'by-discipline',
+    seedEvt?.registrationMode ?? 'by-discipline',
   );
   // Scoring config (PM decision 2026-07-19): judge panels + default entry mode.
-  const initialScoringConfig = scoringConfigOf(editEvent);
+  const initialScoringConfig = scoringConfigOf(seedEvt);
   const [scoringPanels, setScoringPanels] = useState<1 | 2>(initialScoringConfig.panels);
   const [scoringEntryMode, setScoringEntryMode] = useState<ScoringConfig['entryMode']>(initialScoringConfig.entryMode);
   // Publication state (B4: Draft/Live only — the real-time phase is derived
   // from regOpens/regCloses/startDate/endDate, not manually set).
-  const [status, setStatus] = useState<EventStatus>(editEvent?.status ?? 'live');
+  const [status, setStatus] = useState<EventStatus>(seedEvt?.status ?? 'live');
   const [error, setError] = useState('');
 
   const takenSlugs = db.events.filter((m) => m.id !== editEvent?.id).map((m) => m.slug);
@@ -220,6 +245,14 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
     () => isEdit ? editEvent!.slug : uniqueSlug(name, takenSlugs),
     [name, takenSlugs, isEdit, editEvent],
   );
+
+  const wizardTitle = isEdit
+    ? `Edit ${seedEvt?.ucgHosted === 'flipfest' ? 'FlipFest' : seedEvt?.ucgHosted === 'nationals' ? 'UCG Nationals' : 'event'} — ${editEvent!.name}`
+    : seedEvt?.ucgHosted === 'flipfest'
+      ? 'Create FlipFest'
+      : seedEvt?.ucgHosted === 'nationals'
+        ? 'Create UCG Nationals'
+        : 'Sanction a new event';
 
   const allCompetingLevelIds = useMemo(() => [...new Set(sessions.flatMap((s) => s.levelIds))], [sessions]);
   // Finals apply to artistic (WAG/MAG) levels; TNT awards from prelims only.
@@ -358,7 +391,7 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
     });
     const orderedDisciplines = DISCIPLINES.filter((d) => disciplines.includes(d));
     const event: Event = {
-      ...(editEvent ?? {}),
+      ...(editEvent ?? template ?? {}),
       id: eventId,
       slug: editEvent?.slug ?? slug,
       name: name.trim(),
@@ -429,7 +462,7 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
     } else {
       const applied = mutate((d) => { d.events.push(event); pushEvent(event); });
       if (!applied) return; // offline read-only gate — no false success toast
-      toast(`${event.name} sanctioned — #/events/${slug}`);
+      toast(event.ucgHosted ? `${event.name} created — #/events/${slug}` : `${event.name} sanctioned — #/events/${slug}`);
     }
     onClose();
     navigate(`/events/${event.slug}`);
@@ -440,8 +473,8 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
   );
 
   return (
-    <Modal title={isEdit ? `Edit event — ${editEvent!.name}` : 'Sanction a new event'} onClose={onClose}>
-      {caps.isAdmin && (
+    <Modal title={wizardTitle} onClose={onClose}>
+      {caps.isAdmin && !isUcgHosted && (
         <div className="card card-pad" style={{ marginBottom: 12, background: 'var(--ice)', borderColor: 'var(--line)' }}>
           <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, fontWeight: 600 }}>
             <input type="checkbox" checked={kind === 'nationals'} onChange={(e) => setKind(e.target.checked ? 'nationals' : 'standard')} />
@@ -462,17 +495,16 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
           value={hostClubId} onChange={setHostClubId} placeholder="Type to search clubs…"
         />
       </Field>
-      <div className="grid cols-3">
+      <div className="grid cols-2">
         <Field label="City"><input className="input" value={city} onChange={(e) => setCity(e.target.value)} /></Field>
         <Field label="State">
-          <select className="input" value={state} onChange={(e) => setState(e.target.value)}>
+          <select
+            className="input"
+            value={state}
+            onChange={(e) => { const v = e.target.value; setState(v); if (!isUcgHosted) setTimezone(timezoneForState(v, country)); }}
+          >
             <option value="" disabled>Select…</option>
             {Object.keys(STATE_REGIONS).map((s) => <option key={s}>{s}</option>)}
-          </select>
-        </Field>
-        <Field label="Timezone" hint="All reg open/close times are in this timezone.">
-          <select className="input" value={timezone} onChange={(e) => setTimezone(e.target.value)}>
-            {TIMEZONES.map((t) => <option key={t}>{t}</option>)}
           </select>
         </Field>
       </div>
@@ -486,6 +518,11 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
       </div>
 
       {sectionTitle('Dates')}
+      <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '0 0 8px' }}>
+        {isUcgHosted
+          ? 'All dates & times for UCG-hosted events are in Pacific Time (America/Los_Angeles).'
+          : 'Dates & times are in the time zone of the event location.'}
+      </p>
       <div className="grid cols-3">
         <Field label="Start date"><input className="input" type="date" value={startDate} onChange={(e) => changeStart(e.target.value)} /></Field>
         <Field label="End date"><input className="input" type="date" min={startDate} value={endDate} onChange={(e) => setEndDate(e.target.value)} /></Field>
