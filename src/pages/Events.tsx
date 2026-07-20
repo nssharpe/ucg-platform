@@ -81,9 +81,7 @@ const COLUMNS: { key: SortKey; label: string }[] = [
  *  MyRegistrations.tsx. Admins can sanction a new event via the wizard. */
 export function Events() {
   const db = useDB();
-  const caps = useCapabilities();
   const fmtDate = useFmtDate();
-  const [wizardOpen, setWizardOpen] = useState(false);
   const [tab, setTab] = useState<'upcoming' | 'past'>('upcoming');
   const [q, setQ] = useState('');
   // Single sort state. `null` dir ⇒ apply the tab-appropriate default (date asc for
@@ -129,10 +127,6 @@ export function Events() {
     <div>
       <h1 className="page-title display">Events</h1>
       <p className="page-sub">Current and Past UCG Hosted (Nationals, FlipFest, etc.) and UCG Sanctioned (Regular Season Meets) Events</p>
-      {caps.isAdmin && (
-        <button className="btn primary" style={{ marginBottom: 18 }} onClick={() => setWizardOpen(true)}>+ Sanction New Event</button>
-      )}
-      {wizardOpen && <EventWizard onClose={() => setWizardOpen(false)} />}
 
       <Tabs
         tabs={[{ id: 'upcoming' as const, label: 'Upcoming' }, { id: 'past' as const, label: 'Past' }]}

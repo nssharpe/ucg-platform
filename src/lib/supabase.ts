@@ -321,6 +321,7 @@ const eventToRow = (m: Event) => ({
   event_type: m.eventType ?? 'competition', sanction_id: m.sanctionId ?? null,
   camp_config: m.campConfig ?? null,
   kind: m.kind ?? 'standard', nationals_config: m.nationalsConfig ?? null,
+  ucg_hosted: m.ucgHosted ?? null,
   venue: m.venue ?? null, street_address: m.streetAddress ?? null, country: m.country ?? null,
   hotel_link: m.hotelLink ?? null, age_calc_at: m.ageCalcAt || null,
   late_reg: m.lateReg ?? null, director: m.director ?? null, capacity: m.capacity ?? null,
@@ -2216,6 +2217,9 @@ export async function loadAll(): Promise<DB | null> {
       ...(r.sanction_id ? { sanctionId: r.sanction_id } : {}),
       ...(r.camp_config ? { campConfig: r.camp_config as Event['campConfig'] } : {}),
       ...(r.kind && r.kind !== 'standard' ? { kind: r.kind as Event['kind'] } : {}),
+      ...((r as { ucg_hosted?: string | null }).ucg_hosted
+        ? { ucgHosted: (r as { ucg_hosted?: string | null }).ucg_hosted as Event['ucgHosted'] }
+        : {}),
       ...(r.nationals_config ? { nationalsConfig: r.nationals_config as unknown as Event['nationalsConfig'] } : {}),
       ...(r.venue ? { venue: r.venue } : {}),
       ...(r.street_address ? { streetAddress: r.street_address } : {}),

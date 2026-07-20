@@ -1,11 +1,13 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useDB, mutate } from '../../../lib/store';
 import { Badge } from '../../../components/ui';
 import { useToast } from '../../../components/ui-hooks';
-import type { Season } from '../../../lib/types';
+import type { DB, Season } from '../../../lib/types';
 import { pushSeason } from '../../../lib/supabase';
 import { fmtMoney } from '../../../lib/scoring';
 import { isFutureSeason } from '../../../lib/season-lifecycle';
+import { findUcgEvent } from '../../../lib/ucg-event-templates';
 
 // ---------- Seasons ----------
 type SeasonEditState = {
@@ -80,6 +82,16 @@ export function Seasons() {
     return <span style={{ color: 'var(--ink-soft)' }}>No (ended)</span>;
   };
 
+  // FlipFest/Nationals columns (P4 2026-07-20): Create when the season has no
+  // instance yet, Edit once one exists — both navigate to the dedicated page.
+  const ucgCell = (db: DB, s: Season, which: 'flipfest' | 'nationals') => {
+    const existing = findUcgEvent(db, s, which);
+    const to = `/admin/ucg-event/${which}/${s.id}`;
+    return existing
+      ? <Link className="btn small ghost" to={to}>Edit</Link>
+      : <Link className="btn small primary" to={to}>Create</Link>;
+  };
+
   return (
     <div className="card" style={{ overflow: 'hidden' }}>
       <table className="tbl">
@@ -92,6 +104,8 @@ export function Seasons() {
             {/* W12 task 2: Club fee column */}
             <th className="num">Club fee</th>
             <th>Purchasable</th>
+            <th>FlipFest</th>
+            <th>Nationals</th>
             <th />
           </tr>
         </thead>
@@ -164,6 +178,8 @@ export function Seasons() {
                     <td>
                       {purchasableCell(s)}
                     </td>
+                    <td>{ucgCell(db, s, 'flipfest')}</td>
+                    <td>{ucgCell(db, s, 'nationals')}</td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       <button className="btn small primary" onClick={() => saveEdit(s)}>Save</button>{' '}
                       <button className="btn small ghost" onClick={() => setEditingId(null)}>Cancel</button>
@@ -180,6 +196,8 @@ export function Seasons() {
                     <td>
                       {purchasableCell(s)}
                     </td>
+                    <td>{ucgCell(db, s, 'flipfest')}</td>
+                    <td>{ucgCell(db, s, 'nationals')}</td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       <button className="btn small ghost" onClick={() => startEdit(s)}>Edit</button>
                       {!db.seasons.some((x) => x.startsOn > s.startsOn) && (

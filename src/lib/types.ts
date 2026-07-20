@@ -276,6 +276,13 @@ export interface Event {
   /** 'nationals' unlocks the prelim/finals + qualification/awards features and is
    *  creatable only by a UCG admin. Absent ⇒ 'standard'. */
   kind?: 'standard' | 'nationals';
+  /** Set when this event IS a UCG-hosted instance (FlipFest camp or Nationals
+   *  championship) created from the Seasons & fees "Create" flow
+   *  (`src/lib/ucg-event-templates.ts`) rather than a sanctioned club event.
+   *  Absent ⇒ a regular sanctioned event. Pins the timezone to
+   *  America/Los_Angeles and hides the Nationals-kind checkbox in
+   *  `EventWizard` regardless of which value it holds. */
+  ucgHosted?: 'flipfest' | 'nationals';
   /** Present on Nationals events: the qualification/awards configuration. */
   nationalsConfig?: NationalsConfig;
   /** Competition (default) or a camp (NAIGC-hosted, individual-only reg). */
