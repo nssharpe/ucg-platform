@@ -34,9 +34,9 @@ pure [`src/lib/capabilities-core.ts`](src/lib/capabilities-core.ts) (`deriveCapa
   clubs, request new clubs.
 - **Club managers** (a `club_managers` row) co-manage their club's roster, managers,
   and event registration.
-- **App roles** (`user_roles`): `admin` (league controls + a "View as" person
-  impersonation tool), plus scoped roles `sanctioning`, `regional_rep`,
-  `finance_admin`, `refund_manager` — admins are NOT implicitly any of the others.
+- **App roles** (`user_roles`): `admin` (league controls), plus scoped roles
+  `sanctioning`, `regional_rep`, `finance_admin`, `refund_manager` — admins are
+  NOT implicitly any of the others.
 - **Event host** = a manager of the event's host club (derived, not a stored role),
   or a per-event grant via `event_admins`.
 - **Judges** will be account-free via a per-event code (sub-project D, not built yet).
