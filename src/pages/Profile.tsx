@@ -594,7 +594,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
           </div>
 
           {/* Sticky save bar */}
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', position: 'sticky', bottom: 16 }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', position: 'sticky', bottom: 16, zIndex: 10, background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 12, padding: '10px 14px', boxShadow: 'var(--shadow-lg)' }}>
             <button className="btn primary" disabled={!canSave} onClick={save}>Save changes</button>
             <button className="btn ghost" onClick={discardEdit}>Discard</button>
             <span style={{ alignSelf: 'center', fontSize: 13, color: 'var(--coral-600)', fontWeight: 600 }}>Unsaved changes</span>
