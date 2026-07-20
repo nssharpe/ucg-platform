@@ -458,8 +458,11 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   verify_jwt true), `scheduled-dispatch` (pg_cron every 15 min; sanction-vote
   reminders + event-owner task escalations (`owner-task` kind, emv2 P1 §B4) +
   waitlist promotion sweep (emv2 P4 T7 — FIFO promote/requeue/complete, runbook in
-  `supabase/README.md`) + season lifecycle (F6 2026-07-18: `season-launch-nag`
-  escalating admin emails + automatic July-1 `current` rollover — pure logic
+  `supabase/README.md`) + season lifecycle nag (`season-launch-nag`: escalating admin
+  emails to CREATE the next season row — P3 2026-07-20 retired the old automatic
+  July-1 `current` rollover, since "current"/"launched" are no longer stored flags,
+  everything derives from today's date vs. each season's `[startsOn, endsOn]` window,
+  spec `docs/specs/2026-07-20-season-card-ucg-events-and-cleanups.md` — pure logic
   `src/lib/season-lifecycle.ts` MIRRORED in `_shared/season-lifecycle.ts`, keep in
   lockstep); verify_jwt STAYS true + requires the `x-cron-secret` header
   matching its `CRON_SECRET` secret — the runtime's env service key ≠ the legacy JWT,
