@@ -209,15 +209,6 @@ option { color: var(--ink); background: #fff; }
   background: rgba(219, 235, 237, 0.08);
   border-color: rgba(219, 235, 237, 0.6);
 }
-/* "View as" Combo input inside the role-card: keep text readable on navy */
-.role-card .combo .input {
-  background: var(--navy-800);
-  color: var(--ice-200);
-  border-color: rgba(219, 235, 237, 0.25);
-}
-.role-card .combo .input::placeholder { color: rgba(219, 235, 237, 0.45); }
-.role-card .combo .input:focus { border-color: var(--coral-500); }
-
 /* Sidebar footer: "Report a problem" entry + version stamp, below the role
    card. --ice-300 on navy-800 is ~9.9:1 contrast (same token already used for
    .persona/.rank-chip.r3 on navy) — comfortably passes AA for small text. */

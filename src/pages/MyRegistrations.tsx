@@ -450,8 +450,8 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
             // B4.2: client-side UX mirror of the registrations_edit_lockout DB
             // trigger — a member editing their OWN registration is never the
             // event's host club, so this is effectively "locked out past the
-            // deadline" for the self-service flow (an admin impersonating
-            // still bypasses via caps.isEventHost).
+            // deadline" for the self-service flow (an admin still bypasses via
+            // caps.isEventHost).
             const canStillEdit = canStillEditRegistration(event, caps.isEventHost(event.id));
             return (
               <div key={event.id} className="card card-pad">

@@ -429,7 +429,7 @@ To activate it, sign up using <strong>this email address</strong> (${escapeHtml(
         </select>
         <span style={{ alignSelf: 'center', fontSize: 13, color: 'var(--ink-soft)' }}>{rows.length} people</span>
         <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
-          {caps.actingAsAdmin && (
+          {caps.isAdmin && (
             <button className="btn ghost" onClick={() => setShowMerge(true)}>Merge duplicates…</button>
           )}
           <button className="btn primary" onClick={() => setEditing('new')}>+ New person</button>

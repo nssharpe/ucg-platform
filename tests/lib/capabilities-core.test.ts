@@ -200,23 +200,22 @@ const db = makeDb({
 // --- Tests --------------------------------------------------------------------
 
 describe('deriveCapabilities', () => {
-  it('1. admin: full access, hosts any event, no impersonation', () => {
-    const caps = deriveCapabilities(db, true, ['admin'], 'p-admin', null, 's1');
+  it('1. admin: full access, hosts any event', () => {
+    const caps = deriveCapabilities(db, true, ['admin'], 'p-admin', 's1');
 
     expect(caps.isAdmin).toBe(true);
-    expect(caps.impersonating).toBe(false);
     expect(caps.personId).toBe('p-admin');
     expect(caps.isEventHost('meet-1')).toBe(true); // admins host any event
   });
 
   it('1b. sanctioning role (and admin) are on the sanctioning team', () => {
-    expect(deriveCapabilities(db, true, ['sanctioning'], 'p-x', null, 's1').isSanctioning).toBe(true);
-    expect(deriveCapabilities(db, true, ['admin'], 'p-admin', null, 's1').isSanctioning).toBe(true);
-    expect(deriveCapabilities(db, true, [], 'p-athlete-active', null, 's1').isSanctioning).toBe(false);
+    expect(deriveCapabilities(db, true, ['sanctioning'], 'p-x', 's1').isSanctioning).toBe(true);
+    expect(deriveCapabilities(db, true, ['admin'], 'p-admin', 's1').isSanctioning).toBe(true);
+    expect(deriveCapabilities(db, true, [], 'p-athlete-active', 's1').isSanctioning).toBe(false);
   });
 
   it('2. plain signed-in athlete with an active membership can register', () => {
-    const caps = deriveCapabilities(db, true, [], 'p-athlete-active', null, 's1');
+    const caps = deriveCapabilities(db, true, [], 'p-athlete-active', 's1');
 
     expect(caps.isAdmin).toBe(false);
     expect(caps.canRegister).toBe(true); // active membership
@@ -225,14 +224,14 @@ describe('deriveCapabilities', () => {
   });
 
   it('3. athlete with no membership cannot register', () => {
-    const caps = deriveCapabilities(db, true, [], 'p-athlete-none', null, 's1');
+    const caps = deriveCapabilities(db, true, [], 'p-athlete-none', 's1');
 
     expect(caps.canRegister).toBe(false);
     expect(caps.currentMembership).toBe('none');
   });
 
   it('4. club manager: managedClubIds includes their club, isEventHost reflects host club', () => {
-    const caps = deriveCapabilities(db, true, [], 'p-coach', null, 's1');
+    const caps = deriveCapabilities(db, true, [], 'p-coach', 's1');
 
     expect(caps.managedClubIds).toContain('club-A');
     expect(caps.isEventHost('meet-1')).toBe(true); // manages club-A, which hosts meet-1
@@ -241,7 +240,7 @@ describe('deriveCapabilities', () => {
 
   describe('4b. per-event admin grants (event_admins, emv2 §C)', () => {
     it('a grant makes isEventHost true for exactly that event', () => {
-      const caps = deriveCapabilities(db, true, [], 'p-athlete-active', null, 's1', ['meet-clubB']);
+      const caps = deriveCapabilities(db, true, [], 'p-athlete-active', 's1', ['meet-clubB']);
 
       expect(caps.isEventHost('meet-clubB')).toBe(true); // granted
       expect(caps.isEventHost('meet-1')).toBe(false); // NOT granted, not a manager
@@ -249,52 +248,22 @@ describe('deriveCapabilities', () => {
     });
 
     it('no grants (default param) leaves isEventHost purely club-derived', () => {
-      const caps = deriveCapabilities(db, true, [], 'p-coach', null, 's1');
+      const caps = deriveCapabilities(db, true, [], 'p-coach', 's1');
 
       expect(caps.isEventHost('meet-1')).toBe(true);
       expect(caps.isEventHost('meet-clubB')).toBe(false);
     });
 
     it('grants and club management combine (union)', () => {
-      const caps = deriveCapabilities(db, true, [], 'p-coach', null, 's1', ['meet-clubB']);
+      const caps = deriveCapabilities(db, true, [], 'p-coach', 's1', ['meet-clubB']);
 
       expect(caps.isEventHost('meet-1')).toBe(true); // via managed club-A
       expect(caps.isEventHost('meet-clubB')).toBe(true); // via grant
     });
   });
 
-  describe('5. impersonation requires admin', () => {
-    it('5a. admin impersonating a club manager: capabilities recompute for the target person', () => {
-      const caps = deriveCapabilities(db, true, ['admin'], 'p-admin', 'p-coach', 's1');
-
-      expect(caps.impersonating).toBe(true);
-      expect(caps.personId).toBe('p-coach');
-      expect(caps.managedClubIds).toContain('club-A'); // recomputed for impersonated person
-      expect(caps.person?.id).toBe('p-coach');
-      // isAdmin still reflects the real user (keeps the "View as" control visible),
-      // but actingAsAdmin drops so the UI shows the impersonated person's view.
-      expect(caps.isAdmin).toBe(true);
-      expect(caps.actingAsAdmin).toBe(false);
-    });
-
-    it('5b. SECURITY: a non-admin cannot impersonate via viewPersonId', () => {
-      const caps = deriveCapabilities(db, true, [], 'p-athlete-active', 'p-coach', 's1');
-
-      expect(caps.impersonating).toBe(false);
-      expect(caps.personId).toBe('p-athlete-active'); // stays themselves
-      expect(caps.managedClubIds).toEqual([]); // NOT club-A — no privilege escalation
-    });
-
-    it('5c. admin "impersonating" themselves is not impersonation', () => {
-      const caps = deriveCapabilities(db, true, ['admin'], 'p-admin', 'p-admin', 's1');
-
-      expect(caps.impersonating).toBe(false);
-      expect(caps.actingAsAdmin).toBe(true);
-    });
-  });
-
   it('6. signed-out guest has no person, no capabilities', () => {
-    const caps = deriveCapabilities(db, false, [], null, null, 's1');
+    const caps = deriveCapabilities(db, false, [], null, 's1');
 
     expect(caps.personId).toBeNull();
     expect(caps.person).toBeNull();
@@ -304,14 +273,14 @@ describe('deriveCapabilities', () => {
 
   describe('8. typed-membership residuals (T1): registering requires an ATHLETE-type membership', () => {
     it('coach-only member (active coach row, no athlete row) CANNOT register', () => {
-      const caps = deriveCapabilities(db, true, [], 'p-coach-active-only', null, 's1');
+      const caps = deriveCapabilities(db, true, [], 'p-coach-active-only', 's1');
 
       expect(caps.canRegister).toBe(false);
       expect(caps.athleteMembership).toBeNull();
     });
 
     it('coach-only member still shows their ACTIVE coach membership (display unaffected)', () => {
-      const caps = deriveCapabilities(db, true, [], 'p-coach-active-only', null, 's1');
+      const caps = deriveCapabilities(db, true, [], 'p-coach-active-only', 's1');
 
       expect(caps.coachMembership?.status).toBe('active');
       // Generic "any membership" summary falls back to the coach row when
@@ -320,7 +289,7 @@ describe('deriveCapabilities', () => {
     });
 
     it('athlete-only member (active athlete row) CAN register', () => {
-      const caps = deriveCapabilities(db, true, [], 'p-athlete-active', null, 's1');
+      const caps = deriveCapabilities(db, true, [], 'p-athlete-active', 's1');
 
       expect(caps.canRegister).toBe(true);
       expect(caps.athleteMembership?.status).toBe('active');
@@ -328,7 +297,7 @@ describe('deriveCapabilities', () => {
     });
 
     it('dual-role member with BOTH types active CAN register and shows both rows', () => {
-      const caps = deriveCapabilities(db, true, [], 'p-dual-active', null, 's1');
+      const caps = deriveCapabilities(db, true, [], 'p-dual-active', 's1');
 
       expect(caps.canRegister).toBe(true);
       expect(caps.athleteMembership?.status).toBe('active');
@@ -339,7 +308,7 @@ describe('deriveCapabilities', () => {
       // pAthleteActive's fixture membership omits `type` entirely — this
       // mirrors real pre-typed-membership data (DB column defaults to
       // 'athlete'). Confirms canRegister still gates correctly on it.
-      const caps = deriveCapabilities(db, true, [], 'p-athlete-active', null, 's1');
+      const caps = deriveCapabilities(db, true, [], 'p-athlete-active', 's1');
 
       expect(caps.athleteMembership).not.toBeNull();
       expect(caps.canRegister).toBe(true);

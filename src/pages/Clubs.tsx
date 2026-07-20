@@ -135,7 +135,7 @@ export function Clubs() {
                   .map((p) => `${p.firstName} ${p.lastName}`);
 
                 const canManage =
-                  caps.actingAsAdmin || caps.managedClubIds.includes(club.id);
+                  caps.isAdmin || caps.managedClubIds.includes(club.id);
 
                 return (
                   <tr key={club.id}>

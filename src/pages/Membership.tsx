@@ -667,7 +667,7 @@ function MembershipInner({ me }: { me: Athlete }) {
                 </button>
 
                 {/* Task 4: Admin Payment Override */}
-                {(caps.isAdmin || caps.actingAsAdmin) && (
+                {caps.isAdmin && (
                   <button
                     className="btn ghost"
                     style={{ borderColor: 'var(--gold)', color: 'var(--warn)' }}

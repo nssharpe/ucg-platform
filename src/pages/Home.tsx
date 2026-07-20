@@ -566,14 +566,14 @@ export function Home() {
     <div>
       <Hero />
 
-      {/* Admin (real admin, not impersonating) */}
-      {caps.actingAsAdmin && <AdminDashboard />}
+      {/* Admin */}
+      {caps.isAdmin && <AdminDashboard />}
 
-      {/* Club manager (not acting as admin — includes admin-impersonating-manager) */}
-      {!caps.actingAsAdmin && caps.managedClubIds.length > 0 && <ClubManagerDashboard />}
+      {/* Club manager (non-admin) */}
+      {!caps.isAdmin && caps.managedClubIds.length > 0 && <ClubManagerDashboard />}
 
-      {/* General athlete (signed in, no managed clubs, not acting-admin) */}
-      {!caps.actingAsAdmin && caps.managedClubIds.length === 0 && caps.person && <AthleteDashboard />}
+      {/* General athlete (signed in, no managed clubs, not admin) */}
+      {!caps.isAdmin && caps.managedClubIds.length === 0 && caps.person && <AthleteDashboard />}
 
       {/* Guest */}
       {!caps.signedIn && <GuestView />}

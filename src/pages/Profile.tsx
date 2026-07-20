@@ -1172,7 +1172,7 @@ function AdminMembershipControls({
                     </button>
                   );
                 })()}
-                {caps.actingAsAdmin && (
+                {caps.isAdmin && (
                   isActive ? (
                     <button className="btn small ghost" onClick={() => setRevokeTarget({ seasonId: s.id, type })}>Revoke</button>
                   ) : m?.status === 'pending-waiver' ? (

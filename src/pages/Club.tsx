@@ -86,7 +86,7 @@ export function ClubPage({ view }: { view: ClubView }) {
   const [addingCoach, setAddingCoach] = useState(false);
   if (!club) return <p>Club not found.</p>;
 
-  const canManage = caps.actingAsAdmin || caps.managedClubIds.includes(club.id);
+  const canManage = caps.isAdmin || caps.managedClubIds.includes(club.id);
 
   const isMember = caps.personId
     ? (() => {
@@ -105,7 +105,7 @@ export function ClubPage({ view }: { view: ClubView }) {
 
   // Clubs the user can switch between from here: league admins see all clubs,
   // managers see the clubs they manage. Only shown when there's a real choice.
-  const switchableClubs = (caps.actingAsAdmin
+  const switchableClubs = (caps.isAdmin
     ? db.clubs
     : db.clubs.filter((c) => caps.managedClubIds.includes(c.id))
   ).slice().sort((a, b) => a.name.localeCompare(b.name));
@@ -129,7 +129,7 @@ export function ClubPage({ view }: { view: ClubView }) {
         {club.shortName && club.shortName !== club.name && <><strong>{club.shortName}</strong> · </>}
         {club.state} · {club.region} region · <a href={`mailto:${club.email}`}>{club.email}</a> ·
         {rosterSize} member{rosterSize !== 1 ? 's' : ''}
-        {caps.actingAsAdmin && <> · <Link to="/admin/clubs">all clubs</Link></>}
+        {caps.isAdmin && <> · <Link to="/admin/clubs">all clubs</Link></>}
       </p>
 
       {managerNames.length > 0 && (
@@ -237,7 +237,7 @@ function ClubMembershipCard({ club }: { club: Club }) {
   const navigate = useNavigate();
   const [reviewSeason, setReviewSeason] = useState<string | null>(null);
 
-  const isAdmin = caps.actingAsAdmin;
+  const isAdmin = caps.isAdmin;
   const canManage = isAdmin || caps.managedClubIds.includes(club.id);
   const currentSeason = db.seasons.find((s) => s.current);
   // F6 season lifecycle: only the current season and LAUNCHED future seasons
