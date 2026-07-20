@@ -10,12 +10,8 @@ import { normalizeExternalUrl } from '../lib/url';
 import { Combo, Field, Modal } from './ui';
 import { useToast } from './ui-hooks';
 import { APPARATUS, DISCIPLINES, SHIRT_SIZES, STATE_REGIONS } from '../lib/types';
+import { timezoneForState } from '../lib/timezone';
 import type { Discipline, Level, Event, EventSession, EventStatus, ScoringConfig } from '../lib/types';
-
-const TIMEZONES = [
-  'America/New_York', 'America/Chicago', 'America/Denver', 'America/Phoenix',
-  'America/Los_Angeles', 'America/Anchorage', 'Pacific/Honolulu',
-];
 
 const slugify = (name: string) => name.toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
@@ -118,11 +114,14 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
   const [hostClubId, setHostClubId] = useState<string | null>(editEvent?.hostClubId ?? null);
   const [city, setCity] = useState(editEvent?.city ?? '');
   const [state, setState] = useState(editEvent?.state ?? '');
-  const [timezone, setTimezone] = useState(editEvent?.timezone ?? 'America/New_York');
   // Location detail (event-mgmt v2 §A)
   const [venue, setVenue] = useState(editEvent?.venue ?? '');
   const [streetAddress, setStreetAddress] = useState(editEvent?.streetAddress ?? '');
   const [country, setCountry] = useState(editEvent?.country ?? 'United States');
+  // Timezone is derived from location, not user-selected (2026-07-20). An
+  // existing event keeps its stored zone until the admin changes the state,
+  // which recomputes it for consistency going forward.
+  const [timezone, setTimezone] = useState(editEvent?.timezone ?? timezoneForState(state, editEvent?.country ?? 'United States'));
   const [hotelLink, setHotelLink] = useState(editEvent?.hotelLink ?? '');
   // Dates
   const defaultStart = addDays(new Date().toISOString().slice(0, 10), 60);
@@ -462,17 +461,16 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
           value={hostClubId} onChange={setHostClubId} placeholder="Type to search clubs…"
         />
       </Field>
-      <div className="grid cols-3">
+      <div className="grid cols-2">
         <Field label="City"><input className="input" value={city} onChange={(e) => setCity(e.target.value)} /></Field>
         <Field label="State">
-          <select className="input" value={state} onChange={(e) => setState(e.target.value)}>
+          <select
+            className="input"
+            value={state}
+            onChange={(e) => { const v = e.target.value; setState(v); setTimezone(timezoneForState(v, country)); }}
+          >
             <option value="" disabled>Select…</option>
             {Object.keys(STATE_REGIONS).map((s) => <option key={s}>{s}</option>)}
-          </select>
-        </Field>
-        <Field label="Timezone" hint="All reg open/close times are in this timezone.">
-          <select className="input" value={timezone} onChange={(e) => setTimezone(e.target.value)}>
-            {TIMEZONES.map((t) => <option key={t}>{t}</option>)}
           </select>
         </Field>
       </div>
@@ -486,6 +484,9 @@ export function EventWizard({ onClose, editEvent }: EventWizardProps) {
       </div>
 
       {sectionTitle('Dates')}
+      <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '0 0 8px' }}>
+        Dates &amp; times are in the time zone of the event location.
+      </p>
       <div className="grid cols-3">
         <Field label="Start date"><input className="input" type="date" value={startDate} onChange={(e) => changeStart(e.target.value)} /></Field>
         <Field label="End date"><input className="input" type="date" min={startDate} value={endDate} onChange={(e) => setEndDate(e.target.value)} /></Field>

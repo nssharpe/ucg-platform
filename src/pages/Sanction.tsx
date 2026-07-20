@@ -15,17 +15,13 @@ import { useToast } from '../components/ui-hooks';
 import { tallyVotes, nextSanctionId } from '../lib/sanction';
 import { RIBBON_OPTIONS, DEFAULT_RIBBON } from '../lib/ribbons';
 import { STATE_REGIONS, DISCIPLINES, SHIRT_SIZES } from '../lib/types';
+import { timezoneForState } from '../lib/timezone';
 import type { Discipline, Event, SanctionRequest, SanctionVote } from '../lib/types';
 import type { RibbonOption } from '../lib/ribbons';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-const TIMEZONES = [
-  'America/New_York', 'America/Chicago', 'America/Denver', 'America/Phoenix',
-  'America/Los_Angeles', 'America/Anchorage', 'Pacific/Honolulu',
-];
-
 const COUNTRIES = ['United States', 'Canada'];
 
 const WAG_MIN_LEVELS = 3;
@@ -169,7 +165,6 @@ export function SanctionRequestForm() {
   const [regOpens, setRegOpens] = useState(`${isoDateInDays(0)}T12:00`);
   const [regCloses, setRegCloses] = useState(`${isoDateInDays(46)}T23:59`);
   const [lateRegStart, setLateRegStart] = useState('');
-  const [timezone, setTimezone] = useState('America/New_York');
 
   // Location
   const [venue, setVenue] = useState('');
@@ -292,7 +287,7 @@ export function SanctionRequestForm() {
       altContact: altContactName.trim() ? { name: altContactName.trim(), email: altContactEmail.trim(), phone: altContactPhone.trim() } : null,
       accessible: accessibleAccepted,
       startDate, endDate,
-      regOpens, regCloses, lateRegStart: lateRegStart || null, timezone,
+      regOpens, regCloses, lateRegStart: lateRegStart || null,
       venue: venue.trim(), street: street.trim(), city: city.trim(), state, country,
       isRegionalBid, hasAthleticTrainer: isRegionalBid ? hasAthleticTrainer : null,
       insuranceNeeded,
@@ -410,15 +405,13 @@ export function SanctionRequestForm() {
           <Field label="Start date"><input className="input" type="date" value={startDate} onChange={(e) => { setStartDate(e.target.value); if (endDate < e.target.value) setEndDate(e.target.value); }} /></Field>
           <Field label="End date"><input className="input" type="date" min={startDate} value={endDate} onChange={(e) => setEndDate(e.target.value)} /></Field>
         </div>
-        <div className="grid cols-3">
+        <div className="grid cols-2">
           <Field label="Reg opens"><input className="input" type="datetime-local" value={regOpens} onChange={(e) => setRegOpens(e.target.value)} /></Field>
           <Field label="Reg closes"><input className="input" type="datetime-local" value={regCloses} onChange={(e) => setRegCloses(e.target.value)} /></Field>
-          <Field label="Timezone">
-            <select className="input" value={timezone} onChange={(e) => setTimezone(e.target.value)}>
-              {TIMEZONES.map((t) => <option key={t}>{t}</option>)}
-            </select>
-          </Field>
         </div>
+        <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '0 0 8px' }}>
+          Dates &amp; times are in the time zone of the event location.
+        </p>
         <Field label="Late registration starts (optional)">
           <input className="input" type="datetime-local" value={lateRegStart} onChange={(e) => setLateRegStart(e.target.value)} />
         </Field>
@@ -578,7 +571,7 @@ export function SanctionRequestForm() {
                 </label>
               ))}
             </div>
-            <Field label={`Last date to purchase (${timezone})`} hint="Optional. Leave blank to allow purchase any time registration is open.">
+            <Field label={`Last date to purchase (${timezoneForState(state, country)})`} hint="Optional. Leave blank to allow purchase any time registration is open.">
               <input className="input" type="datetime-local" value={tshirtLastPurchaseAt} onChange={(e) => setTshirtLastPurchaseAt(e.target.value)} />
             </Field>
           </div>
@@ -598,7 +591,7 @@ export function SanctionRequestForm() {
                 </label>
               ))}
             </div>
-            <Field label={`Last date to purchase (${timezone})`} hint="Optional. Leave blank to allow purchase any time registration is open.">
+            <Field label={`Last date to purchase (${timezoneForState(state, country)})`} hint="Optional. Leave blank to allow purchase any time registration is open.">
               <input className="input" type="datetime-local" value={leoLastPurchaseAt} onChange={(e) => setLeoLastPurchaseAt(e.target.value)} />
             </Field>
           </div>
@@ -875,7 +868,9 @@ export function SanctionVotePage() {
         hostClubId: req.hostClubId,
         city: String(p.city ?? ''),
         state: String(p.state ?? ''),
-        timezone: String(p.timezone ?? 'America/New_York'),
+        // Legacy payloads (pre-2026-07-20) still carry an explicit p.timezone
+        // from the old selector — prefer it; new payloads derive from location.
+        timezone: p.timezone ? String(p.timezone) : timezoneForState(p.state ? String(p.state) : undefined, p.country ? String(p.country) : undefined),
         startDate: String(p.startDate ?? ''),
         endDate: String(p.endDate ?? ''),
         status: 'draft',
@@ -997,7 +992,7 @@ export function SanctionVotePage() {
           {detail('Dates', `${p.startDate} to ${p.endDate}`)}
           {detail('Reg opens', p.regOpens)}
           {detail('Reg closes', p.regCloses)}
-          {detail('Timezone', p.timezone)}
+          {detail('Timezone', p.timezone ? String(p.timezone) : timezoneForState(p.state ? String(p.state) : undefined, p.country ? String(p.country) : undefined))}
           {detail('Late reg starts', p.lateRegStart)}
           {detail('Venue', p.venue)}
           {detail('Address', [p.street, p.city, p.state, p.country].filter(Boolean).join(', '))}
