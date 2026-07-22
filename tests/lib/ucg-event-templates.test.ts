@@ -5,6 +5,7 @@ import {
   flipfestDateWindow,
   nationalsDateWindow,
   findUcgEvent,
+  buildNationalsSessions,
 } from '../../src/lib/ucg-event-templates';
 import type { Club, DB, Event, Season } from '../../src/lib/types';
 
@@ -57,10 +58,14 @@ describe('flipfestTemplate', () => {
     expect(t.ucgHosted).toBe('flipfest');
     expect(t.timezone).toBe('America/Los_Angeles');
     expect(t.venue).toBe('FlipFest');
+    expect(t.streetAddress).toBe('272 Lake Frances Rd');
+    expect(t.city).toBe('Crossville');
     expect(t.state).toBe('TN');
     expect(t.startDate! >= SEASON.startsOn && t.endDate! <= SEASON.endsOn).toBe(true);
     expect(t.campConfig?.overnightSurvey).toBe(true);
     expect(t.tshirtAddon?.sizes).toEqual(['S', 'M', 'L', 'XL']);
+    expect(t.disciplines).toEqual(['MAG', 'WAG', 'TNT']);
+    expect(t.entryFee).toBe(200);
   });
 
   it('omits hostClubId when no league-host club exists', () => {
@@ -127,5 +132,55 @@ describe('findUcgEvent', () => {
 
   it('returns undefined when no events exist', () => {
     expect(findUcgEvent(dbWith([], []), SEASON, 'nationals')).toBeUndefined();
+  });
+});
+
+describe('buildNationalsSessions', () => {
+  const slots = [
+    { name: 'Session 1', date: '2027-04-16', time: '08:00' },
+    { name: 'Session 2', date: '2027-04-16', time: '14:00' },
+  ];
+  const gyms = [
+    { name: 'Orange', discipline: 'MAG' as const, levelIds: ['mag-dev', 'mag-int', 'mag-adv'] },
+    { name: 'Red', discipline: 'WAG' as const, levelIds: ['wag-diamond'] },
+    { name: 'Purple', discipline: 'TNT' as const, levelIds: ['tnt-new', 'tnt-int', 'tnt-high'] },
+  ];
+
+  it('cross-products slots × gyms — one session per pair', () => {
+    const out = buildNationalsSessions(slots, gyms, 'evt-1');
+    expect(out).toHaveLength(slots.length * gyms.length);
+  });
+
+  it('names sessions "{slot} — {gym} ({discipline label})", T&T abbreviated', () => {
+    const out = buildNationalsSessions(slots, gyms, 'evt-1');
+    expect(out[0].name).toBe('Session 1 — Orange (MAG)');
+    expect(out[1].name).toBe('Session 1 — Red (WAG)');
+    expect(out[2].name).toBe('Session 1 — Purple (T&T)');
+    expect(out[3].name).toBe('Session 2 — Orange (MAG)');
+  });
+
+  it('propagates each gym\'s discipline, levelIds, and the slot\'s date/time', () => {
+    const out = buildNationalsSessions(slots, gyms, 'evt-1');
+    const orangeSession2 = out.find((s) => s.name === 'Session 2 — Orange (MAG)')!;
+    expect(orangeSession2.discipline).toBe('MAG');
+    expect(orangeSession2.levelIds).toEqual(['mag-dev', 'mag-int', 'mag-adv']);
+    expect(orangeSession2.date).toBe('2027-04-16');
+    expect(orangeSession2.time).toBe('14:00');
+    expect(orangeSession2.squads).toEqual([]);
+  });
+
+  it('sets phase to "prelim" on every generated session', () => {
+    const out = buildNationalsSessions(slots, gyms, 'evt-1');
+    expect(out.every((s) => s.phase === 'prelim')).toBe(true);
+  });
+
+  it('assigns unique sequential ids scoped to the event id', () => {
+    const out = buildNationalsSessions(slots, gyms, 'evt-1');
+    expect(out.map((s) => s.id)).toEqual(['evt-1-s1', 'evt-1-s2', 'evt-1-s3', 'evt-1-s4', 'evt-1-s5', 'evt-1-s6']);
+  });
+
+  it('returns an empty array when there are no slots or no gyms', () => {
+    expect(buildNationalsSessions([], gyms, 'evt-1')).toEqual([]);
+    expect(buildNationalsSessions(slots, [], 'evt-1')).toEqual([]);
   });
 });

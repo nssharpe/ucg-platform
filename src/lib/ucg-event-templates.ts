@@ -4,7 +4,7 @@
 // into `EventWizard`'s new `template` prop — the admin reviews/adjusts every
 // field before saving; nothing here is written to the DB directly.
 import { DISCIPLINES } from './types';
-import type { DB, Event, Season } from './types';
+import type { DB, Discipline, Event, EventSession, Season } from './types';
 
 function isoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -51,8 +51,11 @@ export function nationalsDateWindow(year: number): { startDate: string; endDate:
 }
 
 /** The host club to prefill: the `is_league_host`-flagged club, but ONLY when
- *  exactly one exists — with none or several, the admin picks manually. */
-function singleLeagueHostClubId(db: DB): string | undefined {
+ *  exactly one exists — with none or several, the admin picks manually.
+ *  Exported for `EventWizard`'s UCG-hosted submit-time host-club resolution
+ *  (the host club input is hidden for UCG-hosted events, per PM feedback
+ *  2026-07-22 — the wizard falls back to this same lookup). */
+export function singleLeagueHostClubId(db: DB): string | undefined {
   const hosts = db.clubs.filter((c) => c.isLeagueHost);
   return hosts.length === 1 ? hosts[0].id : undefined;
 }
@@ -70,13 +73,23 @@ export function flipfestTemplate(season: Season, db: DB): Partial<Event> {
     ucgHosted: 'flipfest',
     timezone: 'America/Los_Angeles',
     venue: 'FlipFest',
+    // Real, fixed FlipFest address (PM feedback 2026-07-22 — the wizard's
+    // location inputs are hidden for FlipFest, so these must be baked in).
+    streetAddress: '272 Lake Frances Rd',
+    city: 'Crossville',
     state: 'TN',
     country: 'United States',
     startDate,
     endDate,
     campConfig: { overnightSurvey: true },
+    // All three disciplines by default — the wizard's discipline/session
+    // picker is hidden for camps, so this seeds the default sessions the
+    // camp registration flow actually reads (EventWizard's `initialSessions`
+    // derives sessions from these disciplines the same way Nationals does).
+    disciplines: [...DISCIPLINES],
     // Placeholder price/sizes — the admin reviews before saving.
     tshirtAddon: { price: 20, sizes: ['S', 'M', 'L', 'XL'] },
+    entryFee: 200,
     ...(hostClubId ? { hostClubId } : {}),
   };
 }
@@ -99,6 +112,58 @@ export function nationalsTemplate(season: Season, db: DB): Partial<Event> {
     endDate,
     ...(hostClubId ? { hostClubId } : {}),
   };
+}
+
+// ---- Nationals sessions × gyms (PM feedback 2026-07-22, create-mode only) ----
+// Nationals runs every discipline at every session, split across gyms — each
+// gym holds one discipline's level group. `EventWizard` collects the two
+// lists below and this pure builder cross-products them into the
+// `EventSession[]` the rest of the app actually understands. Extracted here
+// (not in the component) so the cross-product/naming/level-propagation logic
+// is independently unit-testable.
+
+export interface NationalsSessionSlot {
+  /** Auto-assigned "Session 1"/"Session 2"/… — not user-editable text. */
+  name: string;
+  date: string;
+  time: string;
+}
+
+export interface NationalsGym {
+  name: string;
+  discipline: Discipline;
+  levelIds: string[];
+}
+
+const disciplineLabel = (d: Discipline) => (d === 'TNT' ? 'T&T' : d);
+
+/** Cross product of session slots × gyms → one `EventSession` per (slot, gym)
+ *  pair, e.g. `"Session 2 — Orange (MAG)"`. All Nationals-create sessions are
+ *  `phase: 'prelim'` — finals sessions aren't part of this create-time model
+ *  (finals lineups/scheduling live on the event's own admin surfaces). */
+export function buildNationalsSessions(
+  slots: NationalsSessionSlot[],
+  gyms: NationalsGym[],
+  eventId: string,
+): EventSession[] {
+  const out: EventSession[] = [];
+  let i = 0;
+  for (const slot of slots) {
+    for (const gym of gyms) {
+      i++;
+      out.push({
+        id: `${eventId}-s${i}`,
+        name: `${slot.name} — ${gym.name} (${disciplineLabel(gym.discipline)})`,
+        discipline: gym.discipline,
+        date: slot.date,
+        time: slot.time,
+        levelIds: gym.levelIds,
+        squads: [],
+        phase: 'prelim',
+      });
+    }
+  }
+  return out;
 }
 
 /** A season's existing FlipFest/Nationals instance: the event with matching
