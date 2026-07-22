@@ -271,8 +271,8 @@ export function EventDetail() {
         <div>
           <h1 className="page-title display">{event.name}</h1>
           <p className="page-sub">
-            {event.city}, {event.state} · {fmtDate(event.startDate)}–{fmtDate(event.endDate)} ({event.timezone}) ·
-            hosted by {host?.name} · <code>#/events/{event.slug}</code>
+            {event.city}, {event.state} · {fmtDate(event.startDate)}–{fmtDate(event.endDate)} ·
+            hosted by {event.ucgHosted ? 'UCG' : host?.name}
           </p>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 6 }}>
             {(event.disciplines as Discipline[]).map((d) => (
@@ -396,23 +396,41 @@ export function EventDetail() {
           )}
         </div>
         <div className="card card-pad">
-          <h3 className="card-title">Field</h3>
+          <h3 className="card-title">Participants</h3>
           <div className="stat-big stat-accent">{regs.length}</div>
           <div className="stat-label">registrations · {[...new Set(regs.map((r) => r.athleteId))].length} athletes · {[...new Set(regs.map((r) => r.clubId))].length} clubs</div>
         </div>
-        <div className="card card-pad">
-          <h3 className="card-title">Quick links</h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <Link to={`/results/${event.slug}`}>→ Live results</Link>
-            {canManage && event.kind === 'nationals' && (
-              <Link to={`/events/${event.slug}/nationals`} style={{ fontWeight: 700 }}>→ Finals qualification &amp; awards</Link>
-            )}
-            {canManage && <Link to={`/events/${event.slug}/manage`}>→ Manage sessions & squads</Link>}
-            {canManage && <Link to={`/judge?event=${event.id}`}>→ Score entry</Link>}
-            {canManage && <a href="#" onClick={(e) => { e.preventDefault(); exportCsv(db, event); }}>→ Export registrations (CSV)</a>}
-            {canManage && <a href="#" onClick={(e) => { e.preventDefault(); exportScoresCsv(db, event); }}>→ Export scores incl. calculator detail (CSV)</a>}
-          </div>
-        </div>
+        {(() => {
+          const isCamp = event.eventType === 'camp';
+          const quickLinks = [
+            !isCamp && (
+              <Link key="results" to={`/results/${event.slug}`}>→ Live results</Link>
+            ),
+            canManage && event.kind === 'nationals' && (
+              <Link key="nationals" to={`/events/${event.slug}/nationals`} style={{ fontWeight: 700 }}>→ Finals qualification &amp; awards</Link>
+            ),
+            canManage && !isCamp && (
+              <Link key="manage" to={`/events/${event.slug}/manage`}>→ Manage sessions & squads</Link>
+            ),
+            canManage && !isCamp && (
+              <Link key="score" to={`/judge?event=${event.id}`}>→ Score entry</Link>
+            ),
+            canManage && (
+              <a key="export-regs" href="#" onClick={(e) => { e.preventDefault(); exportCsv(db, event); }}>→ Export registrations (CSV)</a>
+            ),
+            canManage && !isCamp && (
+              <a key="export-scores" href="#" onClick={(e) => { e.preventDefault(); exportScoresCsv(db, event); }}>→ Export scores incl. calculator detail (CSV)</a>
+            ),
+          ].filter(Boolean);
+          return quickLinks.length > 0 ? (
+            <div className="card card-pad">
+              <h3 className="card-title">Quick links</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {quickLinks}
+              </div>
+            </div>
+          ) : null;
+        })()}
       </div>
 
       <div className="card" style={{ overflow: 'hidden' }}>
