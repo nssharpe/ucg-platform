@@ -108,9 +108,12 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   `supabase/migrations/` — **the authoritative migration list + per-migration narrative +
   schema/RLS model is `supabase/README.md`**; keep its table updated with every migration
   (detail goes THERE, not here). All migrations through
-  `20260720142948` are applied (staging + prod); `20260720212144_events_ucg_hosted.sql`
+  `20260720212144` are applied (staging + prod); the 2026-07-22 pair
+  (`20260722220449_guard_events_ucg_hosted`, `20260722221027_events_listing_only`)
   is applied to STAGING only — prod `supabase db push` is on Nate (in-session CLI
-  pushes to prod were classifier-blocked 2026-07-20). Security hardening:
+  pushes to prod stay classifier-blocked, reconfirmed 2026-07-22; function
+  deploys were ALSO blocked this session — `request-refund` needs a redeploy
+  to prod+staging, on Nate). Security hardening:
   Phase 1+2 applied; Phase 3 TODO (`docs/plans/2026-07-02-security-hardening.md`).
 - New migrations: `supabase migration new <name>` (timestamp filename format is required).
   Apply via `supabase db push` — network is sandbox-blocked, run with sandbox disabled.
@@ -301,6 +304,14 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   (pending regs don't lock). **Change eligibility:** `changeIsEligible(before,after)`
   (`pricing.ts`) gates "Add change to cart" (add discipline / change level / change club /
   swap athlete — NOT apparatus tweaks within a discipline).
+- **Camps are session-less/level-less (2026-07-22):** camp events
+  (`eventType === 'camp'`) save `sessions: []` and `secondDisciplineFee: 0` (flat
+  fee), auto-set `lastDateToEdit = regCloses`, and keep `disciplines` only as
+  "equipment available". Camp regs save `levelId: ''`, `apparatus: []`,
+  `sessionId: null` (RegistrationEditor camp mode = discipline checkboxes only) —
+  don't add code that assumes a reg has a level/apparatus without a camp branch.
+  Overnight-survey mandatory flags: `campConfig.surveyMandatory` (absent = legacy
+  3-of-4), validated by `campSurveyValid(draft, config)` (`pricing.ts`).
 - **Member self-edit (`MyRegistrations.tsx`)** embeds the shared `RegistrationEditor`,
   targets the member's OWN cart, same paid/`updatedPending` semantics as `Club.tsx`.
   **CRITICAL divergence:** the member side NEVER deletes a registration — a fully
@@ -391,7 +402,11 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   scope) inside shared `CartCheckout.tsx` (promo input + server-returned
   Subtotal/Coupon/Fee/Total — UI never sums client amounts as authoritative).
 - **Refunds (in-app, shipped emv2 P3, 2026-07-11):** only for events hosted by an
-  `is_league_host`-flagged club. Self-serve (`MyRegistrations.tsx`) or club-manager
+  `is_league_host`-flagged club, OR any UCG-hosted event (`events.ucg_hosted` set —
+  since 2026-07-22 these need NO host club; `eventIsRefundEligible` + the
+  `request-refund` mirror check `ucgHosted` first, and `ucg_hosted` is admin-only
+  writable via guard trigger `20260722220449` precisely because it now grants
+  eligibility). Self-serve (`MyRegistrations.tsx`) or club-manager
   (`Club.tsx`) request via `RefundRequestDialog` → edge fn `request-refund` (validates
   ownership/eligibility/duplicates, emails requester + refund managers). Review at
   `#/admin/refunds` (`refund_manager` or `admin` role) → edge fn `process-refund`:
