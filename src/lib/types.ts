@@ -295,6 +295,13 @@ export interface Event {
   campConfig?: {
     overnightSurvey?: boolean;
     leoAddon?: { price: number; sizes: string[]; lastPurchaseAt?: string };
+    /** Per-question "Mandatory?" toggles for the overnight survey (PM
+     *  requirement 2026-07-22: pre-seed all four checked). Absent ⇒ legacy
+     *  default (bedtime/noiseLevel/cabinGenderPref mandatory, roommateRequest
+     *  optional) so pre-existing events keep their historical behavior.
+     *  `campSurveyValid` (pricing.ts) is the single source of truth for what
+     *  this actually gates. */
+    surveyMandatory?: { bedtime?: boolean; noiseLevel?: boolean; cabinGenderPref?: boolean; roommateRequest?: boolean };
   };
   /** Venue name (distinct from city/state — e.g. "University Arena"). */
   venue?: string;

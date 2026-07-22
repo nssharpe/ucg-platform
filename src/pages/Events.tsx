@@ -34,7 +34,8 @@ import {
   newRegistrationEntryTotal, registrationChangeFee, syncSynchroPartnerLevel, findIncomingSynchroPartner,
   lateFeeApplies, lateFeeAnchor, addonPurchaseOpen, initialAddonDraft, anyAddonWindowOpen, addonDraftValid,
   buildAddonCartItems, type AddonDraft,
-  initialCampSurveyDraft, campSurveyValid, campSurveyToStored, campSurveySummary, CABIN_GENDER_OPTIONS, type CampSurveyDraft,
+  initialCampSurveyDraft, campSurveyValid, campSurveyToStored, campSurveySummary, campSurveyMandatoryOf,
+  CABIN_GENDER_OPTIONS, CAMP_BEDTIME_LABELS, CAMP_NOISE_LABELS, type CampSurveyDraft,
 } from '../lib/pricing';
 import { holdStamp } from '../lib/capacity';
 import { OWNER_TASKS, ownerTaskDueDate } from '../../supabase/functions/_shared/owner-checklist';
@@ -316,6 +317,15 @@ export function EventDetail() {
           admin/sanctioning (manage-waitlist's server-returned canManage,
           re-checked server-side on every action — hosts see it read-only). */}
       {canManage && <WaitlistCard event={event} toast={toast} />}
+
+      {/* Camp overnight-accommodations survey responses (PM requirement
+          2026-07-22): reviewable by hosts/admins individually and as
+          totals/summaries. Only rendered for camps (survey doesn't apply to
+          competitions) — shown even when the event never turned the survey
+          on, so a host who just enabled it can find where responses land. */}
+      {canManage && event.eventType === 'camp' && (
+        <CampSurveyResponsesCard event={event} regs={regs} />
+      )}
 
       {/* Set Competition Order lock (event-mgmt v2 Phase 5 §E6): admin-only —
           once checked, club managers may only VIEW their competition_orders
@@ -837,6 +847,118 @@ function WaitlistCard({ event, toast }: {
             </tbody>
           </table>
         </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CampSurveyResponsesCard — overnight-accommodations survey review (PM
+// requirement 2026-07-22): hosts/admins review answers both individually and
+// as totals/summaries. Reads through the scoped `registration_camp_surveys`
+// RPC (fetchCampSurveys) — same as the registrant-facing prefill — never a
+// direct `camp_survey` column read (excluded from loadAll by design, privacy
+// fix 2026-07-17).
+// ---------------------------------------------------------------------------
+
+function CampSurveyResponsesCard({ event, regs }: { event: Event; regs: Registration[] }) {
+  const db = useDB();
+  const [surveys, setSurveys] = useState<Record<string, Registration['campSurvey'] | null> | null>(null);
+  const [showIndividual, setShowIndividual] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    void fetchCampSurveys(event.id).then((res) => { if (live) setSurveys(res); });
+    return () => { live = false; };
+  }, [event.id]);
+
+  const rows = surveys === null ? null : regs
+    .filter((r) => surveys[r.id])
+    .map((r) => ({
+      reg: r,
+      athleteName: (() => {
+        const p = db.people.find((pp) => pp.id === r.athleteId);
+        return p ? `${p.firstName} ${p.lastName}` : r.athleteId;
+      })(),
+      survey: surveys[r.id]!,
+    }))
+    .sort((a, b) => a.athleteName.localeCompare(b.athleteName));
+
+  const countBy = <K extends string>(values: (K | undefined)[], labels: Record<string, string>) => {
+    const counts = new Map<string, number>();
+    for (const v of values) {
+      if (!v) continue;
+      const label = labels[v] ?? v;
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  };
+
+  const bedtimeCounts = rows ? countBy(rows.map((r) => r.survey.bedtime), CAMP_BEDTIME_LABELS) : [];
+  const noiseCounts = rows ? countBy(rows.map((r) => r.survey.noiseLevel), CAMP_NOISE_LABELS) : [];
+  const cabinCounts = rows ? countBy(rows.map((r) => r.survey.cabinGenderPref), {}) : [];
+  const roommateCount = rows ? rows.filter((r) => r.survey.roommateRequest?.trim()).length : 0;
+
+  const summaryBlock = (title: string, counts: [string, number][]) => (
+    <div>
+      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>{title}</div>
+      {counts.length === 0
+        ? <div style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>No answers yet</div>
+        : counts.map(([label, n]) => (
+            <div key={label} style={{ fontSize: 13, display: 'flex', justifyContent: 'space-between', gap: 8, maxWidth: 240 }}>
+              <span>{label}</span><strong>{n}</strong>
+            </div>
+          ))}
+    </div>
+  );
+
+  return (
+    <div className="card card-pad" style={{ marginBottom: 18 }}>
+      <h3 className="card-title">Survey responses{rows !== null ? ` (${rows.length})` : ''}</h3>
+      <p style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--ink-soft)' }}>
+        Overnight-accommodations answers from camp registrants.
+        {!event.campConfig?.overnightSurvey && ' The survey is currently turned off in "Edit event" — no new answers will come in.'}
+      </p>
+      {rows === null ? (
+        <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)' }}>Loading…</p>
+      ) : rows.length === 0 ? (
+        <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)' }}>No survey answers yet.</p>
+      ) : (
+        <>
+          <div className="grid cols-3" style={{ gap: 16, marginBottom: 14 }}>
+            {summaryBlock('Bedtime', bedtimeCounts)}
+            {summaryBlock('Noise level', noiseCounts)}
+            {summaryBlock('Cabin preference', cabinCounts)}
+          </div>
+          <p style={{ margin: '0 0 12px', fontSize: 13 }}>
+            <strong>{roommateCount}</strong> of {rows.length} left a roommate request.
+          </p>
+          <button className="btn small ghost" onClick={() => setShowIndividual((v) => !v)}>
+            {showIndividual ? 'Hide individual answers' : 'Show individual answers'}
+          </button>
+          {showIndividual && (
+            <div style={{ overflowX: 'auto', marginTop: 12 }}>
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>Athlete</th><th>Bedtime</th><th>Noise</th><th>Cabin pref</th><th>Roommate request</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map(({ reg, athleteName, survey }) => (
+                    <tr key={reg.id}>
+                      <td>{athleteName}</td>
+                      <td>{survey.bedtime ? CAMP_BEDTIME_LABELS[survey.bedtime] ?? survey.bedtime : '—'}</td>
+                      <td>{survey.noiseLevel ? CAMP_NOISE_LABELS[survey.noiseLevel] ?? survey.noiseLevel : '—'}</td>
+                      <td>{survey.cabinGenderPref ?? '—'}</td>
+                      <td style={{ maxWidth: 260, whiteSpace: 'normal' }}>{survey.roommateRequest || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -1923,6 +2045,10 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
   // the popup, after add-ons, only when the event turns it on. Seeded from
   // any prior answer on this athlete's existing reg (re-registering keeps it).
   const surveyRequired = event.eventType === 'camp' && !!event.campConfig?.overnightSurvey;
+  // Per-question "Mandatory?" config (PM requirement 2026-07-22) — resolved
+  // against the legacy default so pre-existing camps without an explicit
+  // config keep behaving as before.
+  const surveyMandatory = useMemo(() => campSurveyMandatoryOf(event.campConfig?.surveyMandatory), [event.campConfig?.surveyMandatory]);
   const [surveyDraft, setSurveyDraft] = useState<CampSurveyDraft>(
     () => initialCampSurveyDraft(existingRegs[0]?.campSurvey),
   );
@@ -2168,8 +2294,8 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
   // Survey questions come LAST in the popup (§G), after add-ons.
   const handleSurvey = () => {
     if (!pendingRegs) return;
-    if (!campSurveyValid(surveyDraft)) {
-      toast('Answer bedtime, noise level, and cabin gender preference before continuing (roommate request is optional).', { variant: 'error' });
+    if (!campSurveyValid(surveyDraft, surveyMandatory)) {
+      toast('Answer every required survey question before continuing.', { variant: 'error' });
       return;
     }
     persistRegs(pendingRegs, pendingAddonItems);
@@ -2259,7 +2385,7 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
           </p>
 
           <div className="grid cols-2" style={{ gap: 12 }}>
-            <Field label="Bedtime">
+            <Field label="Bedtime" required={surveyMandatory.bedtime}>
               <select
                 className="input"
                 value={surveyDraft.bedtime}
@@ -2271,7 +2397,7 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
                 <option value="after-midnight">After midnight</option>
               </select>
             </Field>
-            <Field label="Noise level preference">
+            <Field label="Noise level preference" required={surveyMandatory.noiseLevel}>
               <select
                 className="input"
                 value={surveyDraft.noiseLevel}
@@ -2283,7 +2409,7 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
                 <option value="lively">Lively</option>
               </select>
             </Field>
-            <Field label="Cabin gender preference">
+            <Field label="Cabin gender preference" required={surveyMandatory.cabinGenderPref}>
               <select
                 className="input"
                 value={surveyDraft.cabinGenderPref}
@@ -2295,7 +2421,11 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
             </Field>
           </div>
 
-          <Field label="Roommate request (optional)" hint="Who would you like to room with?">
+          <Field
+            label={surveyMandatory.roommateRequest ? 'Roommate request' : 'Roommate request (optional)'}
+            required={surveyMandatory.roommateRequest}
+            hint="Who would you like to room with?"
+          >
             <input
               className="input"
               value={surveyDraft.roommateRequest}
@@ -2305,7 +2435,7 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
           </Field>
 
           <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
-            <button className="btn primary" onClick={handleSurvey} disabled={!campSurveyValid(surveyDraft)}>
+            <button className="btn primary" onClick={handleSurvey} disabled={!campSurveyValid(surveyDraft, surveyMandatory)}>
               Continue to cart
             </button>
           </div>

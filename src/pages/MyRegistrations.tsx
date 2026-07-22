@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
@@ -8,7 +8,7 @@ import { pushRegistration, pushCart, syncSynchroPartnerLevelRemote, cancelWaitli
 import { RegistrationEditor } from '../components/RegistrationEditor';
 import {
   newRegistrationEntryTotal, registrationChangeFee, changeIsEligible, syncSynchroPartnerLevel, lateFeeApplies, lateFeeAnchor,
-  initialCampSurveyDraft, campSurveyValid, campSurveyToStored, CABIN_GENDER_OPTIONS, requiredSessionRequests,
+  initialCampSurveyDraft, campSurveyValid, campSurveyToStored, campSurveyMandatoryOf, CABIN_GENDER_OPTIONS, requiredSessionRequests,
 } from '../lib/pricing';
 import type { RegChangeState, CampSurveyDraft } from '../lib/pricing';
 import { holdStamp, waitlistPosition } from '../lib/capacity';
@@ -682,6 +682,10 @@ function EditRegistrationModal({
   // RegistrationEditor's discipline/change-fee flow below.
   const isCamp = event.eventType === 'camp';
   const surveyRequired = isCamp && !!event.campConfig?.overnightSurvey;
+  // Per-question "Mandatory?" config (PM requirement 2026-07-22) — resolved
+  // against the legacy default so pre-existing camps without an explicit
+  // config keep behaving as before.
+  const surveyMandatory = useMemo(() => campSurveyMandatoryOf(event.campConfig?.surveyMandatory), [event.campConfig?.surveyMandatory]);
   const [surveyDraft, setSurveyDraft] = useState<CampSurveyDraft>(
     () => initialCampSurveyDraft(existing[0]?.campSurvey),
   );
@@ -703,8 +707,8 @@ function EditRegistrationModal({
   }, []);
 
   const saveSurvey = () => {
-    if (!campSurveyValid(surveyDraft)) {
-      toast('Answer bedtime, noise level, and cabin gender preference before saving (roommate request is optional).', { variant: 'error' });
+    if (!campSurveyValid(surveyDraft, surveyMandatory)) {
+      toast('Answer every required survey question before saving.', { variant: 'error' });
       return;
     }
     const stored = campSurveyToStored(surveyDraft);
@@ -756,7 +760,7 @@ function EditRegistrationModal({
             Free to update any time before the edit deadline — never a change fee.
           </p>
           <div className="grid cols-2" style={{ gap: 12 }}>
-            <Field label="Bedtime">
+            <Field label="Bedtime" required={surveyMandatory.bedtime}>
               <select
                 className="input"
                 value={surveyDraft.bedtime}
@@ -768,7 +772,7 @@ function EditRegistrationModal({
                 <option value="after-midnight">After midnight</option>
               </select>
             </Field>
-            <Field label="Noise level preference">
+            <Field label="Noise level preference" required={surveyMandatory.noiseLevel}>
               <select
                 className="input"
                 value={surveyDraft.noiseLevel}
@@ -780,7 +784,7 @@ function EditRegistrationModal({
                 <option value="lively">Lively</option>
               </select>
             </Field>
-            <Field label="Cabin gender preference">
+            <Field label="Cabin gender preference" required={surveyMandatory.cabinGenderPref}>
               <select
                 className="input"
                 value={surveyDraft.cabinGenderPref}
@@ -791,7 +795,11 @@ function EditRegistrationModal({
               </select>
             </Field>
           </div>
-          <Field label="Roommate request (optional)" hint="Who would you like to room with?">
+          <Field
+            label={surveyMandatory.roommateRequest ? 'Roommate request' : 'Roommate request (optional)'}
+            required={surveyMandatory.roommateRequest}
+            hint="Who would you like to room with?"
+          >
             <input
               className="input"
               value={surveyDraft.roommateRequest}
@@ -799,7 +807,7 @@ function EditRegistrationModal({
               placeholder="e.g. Jamie Lee"
             />
           </Field>
-          <button className="btn ghost" style={{ marginTop: 8 }} onClick={saveSurvey} disabled={!campSurveyValid(surveyDraft)}>
+          <button className="btn ghost" style={{ marginTop: 8 }} onClick={saveSurvey} disabled={!campSurveyValid(surveyDraft, surveyMandatory)}>
             Save survey answers
           </button>
         </div>

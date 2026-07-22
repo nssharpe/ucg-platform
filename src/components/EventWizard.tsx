@@ -314,6 +314,19 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
   const [registrationMode, setRegistrationMode] = useState<'by-discipline' | 'by-session'>(
     seedEvt?.registrationMode ?? 'by-discipline',
   );
+  // Registrant survey (camps only, PM requirement 2026-07-22): the four
+  // questions themselves are fixed (bedtime/noise/cabin-pref/roommate) — only
+  // the master on/off toggle and each question's "Mandatory?" box are
+  // editable. Pre-seeded checked (all four mandatory) for a brand-new camp;
+  // an existing camp's saved config (or its lack of one, pre-dating this
+  // feature) is honored on edit.
+  const [surveyEnabled, setSurveyEnabled] = useState(seedEvt?.campConfig?.overnightSurvey ?? true);
+  const [surveyMandatory, setSurveyMandatory] = useState({
+    bedtime: seedEvt?.campConfig?.surveyMandatory?.bedtime ?? true,
+    noiseLevel: seedEvt?.campConfig?.surveyMandatory?.noiseLevel ?? true,
+    cabinGenderPref: seedEvt?.campConfig?.surveyMandatory?.cabinGenderPref ?? true,
+    roommateRequest: seedEvt?.campConfig?.surveyMandatory?.roommateRequest ?? true,
+  });
   // Scoring config (PM decision 2026-07-19): judge panels + default entry mode.
   const initialScoringConfig = scoringConfigOf(seedEvt);
   const [scoringPanels, setScoringPanels] = useState<1 | 2>(isNationalsCreate ? 2 : initialScoringConfig.panels);
@@ -581,6 +594,14 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
           }
         : { kind: 'standard' as const }),
       scoringConfig: { panels: scoringPanels, entryMode: scoringEntryMode },
+      // Registrant survey (camps only, PM requirement 2026-07-22) — preserves
+      // any `leoAddon` the sanction-approval flow set (this wizard has no UI
+      // for it) while writing the survey on/off + per-question mandatory
+      // config from the section above. Non-camp events keep whatever
+      // campConfig they already had (there's nothing to edit for them).
+      ...(isCamp
+        ? { campConfig: { ...seedEvt?.campConfig, overnightSurvey: surveyEnabled, surveyMandatory } }
+        : {}),
     };
     if (isEdit) {
       const applied = mutate((d) => { const idx = d.events.findIndex((m) => m.id === event.id); if (idx >= 0) d.events[idx] = event; pushEvent(event); });
@@ -845,6 +866,34 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
               </label>
             ))}
           </div>
+
+          {sectionTitle('Registrant survey')}
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, marginBottom: surveyEnabled ? 10 : 0 }}>
+            <input type="checkbox" checked={surveyEnabled} onChange={(e) => setSurveyEnabled(e.target.checked)} />
+            Do you want to survey registrants during registration?
+          </label>
+          {surveyEnabled && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {([
+                { key: 'bedtime' as const, text: 'What time do you plan to go to bed?' },
+                { key: 'noiseLevel' as const, text: 'What is the preferred noise level in your cabin?' },
+                { key: 'cabinGenderPref' as const, text: 'Would you prefer a co-ed or single gender cabin?' },
+                { key: 'roommateRequest' as const, text: 'If you have any roommate requests (including people you DO NOT want to room with), please list them here.' },
+              ]).map((q) => (
+                <div key={q.key} style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap', padding: '8px 10px', border: '1px solid var(--line)', borderRadius: 8 }}>
+                  <span style={{ fontSize: 14, flex: '1 1 320px' }}>{q.text}</span>
+                  <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' }}>
+                    <input
+                      type="checkbox"
+                      checked={surveyMandatory[q.key]}
+                      onChange={(e) => setSurveyMandatory((m) => ({ ...m, [q.key]: e.target.checked }))}
+                    />
+                    Mandatory?
+                  </label>
+                </div>
+              ))}
+            </div>
+          )}
         </>
       ) : (
         <>

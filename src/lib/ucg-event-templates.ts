@@ -81,7 +81,12 @@ export function flipfestTemplate(season: Season, db: DB): Partial<Event> {
     country: 'United States',
     startDate,
     endDate,
-    campConfig: { overnightSurvey: true },
+    // Pre-seeded per PM requirement 2026-07-22: survey on, all four questions
+    // mandatory (the admin can still relax individual questions in the wizard).
+    campConfig: {
+      overnightSurvey: true,
+      surveyMandatory: { bedtime: true, noiseLevel: true, cabinGenderPref: true, roommateRequest: true },
+    },
     // All three disciplines by default — the wizard's discipline/session
     // picker is hidden for camps, so this seeds the default sessions the
     // camp registration flow actually reads (EventWizard's `initialSessions`
