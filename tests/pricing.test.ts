@@ -188,6 +188,15 @@ describe('newRegistrationEntryTotal (3f/3g host-club $0)', () => {
   it('zero new disciplines = $0', () => {
     expect(newRegistrationEntryTotal(event, { competingClubId: 'other', priorDisciplineCount: 0, newDisciplineCount: 0 })).toBe(0);
   });
+
+  // PM feedback 2026-07-22: UCG-hosted events can have hostClubId === '' (no
+  // host club resolved). An unaffiliated athlete's competingClubId also
+  // defaults to '' (e.g. camp registration, which waives the club-membership
+  // gate) — that must NOT coincidentally match and waive the fee.
+  it('an empty competingClubId never matches an empty (unresolved) hostClubId', () => {
+    const hostless: RegFeeEvent = { hostClubId: '', entryFee: 60, secondDisciplineFee: 25 };
+    expect(newRegistrationEntryTotal(hostless, { competingClubId: '', priorDisciplineCount: 0, newDisciplineCount: 1 })).toBe(60);
+  });
 });
 
 describe('reassignPartners (synchro swap, 3e)', () => {

@@ -15,9 +15,11 @@
 //     manager of the invoice's club.
 //
 // Eligibility: only events whose HOST club has `clubs.is_league_host = true`
-// offer refunds at all (`eventIsRefundEligible`, src/lib/events-core.ts —
-// mirrored here since this function can't import client code). A duplicate
-// pending/approved request against the same item is rejected (409).
+// offer refunds at all — OR a UCG-hosted event (`events.ucg_hosted` set;
+// FlipFest/Nationals need no host club at all as of PM feedback 2026-07-22)
+// (`eventIsRefundEligible`, src/lib/events-core.ts — mirrored here since this
+// function can't import client code; keep both sides in exact lockstep). A
+// duplicate pending/approved request against the same item is rejected (409).
 //
 // verify_jwt STAYS TRUE (default) — this is NOT one of the three
 // --no-verify-jwt functions (stripe-webhook, sms-webhook,
@@ -201,26 +203,28 @@ Deno.serve(async (req) => {
     ownerPersonId = invoice.athlete_id ?? pay?.person_id ?? null;
   }
 
-  // --- Eligibility: event must be hosted by the league's own club ---
+  // --- Eligibility: event must be hosted by the league's own club, OR be a
+  // UCG-hosted event (FlipFest/Nationals — no host club required as of PM
+  // feedback 2026-07-22). Mirrors `eventIsRefundEligible` (events-core.ts). ---
   const { data: event, error: eventErr } = await db
     .from('events')
-    .select('id, name, host_club_id, last_date_to_edit')
+    .select('id, name, host_club_id, last_date_to_edit, ucg_hosted')
     .eq('id', eventId)
     .maybeSingle();
   if (eventErr) return json({ error: 'Could not look up the event.' }, 500);
   if (!event) return json({ error: 'Event not found.' }, 404);
 
-  let hostIsLeague = false;
-  if (event.host_club_id) {
+  let refundEligible = !!event.ucg_hosted;
+  if (!refundEligible && event.host_club_id) {
     const { data: hostClub, error: hostErr } = await db
       .from('clubs')
       .select('id, is_league_host')
       .eq('id', event.host_club_id)
       .maybeSingle();
     if (hostErr) return json({ error: 'Could not verify refund eligibility.' }, 500);
-    hostIsLeague = coalesceBool(hostClub?.is_league_host);
+    refundEligible = coalesceBool(hostClub?.is_league_host);
   }
-  if (!hostIsLeague) {
+  if (!refundEligible) {
     return json({ error: 'Refund requests are only available for events hosted by United Club Gymnastics.' }, 400);
   }
 

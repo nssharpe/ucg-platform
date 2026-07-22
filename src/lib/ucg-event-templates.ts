@@ -96,6 +96,11 @@ export function flipfestTemplate(season: Season, db: DB): Partial<Event> {
     tshirtAddon: { price: 20, sizes: ['S', 'M', 'L', 'XL'] },
     entryFee: 200,
     ...(hostClubId ? { hostClubId } : {}),
+    // Director is always UCG itself for UCG-hosted events (PM feedback
+    // 2026-07-22) — the wizard hides the "Event director" section for these,
+    // so this is the only place it's set. No confirmation CC: the Director of
+    // Nationals never wants a copy of every registrant's confirmation email.
+    director: { name: 'UCG', email: 'info@unitedgymnastics.org', ccOnConfirmation: false },
   };
 }
 
@@ -116,6 +121,9 @@ export function nationalsTemplate(season: Season, db: DB): Partial<Event> {
     startDate,
     endDate,
     ...(hostClubId ? { hostClubId } : {}),
+    // See flipfestTemplate's comment: UCG is always its own Director of
+    // Nationals, no confirmation CC.
+    director: { name: 'UCG', email: 'info@unitedgymnastics.org', ccOnConfirmation: false },
   };
 }
 

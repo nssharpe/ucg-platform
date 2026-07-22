@@ -140,6 +140,20 @@ describe('eventIsRefundEligible (event-mgmt v2 Phase 3, spec §H)', () => {
   it('is not eligible when the host club is not found at all', () => {
     expect(eventIsRefundEligible({ hostClubId: 'club-nonexistent' }, clubs)).toBe(false);
   });
+
+  // PM feedback 2026-07-22: UCG-hosted events (FlipFest/Nationals) no longer
+  // require a host club at all — they must stay refund-eligible regardless.
+  it('is eligible for a UCG-hosted event with no host club (ucgHosted set, hostClubId empty)', () => {
+    expect(eventIsRefundEligible({ hostClubId: '', ucgHosted: 'flipfest' }, clubs)).toBe(true);
+  });
+
+  it('is eligible for a UCG-hosted event even if its host club is not a league host', () => {
+    expect(eventIsRefundEligible({ hostClubId: 'club-member', ucgHosted: 'nationals' }, clubs)).toBe(true);
+  });
+
+  it('non-UCG event with a non-league-host club stays ineligible (unchanged)', () => {
+    expect(eventIsRefundEligible({ hostClubId: 'club-member' }, clubs)).toBe(false);
+  });
 });
 
 describe('scoringConfigOf (per-event scoring config, 2026-07-19)', () => {

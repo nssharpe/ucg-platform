@@ -310,7 +310,10 @@ const rowToMembership = (r: Row<'memberships'>): Membership => ({
 });
 
 const eventToRow = (m: Event) => ({
-  id: m.id, slug: m.slug, name: m.name, host_club_id: m.hostClubId, city: m.city, state: m.state,
+  // '' means "no host club" client-side (events-core.ts UCG-hosted-no-club
+  // path, PM feedback 2026-07-22) — host_club_id is a nullable FK into
+  // clubs(id), so an empty string would violate the constraint; write null.
+  id: m.id, slug: m.slug, name: m.name, host_club_id: m.hostClubId || null, city: m.city, state: m.state,
   timezone: m.timezone, start_date: m.startDate || null, end_date: m.endDate || null, status: m.status,
   reg_opens: m.regOpens || null, reg_closes: m.regCloses || null,
   last_date_to_edit: m.lastDateToEdit || null, entry_fee: m.entryFee,

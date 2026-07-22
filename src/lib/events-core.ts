@@ -99,10 +99,18 @@ export function canStillEditRegistration(
  * club — "UCG - Main" — in the admin clubs editor). Any other host club
  * (member clubs hosting their own competitions) is NOT refund-eligible.
  * Looks the host club up in `clubs` rather than trusting a denormalized flag
- * on the event, so it always reflects the club's current setting. */
+ * on the event, so it always reflects the club's current setting.
+ *
+ * UCG-hosted events (`event.ucgHosted` set — FlipFest/Nationals, PM feedback
+ * 2026-07-22) are ALWAYS refund-eligible regardless of host club: they no
+ * longer require a league-host club to be flagged/resolved at all (a
+ * UCG-hosted event's `hostClubId` may be `''`), so the club lookup below
+ * would otherwise wrongly deny refunds for them. Checked before the club
+ * lookup. Mirror EXACTLY in `supabase/functions/request-refund/index.ts`. */
 export function eventIsRefundEligible(
-  event: { hostClubId: string },
+  event: { hostClubId: string; ucgHosted?: 'flipfest' | 'nationals' },
   clubs: Pick<Club, 'id' | 'isLeagueHost'>[],
 ): boolean {
+  if (event.ucgHosted) return true;
   return clubs.some((c) => c.id === event.hostClubId && c.isLeagueHost === true);
 }

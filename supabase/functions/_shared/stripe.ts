@@ -213,7 +213,11 @@ export function newRegistrationEntryTotalDollars(
     late?: { earliestCreatedAtISO: string };
   },
 ): number {
-  if (competingClubId === event.host_club_id) return 0;
+  // `event.host_club_id` is `null` (not `''`) for a UCG-hosted event with no
+  // host club — `'' === null` is already false, but guard explicitly so this
+  // stays correct even if a future caller passes `''` for "no host club"
+  // (mirrors `newRegistrationEntryTotal`'s guard in src/lib/pricing.ts).
+  if (event.host_club_id && competingClubId === event.host_club_id) return 0;
   let total = 0;
   for (let i = 0; i < newDisciplineCount; i++) {
     const isSecond = priorDisciplineCount + i > 0;
@@ -231,7 +235,8 @@ export function registrationChangeFeeDollars(
   event: RegFeeEvent,
   { competingClubId }: { competingClubId: string },
 ): number {
-  if (competingClubId === event.host_club_id) return 0;
+  // See `newRegistrationEntryTotalDollars`'s guard comment above.
+  if (event.host_club_id && competingClubId === event.host_club_id) return 0;
   return event.change_fee?.amount ?? 0;
 }
 

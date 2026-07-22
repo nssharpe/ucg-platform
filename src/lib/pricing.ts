@@ -179,7 +179,13 @@ export function registrationEntryFee(
     late?: { earliestCreatedAtISO: string };
   },
 ): number {
-  if (competingClubId === event.hostClubId) return 0;
+  // `event.hostClubId` is `''` for UCG-hosted events with no host club
+  // resolved (PM feedback 2026-07-22) — never treat that as a match even if
+  // the caller passes an equally-empty `competingClubId` (an unaffiliated
+  // athlete's `selectedClubId` defaults to `''`, e.g. camp registration,
+  // which waives the club-membership gate). Guard explicitly rather than
+  // relying on `'' === ''` being coincidentally false.
+  if (event.hostClubId && competingClubId === event.hostClubId) return 0;
   const base = isSecondDiscipline ? event.secondDisciplineFee : event.entryFee;
   if (late && lateFeeApplies(event, late.earliestCreatedAtISO)) {
     return base + (event.lateReg?.fee ?? 0);
@@ -197,7 +203,9 @@ export function registrationChangeFee(
   event: RegFeeEvent,
   { competingClubId }: { competingClubId: string },
 ): number {
-  if (competingClubId === event.hostClubId) return 0;
+  // See `registrationEntryFee`'s guard comment above — never treat an empty
+  // `event.hostClubId` as matching an equally-empty `competingClubId`.
+  if (event.hostClubId && competingClubId === event.hostClubId) return 0;
   return event.changeFee?.amount ?? 0;
 }
 
@@ -233,7 +241,9 @@ export function newRegistrationEntryTotal(
     late?: { earliestCreatedAtISO: string };
   },
 ): number {
-  if (competingClubId === event.hostClubId) return 0;
+  // See `registrationEntryFee`'s guard comment above — never treat an empty
+  // `event.hostClubId` as matching an equally-empty `competingClubId`.
+  if (event.hostClubId && competingClubId === event.hostClubId) return 0;
   let total = 0;
   for (let i = 0; i < newDisciplineCount; i++) {
     const isSecond = priorDisciplineCount + i > 0;

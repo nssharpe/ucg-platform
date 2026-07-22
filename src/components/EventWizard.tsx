@@ -277,7 +277,12 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
   const [hasConfirmationEmail, setHasConfirmationEmail] = useState(!!seedEvt?.confirmationEmail || isNationalsCreate);
   const [confirmationBodyHtml, setConfirmationBodyHtml] = useState(seedEvt?.confirmationEmail?.bodyHtml ?? '');
   const [confirmationFromAlias, setConfirmationFromAlias] = useState(seedEvt?.confirmationEmail?.fromAlias ?? '');
-  const [confirmationReplyTo, setConfirmationReplyTo] = useState(seedEvt?.confirmationEmail?.replyTo ?? '');
+  // UCG-hosted CREATE only (PM feedback 2026-07-22): prefill the reply-to with
+  // the general-questions address when the seed/template didn't set one. An
+  // edit of an existing event keeps whatever it already has (incl. blank).
+  const [confirmationReplyTo, setConfirmationReplyTo] = useState(
+    seedEvt?.confirmationEmail?.replyTo ?? (isUcgHosted && !isEdit ? 'info@unitedgymnastics.org' : ''),
+  );
   const [confirmationPreview, setConfirmationPreview] = useState(false);
   // Disciplines & sessions
   const [disciplines, setDisciplines] = useState<Discipline[]>(seedEvt?.disciplines ?? []);
@@ -396,10 +401,13 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
   const submit = () => {
     if (!name.trim()) return setError('Event name is required.');
     // Host club input is hidden for UCG-hosted events (PM feedback
-    // 2026-07-22) — resolve it to the single league-host club instead of
-    // asking the admin to pick one.
-    const resolvedHostClubId = isUcgHosted ? (hostClubId ?? singleLeagueHostClubId(db) ?? null) : hostClubId;
-    if (!resolvedHostClubId) return setError(isUcgHosted ? 'Flag a club as league host (UCG) first.' : 'Pick a host club.');
+    // 2026-07-22). UCG-hosted events need NO host club at all — still prefer
+    // a single league-host club if one happens to exist (keeps the old
+    // host-club-$0 behavior working for UCG's own club when flagged), but
+    // fall back to '' (no host club) rather than blocking the save. Non-UCG
+    // events are unchanged: a host club is still required.
+    const resolvedHostClubId = isUcgHosted ? (hostClubId ?? singleLeagueHostClubId(db) ?? '') : hostClubId;
+    if (!isUcgHosted && !resolvedHostClubId) return setError('Pick a host club.');
     if (!city.trim() || !state) return setError('City and state are required.');
     if (!startDate || !endDate || endDate < startDate) return setError('End date must be on or after the start date.');
     // F6 season lifecycle: an event's season is derived from its start date —
@@ -703,8 +711,13 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
       </div>
 
       {/* Age-calculation date (event-mgmt v2 §A) — camps don't have age-based
-          levels, so this is hidden for them (PM feedback 2026-07-22). */}
-      {!isCamp && (
+          levels, so this is hidden for them (PM feedback 2026-07-22). Also
+          hidden for UCG-hosted events (PM feedback 2026-07-22): it only
+          matters for meets using Masters rules. An existing event with
+          `ageCalcAt` already set keeps it — the checkbox state still seeds
+          from `seedEvt` above and submit still writes it below, just via a
+          hidden/unreachable-but-preserved toggle. */}
+      {!isCamp && !isUcgHosted && (
         <>
           <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, marginTop: 8, marginBottom: hasAgeCalcAt ? 8 : 0 }}>
             <input type="checkbox" checked={hasAgeCalcAt} onChange={(e) => setHasAgeCalcAt(e.target.checked)} /> Set an age-calculation date
@@ -834,17 +847,28 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
         </>
       )}
 
-      {sectionTitle('Event director')}
-      <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '0 0 8px' }}>
-        Applies to both competitions and camps.
-      </p>
-      <div className="grid cols-3">
-        <Field label="Director name"><input className="input" value={directorName} onChange={(e) => setDirectorName(e.target.value)} /></Field>
-        <Field label="Director email"><input className="input" type="email" value={directorEmail} onChange={(e) => setDirectorEmail(e.target.value)} /></Field>
-      </div>
-      <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, marginTop: 4 }}>
-        <input type="checkbox" checked={directorCc} onChange={(e) => setDirectorCc(e.target.checked)} /> CC director on confirmation emails
-      </label>
+      {/* Event director — hidden for UCG-hosted events (PM feedback
+          2026-07-22): the Director of Nationals is always UCG itself, baked
+          into `flipfestTemplate`/`nationalsTemplate` (director name "UCG",
+          email info@unitedgymnastics.org, no confirmation CC — the PM never
+          wants those). State still seeds from `seedEvt?.director` above and
+          submit below still writes it unconditionally off that state, so the
+          template-provided value round-trips even with the section hidden. */}
+      {!isUcgHosted && (
+        <>
+          {sectionTitle('Event director')}
+          <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '0 0 8px' }}>
+            Applies to both competitions and camps.
+          </p>
+          <div className="grid cols-3">
+            <Field label="Director name"><input className="input" value={directorName} onChange={(e) => setDirectorName(e.target.value)} /></Field>
+            <Field label="Director email"><input className="input" type="email" value={directorEmail} onChange={(e) => setDirectorEmail(e.target.value)} /></Field>
+          </div>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, marginTop: 4 }}>
+            <input type="checkbox" checked={directorCc} onChange={(e) => setDirectorCc(e.target.checked)} /> CC director on confirmation emails
+          </label>
+        </>
+      )}
 
       {/* Disciplines & sessions: camps get a minimal "which disciplines'
           equipment will be available" checkbox row only — no registration
