@@ -335,6 +335,7 @@ const eventToRow = (m: Event) => ({
   finals_roster_locked: m.finalsRosterLocked ?? false,
   finals_lineup_deadline_at: m.finalsLineupDeadlineAt || null,
   scoring_config: m.scoringConfig ?? null,
+  listing_only: m.listingOnly ?? false,
 });
 
 const sessionToRow = (eventId: string, s: Event['sessions'][number]) => ({
@@ -2247,6 +2248,9 @@ export async function loadAll(): Promise<DB | null> {
         : {}),
       ...((r as { scoring_config?: Event['scoringConfig'] | null }).scoring_config
         ? { scoringConfig: (r as { scoring_config?: Event['scoringConfig'] | null }).scoring_config as Event['scoringConfig'] }
+        : {}),
+      ...((r as { listing_only?: boolean | null }).listing_only
+        ? { listingOnly: true }
         : {}),
     }));
 

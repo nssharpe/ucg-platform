@@ -283,6 +283,11 @@ export interface Event {
    *  America/Los_Angeles and hides the Nationals-kind checkbox in
    *  `EventWizard` regardless of which value it holds. */
   ucgHosted?: 'flipfest' | 'nationals';
+  /** UCG Nationals two-tier publish model (PM feedback 2026-07-23): set when
+   *  the event was published via "Publish Dates and Location Only" rather
+   *  than the full wizard flow. Lists on the Events page but hides the
+   *  "Details" button. Absent/false ⇒ a normal, fully-published event. */
+  listingOnly?: boolean;
   /** Present on Nationals events: the qualification/awards configuration. */
   nationalsConfig?: NationalsConfig;
   /** Competition (default) or a camp (NAIGC-hosted, individual-only reg). */

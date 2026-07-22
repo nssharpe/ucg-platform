@@ -161,6 +161,19 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
   // arbitrary existing sessions is lossy, PM feedback 2026-07-22 §C): drives
   // both the create-mode defaults (§B) and the Sessions×Gyms UI (§C).
   const isNationalsCreate = !editEvent && template?.ucgHosted === 'nationals';
+  // A UCG-nationals event edited while its `sessions` are still empty — i.e.
+  // it was published "Dates and Location Only" (two-tier publish model, PM
+  // feedback 2026-07-23) — ALSO gets the slots×gyms UI, otherwise there'd be
+  // no path to author sessions after a dates-only publish. An edited event
+  // WITH sessions keeps the classic per-session cards. Deliberately separate
+  // from `isNationalsCreate`, which stays CREATE-only so editing a
+  // dates-only event doesn't re-force its create-mode defaults (checkboxes,
+  // finals levels, judge panels) over already-saved values.
+  const useGymsUi = isNationalsCreate || (isEdit && seedEvt?.ucgHosted === 'nationals' && (seedEvt?.sessions?.length ?? 0) === 0);
+  // Two-tier publish model applies only to the UCG-hosted Nationals
+  // full-page wizard (FlipFest and normal sanctioned events keep the single
+  // "Sanction event"/"Save changes" button).
+  const isNationalsUcgWizard = variant === 'page' && seedEvt?.ucgHosted === 'nationals';
 
   const defaultStart = addDays(new Date().toISOString().slice(0, 10), 60);
   const seedStartDate = seedEvt?.startDate ?? defaultStart;
@@ -295,13 +308,13 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
   // read during render, same reason `initialSessions`/`keyRef` above use this
   // pattern); the refs' starting values are then seeded past that count so
   // later add-row calls don't collide.
-  const initialNationalsSlots: NationalsSlotDraft[] = isNationalsCreate ? (() => {
+  const initialNationalsSlots: NationalsSlotDraft[] = useGymsUi ? (() => {
     let key = 1;
     return defaultNationalsSlots(seedStartDate, () => key++);
   })() : [];
   const slotKeyRef = useRef(initialNationalsSlots.length + 1);
   const nextSlotKey = () => slotKeyRef.current++;
-  const initialNationalsGyms: NationalsGymDraft[] = isNationalsCreate ? (() => {
+  const initialNationalsGyms: NationalsGymDraft[] = useGymsUi ? (() => {
     let key = 1;
     return defaultNationalsGyms(db.levels, () => key++);
   })() : [];
@@ -311,8 +324,8 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
   const [nationalsGyms, setNationalsGyms] = useState<NationalsGymDraft[]>(initialNationalsGyms);
   const gymDisciplines = useMemo(() => [...new Set(nationalsGyms.map((g) => g.discipline))], [nationalsGyms]);
   // Everywhere downstream (capacity, finals levels, submit) reads this
-  // instead of `disciplines`/`sessions` when in Nationals create mode.
-  const effectiveDisciplines = isNationalsCreate ? DISCIPLINES.filter((d) => gymDisciplines.includes(d)) : disciplines;
+  // instead of `disciplines`/`sessions` when the slots×gyms UI is active.
+  const effectiveDisciplines = useGymsUi ? DISCIPLINES.filter((d) => gymDisciplines.includes(d)) : disciplines;
   // Registration mode (event-mgmt v2 P4 T4): competitions only — camps always
   // register per-athlete, no session choice.
   const isCamp = seedEvt?.eventType === 'camp';
@@ -356,10 +369,10 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
         : 'Sanction a new event';
 
   const allCompetingLevelIds = useMemo(
-    () => isNationalsCreate
+    () => useGymsUi
       ? [...new Set(nationalsGyms.flatMap((g) => g.levelIds))]
       : [...new Set(sessions.flatMap((s) => s.levelIds))],
-    [isNationalsCreate, nationalsGyms, sessions],
+    [useGymsUi, nationalsGyms, sessions],
   );
   // Finals apply to artistic (WAG/MAG) levels; TNT awards from prelims only.
   const finalsEligibleLevels = useMemo(
@@ -398,7 +411,31 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
   const updateSession = (key: number, patch: Partial<SessionDraft>) =>
     setSessions(sessions.map((s) => (s.key === key ? { ...s, ...patch } : s)));
 
-  const submit = () => {
+  /** Shared save/navigate tail for both publish modes. */
+  const finishSave = (event: Event) => {
+    if (isEdit) {
+      const applied = mutate((d) => { const idx = d.events.findIndex((m) => m.id === event.id); if (idx >= 0) d.events[idx] = event; pushEvent(event); });
+      if (!applied) return; // offline read-only gate — no false success toast
+      toast(`${event.name} updated.`);
+    } else {
+      const applied = mutate((d) => { d.events.push(event); pushEvent(event); });
+      if (!applied) return; // offline read-only gate — no false success toast
+      toast(event.ucgHosted ? `${event.name} created — #/events/${slug}` : `${event.name} sanctioned — #/events/${slug}`);
+    }
+    onClose();
+    navigate(`/events/${event.slug}`);
+  };
+
+  /**
+   * `mode` drives the UCG-Nationals two-tier publish model (PM feedback
+   * 2026-07-23 — `isNationalsUcgWizard` footer only): 'dates-only' validates
+   * + saves only name/dates/location (+ an optional matched reg-open/close
+   * pair) and marks `listingOnly: true`, skipping discipline/session/gym,
+   * fee, add-on, capacity, finals, and confirmation-email validation.
+   * 'full' (the only mode every other caller uses) is today's complete
+   * validation and clears `listingOnly`.
+   */
+  const submit = (mode: 'full' | 'dates-only' = 'full') => {
     if (!name.trim()) return setError('Event name is required.');
     // Host club input is hidden for UCG-hosted events (PM feedback
     // 2026-07-22). UCG-hosted events need NO host club at all — still prefer
@@ -414,9 +451,61 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
     // block creating (or re-dating) it into a season that isn't launched yet.
     const seasonBlock = eventCreationBlocked(db, startDate);
     if (seasonBlock.blocked) return setError(seasonBlock.reason ?? 'That season is not yet available for events.');
+
+    if (mode === 'dates-only') {
+      // Reg dates are optional here, but if either is set both are required,
+      // with the same ordering rules as a full publish.
+      const regDatesProvided = !!regOpens || !!regCloses;
+      if (regDatesProvided) {
+        if (!regOpens || !regCloses) return setError('Set both registration open and close dates, or leave both blank.');
+        if (regCloses.slice(0, 10) > startDate) return setError('Registration must close on or before the event start date.');
+        if (regOpens >= regCloses) return setError('Registration must open before it closes.');
+      }
+      const eventId = editEvent?.id ?? `meet-${Date.now()}`;
+      // Only author sessions from the slots×gyms inputs if they're fully
+      // filled in — otherwise a dates-only publish saves no sessions at all
+      // (create mode) or leaves an existing event's sessions untouched (edit
+      // mode with the classic per-session cards, `useGymsUi` false — a
+      // dates-only re-publish must never silently wipe already-authored
+      // sessions).
+      let eventSessions: EventSession[] = editEvent?.sessions ?? [];
+      if (useGymsUi) {
+        const slotsOk = nationalsSlots.length > 0 && nationalsSlots.every((s) => s.date && s.time);
+        const gymsOk = nationalsGyms.length > 0 && nationalsGyms.every((g) => g.name.trim() && g.levelIds.length > 0);
+        if (slotsOk && gymsOk) {
+          eventSessions = buildNationalsSessions(
+            nationalsSlots.map((s, i) => ({ name: `Session ${i + 1}`, date: s.date, time: s.time })),
+            nationalsGyms.map((g) => ({ name: g.name.trim(), discipline: g.discipline, levelIds: g.levelIds })),
+            eventId,
+          );
+        }
+      }
+      const orderedDisciplines = DISCIPLINES.filter((d) => effectiveDisciplines.includes(d));
+      const event: Event = {
+        ...(editEvent ?? template ?? {}),
+        id: eventId,
+        slug: editEvent?.slug ?? slug,
+        name: name.trim(),
+        hostClubId: resolvedHostClubId!,
+        city: city.trim(), state, timezone,
+        startDate, endDate, status: 'live', regOpens, regCloses,
+        // Fees aren't validated in this mode — fall back to a benign default
+        // rather than writing a non-finite value if left blank/invalid.
+        entryFee: Number(entryFee) || 0,
+        secondDisciplineFee: Number(secondFee) || 0,
+        disciplines: orderedDisciplines,
+        sessions: eventSessions,
+        venue: venue.trim() || undefined,
+        streetAddress: streetAddress.trim() || undefined,
+        country: country.trim() || undefined,
+        listingOnly: true,
+      };
+      return finishSave(event);
+    }
+
     if (!regOpens || !regCloses || regCloses.slice(0, 10) > startDate) return setError('Registration must close on or before the event start date.');
     if (regOpens >= regCloses) return setError('Registration must open before it closes.');
-    if (isNationalsCreate) {
+    if (useGymsUi) {
       if (nationalsSlots.length === 0) return setError('Add at least one session.');
       const badSlot = nationalsSlots.find((s) => !s.date || !s.time);
       if (badSlot) return setError('Every session needs a date and time.');
@@ -476,7 +565,7 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
         if (!Number.isFinite(n) || n < 0) return setError('Per-level capacity must be a valid number.');
       }
     }
-    if (!isNationalsCreate) {
+    if (!useGymsUi) {
       for (const s of sessions) {
         for (const a of APPARATUS[s.discipline]) {
           const v = s.maxRoutines[a.code];
@@ -503,7 +592,7 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
     // belt-and-suspenders against any future path that populates it).
     const eventSessions: EventSession[] = isCamp
       ? []
-      : isNationalsCreate
+      : useGymsUi
       ? buildNationalsSessions(
           nationalsSlots.map((s, i) => ({ name: `Session ${i + 1}`, date: s.date, time: s.time })),
           nationalsGyms.map((g) => ({ name: g.name.trim(), discipline: g.discipline, levelIds: g.levelIds })),
@@ -610,18 +699,11 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
       ...(isCamp
         ? { campConfig: { ...seedEvt?.campConfig, overnightSurvey: surveyEnabled, surveyMandatory } }
         : {}),
+      // A full publish always clears the dates-only flag, even for an event
+      // previously published via "Publish Dates and Location Only".
+      listingOnly: false,
     };
-    if (isEdit) {
-      const applied = mutate((d) => { const idx = d.events.findIndex((m) => m.id === event.id); if (idx >= 0) d.events[idx] = event; pushEvent(event); });
-      if (!applied) return; // offline read-only gate — no false success toast
-      toast(`${event.name} updated.`);
-    } else {
-      const applied = mutate((d) => { d.events.push(event); pushEvent(event); });
-      if (!applied) return; // offline read-only gate — no false success toast
-      toast(event.ucgHosted ? `${event.name} created — #/events/${slug}` : `${event.name} sanctioned — #/events/${slug}`);
-    }
-    onClose();
-    navigate(`/events/${event.slug}`);
+    finishSave(event);
   };
 
   const sectionTitle = (t: string) => (
@@ -922,7 +1004,7 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
       ) : (
         <>
           {sectionTitle('Disciplines & sessions')}
-          {isNationalsCreate ? (
+          {useGymsUi ? (
             <>
               <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '0 0 10px' }}>
                 Every discipline runs at every session — the venue is split into gyms, each holding one
@@ -1283,24 +1365,41 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
         </>
       )}
 
-      {sectionTitle('Status')}
-      <div style={{ display: 'flex', gap: 16, marginBottom: 6 }}>
-        {(['live', 'draft'] as const).map((s) => (
-          <label key={s} style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
-            <input type="radio" name="meet-status" checked={status === s} onChange={() => setStatus(s)} />
-            {s === 'live' ? 'Live (published)' : 'Draft (hidden)'}
-          </label>
-        ))}
-      </div>
-      <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '0 0 6px' }}>
-        A Live event is visible and follows the registration-open/close dates below automatically —
-        it doesn't need to be manually reopened or closed. A Draft event is hidden from everyone but admins.
-      </p>
+      {/* Status is hidden for the UCG-Nationals two-tier publish wizard —
+          publishing (either mode) always implies live. */}
+      {!isNationalsUcgWizard && (
+        <>
+          {sectionTitle('Status')}
+          <div style={{ display: 'flex', gap: 16, marginBottom: 6 }}>
+            {(['live', 'draft'] as const).map((s) => (
+              <label key={s} style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
+                <input type="radio" name="meet-status" checked={status === s} onChange={() => setStatus(s)} />
+                {s === 'live' ? 'Live (published)' : 'Draft (hidden)'}
+              </label>
+            ))}
+          </div>
+          <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '0 0 6px' }}>
+            A Live event is visible and follows the registration-open/close dates below automatically —
+            it doesn't need to be manually reopened or closed. A Draft event is hidden from everyone but admins.
+          </p>
+        </>
+      )}
 
       {error && <p style={{ color: 'var(--coral-600)', fontSize: 13.5, fontWeight: 600, margin: '8px 0 0' }}>{error}</p>}
-      <div style={{ display: 'flex', justifyContent: 'end', gap: 8, marginTop: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'end', gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
         <button className="btn ghost" onClick={onClose}>Cancel</button>
-        <button className="btn primary" onClick={submit}>{isEdit ? 'Save changes' : 'Sanction event'}</button>
+        {isNationalsUcgWizard ? (
+          <>
+            <button className="btn" onClick={() => submit('dates-only')}>
+              {isEdit && seedEvt?.listingOnly ? 'Edit Dates and Location Only' : 'Publish Dates and Location Only'}
+            </button>
+            <button className="btn primary" onClick={() => submit('full')}>
+              {isEdit && !seedEvt?.listingOnly ? 'Edit Full Details' : 'Publish Full Details'}
+            </button>
+          </>
+        ) : (
+          <button className="btn primary" onClick={() => submit('full')}>{isEdit ? 'Save changes' : 'Sanction event'}</button>
+        )}
       </div>
     </>
   );

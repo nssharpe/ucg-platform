@@ -190,16 +190,22 @@ export function Events() {
                         </span>
                       </td>
                       <td data-label="Reg Opens" style={{ whiteSpace: 'nowrap' }}>
-                        {regOpen
+                        {!ev.regOpens
+                          ? <span style={{ color: 'var(--ink-soft)' }}>—</span>
+                          : regOpen
                           ? <span className="badge ok">{fmtDate(ev.regOpens.slice(0, 10))}</span>
                           : <span style={{ color: 'var(--ink-soft)' }}>{fmtDate(ev.regOpens.slice(0, 10))}</span>}
                       </td>
                       <td data-label="Reg Closes" style={{ whiteSpace: 'nowrap' }}>
-                        {regClosed
+                        {!ev.regCloses
+                          ? <span style={{ color: 'var(--ink-soft)' }}>—</span>
+                          : regClosed
                           ? <span className="badge err">{fmtDate(ev.regCloses.slice(0, 10))}</span>
                           : <span style={{ color: 'var(--ink-soft)' }}>{fmtDate(ev.regCloses.slice(0, 10))}</span>}
                       </td>
-                      <td data-label=""><Link className="btn small" to={`/events/${ev.slug}`}>Details</Link></td>
+                      <td data-label="">
+                        {!ev.listingOnly && <Link className="btn small" to={`/events/${ev.slug}`}>Details</Link>}
+                      </td>
                     </tr>
                   );
                 })}
@@ -357,7 +363,9 @@ export function EventDetail() {
         <div className="card card-pad">
           <h3 className="card-title">Registration</h3>
           <p style={{ margin: '0 0 8px', fontSize: 14 }}>
-            Opens {fmtDate(event.regOpens.slice(0, 10))} · closes <strong>{fmtDate(event.regCloses.slice(0, 10))}</strong> ({tz})<br />
+            {event.regOpens && event.regCloses
+              ? <>Opens {fmtDate(event.regOpens.slice(0, 10))} · closes <strong>{fmtDate(event.regCloses.slice(0, 10))}</strong> ({tz})<br /></>
+              : <>Registration dates not yet set.<br /></>}
             {fmtMoney(event.entryFee)} / discipline · {fmtMoney(event.secondDisciplineFee)} each additional
             {event.banquet && <><br />{event.banquet.name}: {fmtMoney(event.banquet.price)}</>}
             {event.tshirtAddon && <><br />T-shirt: {fmtMoney(event.tshirtAddon.price)}</>}
@@ -368,7 +376,7 @@ export function EventDetail() {
           </p>
           {event.status === 'draft' ? (
             <Badge tone="info">Draft — not yet published</Badge>
-          ) : eventIsInPhase(event, 'reg-open') ? (
+          ) : !event.listingOnly && eventIsInPhase(event, 'reg-open') ? (
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {caps.managedClubIds.length > 0 && (
                 <Link className="btn primary small" to={`/club/${caps.managedClubIds[0]}`}>Register your club →</Link>
