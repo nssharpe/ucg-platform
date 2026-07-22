@@ -4,7 +4,7 @@
 // into `EventWizard`'s new `template` prop — the admin reviews/adjusts every
 // field before saving; nothing here is written to the DB directly.
 import { DISCIPLINES } from './types';
-import type { DB, Event, Season } from './types';
+import type { DB, Discipline, Event, EventSession, Season } from './types';
 
 function isoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -112,6 +112,58 @@ export function nationalsTemplate(season: Season, db: DB): Partial<Event> {
     endDate,
     ...(hostClubId ? { hostClubId } : {}),
   };
+}
+
+// ---- Nationals sessions × gyms (PM feedback 2026-07-22, create-mode only) ----
+// Nationals runs every discipline at every session, split across gyms — each
+// gym holds one discipline's level group. `EventWizard` collects the two
+// lists below and this pure builder cross-products them into the
+// `EventSession[]` the rest of the app actually understands. Extracted here
+// (not in the component) so the cross-product/naming/level-propagation logic
+// is independently unit-testable.
+
+export interface NationalsSessionSlot {
+  /** Auto-assigned "Session 1"/"Session 2"/… — not user-editable text. */
+  name: string;
+  date: string;
+  time: string;
+}
+
+export interface NationalsGym {
+  name: string;
+  discipline: Discipline;
+  levelIds: string[];
+}
+
+const disciplineLabel = (d: Discipline) => (d === 'TNT' ? 'T&T' : d);
+
+/** Cross product of session slots × gyms → one `EventSession` per (slot, gym)
+ *  pair, e.g. `"Session 2 — Orange (MAG)"`. All Nationals-create sessions are
+ *  `phase: 'prelim'` — finals sessions aren't part of this create-time model
+ *  (finals lineups/scheduling live on the event's own admin surfaces). */
+export function buildNationalsSessions(
+  slots: NationalsSessionSlot[],
+  gyms: NationalsGym[],
+  eventId: string,
+): EventSession[] {
+  const out: EventSession[] = [];
+  let i = 0;
+  for (const slot of slots) {
+    for (const gym of gyms) {
+      i++;
+      out.push({
+        id: `${eventId}-s${i}`,
+        name: `${slot.name} — ${gym.name} (${disciplineLabel(gym.discipline)})`,
+        discipline: gym.discipline,
+        date: slot.date,
+        time: slot.time,
+        levelIds: gym.levelIds,
+        squads: [],
+        phase: 'prelim',
+      });
+    }
+  }
+  return out;
 }
 
 /** A season's existing FlipFest/Nationals instance: the event with matching

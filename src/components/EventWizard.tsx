@@ -6,7 +6,7 @@ import { useCapabilities } from '../lib/capabilities';
 import { scaffoldNationalsConfig } from '../lib/nationals-adapter';
 import { toDatetimeLocalValue, scoringConfigOf } from '../lib/events-core';
 import { eventCreationBlocked } from '../lib/season-lifecycle';
-import { singleLeagueHostClubId } from '../lib/ucg-event-templates';
+import { buildNationalsSessions, singleLeagueHostClubId } from '../lib/ucg-event-templates';
 import { normalizeExternalUrl } from '../lib/url';
 import { Combo, Field, Modal } from './ui';
 import { useToast } from './ui-hooks';
@@ -87,6 +87,45 @@ function sessionsTodrafts(sessions: EventSession[]): SessionDraft[] {
   });
 }
 
+// Nationals create-mode "Sessions × Gyms" drafts (PM feedback 2026-07-22 §C).
+// Session slot names are auto-assigned "Session N" on save; gyms carry their
+// own name/discipline/levels. Both cross-product into EventSession[] via
+// `buildNationalsSessions` at submit time.
+interface NationalsSlotDraft {
+  key: number;
+  date: string;
+  time: string;
+}
+interface NationalsGymDraft {
+  key: number;
+  name: string;
+  discipline: Discipline;
+  levelIds: string[];
+}
+
+function defaultNationalsSlots(date: string, nextKey: () => number): NationalsSlotDraft[] {
+  return ['08:00', '11:00', '14:00', '17:00'].map((time) => ({ key: nextKey(), date, time }));
+}
+
+// Masters is intentionally excluded everywhere (PM requirement) — Orange
+// (MAG) explicitly drops it; Yellow (WAG) simply never includes it.
+function defaultNationalsGyms(levels: Level[], nextKey: () => number): NationalsGymDraft[] {
+  const idsFor = (ids: string[]) => levels.filter((l) => ids.includes(l.id) && !l.retired).map((l) => l.id);
+  const magExceptMasters = levels.filter((l) => l.discipline === 'MAG' && !l.retired && l.id !== 'mag-masters').map((l) => l.id);
+  const tntAll = levels.filter((l) => l.discipline === 'TNT' && !l.retired).map((l) => l.id);
+  return [
+    { key: nextKey(), name: 'Orange', discipline: 'MAG' as const, levelIds: magExceptMasters },
+    { key: nextKey(), name: 'Red', discipline: 'WAG' as const, levelIds: idsFor(['wag-diamond']) },
+    { key: nextKey(), name: 'Green', discipline: 'WAG' as const, levelIds: idsFor(['wag-plat']) },
+    { key: nextKey(), name: 'Yellow', discipline: 'WAG' as const, levelIds: idsFor(['wag-silver', 'wag-l9', 'wag-open']) },
+    { key: nextKey(), name: 'Purple', discipline: 'TNT' as const, levelIds: tntAll },
+  ];
+}
+
+// Nationals create-mode default finals levels (PM feedback 2026-07-22 §B):
+// MAG Intermediate/Advanced, WAG Platinum/Diamond/Level 9 — the seed.ts ids.
+const NATIONALS_DEFAULT_FINALS_LEVEL_IDS = ['mag-int', 'mag-adv', 'wag-plat', 'wag-diamond', 'wag-l9'];
+
 interface EventWizardProps {
   onClose: () => void;
   /** When provided, the wizard edits this event rather than creating a new one. */
@@ -97,9 +136,14 @@ interface EventWizardProps {
    *  (`src/lib/ucg-event-templates.ts`, `src/pages/admin/UcgEvent.tsx`).
    *  Mutually exclusive with `editEvent` (editEvent wins if both are passed). */
   template?: Partial<Event>;
+  /** 'page' renders the same form inline in the page flow (heading + Cancel,
+   *  no Modal overlay) — used for the Nationals create/edit-details flows
+   *  (PM feedback 2026-07-22 §A). Default 'modal' is unchanged for every
+   *  other caller. */
+  variant?: 'modal' | 'page';
 }
 
-export function EventWizard({ onClose, editEvent, template }: EventWizardProps) {
+export function EventWizard({ onClose, editEvent, template, variant = 'modal' }: EventWizardProps) {
   const db = useDB();
   const caps = useCapabilities();
   const toast = useToast();
@@ -113,6 +157,10 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
   // FlipFest/Nationals events pin their own timezone and kind — the admin
   // never picks either (spec 2026-07-20 §FlipFest/Nationals model).
   const isUcgHosted = !!seedEvt?.ucgHosted;
+  // Nationals CREATE only (never edit — reconstructing slots×gyms from
+  // arbitrary existing sessions is lossy, PM feedback 2026-07-22 §C): drives
+  // both the create-mode defaults (§B) and the Sessions×Gyms UI (§C).
+  const isNationalsCreate = !editEvent && template?.ucgHosted === 'nationals';
 
   const defaultStart = addDays(new Date().toISOString().slice(0, 10), 60);
   const seedStartDate = seedEvt?.startDate ?? defaultStart;
@@ -132,7 +180,9 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
 
   // Nationals (admin only): adds prelim/finals phases + qualification config.
   const [kind, setKind] = useState<'standard' | 'nationals'>(seedEvt?.kind ?? 'standard');
-  const [finalsLevelIds, setFinalsLevelIds] = useState<string[]>(seedEvt?.nationalsConfig?.finalsLevelIds ?? []);
+  const [finalsLevelIds, setFinalsLevelIds] = useState<string[]>(
+    seedEvt?.nationalsConfig?.finalsLevelIds ?? (isNationalsCreate ? NATIONALS_DEFAULT_FINALS_LEVEL_IDS : []),
+  );
 
   // Basics
   const [name, setName] = useState(seedEvt?.name ?? '');
@@ -162,11 +212,11 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
   const regClosesDirty = useRef(isEdit);
   // Last date to edit (B4): optional edit-lockout, past which only an admin
   // or the event's host club may still edit a registration.
-  const [hasEditLockout, setHasEditLockout] = useState(!!seedEvt?.lastDateToEdit);
+  const [hasEditLockout, setHasEditLockout] = useState(!!seedEvt?.lastDateToEdit || isNationalsCreate);
   const [lastDateToEdit, setLastDateToEdit] = useState(seedEvt?.lastDateToEdit ? toDatetimeLocalValue(seedEvt.lastDateToEdit) : `${addDays(defaultStart, -7)}T23:59`);
   // Finals lineup deadline (event-mgmt v2 P5 §L.3, nationals only): scheduled-dispatch
   // nags club managers at/after this instant and hard-locks finals rosters 1h later.
-  const [hasFinalsDeadline, setHasFinalsDeadline] = useState(!!seedEvt?.finalsLineupDeadlineAt);
+  const [hasFinalsDeadline, setHasFinalsDeadline] = useState(!!seedEvt?.finalsLineupDeadlineAt || isNationalsCreate);
   const [finalsLineupDeadlineAt, setFinalsLineupDeadlineAt] = useState(seedEvt?.finalsLineupDeadlineAt ? toDatetimeLocalValue(seedEvt.finalsLineupDeadlineAt) : `${addDays(defaultStart, -1)}T21:00`);
   // Age-calculation date (event-mgmt v2 §A): applies to all events, not just camps.
   const [hasAgeCalcAt, setHasAgeCalcAt] = useState(!!seedEvt?.ageCalcAt);
@@ -174,28 +224,28 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
   // Fees
   const [entryFee, setEntryFee] = useState(String(seedEvt?.entryFee ?? 60));
   const [secondFee, setSecondFee] = useState(String(seedEvt?.secondDisciplineFee ?? 30));
-  // Banquet
-  const [hasBanquet, setHasBanquet] = useState(!!seedEvt?.banquet);
+  // Banquet — defaults ON for Nationals create (PM feedback 2026-07-22 §B).
+  const [hasBanquet, setHasBanquet] = useState(!!seedEvt?.banquet || isNationalsCreate);
   const [banquetName, setBanquetName] = useState(seedEvt?.banquet?.name ?? 'Banquet');
   const [banquetPrice, setBanquetPrice] = useState(String(seedEvt?.banquet?.price ?? 45));
   const [banquetLastPurchaseAt, setBanquetLastPurchaseAt] = useState(seedEvt?.banquet?.lastPurchaseAt ?? '');
-  // T-shirt add-on
-  const [hasTshirt, setHasTshirt] = useState(!!seedEvt?.tshirtAddon);
+  // T-shirt add-on — defaults ON for Nationals create.
+  const [hasTshirt, setHasTshirt] = useState(!!seedEvt?.tshirtAddon || isNationalsCreate);
   const [tshirtPrice, setTshirtPrice] = useState(String(seedEvt?.tshirtAddon?.price ?? 25));
   const [tshirtSizes, setTshirtSizes] = useState<string[]>(seedEvt?.tshirtAddon?.sizes ?? [...SHIRT_SIZES]);
   const [tshirtLastPurchaseAt, setTshirtLastPurchaseAt] = useState(seedEvt?.tshirtAddon?.lastPurchaseAt ?? '');
-  // Banner add-on
-  const [hasBanner, setHasBanner] = useState(!!seedEvt?.bannerAddon);
+  // Banner add-on — defaults ON for Nationals create.
+  const [hasBanner, setHasBanner] = useState(!!seedEvt?.bannerAddon || isNationalsCreate);
   const [bannerPrice, setBannerPrice] = useState(String(seedEvt?.bannerAddon?.price ?? 30));
   const [bannerLastPurchaseAt, setBannerLastPurchaseAt] = useState(seedEvt?.bannerAddon?.lastPurchaseAt ?? '');
-  // Change fee
-  const [hasChangeFee, setHasChangeFee] = useState(!!seedEvt?.changeFee);
+  // Change fee — defaults ON for Nationals create.
+  const [hasChangeFee, setHasChangeFee] = useState(!!seedEvt?.changeFee || isNationalsCreate);
   const [changeFeeAmount, setChangeFeeAmount] = useState(String(seedEvt?.changeFee?.amount ?? 15));
   const [changeFeeStartsAt, setChangeFeeStartsAt] = useState(
     seedEvt?.changeFee?.startsAt ?? `${addDays(defaultStart, -21)}T00:00`,
   );
   // Late registration (event-mgmt v2 §A): fee is added ON TOP of the entry fee.
-  const [hasLateReg, setHasLateReg] = useState(!!seedEvt?.lateReg);
+  const [hasLateReg, setHasLateReg] = useState(!!seedEvt?.lateReg || isNationalsCreate);
   const [lateRegStartsAt, setLateRegStartsAt] = useState(
     seedEvt?.lateReg?.startsAt ?? `${addDays(defaultStart, -14)}T00:00`,
   );
@@ -218,7 +268,7 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
     ),
   );
   // Confirmation email override (event-mgmt v2 §A)
-  const [hasConfirmationEmail, setHasConfirmationEmail] = useState(!!seedEvt?.confirmationEmail);
+  const [hasConfirmationEmail, setHasConfirmationEmail] = useState(!!seedEvt?.confirmationEmail || isNationalsCreate);
   const [confirmationBodyHtml, setConfirmationBodyHtml] = useState(seedEvt?.confirmationEmail?.bodyHtml ?? '');
   const [confirmationFromAlias, setConfirmationFromAlias] = useState(seedEvt?.confirmationEmail?.fromAlias ?? '');
   const [confirmationReplyTo, setConfirmationReplyTo] = useState(seedEvt?.confirmationEmail?.replyTo ?? '');
@@ -226,6 +276,32 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
   // Disciplines & sessions
   const [disciplines, setDisciplines] = useState<Discipline[]>(seedEvt?.disciplines ?? []);
   const [sessions, setSessions] = useState<SessionDraft[]>(initialSessions);
+  // Nationals create-mode "Sessions × Gyms" (PM feedback 2026-07-22 §C) —
+  // replaces the per-discipline session cards entirely; disciplines[] and
+  // sessions[] above stay populated (from the template) but unused in this
+  // mode, so edit mode falls back to the classic UI unaffected.
+  // Initial rows are keyed via a local counter (not a ref — refs can't be
+  // read during render, same reason `initialSessions`/`keyRef` above use this
+  // pattern); the refs' starting values are then seeded past that count so
+  // later add-row calls don't collide.
+  const initialNationalsSlots: NationalsSlotDraft[] = isNationalsCreate ? (() => {
+    let key = 1;
+    return defaultNationalsSlots(seedStartDate, () => key++);
+  })() : [];
+  const slotKeyRef = useRef(initialNationalsSlots.length + 1);
+  const nextSlotKey = () => slotKeyRef.current++;
+  const initialNationalsGyms: NationalsGymDraft[] = isNationalsCreate ? (() => {
+    let key = 1;
+    return defaultNationalsGyms(db.levels, () => key++);
+  })() : [];
+  const gymKeyRef = useRef(initialNationalsGyms.length + 1);
+  const nextGymKey = () => gymKeyRef.current++;
+  const [nationalsSlots, setNationalsSlots] = useState<NationalsSlotDraft[]>(initialNationalsSlots);
+  const [nationalsGyms, setNationalsGyms] = useState<NationalsGymDraft[]>(initialNationalsGyms);
+  const gymDisciplines = useMemo(() => [...new Set(nationalsGyms.map((g) => g.discipline))], [nationalsGyms]);
+  // Everywhere downstream (capacity, finals levels, submit) reads this
+  // instead of `disciplines`/`sessions` when in Nationals create mode.
+  const effectiveDisciplines = isNationalsCreate ? DISCIPLINES.filter((d) => gymDisciplines.includes(d)) : disciplines;
   // Registration mode (event-mgmt v2 P4 T4): competitions only — camps always
   // register per-athlete, no session choice.
   const isCamp = seedEvt?.eventType === 'camp';
@@ -234,7 +310,7 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
   );
   // Scoring config (PM decision 2026-07-19): judge panels + default entry mode.
   const initialScoringConfig = scoringConfigOf(seedEvt);
-  const [scoringPanels, setScoringPanels] = useState<1 | 2>(initialScoringConfig.panels);
+  const [scoringPanels, setScoringPanels] = useState<1 | 2>(isNationalsCreate ? 2 : initialScoringConfig.panels);
   const [scoringEntryMode, setScoringEntryMode] = useState<ScoringConfig['entryMode']>(initialScoringConfig.entryMode);
   // Publication state (B4: Draft/Live only — the real-time phase is derived
   // from regOpens/regCloses/startDate/endDate, not manually set).
@@ -255,7 +331,12 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
         ? 'Create UCG Nationals'
         : 'Sanction a new event';
 
-  const allCompetingLevelIds = useMemo(() => [...new Set(sessions.flatMap((s) => s.levelIds))], [sessions]);
+  const allCompetingLevelIds = useMemo(
+    () => isNationalsCreate
+      ? [...new Set(nationalsGyms.flatMap((g) => g.levelIds))]
+      : [...new Set(sessions.flatMap((s) => s.levelIds))],
+    [isNationalsCreate, nationalsGyms, sessions],
+  );
   // Finals apply to artistic (WAG/MAG) levels; TNT awards from prelims only.
   const finalsEligibleLevels = useMemo(
     () => db.levels
@@ -307,10 +388,19 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
     if (seasonBlock.blocked) return setError(seasonBlock.reason ?? 'That season is not yet available for events.');
     if (!regOpens || !regCloses || regCloses.slice(0, 10) > startDate) return setError('Registration must close on or before the event start date.');
     if (regOpens >= regCloses) return setError('Registration must open before it closes.');
-    if (disciplines.length === 0) return setError('Select at least one discipline.');
-    if (sessions.length === 0) return setError('Add at least one session.');
-    const bad = sessions.find((s) => !s.label.trim() || !s.date || !s.time || s.levelIds.length === 0);
-    if (bad) return setError('Every session needs a name, date, time, and at least one level.');
+    if (isNationalsCreate) {
+      if (nationalsSlots.length === 0) return setError('Add at least one session.');
+      const badSlot = nationalsSlots.find((s) => !s.date || !s.time);
+      if (badSlot) return setError('Every session needs a date and time.');
+      if (nationalsGyms.length === 0) return setError('Add at least one gym.');
+      const badGym = nationalsGyms.find((g) => !g.name.trim() || g.levelIds.length === 0);
+      if (badGym) return setError('Every gym needs a name and at least one level.');
+    } else {
+      if (disciplines.length === 0) return setError('Select at least one discipline.');
+      if (sessions.length === 0) return setError('Add at least one session.');
+      const bad = sessions.find((s) => !s.label.trim() || !s.date || !s.time || s.levelIds.length === 0);
+      if (bad) return setError('Every session needs a name, date, time, and at least one level.');
+    }
     const fee = Number(entryFee), fee2 = Number(secondFee), bPrice = Number(banquetPrice);
     if (!Number.isFinite(fee) || fee < 0 || !Number.isFinite(fee2) || fee2 < 0) return setError('Fees must be valid dollar amounts.');
     if (hasBanquet && (!banquetName.trim() || !Number.isFinite(bPrice) || bPrice < 0)) return setError('Banquet needs a name and a valid price.');
@@ -340,7 +430,7 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
       const t = Number(capacityTotal);
       if (!Number.isFinite(t) || t < 0) return setError('Max total participants must be a valid number.');
     }
-    for (const d of disciplines) {
+    for (const d of effectiveDisciplines) {
       const v = capacityPerDiscipline[d];
       if (v && v.trim()) {
         const n = Number(v);
@@ -354,13 +444,15 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
         if (!Number.isFinite(n) || n < 0) return setError('Per-level capacity must be a valid number.');
       }
     }
-    for (const s of sessions) {
-      for (const a of APPARATUS[s.discipline]) {
-        const v = s.maxRoutines[a.code];
-        if (v && v.trim()) {
-          const n = Number(v);
-          if (!Number.isInteger(n) || n < 0) {
-            return setError(`${s.label.trim() || 'Session'} — max routines (${a.code}) must be a non-negative whole number.`);
+    if (!isNationalsCreate) {
+      for (const s of sessions) {
+        for (const a of APPARATUS[s.discipline]) {
+          const v = s.maxRoutines[a.code];
+          if (v && v.trim()) {
+            const n = Number(v);
+            if (!Number.isInteger(n) || n < 0) {
+              return setError(`${s.label.trim() || 'Session'} — max routines (${a.code}) must be a non-negative whole number.`);
+            }
           }
         }
       }
@@ -371,30 +463,36 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
     if (hasConfirmationEmail && !confirmationBodyHtml.trim()) return setError('Confirmation email needs a body, or turn the toggle off.');
 
     const nationals = kind === 'nationals';
-    if (nationals && !sessions.some((s) => s.phase === 'prelim')) return setError('A Nationals event needs at least one prelim session.');
 
     const eventId = editEvent?.id ?? `meet-${Date.now()}`;
-    const eventSessions: EventSession[] = sessions.map((s, i) => {
-      // Strip blank/invalid entries — never persist non-finite or null caps
-      // (the capacity engine treats those as "not configured," but a clean
-      // save shouldn't write garbage either).
-      const maxRoutines = Object.entries(s.maxRoutines).reduce<Record<string, number>>((acc, [code, v]) => {
-        if (v.trim()) {
-          const n = Number(v);
-          if (Number.isFinite(n)) acc[code] = n;
-        }
-        return acc;
-      }, {});
-      return {
-        id: editEvent?.sessions[i]?.id ?? `${eventId}-s${i + 1}`,
-        name: `Session ${i + 1} — ${s.label.trim()}`,
-        discipline: s.discipline, date: s.date, time: s.time, levelIds: s.levelIds,
-        squads: editEvent?.sessions[i]?.squads ?? [],
-        ...(nationals ? { phase: s.phase } : {}),
-        ...(Object.keys(maxRoutines).length > 0 ? { maxRoutines } : {}),
-      };
-    });
-    const orderedDisciplines = DISCIPLINES.filter((d) => disciplines.includes(d));
+    const eventSessions: EventSession[] = isNationalsCreate
+      ? buildNationalsSessions(
+          nationalsSlots.map((s, i) => ({ name: `Session ${i + 1}`, date: s.date, time: s.time })),
+          nationalsGyms.map((g) => ({ name: g.name.trim(), discipline: g.discipline, levelIds: g.levelIds })),
+          eventId,
+        )
+      : sessions.map((s, i) => {
+          // Strip blank/invalid entries — never persist non-finite or null caps
+          // (the capacity engine treats those as "not configured," but a clean
+          // save shouldn't write garbage either).
+          const maxRoutines = Object.entries(s.maxRoutines).reduce<Record<string, number>>((acc, [code, v]) => {
+            if (v.trim()) {
+              const n = Number(v);
+              if (Number.isFinite(n)) acc[code] = n;
+            }
+            return acc;
+          }, {});
+          return {
+            id: editEvent?.sessions[i]?.id ?? `${eventId}-s${i + 1}`,
+            name: `Session ${i + 1} — ${s.label.trim()}`,
+            discipline: s.discipline, date: s.date, time: s.time, levelIds: s.levelIds,
+            squads: editEvent?.sessions[i]?.squads ?? [],
+            ...(nationals ? { phase: s.phase } : {}),
+            ...(Object.keys(maxRoutines).length > 0 ? { maxRoutines } : {}),
+          };
+        });
+    if (nationals && !eventSessions.some((s) => s.phase === 'prelim')) return setError('A Nationals event needs at least one prelim session.');
+    const orderedDisciplines = DISCIPLINES.filter((d) => effectiveDisciplines.includes(d));
     const event: Event = {
       ...(editEvent ?? template ?? {}),
       id: eventId,
@@ -424,14 +522,14 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
       ...(directorName.trim()
         ? { director: { name: directorName.trim(), email: directorEmail.trim(), ccOnConfirmation: directorCc } }
         : { director: undefined }),
-      ...((capacityTotal.trim() || disciplines.some((d) => capacityPerDiscipline[d]?.trim()) || allCompetingLevelIds.some((id) => capacityPerLevel[id]?.trim()))
+      ...((capacityTotal.trim() || effectiveDisciplines.some((d) => capacityPerDiscipline[d]?.trim()) || allCompetingLevelIds.some((id) => capacityPerLevel[id]?.trim()))
         ? {
             capacity: {
               ...(capacityTotal.trim() ? { total: Number(capacityTotal) } : {}),
-              ...(disciplines.some((d) => capacityPerDiscipline[d]?.trim())
+              ...(effectiveDisciplines.some((d) => capacityPerDiscipline[d]?.trim())
                 ? {
                     perDiscipline: Object.fromEntries(
-                      disciplines.filter((d) => capacityPerDiscipline[d]?.trim()).map((d) => [d, Number(capacityPerDiscipline[d])]),
+                      effectiveDisciplines.filter((d) => capacityPerDiscipline[d]?.trim()).map((d) => [d, Number(capacityPerDiscipline[d])]),
                     ) as Partial<Record<Discipline, number>>,
                   }
                 : {}),
@@ -479,8 +577,8 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
     <h3 className="card-title" style={{ margin: '14px 0 8px', paddingTop: 10, borderTop: '1px solid var(--line)' }}>{t}</h3>
   );
 
-  return (
-    <Modal title={wizardTitle} onClose={onClose}>
+  const formBody = (
+    <>
       {caps.isAdmin && !isUcgHosted && (
         <div className="card card-pad" style={{ marginBottom: 12, background: 'var(--ice)', borderColor: 'var(--line)' }}>
           <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, fontWeight: 600 }}>
@@ -715,103 +813,189 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
       {!isCamp && (
         <>
           {sectionTitle('Disciplines & sessions')}
-          <div style={{ display: 'flex', gap: 16, marginBottom: 10 }}>
-            {DISCIPLINES.map((d) => (
-              <label key={d} style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14, fontWeight: 600 }}>
-                <input type="checkbox" checked={disciplines.includes(d)} onChange={() => toggleDiscipline(d)} /> {discLabel(d)}
-              </label>
-            ))}
-          </div>
-          <div className="card card-pad" style={{ marginBottom: 10 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Registration mode</div>
-            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-              <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
-                <input
-                  type="radio" name="registrationMode" checked={registrationMode === 'by-discipline'}
-                  onChange={() => setRegistrationMode('by-discipline')}
-                />
-                By discipline (default)
-              </label>
-              <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
-                <input
-                  type="radio" name="registrationMode" checked={registrationMode === 'by-session'}
-                  onChange={() => setRegistrationMode('by-session')}
-                />
-                By session
-              </label>
-            </div>
-            <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '6px 0 0' }}>
-              By-session: athletes pick a pre-created session at registration instead of just a discipline —
-              sessions (below) must be created before registration opens.
-            </p>
-          </div>
-          {sessions.length === 0 && <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '4px 0' }}>Pick a discipline to load its default session templates — then add, remove, or edit sessions.</p>}
-          {sessions.map((s, i) => {
-            // Exclude retired levels from the session level pickers
-            const discLevels = db.levels.filter((l) => l.discipline === s.discipline && !l.retired).sort((a, b) => a.order - b.order);
-            return (
-              <div key={s.key} className="card card-pad" style={{ marginBottom: 10 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
-                  <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--ink-soft)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Session {i + 1} · {discLabel(s.discipline)}</span>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    {kind === 'nationals' && (
-                      <select className="input" style={{ width: 'auto', padding: '2px 8px', fontSize: 12.5 }} value={s.phase} onChange={(e) => updateSession(s.key, { phase: e.target.value as 'prelim' | 'final' })}>
-                        <option value="prelim">Prelims</option>
-                        <option value="final">Finals</option>
-                      </select>
-                    )}
-                    <button className="btn small ghost" onClick={() => setSessions(sessions.filter((x) => x.key !== s.key))}>Remove</button>
+          {isNationalsCreate ? (
+            <>
+              <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '0 0 10px' }}>
+                Every discipline runs at every session — the venue is split into gyms, each holding one
+                discipline&rsquo;s level group. Set the session time slots and gyms below; the underlying
+                per-discipline sessions (one per session × gym) are generated automatically on save.
+              </p>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Sessions</div>
+              {nationalsSlots.length === 0 && <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '4px 0' }}>Add at least one session.</p>}
+              {nationalsSlots.map((slot, i) => (
+                <div key={slot.key} className="grid cols-3" style={{ marginBottom: 8, alignItems: 'end' }}>
+                  <Field label={`Session ${i + 1} date`}>
+                    <input
+                      className="input" type="date" min={startDate} max={endDate} value={slot.date}
+                      onChange={(e) => setNationalsSlots((rows) => rows.map((r) => (r.key === slot.key ? { ...r, date: e.target.value } : r)))}
+                    />
+                  </Field>
+                  <Field label={`Session ${i + 1} time`}>
+                    <input
+                      className="input" type="time" value={slot.time}
+                      onChange={(e) => setNationalsSlots((rows) => rows.map((r) => (r.key === slot.key ? { ...r, time: e.target.value } : r)))}
+                    />
+                  </Field>
+                  <div>
+                    <button className="btn small ghost" onClick={() => setNationalsSlots((rows) => rows.filter((r) => r.key !== slot.key))}>Remove</button>
                   </div>
                 </div>
-                <Field label="Name" hint={`Saved as "Session ${i + 1} — ${s.label.trim() || '…'}"`}>
-                  <input className="input" value={s.label} onChange={(e) => updateSession(s.key, { label: e.target.value })} />
-                </Field>
-                <div className="grid cols-3">
-                  <Field label="Date"><input className="input" type="date" min={startDate} max={endDate} value={s.date} onChange={(e) => updateSession(s.key, { date: e.target.value })} /></Field>
-                  <Field label="Time"><input className="input" type="time" value={s.time} onChange={(e) => updateSession(s.key, { time: e.target.value })} /></Field>
-                </div>
-                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                  {discLevels.map((l) => (
-                    <label key={l.id} style={{ display: 'flex', gap: 5, alignItems: 'center', fontSize: 13.5 }}>
-                      <input
-                        type="checkbox"
-                        checked={s.levelIds.includes(l.id)}
-                        onChange={(e) => updateSession(s.key, {
-                          levelIds: e.target.checked
-                            ? discLevels.map((x) => x.id).filter((id) => s.levelIds.includes(id) || id === l.id) // keep level order
-                            : s.levelIds.filter((id) => id !== l.id),
-                        })}
-                      /> {l.name}
-                    </label>
-                  ))}
-                </div>
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink-soft)', marginBottom: 4 }}>
-                    Max routines per apparatus (optional — blank = uncapped, counts apparatus entries)
-                  </div>
-                  <div className="grid cols-3">
-                    {APPARATUS[s.discipline].map((a) => (
-                      <Field key={a.code} label={a.name}>
+              ))}
+              <button
+                className="btn small ghost" style={{ marginBottom: 16 }}
+                onClick={() => setNationalsSlots((rows) => [...rows, { key: nextSlotKey(), date: startDate, time: '09:00' }])}
+              >+ Add session</button>
+
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Gyms</div>
+              {nationalsGyms.length === 0 && <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '4px 0' }}>Add at least one gym.</p>}
+              {nationalsGyms.map((gym) => {
+                const discLevels = db.levels.filter((l) => l.discipline === gym.discipline && !l.retired).sort((a, b) => a.order - b.order);
+                return (
+                  <div key={gym.key} className="card card-pad" style={{ marginBottom: 10 }}>
+                    <div className="grid cols-3" style={{ marginBottom: 8 }}>
+                      <Field label="Gym name">
                         <input
-                          className="input" type="number" min={0} step={1}
-                          value={s.maxRoutines[a.code] ?? ''}
-                          onChange={(e) => updateSession(s.key, { maxRoutines: { ...s.maxRoutines, [a.code]: e.target.value } })}
+                          className="input" value={gym.name}
+                          onChange={(e) => setNationalsGyms((rows) => rows.map((r) => (r.key === gym.key ? { ...r, name: e.target.value } : r)))}
                         />
                       </Field>
-                    ))}
+                      <Field label="Discipline">
+                        <select
+                          className="input" value={gym.discipline}
+                          onChange={(e) => setNationalsGyms((rows) => rows.map((r) => (r.key === gym.key ? { ...r, discipline: e.target.value as Discipline, levelIds: [] } : r)))}
+                        >
+                          {DISCIPLINES.map((d) => <option key={d} value={d}>{discLabel(d)}</option>)}
+                        </select>
+                      </Field>
+                      <div style={{ display: 'flex', alignItems: 'end' }}>
+                        <button className="btn small ghost" onClick={() => setNationalsGyms((rows) => rows.filter((r) => r.key !== gym.key))}>Remove</button>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                      {discLevels.map((l) => (
+                        <label key={l.id} style={{ display: 'flex', gap: 5, alignItems: 'center', fontSize: 13.5 }}>
+                          <input
+                            type="checkbox"
+                            checked={gym.levelIds.includes(l.id)}
+                            onChange={(e) => setNationalsGyms((rows) => rows.map((r) => (r.key === gym.key ? {
+                              ...r,
+                              levelIds: e.target.checked
+                                ? discLevels.map((x) => x.id).filter((id) => r.levelIds.includes(id) || id === l.id)
+                                : r.levelIds.filter((id) => id !== l.id),
+                            } : r)))}
+                          /> {l.name}
+                        </label>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                );
+              })}
+              <button
+                className="btn small ghost"
+                onClick={() => setNationalsGyms((rows) => [...rows, { key: nextGymKey(), name: '', discipline: 'MAG', levelIds: [] }])}
+              >+ Add gym</button>
+            </>
+          ) : (
+            <>
+              <div style={{ display: 'flex', gap: 16, marginBottom: 10 }}>
+                {DISCIPLINES.map((d) => (
+                  <label key={d} style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14, fontWeight: 600 }}>
+                    <input type="checkbox" checked={disciplines.includes(d)} onChange={() => toggleDiscipline(d)} /> {discLabel(d)}
+                  </label>
+                ))}
               </div>
-            );
-          })}
-          {disciplines.length > 0 && (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
-              {disciplines.map((d) => (
-                <button key={d} className="btn small ghost" onClick={() => setSessions([...sessions, { key: nextKey(), discipline: d, label: `${discLabel(d)} `, date: startDate, time: '09:00', levelIds: [], phase: 'prelim', maxRoutines: {} }])}>
-                  + Add {discLabel(d)} session
-                </button>
-              ))}
-            </div>
+              <div className="card card-pad" style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Registration mode</div>
+                <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                  <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
+                    <input
+                      type="radio" name="registrationMode" checked={registrationMode === 'by-discipline'}
+                      onChange={() => setRegistrationMode('by-discipline')}
+                    />
+                    By discipline (default)
+                  </label>
+                  <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
+                    <input
+                      type="radio" name="registrationMode" checked={registrationMode === 'by-session'}
+                      onChange={() => setRegistrationMode('by-session')}
+                    />
+                    By session
+                  </label>
+                </div>
+                <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '6px 0 0' }}>
+                  By-session: athletes pick a pre-created session at registration instead of just a discipline —
+                  sessions (below) must be created before registration opens.
+                </p>
+              </div>
+              {sessions.length === 0 && <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '4px 0' }}>Pick a discipline to load its default session templates — then add, remove, or edit sessions.</p>}
+              {sessions.map((s, i) => {
+                // Exclude retired levels from the session level pickers
+                const discLevels = db.levels.filter((l) => l.discipline === s.discipline && !l.retired).sort((a, b) => a.order - b.order);
+                return (
+                  <div key={s.key} className="card card-pad" style={{ marginBottom: 10 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+                      <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--ink-soft)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Session {i + 1} · {discLabel(s.discipline)}</span>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        {kind === 'nationals' && (
+                          <select className="input" style={{ width: 'auto', padding: '2px 8px', fontSize: 12.5 }} value={s.phase} onChange={(e) => updateSession(s.key, { phase: e.target.value as 'prelim' | 'final' })}>
+                            <option value="prelim">Prelims</option>
+                            <option value="final">Finals</option>
+                          </select>
+                        )}
+                        <button className="btn small ghost" onClick={() => setSessions(sessions.filter((x) => x.key !== s.key))}>Remove</button>
+                      </div>
+                    </div>
+                    <Field label="Name" hint={`Saved as "Session ${i + 1} — ${s.label.trim() || '…'}"`}>
+                      <input className="input" value={s.label} onChange={(e) => updateSession(s.key, { label: e.target.value })} />
+                    </Field>
+                    <div className="grid cols-3">
+                      <Field label="Date"><input className="input" type="date" min={startDate} max={endDate} value={s.date} onChange={(e) => updateSession(s.key, { date: e.target.value })} /></Field>
+                      <Field label="Time"><input className="input" type="time" value={s.time} onChange={(e) => updateSession(s.key, { time: e.target.value })} /></Field>
+                    </div>
+                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                      {discLevels.map((l) => (
+                        <label key={l.id} style={{ display: 'flex', gap: 5, alignItems: 'center', fontSize: 13.5 }}>
+                          <input
+                            type="checkbox"
+                            checked={s.levelIds.includes(l.id)}
+                            onChange={(e) => updateSession(s.key, {
+                              levelIds: e.target.checked
+                                ? discLevels.map((x) => x.id).filter((id) => s.levelIds.includes(id) || id === l.id) // keep level order
+                                : s.levelIds.filter((id) => id !== l.id),
+                            })}
+                          /> {l.name}
+                        </label>
+                      ))}
+                    </div>
+                    <div style={{ marginTop: 10 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink-soft)', marginBottom: 4 }}>
+                        Max routines per apparatus (optional — blank = uncapped, counts apparatus entries)
+                      </div>
+                      <div className="grid cols-3">
+                        {APPARATUS[s.discipline].map((a) => (
+                          <Field key={a.code} label={a.name}>
+                            <input
+                              className="input" type="number" min={0} step={1}
+                              value={s.maxRoutines[a.code] ?? ''}
+                              onChange={(e) => updateSession(s.key, { maxRoutines: { ...s.maxRoutines, [a.code]: e.target.value } })}
+                            />
+                          </Field>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {disciplines.length > 0 && (
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
+                  {disciplines.map((d) => (
+                    <button key={d} className="btn small ghost" onClick={() => setSessions([...sessions, { key: nextKey(), discipline: d, label: `${discLabel(d)} `, date: startDate, time: '09:00', levelIds: [], phase: 'prelim', maxRoutines: {} }])}>
+                      + Add {discLabel(d)} session
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </>
       )}
@@ -822,13 +1006,13 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
           <input className="input" type="number" min={0} step={1} value={capacityTotal} onChange={(e) => setCapacityTotal(e.target.value)} />
         </Field>
       </div>
-      {!isCamp && disciplines.length > 0 && (
+      {!isCamp && effectiveDisciplines.length > 0 && (
         <>
           <div style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '4px 0 6px' }}>
             Per-discipline caps (optional) — counts routines (apparatus entries), T&amp;T only
           </div>
           <div className="grid cols-3" style={{ marginBottom: 8 }}>
-            {disciplines.map((d) => (
+            {effectiveDisciplines.map((d) => (
               <Field key={d} label={`${discLabel(d)} cap`}>
                 <input
                   className="input" type="number" min={0} step={1}
@@ -1009,6 +1193,20 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
         <button className="btn ghost" onClick={onClose}>Cancel</button>
         <button className="btn primary" onClick={submit}>{isEdit ? 'Save changes' : 'Sanction event'}</button>
       </div>
-    </Modal>
+    </>
   );
+
+  if (variant === 'page') {
+    return (
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+          <h1 className="page-title display" style={{ marginBottom: 0 }}>{wizardTitle}</h1>
+          <button className="btn ghost" onClick={onClose}>← Cancel</button>
+        </div>
+        {formBody}
+      </div>
+    );
+  }
+
+  return <Modal title={wizardTitle} onClose={onClose}>{formBody}</Modal>;
 }

@@ -10,6 +10,8 @@ const LABEL: Record<'flipfest' | 'nationals', string> = { flipfest: 'FlipFest', 
 
 // Extracted so this button's own `open` state doesn't force the whole page
 // (and the `findUcgEvent` lookup) to re-render on every EventWizard keystroke.
+// FlipFest only — Nationals edits full-page via `UcgEvent`'s own state below
+// (PM feedback 2026-07-22 §A: the wizard needs the full page, not a card slot).
 function EditDetailsButton({ event }: { event: Event }) {
   const [open, setOpen] = useState(false);
   return (
@@ -31,6 +33,10 @@ export function UcgEvent() {
   const db = useDB();
   const navigate = useNavigate();
   const fmtDate = useFmtDate();
+  // Nationals "Edit details" renders EventWizard full-page (PM feedback
+  // 2026-07-22 §A) — tracked here so the summary card is replaced entirely
+  // rather than the wizard squeezing in beside it.
+  const [editingNationals, setEditingNationals] = useState(false);
 
   const which = templateParam === 'flipfest' || templateParam === 'nationals' ? templateParam : null;
   const season = db.seasons.find((s) => s.id === seasonId) ?? null;
@@ -51,7 +57,17 @@ export function UcgEvent() {
 
   if (!existing) {
     const template = which === 'flipfest' ? flipfestTemplate(season, db) : nationalsTemplate(season, db);
-    return <EventWizard template={template} onClose={() => navigate('/admin/league')} />;
+    return (
+      <EventWizard
+        template={template}
+        variant={which === 'nationals' ? 'page' : 'modal'}
+        onClose={() => navigate('/admin/league')}
+      />
+    );
+  }
+
+  if (which === 'nationals' && editingNationals) {
+    return <EventWizard editEvent={existing} variant="page" onClose={() => setEditingNationals(false)} />;
   }
 
   return (
@@ -73,7 +89,9 @@ export function UcgEvent() {
         )}
         <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
           <Link className="btn" to={`/events/${existing.slug}`}>View public event page</Link>
-          <EditDetailsButton event={existing} />
+          {which === 'nationals'
+            ? <button className="btn primary" onClick={() => setEditingNationals(true)}>Edit details</button>
+            : <EditDetailsButton event={existing} />}
           <Link className="btn ghost" to="/admin/league">← Back to League Controls</Link>
         </div>
       </div>
