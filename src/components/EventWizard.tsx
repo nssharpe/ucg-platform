@@ -169,12 +169,18 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
   // Nationals), fall back to the same per-discipline default-session
   // templates `toggleDiscipline` uses below. Keys are 1..N (no ref read
   // during render); the key counter starts at N+1 so later additions don't collide.
-  const initialSessions: SessionDraft[] = seedEvt?.sessions?.length
-    ? sessionsTodrafts(seedEvt.sessions)
-    : (() => {
-        let key = 1;
-        return (seedEvt?.disciplines ?? []).flatMap((d) => defaultSessions(db.levels, d, seedStartDate, () => key++));
-      })();
+  // Camps are session-less entirely (PM feedback 2026-07-22): never build
+  // default per-discipline sessions for them, even though the template seeds
+  // `disciplines` (that field only drives the equipment-availability picker
+  // for camps now, not a session builder).
+  const initialSessions: SessionDraft[] = seedEvt?.eventType === 'camp'
+    ? []
+    : seedEvt?.sessions?.length
+      ? sessionsTodrafts(seedEvt.sessions)
+      : (() => {
+          let key = 1;
+          return (seedEvt?.disciplines ?? []).flatMap((d) => defaultSessions(db.levels, d, seedStartDate, () => key++));
+        })();
   const keyRef = useRef(initialSessions.length + 1);
   const nextKey = () => keyRef.current++;
 
@@ -357,10 +363,11 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
   const toggleDiscipline = (d: Discipline) => {
     if (disciplines.includes(d)) {
       setDisciplines(disciplines.filter((x) => x !== d));
-      setSessions(sessions.filter((s) => s.discipline !== d));
+      // Camps never carry sessions (PM feedback 2026-07-22) — nothing to prune.
+      if (!isCamp) setSessions(sessions.filter((s) => s.discipline !== d));
     } else {
       setDisciplines([...disciplines, d]);
-      setSessions([...sessions, ...defaultSessions(db.levels, d, startDate, nextKey)]);
+      if (!isCamp) setSessions([...sessions, ...defaultSessions(db.levels, d, startDate, nextKey)]);
     }
   };
 
@@ -397,9 +404,13 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
       if (badGym) return setError('Every gym needs a name and at least one level.');
     } else {
       if (disciplines.length === 0) return setError('Select at least one discipline.');
-      if (sessions.length === 0) return setError('Add at least one session.');
-      const bad = sessions.find((s) => !s.label.trim() || !s.date || !s.time || s.levelIds.length === 0);
-      if (bad) return setError('Every session needs a name, date, time, and at least one level.');
+      // Camps are session-less entirely (PM feedback 2026-07-22) — no
+      // "add at least one session" requirement for them.
+      if (!isCamp) {
+        if (sessions.length === 0) return setError('Add at least one session.');
+        const bad = sessions.find((s) => !s.label.trim() || !s.date || !s.time || s.levelIds.length === 0);
+        if (bad) return setError('Every session needs a name, date, time, and at least one level.');
+      }
     }
     const fee = Number(entryFee), fee2 = Number(secondFee), bPrice = Number(banquetPrice);
     if (!Number.isFinite(fee) || fee < 0 || !Number.isFinite(fee2) || fee2 < 0) return setError('Fees must be valid dollar amounts.');
@@ -465,7 +476,13 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
     const nationals = kind === 'nationals';
 
     const eventId = editEvent?.id ?? `meet-${Date.now()}`;
-    const eventSessions: EventSession[] = isNationalsCreate
+    // Camps are truly session-less (PM feedback 2026-07-22) — save `[]`
+    // regardless of whatever `sessions` state holds (it stays empty for
+    // camps anyway per `initialSessions`/`toggleDiscipline` above; this is
+    // belt-and-suspenders against any future path that populates it).
+    const eventSessions: EventSession[] = isCamp
+      ? []
+      : isNationalsCreate
       ? buildNationalsSessions(
           nationalsSlots.map((s, i) => ({ name: `Session ${i + 1}`, date: s.date, time: s.time })),
           nationalsGyms.map((g) => ({ name: g.name.trim(), discipline: g.discipline, levelIds: g.levelIds })),
@@ -501,7 +518,12 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
       hostClubId: resolvedHostClubId!,
       city: city.trim(), state, timezone,
       startDate, endDate, status, regOpens, regCloses,
-      entryFee: fee, secondDisciplineFee: fee2,
+      entryFee: fee,
+      // Camps charge one flat per-athlete fee regardless of discipline count —
+      // the 2nd-discipline fee input is hidden for camps, so force it to 0
+      // rather than silently charging the hidden default (PM feedback
+      // 2026-07-22 camp session/level-less pass).
+      secondDisciplineFee: isCamp ? 0 : fee2,
       disciplines: orderedDisciplines,
       sessions: eventSessions,
       ...(isCamp ? {} : { registrationMode }),
@@ -803,14 +825,28 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
         <input type="checkbox" checked={directorCc} onChange={(e) => setDirectorCc(e.target.checked)} /> CC director on confirmation emails
       </label>
 
-      {/* Disciplines & sessions — hidden entirely for camps (PM feedback
-          2026-07-22). Camp registration DOES read `disciplines`/`sessions`
-          downstream (RosterToolsCard, RegistrationEditor's per-discipline
-          picker), so these aren't dropped — `flipfestTemplate` seeds all
-          three disciplines, which `initialSessions` (above) turns into the
-          same default sessions this UI would have produced; that seed is
-          carried through unmodified since there's no picker to change it. */}
-      {!isCamp && (
+      {/* Disciplines & sessions: camps get a minimal "which disciplines'
+          equipment will be available" checkbox row only — no registration
+          mode, no session cards (PM feedback 2026-07-22 — camps are truly
+          session-less/level-less). Camp registration still reads
+          `disciplines` downstream (RosterToolsCard, RegistrationEditor's
+          per-discipline enable checkbox), but `sessions` is always `[]`. */}
+      {isCamp ? (
+        <>
+          {sectionTitle('Disciplines')}
+          <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '0 0 10px' }}>
+            Which disciplines&rsquo; equipment will be available at the camp. Camps have no
+            sessions, levels, or scoring — this only controls equipment availability.
+          </p>
+          <div style={{ display: 'flex', gap: 16, marginBottom: 10 }}>
+            {DISCIPLINES.map((d) => (
+              <label key={d} style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14, fontWeight: 600 }}>
+                <input type="checkbox" checked={disciplines.includes(d)} onChange={() => toggleDiscipline(d)} /> {discLabel(d)}
+              </label>
+            ))}
+          </div>
+        </>
+      ) : (
         <>
           {sectionTitle('Disciplines & sessions')}
           {isNationalsCreate ? (
