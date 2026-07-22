@@ -133,3 +133,37 @@ commit. Controller applies the migration (staging then prod) and deploys
 `scheduled-dispatch` (+ any other touched fns) at the end; verify the
 no-verify-jwt trio after any function deploy. Responsive sweep for Seasons.tsx
 (table gets 2 new columns) at 375/768/1280.
+
+## 2026-07-22 PM feedback pass (applied on `feat/ucg-event-creation-feedback`)
+
+Nate walked both creation flows + a camp event page; the resulting changes:
+
+- **FlipFest (camps generally):** wizard hides URL-slug hint + host-club input
+  (UCG-hosted; submit falls back to `singleLeagueHostClubId`, errors if no
+  league-host club is flagged), location block (FlipFest only — the real
+  address `272 Lake Frances Rd, Crossville, TN` is baked into
+  `flipfestTemplate`), hotel link, age-calc date, 2nd-discipline fee, banquet/
+  banner/change-fee, edit-lockout (camps auto-set `lastDateToEdit = regCloses`
+  on save), the whole Disciplines & sessions section (template seeds all three
+  disciplines — camp registration reads them downstream), the capacity hint
+  text + per-discipline/per-level caps, and Scoring. `entryFee` defaults 200.
+- **Event page:** subtitle drops timezone + `#/events/slug` breadcrumb;
+  host shows literal "UCG" when `event.ucgHosted`; "Field" card renamed
+  "Participants"; Quick links gated for camps (no results/score-entry/manage/
+  scores-CSV) and the card disappears when no links apply.
+- **Nationals:** renders as a FULL PAGE, not a modal (`EventWizard`'s new
+  `variant='page'` prop; `UcgEvent.tsx` uses it for nationals create AND
+  edit). Create-mode defaults: late fee, banquet, t-shirt, banner, change fee,
+  edit lockout, finals deadline, custom confirmation email all pre-checked;
+  judge panels default 2; finals levels default `mag-int/mag-adv/wag-plat/
+  wag-diamond/wag-l9`.
+- **Nationals sessions × gyms (create only):** the per-discipline session
+  cards are replaced by two lists — session time slots (default 4) and gyms
+  (name + discipline + levels; defaults Orange=MAG-sans-Masters, Red=WAG
+  Diamond, Green=WAG Platinum, Yellow=WAG Silver/9/Open, Purple=all T&T;
+  Masters excluded everywhere by default). Pure builder
+  `buildNationalsSessions` (`ucg-event-templates.ts`, unit-tested) cross-
+  products slots×gyms into ordinary `EventSession[]` (`phase:'prelim'`,
+  names like "Session 2 — Orange (MAG)"). EDIT of an existing nationals
+  event keeps the classic per-session cards (slots×gyms reconstruction is
+  lossy); heavy session management stays on the event page manage tools.
