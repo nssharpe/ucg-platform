@@ -335,7 +335,11 @@ const eventToRow = (m: Event) => ({
   finals_roster_locked: m.finalsRosterLocked ?? false,
   finals_lineup_deadline_at: m.finalsLineupDeadlineAt || null,
   scoring_config: m.scoringConfig ?? null,
-  listing_only: m.listingOnly ?? false,
+  // Omit when unset so event saves keep working against a DB that doesn't
+  // have the column yet (migration 20260722221027 pending on prod at ship
+  // time); the Nationals wizard always sets listingOnly explicitly, so
+  // true→false transitions still write.
+  ...(m.listingOnly !== undefined ? { listing_only: m.listingOnly } : {}),
 });
 
 const sessionToRow = (eventId: string, s: Event['sessions'][number]) => ({

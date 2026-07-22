@@ -699,9 +699,14 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
       ...(isCamp
         ? { campConfig: { ...seedEvt?.campConfig, overnightSurvey: surveyEnabled, surveyMandatory } }
         : {}),
-      // A full publish always clears the dates-only flag, even for an event
-      // previously published via "Publish Dates and Location Only".
-      listingOnly: false,
+      // A full publish clears the dates-only flag, even for an event
+      // previously published via "Publish Dates and Location Only". Only
+      // stamped where the flag is in play (the two-button Nationals wizard,
+      // or clearing a previously-set flag) — leaving it undefined elsewhere
+      // lets eventToRow omit the column entirely, which keeps every other
+      // event save working against a DB that predates migration
+      // 20260722221027 (prod at ship time).
+      ...(isNationalsUcgWizard || seedEvt?.listingOnly ? { listingOnly: false } : {}),
     };
     finishSave(event);
   };
