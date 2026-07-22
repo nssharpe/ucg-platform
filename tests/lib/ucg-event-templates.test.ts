@@ -57,10 +57,14 @@ describe('flipfestTemplate', () => {
     expect(t.ucgHosted).toBe('flipfest');
     expect(t.timezone).toBe('America/Los_Angeles');
     expect(t.venue).toBe('FlipFest');
+    expect(t.streetAddress).toBe('272 Lake Frances Rd');
+    expect(t.city).toBe('Crossville');
     expect(t.state).toBe('TN');
     expect(t.startDate! >= SEASON.startsOn && t.endDate! <= SEASON.endsOn).toBe(true);
     expect(t.campConfig?.overnightSurvey).toBe(true);
     expect(t.tshirtAddon?.sizes).toEqual(['S', 'M', 'L', 'XL']);
+    expect(t.disciplines).toEqual(['MAG', 'WAG', 'TNT']);
+    expect(t.entryFee).toBe(200);
   });
 
   it('omits hostClubId when no league-host club exists', () => {

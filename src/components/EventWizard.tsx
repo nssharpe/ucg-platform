@@ -6,6 +6,7 @@ import { useCapabilities } from '../lib/capabilities';
 import { scaffoldNationalsConfig } from '../lib/nationals-adapter';
 import { toDatetimeLocalValue, scoringConfigOf } from '../lib/events-core';
 import { eventCreationBlocked } from '../lib/season-lifecycle';
+import { singleLeagueHostClubId } from '../lib/ucg-event-templates';
 import { normalizeExternalUrl } from '../lib/url';
 import { Combo, Field, Modal } from './ui';
 import { useToast } from './ui-hooks';
@@ -293,7 +294,11 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
 
   const submit = () => {
     if (!name.trim()) return setError('Event name is required.');
-    if (!hostClubId) return setError('Pick a host club.');
+    // Host club input is hidden for UCG-hosted events (PM feedback
+    // 2026-07-22) — resolve it to the single league-host club instead of
+    // asking the admin to pick one.
+    const resolvedHostClubId = isUcgHosted ? (hostClubId ?? singleLeagueHostClubId(db) ?? null) : hostClubId;
+    if (!resolvedHostClubId) return setError(isUcgHosted ? 'Flag a club as league host (UCG) first.' : 'Pick a host club.');
     if (!city.trim() || !state) return setError('City and state are required.');
     if (!startDate || !endDate || endDate < startDate) return setError('End date must be on or after the start date.');
     // F6 season lifecycle: an event's season is derived from its start date —
@@ -395,7 +400,7 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
       id: eventId,
       slug: editEvent?.slug ?? slug,
       name: name.trim(),
-      hostClubId: hostClubId!,
+      hostClubId: resolvedHostClubId!,
       city: city.trim(), state, timezone,
       startDate, endDate, status, regOpens, regCloses,
       entryFee: fee, secondDisciplineFee: fee2,
@@ -406,7 +411,9 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
       ...(hasTshirt ? { tshirtAddon: { price: Number(tshirtPrice), sizes: tshirtSizes, ...(tshirtLastPurchaseAt ? { lastPurchaseAt: tshirtLastPurchaseAt } : {}) } } : { tshirtAddon: undefined }),
       ...(hasBanner ? { bannerAddon: { price: Number(bannerPrice), ...(bannerLastPurchaseAt ? { lastPurchaseAt: bannerLastPurchaseAt } : {}) } } : { bannerAddon: undefined }),
       ...(hasChangeFee ? { changeFee: { amount: Number(changeFeeAmount), startsAt: changeFeeStartsAt } } : { changeFee: undefined }),
-      lastDateToEdit: hasEditLockout ? lastDateToEdit : null,
+      // Camps hide the edit-lockout toggle (PM feedback 2026-07-22) — lock
+      // out editing as soon as registration closes instead.
+      lastDateToEdit: isCamp ? regCloses : (hasEditLockout ? lastDateToEdit : null),
       finalsLineupDeadlineAt: nationals && hasFinalsDeadline ? finalsLineupDeadlineAt : null,
       venue: venue.trim() || undefined,
       streetAddress: streetAddress.trim() || undefined,
@@ -486,36 +493,56 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
         </div>
       )}
       <h3 className="card-title" style={{ marginBottom: 8 }}>Basics</h3>
-      <Field label="Event name" hint={name.trim() ? `URL: ucg.org/#/events/${slug}` : 'The URL slug is derived automatically.'}>
+      <Field
+        label="Event name"
+        hint={isUcgHosted ? undefined : (name.trim() ? `URL: ucg.org/#/events/${slug}` : 'The URL slug is derived automatically.')}
+      >
         <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Southeast Open 2027" autoFocus />
       </Field>
-      <Field label="Host club">
-        <Combo
-          options={db.clubs.map((c) => ({ value: c.id, label: c.name, sub: `${c.state} · ${c.region}` }))}
-          value={hostClubId} onChange={setHostClubId} placeholder="Type to search clubs…"
-        />
-      </Field>
-      <div className="grid cols-2">
-        <Field label="City"><input className="input" value={city} onChange={(e) => setCity(e.target.value)} /></Field>
-        <Field label="State">
-          <select
-            className="input"
-            value={state}
-            onChange={(e) => { const v = e.target.value; setState(v); if (!isUcgHosted) setTimezone(timezoneForState(v, country)); }}
-          >
-            <option value="" disabled>Select…</option>
-            {Object.keys(STATE_REGIONS).map((s) => <option key={s}>{s}</option>)}
-          </select>
+      {!isUcgHosted && (
+        <Field label="Host club">
+          <Combo
+            options={db.clubs.map((c) => ({ value: c.id, label: c.name, sub: `${c.state} · ${c.region}` }))}
+            value={hostClubId} onChange={setHostClubId} placeholder="Type to search clubs…"
+          />
         </Field>
-      </div>
-      <Field label="Venue name"><input className="input" value={venue} onChange={(e) => setVenue(e.target.value)} placeholder="e.g. University Arena" /></Field>
-      <div className="grid cols-3">
-        <Field label="Street address"><input className="input" value={streetAddress} onChange={(e) => setStreetAddress(e.target.value)} /></Field>
-        <Field label="Country"><input className="input" value={country} onChange={(e) => setCountry(e.target.value)} placeholder="United States" /></Field>
-        <Field label="Hotel block link" hint="URL to the room-block booking page.">
-          <input className="input" type="url" value={hotelLink} onChange={(e) => setHotelLink(e.target.value)} placeholder="https://…" />
-        </Field>
-      </div>
+      )}
+      {/* Location — hidden for FlipFest, which always runs at its fixed
+          UCG address (baked into the template, PM feedback 2026-07-22).
+          Nationals keeps these (its venue changes year to year). */}
+      {seedEvt?.ucgHosted !== 'flipfest' && (
+        <>
+          <div className="grid cols-2">
+            <Field label="City"><input className="input" value={city} onChange={(e) => setCity(e.target.value)} /></Field>
+            <Field label="State">
+              <select
+                className="input"
+                value={state}
+                onChange={(e) => { const v = e.target.value; setState(v); if (!isUcgHosted) setTimezone(timezoneForState(v, country)); }}
+              >
+                <option value="" disabled>Select…</option>
+                {Object.keys(STATE_REGIONS).map((s) => <option key={s}>{s}</option>)}
+              </select>
+            </Field>
+          </div>
+          <Field label="Venue name"><input className="input" value={venue} onChange={(e) => setVenue(e.target.value)} placeholder="e.g. University Arena" /></Field>
+        </>
+      )}
+      {(seedEvt?.ucgHosted !== 'flipfest' || !isCamp) && (
+        <div className="grid cols-3">
+          {seedEvt?.ucgHosted !== 'flipfest' && (
+            <>
+              <Field label="Street address"><input className="input" value={streetAddress} onChange={(e) => setStreetAddress(e.target.value)} /></Field>
+              <Field label="Country"><input className="input" value={country} onChange={(e) => setCountry(e.target.value)} placeholder="United States" /></Field>
+            </>
+          )}
+          {!isCamp && (
+            <Field label="Hotel block link" hint="URL to the room-block booking page.">
+              <input className="input" type="url" value={hotelLink} onChange={(e) => setHotelLink(e.target.value)} placeholder="https://…" />
+            </Field>
+          )}
+        </div>
+      )}
 
       {sectionTitle('Dates')}
       <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '0 0 8px' }}>
@@ -534,22 +561,29 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
         </Field>
       </div>
 
-      {/* Age-calculation date (event-mgmt v2 §A) */}
-      <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, marginTop: 8, marginBottom: hasAgeCalcAt ? 8 : 0 }}>
-        <input type="checkbox" checked={hasAgeCalcAt} onChange={(e) => setHasAgeCalcAt(e.target.checked)} /> Set an age-calculation date
-      </label>
-      {hasAgeCalcAt && (
-        <div className="grid cols-3" style={{ marginBottom: 8 }}>
-          <Field label={`Age calculated as of (${timezone})`} hint="Used for age-based level eligibility.">
-            <input className="input" type="datetime-local" value={ageCalcAt} onChange={(e) => setAgeCalcAt(e.target.value)} />
-          </Field>
-        </div>
+      {/* Age-calculation date (event-mgmt v2 §A) — camps don't have age-based
+          levels, so this is hidden for them (PM feedback 2026-07-22). */}
+      {!isCamp && (
+        <>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, marginTop: 8, marginBottom: hasAgeCalcAt ? 8 : 0 }}>
+            <input type="checkbox" checked={hasAgeCalcAt} onChange={(e) => setHasAgeCalcAt(e.target.checked)} /> Set an age-calculation date
+          </label>
+          {hasAgeCalcAt && (
+            <div className="grid cols-3" style={{ marginBottom: 8 }}>
+              <Field label={`Age calculated as of (${timezone})`} hint="Used for age-based level eligibility.">
+                <input className="input" type="datetime-local" value={ageCalcAt} onChange={(e) => setAgeCalcAt(e.target.value)} />
+              </Field>
+            </div>
+          )}
+        </>
       )}
 
       {sectionTitle('Fees')}
       <div className="grid cols-3">
         <Field label="Entry fee ($)"><input className="input" type="number" min={0} step={5} value={entryFee} onChange={(e) => setEntryFee(e.target.value)} /></Field>
-        <Field label="2nd discipline ($)"><input className="input" type="number" min={0} step={5} value={secondFee} onChange={(e) => setSecondFee(e.target.value)} /></Field>
+        {!isCamp && (
+          <Field label="2nd discipline ($)"><input className="input" type="number" min={0} step={5} value={secondFee} onChange={(e) => setSecondFee(e.target.value)} /></Field>
+        )}
       </div>
 
       {/* Late registration (event-mgmt v2 §A) */}
@@ -565,18 +599,22 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
         </div>
       )}
 
-      {/* Banquet */}
-      <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, marginBottom: hasBanquet ? 8 : 0 }}>
-        <input type="checkbox" checked={hasBanquet} onChange={(e) => setHasBanquet(e.target.checked)} /> Offer a banquet add-on
-      </label>
-      {hasBanquet && (
-        <div className="grid cols-3">
-          <Field label="Banquet name"><input className="input" value={banquetName} onChange={(e) => setBanquetName(e.target.value)} /></Field>
-          <Field label="Banquet price ($)"><input className="input" type="number" min={0} step={5} value={banquetPrice} onChange={(e) => setBanquetPrice(e.target.value)} /></Field>
-          <Field label={`Last date to purchase (${timezone})`} hint="Optional. Leave blank to allow purchase any time registration is open.">
-            <input className="input" type="datetime-local" value={banquetLastPurchaseAt} onChange={(e) => setBanquetLastPurchaseAt(e.target.value)} />
-          </Field>
-        </div>
+      {/* Banquet — hidden for camps (PM feedback 2026-07-22). */}
+      {!isCamp && (
+        <>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, marginBottom: hasBanquet ? 8 : 0 }}>
+            <input type="checkbox" checked={hasBanquet} onChange={(e) => setHasBanquet(e.target.checked)} /> Offer a banquet add-on
+          </label>
+          {hasBanquet && (
+            <div className="grid cols-3">
+              <Field label="Banquet name"><input className="input" value={banquetName} onChange={(e) => setBanquetName(e.target.value)} /></Field>
+              <Field label="Banquet price ($)"><input className="input" type="number" min={0} step={5} value={banquetPrice} onChange={(e) => setBanquetPrice(e.target.value)} /></Field>
+              <Field label={`Last date to purchase (${timezone})`} hint="Optional. Leave blank to allow purchase any time registration is open.">
+                <input className="input" type="datetime-local" value={banquetLastPurchaseAt} onChange={(e) => setBanquetLastPurchaseAt(e.target.value)} />
+              </Field>
+            </div>
+          )}
+        </>
       )}
 
       {/* T-shirt add-on */}
@@ -602,44 +640,57 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
         </div>
       )}
 
-      {/* Club banner add-on */}
-      <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, marginTop: hasTshirt ? 0 : 8, marginBottom: hasBanner ? 8 : 0 }}>
-        <input type="checkbox" checked={hasBanner} onChange={(e) => setHasBanner(e.target.checked)} /> Offer a club banner add-on
-      </label>
-      {hasBanner && (
-        <div className="grid cols-3" style={{ marginBottom: 8 }}>
-          <Field label="Banner price ($)" hint="Clubs enter their banner text at registration.">
-            <input className="input" type="number" min={0} step={5} value={bannerPrice} onChange={(e) => setBannerPrice(e.target.value)} />
-          </Field>
-          <Field label={`Last date to purchase (${timezone})`} hint="Optional. Leave blank to allow purchase any time registration is open.">
-            <input className="input" type="datetime-local" value={bannerLastPurchaseAt} onChange={(e) => setBannerLastPurchaseAt(e.target.value)} />
-          </Field>
-        </div>
+      {/* Club banner add-on — hidden for camps (PM feedback 2026-07-22). */}
+      {!isCamp && (
+        <>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, marginTop: hasTshirt ? 0 : 8, marginBottom: hasBanner ? 8 : 0 }}>
+            <input type="checkbox" checked={hasBanner} onChange={(e) => setHasBanner(e.target.checked)} /> Offer a club banner add-on
+          </label>
+          {hasBanner && (
+            <div className="grid cols-3" style={{ marginBottom: 8 }}>
+              <Field label="Banner price ($)" hint="Clubs enter their banner text at registration.">
+                <input className="input" type="number" min={0} step={5} value={bannerPrice} onChange={(e) => setBannerPrice(e.target.value)} />
+              </Field>
+              <Field label={`Last date to purchase (${timezone})`} hint="Optional. Leave blank to allow purchase any time registration is open.">
+                <input className="input" type="datetime-local" value={bannerLastPurchaseAt} onChange={(e) => setBannerLastPurchaseAt(e.target.value)} />
+              </Field>
+            </div>
+          )}
+        </>
       )}
 
-      {/* Change fee */}
-      <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, marginTop: 8, marginBottom: hasChangeFee ? 8 : 0 }}>
-        <input type="checkbox" checked={hasChangeFee} onChange={(e) => setHasChangeFee(e.target.checked)} /> Charge a registration change fee (late changes)
-      </label>
-      {hasChangeFee && (
-        <div className="grid cols-3" style={{ marginBottom: 8 }}>
-          <Field label="Change fee ($)"><input className="input" type="number" min={0} step={5} value={changeFeeAmount} onChange={(e) => setChangeFeeAmount(e.target.value)} /></Field>
-          <Field label={`Applies after (${timezone})`} hint="Changes made after this date/time incur the fee.">
-            <input className="input" type="datetime-local" value={changeFeeStartsAt} onChange={(e) => setChangeFeeStartsAt(e.target.value)} />
-          </Field>
-        </div>
+      {/* Change fee — hidden for camps (PM feedback 2026-07-22). */}
+      {!isCamp && (
+        <>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, marginTop: 8, marginBottom: hasChangeFee ? 8 : 0 }}>
+            <input type="checkbox" checked={hasChangeFee} onChange={(e) => setHasChangeFee(e.target.checked)} /> Charge a registration change fee (late changes)
+          </label>
+          {hasChangeFee && (
+            <div className="grid cols-3" style={{ marginBottom: 8 }}>
+              <Field label="Change fee ($)"><input className="input" type="number" min={0} step={5} value={changeFeeAmount} onChange={(e) => setChangeFeeAmount(e.target.value)} /></Field>
+              <Field label={`Applies after (${timezone})`} hint="Changes made after this date/time incur the fee.">
+                <input className="input" type="datetime-local" value={changeFeeStartsAt} onChange={(e) => setChangeFeeStartsAt(e.target.value)} />
+              </Field>
+            </div>
+          )}
+        </>
       )}
 
-      {/* Last date to edit (B4) */}
-      <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, marginTop: 8, marginBottom: hasEditLockout ? 8 : 0 }}>
-        <input type="checkbox" checked={hasEditLockout} onChange={(e) => setHasEditLockout(e.target.checked)} /> Lock out editing after a date
-      </label>
-      {hasEditLockout && (
-        <div className="grid cols-3" style={{ marginBottom: 8 }}>
-          <Field label={`Last date to edit (${timezone})`} hint="Past this, only an admin or this event's host club can still edit a registration.">
-            <input className="input" type="datetime-local" value={lastDateToEdit} onChange={(e) => setLastDateToEdit(e.target.value)} />
-          </Field>
-        </div>
+      {/* Last date to edit (B4) — hidden for camps (PM feedback 2026-07-22);
+          submit() sets it to regCloses automatically for them instead. */}
+      {!isCamp && (
+        <>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, marginTop: 8, marginBottom: hasEditLockout ? 8 : 0 }}>
+            <input type="checkbox" checked={hasEditLockout} onChange={(e) => setHasEditLockout(e.target.checked)} /> Lock out editing after a date
+          </label>
+          {hasEditLockout && (
+            <div className="grid cols-3" style={{ marginBottom: 8 }}>
+              <Field label={`Last date to edit (${timezone})`} hint="Past this, only an admin or this event's host club can still edit a registration.">
+                <input className="input" type="datetime-local" value={lastDateToEdit} onChange={(e) => setLastDateToEdit(e.target.value)} />
+              </Field>
+            </div>
+          )}
+        </>
       )}
 
       {sectionTitle('Event director')}
@@ -654,115 +705,124 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
         <input type="checkbox" checked={directorCc} onChange={(e) => setDirectorCc(e.target.checked)} /> CC director on confirmation emails
       </label>
 
-      {sectionTitle('Disciplines & sessions')}
-      <div style={{ display: 'flex', gap: 16, marginBottom: 10 }}>
-        {DISCIPLINES.map((d) => (
-          <label key={d} style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14, fontWeight: 600 }}>
-            <input type="checkbox" checked={disciplines.includes(d)} onChange={() => toggleDiscipline(d)} /> {discLabel(d)}
-          </label>
-        ))}
-      </div>
+      {/* Disciplines & sessions — hidden entirely for camps (PM feedback
+          2026-07-22). Camp registration DOES read `disciplines`/`sessions`
+          downstream (RosterToolsCard, RegistrationEditor's per-discipline
+          picker), so these aren't dropped — `flipfestTemplate` seeds all
+          three disciplines, which `initialSessions` (above) turns into the
+          same default sessions this UI would have produced; that seed is
+          carried through unmodified since there's no picker to change it. */}
       {!isCamp && (
-        <div className="card card-pad" style={{ marginBottom: 10 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Registration mode</div>
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
-              <input
-                type="radio" name="registrationMode" checked={registrationMode === 'by-discipline'}
-                onChange={() => setRegistrationMode('by-discipline')}
-              />
-              By discipline (default)
-            </label>
-            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
-              <input
-                type="radio" name="registrationMode" checked={registrationMode === 'by-session'}
-                onChange={() => setRegistrationMode('by-session')}
-              />
-              By session
-            </label>
+        <>
+          {sectionTitle('Disciplines & sessions')}
+          <div style={{ display: 'flex', gap: 16, marginBottom: 10 }}>
+            {DISCIPLINES.map((d) => (
+              <label key={d} style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14, fontWeight: 600 }}>
+                <input type="checkbox" checked={disciplines.includes(d)} onChange={() => toggleDiscipline(d)} /> {discLabel(d)}
+              </label>
+            ))}
           </div>
-          <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '6px 0 0' }}>
-            By-session: athletes pick a pre-created session at registration instead of just a discipline —
-            sessions (below) must be created before registration opens.
-          </p>
-        </div>
-      )}
-      {sessions.length === 0 && <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '4px 0' }}>Pick a discipline to load its default session templates — then add, remove, or edit sessions.</p>}
-      {sessions.map((s, i) => {
-        // Exclude retired levels from the session level pickers
-        const discLevels = db.levels.filter((l) => l.discipline === s.discipline && !l.retired).sort((a, b) => a.order - b.order);
-        return (
-          <div key={s.key} className="card card-pad" style={{ marginBottom: 10 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
-              <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--ink-soft)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Session {i + 1} · {discLabel(s.discipline)}</span>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                {kind === 'nationals' && (
-                  <select className="input" style={{ width: 'auto', padding: '2px 8px', fontSize: 12.5 }} value={s.phase} onChange={(e) => updateSession(s.key, { phase: e.target.value as 'prelim' | 'final' })}>
-                    <option value="prelim">Prelims</option>
-                    <option value="final">Finals</option>
-                  </select>
-                )}
-                <button className="btn small ghost" onClick={() => setSessions(sessions.filter((x) => x.key !== s.key))}>Remove</button>
+          <div className="card card-pad" style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Registration mode</div>
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
+                <input
+                  type="radio" name="registrationMode" checked={registrationMode === 'by-discipline'}
+                  onChange={() => setRegistrationMode('by-discipline')}
+                />
+                By discipline (default)
+              </label>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
+                <input
+                  type="radio" name="registrationMode" checked={registrationMode === 'by-session'}
+                  onChange={() => setRegistrationMode('by-session')}
+                />
+                By session
+              </label>
+            </div>
+            <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '6px 0 0' }}>
+              By-session: athletes pick a pre-created session at registration instead of just a discipline —
+              sessions (below) must be created before registration opens.
+            </p>
+          </div>
+          {sessions.length === 0 && <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '4px 0' }}>Pick a discipline to load its default session templates — then add, remove, or edit sessions.</p>}
+          {sessions.map((s, i) => {
+            // Exclude retired levels from the session level pickers
+            const discLevels = db.levels.filter((l) => l.discipline === s.discipline && !l.retired).sort((a, b) => a.order - b.order);
+            return (
+              <div key={s.key} className="card card-pad" style={{ marginBottom: 10 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--ink-soft)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Session {i + 1} · {discLabel(s.discipline)}</span>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    {kind === 'nationals' && (
+                      <select className="input" style={{ width: 'auto', padding: '2px 8px', fontSize: 12.5 }} value={s.phase} onChange={(e) => updateSession(s.key, { phase: e.target.value as 'prelim' | 'final' })}>
+                        <option value="prelim">Prelims</option>
+                        <option value="final">Finals</option>
+                      </select>
+                    )}
+                    <button className="btn small ghost" onClick={() => setSessions(sessions.filter((x) => x.key !== s.key))}>Remove</button>
+                  </div>
+                </div>
+                <Field label="Name" hint={`Saved as "Session ${i + 1} — ${s.label.trim() || '…'}"`}>
+                  <input className="input" value={s.label} onChange={(e) => updateSession(s.key, { label: e.target.value })} />
+                </Field>
+                <div className="grid cols-3">
+                  <Field label="Date"><input className="input" type="date" min={startDate} max={endDate} value={s.date} onChange={(e) => updateSession(s.key, { date: e.target.value })} /></Field>
+                  <Field label="Time"><input className="input" type="time" value={s.time} onChange={(e) => updateSession(s.key, { time: e.target.value })} /></Field>
+                </div>
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                  {discLevels.map((l) => (
+                    <label key={l.id} style={{ display: 'flex', gap: 5, alignItems: 'center', fontSize: 13.5 }}>
+                      <input
+                        type="checkbox"
+                        checked={s.levelIds.includes(l.id)}
+                        onChange={(e) => updateSession(s.key, {
+                          levelIds: e.target.checked
+                            ? discLevels.map((x) => x.id).filter((id) => s.levelIds.includes(id) || id === l.id) // keep level order
+                            : s.levelIds.filter((id) => id !== l.id),
+                        })}
+                      /> {l.name}
+                    </label>
+                  ))}
+                </div>
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink-soft)', marginBottom: 4 }}>
+                    Max routines per apparatus (optional — blank = uncapped, counts apparatus entries)
+                  </div>
+                  <div className="grid cols-3">
+                    {APPARATUS[s.discipline].map((a) => (
+                      <Field key={a.code} label={a.name}>
+                        <input
+                          className="input" type="number" min={0} step={1}
+                          value={s.maxRoutines[a.code] ?? ''}
+                          onChange={(e) => updateSession(s.key, { maxRoutines: { ...s.maxRoutines, [a.code]: e.target.value } })}
+                        />
+                      </Field>
+                    ))}
+                  </div>
+                </div>
               </div>
-            </div>
-            <Field label="Name" hint={`Saved as "Session ${i + 1} — ${s.label.trim() || '…'}"`}>
-              <input className="input" value={s.label} onChange={(e) => updateSession(s.key, { label: e.target.value })} />
-            </Field>
-            <div className="grid cols-3">
-              <Field label="Date"><input className="input" type="date" min={startDate} max={endDate} value={s.date} onChange={(e) => updateSession(s.key, { date: e.target.value })} /></Field>
-              <Field label="Time"><input className="input" type="time" value={s.time} onChange={(e) => updateSession(s.key, { time: e.target.value })} /></Field>
-            </div>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-              {discLevels.map((l) => (
-                <label key={l.id} style={{ display: 'flex', gap: 5, alignItems: 'center', fontSize: 13.5 }}>
-                  <input
-                    type="checkbox"
-                    checked={s.levelIds.includes(l.id)}
-                    onChange={(e) => updateSession(s.key, {
-                      levelIds: e.target.checked
-                        ? discLevels.map((x) => x.id).filter((id) => s.levelIds.includes(id) || id === l.id) // keep level order
-                        : s.levelIds.filter((id) => id !== l.id),
-                    })}
-                  /> {l.name}
-                </label>
+            );
+          })}
+          {disciplines.length > 0 && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
+              {disciplines.map((d) => (
+                <button key={d} className="btn small ghost" onClick={() => setSessions([...sessions, { key: nextKey(), discipline: d, label: `${discLabel(d)} `, date: startDate, time: '09:00', levelIds: [], phase: 'prelim', maxRoutines: {} }])}>
+                  + Add {discLabel(d)} session
+                </button>
               ))}
             </div>
-            <div style={{ marginTop: 10 }}>
-              <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink-soft)', marginBottom: 4 }}>
-                Max routines per apparatus (optional — blank = uncapped, counts apparatus entries)
-              </div>
-              <div className="grid cols-3">
-                {APPARATUS[s.discipline].map((a) => (
-                  <Field key={a.code} label={a.name}>
-                    <input
-                      className="input" type="number" min={0} step={1}
-                      value={s.maxRoutines[a.code] ?? ''}
-                      onChange={(e) => updateSession(s.key, { maxRoutines: { ...s.maxRoutines, [a.code]: e.target.value } })}
-                    />
-                  </Field>
-                ))}
-              </div>
-            </div>
-          </div>
-        );
-      })}
-      {disciplines.length > 0 && (
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
-          {disciplines.map((d) => (
-            <button key={d} className="btn small ghost" onClick={() => setSessions([...sessions, { key: nextKey(), discipline: d, label: `${discLabel(d)} `, date: startDate, time: '09:00', levelIds: [], phase: 'prelim', maxRoutines: {} }])}>
-              + Add {discLabel(d)} session
-            </button>
-          ))}
-        </div>
+          )}
+        </>
       )}
 
       {sectionTitle('Capacity')}
       <div className="grid cols-3">
-        <Field label="Max total participants" hint="Counts athletes — one per person, regardless of how many disciplines they enter.">
+        <Field label="Max total participants" hint={isCamp ? undefined : 'Counts athletes — one per person, regardless of how many disciplines they enter.'}>
           <input className="input" type="number" min={0} step={1} value={capacityTotal} onChange={(e) => setCapacityTotal(e.target.value)} />
         </Field>
       </div>
-      {disciplines.length > 0 && (
+      {!isCamp && disciplines.length > 0 && (
         <>
           <div style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '4px 0 6px' }}>
             Per-discipline caps (optional) — counts routines (apparatus entries), T&amp;T only
@@ -780,7 +840,7 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
           </div>
         </>
       )}
-      {allCompetingLevelIds.length > 0 && (
+      {!isCamp && allCompetingLevelIds.length > 0 && (
         <>
           <div style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '4px 0 6px' }}>
             Per-level caps (optional) — counts routines (apparatus entries), WAG/MAG
@@ -889,39 +949,46 @@ export function EventWizard({ onClose, editEvent, template }: EventWizardProps) 
         </div>
       )}
 
-      {sectionTitle('Scoring')}
-      <div className="card card-pad" style={{ marginBottom: 10 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Judge panels</div>
-        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-          <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
-            <input type="radio" name="scoringPanels" checked={scoringPanels === 1} onChange={() => setScoringPanels(1)} />
-            1 judge panel (default)
-          </label>
-          <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
-            <input type="radio" name="scoringPanels" checked={scoringPanels === 2} onChange={() => setScoringPanels(2)} />
-            2 judge panels
-          </label>
-        </div>
-        <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '6px 0 0' }}>
-          With 2 panels, each judge enters their own execution evaluation and the two are averaged into the final score.
-        </p>
-      </div>
-      <div className="card card-pad" style={{ marginBottom: 10 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Default entry mode</div>
-        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-          <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
-            <input type="radio" name="scoringEntryMode" checked={scoringEntryMode === 'calculator'} onChange={() => setScoringEntryMode('calculator')} />
-            Calculator (default)
-          </label>
-          <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
-            <input type="radio" name="scoringEntryMode" checked={scoringEntryMode === 'simple'} onChange={() => setScoringEntryMode('simple')} />
-            Simple entry (manual)
-          </label>
-        </div>
-        <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '6px 0 0' }}>
-          Judges can still switch modes per score at the judges' table — this just sets which one opens by default.
-        </p>
-      </div>
+      {/* Scoring — hidden for camps (no judging), PM feedback 2026-07-22.
+          submit() still saves whatever scoringPanels/scoringEntryMode default
+          to (state stays at its initial value since there's no UI to change it). */}
+      {!isCamp && (
+        <>
+          {sectionTitle('Scoring')}
+          <div className="card card-pad" style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Judge panels</div>
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
+                <input type="radio" name="scoringPanels" checked={scoringPanels === 1} onChange={() => setScoringPanels(1)} />
+                1 judge panel (default)
+              </label>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
+                <input type="radio" name="scoringPanels" checked={scoringPanels === 2} onChange={() => setScoringPanels(2)} />
+                2 judge panels
+              </label>
+            </div>
+            <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '6px 0 0' }}>
+              With 2 panels, each judge enters their own execution evaluation and the two are averaged into the final score.
+            </p>
+          </div>
+          <div className="card card-pad" style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Default entry mode</div>
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
+                <input type="radio" name="scoringEntryMode" checked={scoringEntryMode === 'calculator'} onChange={() => setScoringEntryMode('calculator')} />
+                Calculator (default)
+              </label>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
+                <input type="radio" name="scoringEntryMode" checked={scoringEntryMode === 'simple'} onChange={() => setScoringEntryMode('simple')} />
+                Simple entry (manual)
+              </label>
+            </div>
+            <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '6px 0 0' }}>
+              Judges can still switch modes per score at the judges' table — this just sets which one opens by default.
+            </p>
+          </div>
+        </>
+      )}
 
       {sectionTitle('Status')}
       <div style={{ display: 'flex', gap: 16, marginBottom: 6 }}>

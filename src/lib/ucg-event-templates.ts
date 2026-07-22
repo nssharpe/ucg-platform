@@ -51,8 +51,11 @@ export function nationalsDateWindow(year: number): { startDate: string; endDate:
 }
 
 /** The host club to prefill: the `is_league_host`-flagged club, but ONLY when
- *  exactly one exists — with none or several, the admin picks manually. */
-function singleLeagueHostClubId(db: DB): string | undefined {
+ *  exactly one exists — with none or several, the admin picks manually.
+ *  Exported for `EventWizard`'s UCG-hosted submit-time host-club resolution
+ *  (the host club input is hidden for UCG-hosted events, per PM feedback
+ *  2026-07-22 — the wizard falls back to this same lookup). */
+export function singleLeagueHostClubId(db: DB): string | undefined {
   const hosts = db.clubs.filter((c) => c.isLeagueHost);
   return hosts.length === 1 ? hosts[0].id : undefined;
 }
@@ -70,13 +73,23 @@ export function flipfestTemplate(season: Season, db: DB): Partial<Event> {
     ucgHosted: 'flipfest',
     timezone: 'America/Los_Angeles',
     venue: 'FlipFest',
+    // Real, fixed FlipFest address (PM feedback 2026-07-22 — the wizard's
+    // location inputs are hidden for FlipFest, so these must be baked in).
+    streetAddress: '272 Lake Frances Rd',
+    city: 'Crossville',
     state: 'TN',
     country: 'United States',
     startDate,
     endDate,
     campConfig: { overnightSurvey: true },
+    // All three disciplines by default — the wizard's discipline/session
+    // picker is hidden for camps, so this seeds the default sessions the
+    // camp registration flow actually reads (EventWizard's `initialSessions`
+    // derives sessions from these disciplines the same way Nationals does).
+    disciplines: [...DISCIPLINES],
     // Placeholder price/sizes — the admin reviews before saving.
     tshirtAddon: { price: 20, sizes: ['S', 'M', 'L', 'XL'] },
+    entryFee: 200,
     ...(hostClubId ? { hostClubId } : {}),
   };
 }
