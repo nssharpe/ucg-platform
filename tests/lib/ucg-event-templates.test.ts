@@ -63,6 +63,7 @@ describe('flipfestTemplate', () => {
     expect(t.state).toBe('TN');
     expect(t.startDate! >= SEASON.startsOn && t.endDate! <= SEASON.endsOn).toBe(true);
     expect(t.campConfig?.overnightSurvey).toBe(true);
+    expect(t.campConfig?.surveyMandatory).toEqual({ bedtime: true, noiseLevel: true, cabinGenderPref: true, roommateRequest: true });
     expect(t.tshirtAddon?.sizes).toEqual(['S', 'M', 'L', 'XL']);
     expect(t.disciplines).toEqual(['MAG', 'WAG', 'TNT']);
     expect(t.entryFee).toBe(200);

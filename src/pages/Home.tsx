@@ -472,7 +472,7 @@ function AthleteDashboard() {
                   <EventStatusBadge event={event} />
                 </div>
                 <div style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
-                  {fmtDate(event.startDate)} · {regs.map((r) => `${r.discipline} (${r.apparatus.join(', ')})`).join(' + ')}
+                  {fmtDate(event.startDate)} · {regs.map((r) => r.apparatus.length > 0 ? `${r.discipline} (${r.apparatus.join(', ')})` : r.discipline).join(' + ')}
                 </div>
                 {myScores.length > 0 && (
                   <div style={{ fontSize: 13, marginTop: 4, display: 'flex', gap: 10, flexWrap: 'wrap' }}>

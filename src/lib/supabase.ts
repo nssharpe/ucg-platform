@@ -310,7 +310,10 @@ const rowToMembership = (r: Row<'memberships'>): Membership => ({
 });
 
 const eventToRow = (m: Event) => ({
-  id: m.id, slug: m.slug, name: m.name, host_club_id: m.hostClubId, city: m.city, state: m.state,
+  // '' means "no host club" client-side (events-core.ts UCG-hosted-no-club
+  // path, PM feedback 2026-07-22) — host_club_id is a nullable FK into
+  // clubs(id), so an empty string would violate the constraint; write null.
+  id: m.id, slug: m.slug, name: m.name, host_club_id: m.hostClubId || null, city: m.city, state: m.state,
   timezone: m.timezone, start_date: m.startDate || null, end_date: m.endDate || null, status: m.status,
   reg_opens: m.regOpens || null, reg_closes: m.regCloses || null,
   last_date_to_edit: m.lastDateToEdit || null, entry_fee: m.entryFee,
@@ -332,6 +335,11 @@ const eventToRow = (m: Event) => ({
   finals_roster_locked: m.finalsRosterLocked ?? false,
   finals_lineup_deadline_at: m.finalsLineupDeadlineAt || null,
   scoring_config: m.scoringConfig ?? null,
+  // Omit when unset so event saves keep working against a DB that doesn't
+  // have the column yet (migration 20260722221027 pending on prod at ship
+  // time); the Nationals wizard always sets listingOnly explicitly, so
+  // true→false transitions still write.
+  ...(m.listingOnly !== undefined ? { listing_only: m.listingOnly } : {}),
 });
 
 const sessionToRow = (eventId: string, s: Event['sessions'][number]) => ({
@@ -2244,6 +2252,9 @@ export async function loadAll(): Promise<DB | null> {
         : {}),
       ...((r as { scoring_config?: Event['scoringConfig'] | null }).scoring_config
         ? { scoringConfig: (r as { scoring_config?: Event['scoringConfig'] | null }).scoring_config as Event['scoringConfig'] }
+        : {}),
+      ...((r as { listing_only?: boolean | null }).listing_only
+        ? { listingOnly: true }
         : {}),
     }));
 

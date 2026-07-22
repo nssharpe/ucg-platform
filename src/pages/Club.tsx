@@ -1119,7 +1119,15 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   const regSummary = (athleteId: string) => {
     const regs = regsFor(athleteId);
     if (regs.length === 0) return null;
-    return regs.map((r) => `${r.discipline === 'TNT' ? 'T&T' : r.discipline} – ${lvlName(r.levelId)} – ${eventsText(r, nameOf)}`).join(' / ');
+    // Camp regs carry no level/apparatus (they're on/off per discipline) —
+    // drop those blank segments instead of rendering trailing " – " dashes.
+    return regs.map((r) => {
+      const parts = [r.discipline === 'TNT' ? 'T&T' : r.discipline];
+      if (r.levelId) parts.push(lvlName(r.levelId));
+      const events = eventsText(r, nameOf);
+      if (events) parts.push(events);
+      return parts.join(' – ');
+    }).join(' / ');
   };
 
   // Leave waitlist (event-mgmt v2 P4 T6, club-manager side): cancels every

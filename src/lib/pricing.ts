@@ -179,7 +179,13 @@ export function registrationEntryFee(
     late?: { earliestCreatedAtISO: string };
   },
 ): number {
-  if (competingClubId === event.hostClubId) return 0;
+  // `event.hostClubId` is `''` for UCG-hosted events with no host club
+  // resolved (PM feedback 2026-07-22) — never treat that as a match even if
+  // the caller passes an equally-empty `competingClubId` (an unaffiliated
+  // athlete's `selectedClubId` defaults to `''`, e.g. camp registration,
+  // which waives the club-membership gate). Guard explicitly rather than
+  // relying on `'' === ''` being coincidentally false.
+  if (event.hostClubId && competingClubId === event.hostClubId) return 0;
   const base = isSecondDiscipline ? event.secondDisciplineFee : event.entryFee;
   if (late && lateFeeApplies(event, late.earliestCreatedAtISO)) {
     return base + (event.lateReg?.fee ?? 0);
@@ -197,7 +203,9 @@ export function registrationChangeFee(
   event: RegFeeEvent,
   { competingClubId }: { competingClubId: string },
 ): number {
-  if (competingClubId === event.hostClubId) return 0;
+  // See `registrationEntryFee`'s guard comment above — never treat an empty
+  // `event.hostClubId` as matching an equally-empty `competingClubId`.
+  if (event.hostClubId && competingClubId === event.hostClubId) return 0;
   return event.changeFee?.amount ?? 0;
 }
 
@@ -233,7 +241,9 @@ export function newRegistrationEntryTotal(
     late?: { earliestCreatedAtISO: string };
   },
 ): number {
-  if (competingClubId === event.hostClubId) return 0;
+  // See `registrationEntryFee`'s guard comment above — never treat an empty
+  // `event.hostClubId` as matching an equally-empty `competingClubId`.
+  if (event.hostClubId && competingClubId === event.hostClubId) return 0;
   let total = 0;
   for (let i = 0; i < newDisciplineCount; i++) {
     const isSecond = priorDisciplineCount + i > 0;
@@ -489,10 +499,39 @@ export const CAMP_BEDTIME_LABELS: Record<string, string> = {
 };
 export const CAMP_NOISE_LABELS: Record<string, string> = { quiet: 'Quiet', moderate: 'Moderate', lively: 'Lively' };
 
-/** Required fields (bedtime/noise/cabin pref) must be explicitly chosen;
- *  the free-text roommate request is always optional. */
-export function campSurveyValid(draft: CampSurveyDraft): boolean {
-  return !!draft.bedtime && !!draft.noiseLevel && !!draft.cabinGenderPref;
+/** Per-question "Mandatory?" config, matching `Event.campConfig.surveyMandatory`.
+ *  Kept as a standalone type (rather than importing `Event`) so this module's
+ *  camp-survey helpers stay decoupled from the full Event shape. */
+export type CampSurveyMandatoryConfig = {
+  bedtime?: boolean; noiseLevel?: boolean; cabinGenderPref?: boolean; roommateRequest?: boolean;
+};
+
+/** Legacy default (pre-2026-07-22 events, or any event with no explicit
+ *  `surveyMandatory` config): bedtime/noise/cabin-pref required, roommate
+ *  request optional. */
+const LEGACY_SURVEY_MANDATORY: Required<CampSurveyMandatoryConfig> = {
+  bedtime: true, noiseLevel: true, cabinGenderPref: true, roommateRequest: false,
+};
+
+/** A question is answered iff its draft field is non-blank. */
+function campSurveyQuestionAnswered(draft: CampSurveyDraft, key: keyof CampSurveyDraft): boolean {
+  return !!draft[key];
+}
+
+/** Resolve a possibly-partial `surveyMandatory` config against the legacy
+ *  default, so every caller (validity check + "Mandatory?" field markers)
+ *  agrees on which questions are required. */
+export function campSurveyMandatoryOf(config?: CampSurveyMandatoryConfig): Required<CampSurveyMandatoryConfig> {
+  return { ...LEGACY_SURVEY_MANDATORY, ...config };
+}
+
+/** Every question configured as mandatory (`config`, falling back to the
+ *  legacy default when absent) must be explicitly answered; anything not
+ *  marked mandatory is optional regardless of draft content. */
+export function campSurveyValid(draft: CampSurveyDraft, config?: CampSurveyMandatoryConfig): boolean {
+  const mandatory = campSurveyMandatoryOf(config);
+  return (Object.keys(mandatory) as (keyof CampSurveyMandatoryConfig)[])
+    .every((key) => !mandatory[key] || campSurveyQuestionAnswered(draft, key));
 }
 
 /** Draft → the shape stored on `Registration.campSurvey`. Returns `undefined`

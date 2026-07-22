@@ -188,6 +188,15 @@ describe('newRegistrationEntryTotal (3f/3g host-club $0)', () => {
   it('zero new disciplines = $0', () => {
     expect(newRegistrationEntryTotal(event, { competingClubId: 'other', priorDisciplineCount: 0, newDisciplineCount: 0 })).toBe(0);
   });
+
+  // PM feedback 2026-07-22: UCG-hosted events can have hostClubId === '' (no
+  // host club resolved). An unaffiliated athlete's competingClubId also
+  // defaults to '' (e.g. camp registration, which waives the club-membership
+  // gate) — that must NOT coincidentally match and waive the fee.
+  it('an empty competingClubId never matches an empty (unresolved) hostClubId', () => {
+    const hostless: RegFeeEvent = { hostClubId: '', entryFee: 60, secondDisciplineFee: 25 };
+    expect(newRegistrationEntryTotal(hostless, { competingClubId: '', priorDisciplineCount: 0, newDisciplineCount: 1 })).toBe(60);
+  });
 });
 
 describe('reassignPartners (synchro swap, 3e)', () => {
@@ -525,10 +534,27 @@ describe('camp overnight-accommodations survey (emv2 P2 T5, spec §G)', () => {
       .toEqual({ bedtime: 'after-midnight', noiseLevel: 'lively', cabinGenderPref: 'Female', roommateRequest: 'Jamie' });
   });
 
-  it('campSurveyValid requires bedtime + noiseLevel + cabinGenderPref, not roommateRequest', () => {
+  it('campSurveyValid (legacy default, no config) requires bedtime + noiseLevel + cabinGenderPref, not roommateRequest', () => {
     expect(campSurveyValid({ bedtime: '', noiseLevel: '', cabinGenderPref: '', roommateRequest: '' })).toBe(false);
     expect(campSurveyValid({ bedtime: 'before-10', noiseLevel: 'quiet', cabinGenderPref: '', roommateRequest: '' })).toBe(false);
     expect(campSurveyValid({ bedtime: 'before-10', noiseLevel: 'quiet', cabinGenderPref: 'No preference', roommateRequest: '' })).toBe(true);
+  });
+
+  it('campSurveyValid with an explicit all-mandatory config also requires roommateRequest', () => {
+    const allMandatory = { bedtime: true, noiseLevel: true, cabinGenderPref: true, roommateRequest: true };
+    expect(campSurveyValid({ bedtime: 'before-10', noiseLevel: 'quiet', cabinGenderPref: 'No preference', roommateRequest: '' }, allMandatory)).toBe(false);
+    expect(campSurveyValid({ bedtime: 'before-10', noiseLevel: 'quiet', cabinGenderPref: 'No preference', roommateRequest: 'Jamie' }, allMandatory)).toBe(true);
+  });
+
+  it('campSurveyValid with an empty config object ({}) falls back to the legacy default', () => {
+    expect(campSurveyValid({ bedtime: 'before-10', noiseLevel: 'quiet', cabinGenderPref: 'No preference', roommateRequest: '' }, {})).toBe(true);
+    expect(campSurveyValid({ bedtime: '', noiseLevel: 'quiet', cabinGenderPref: 'No preference', roommateRequest: '' }, {})).toBe(false);
+  });
+
+  it('campSurveyValid with roommateRequest mandatory but the other three optional', () => {
+    const roommateOnly = { bedtime: false, noiseLevel: false, cabinGenderPref: false, roommateRequest: true };
+    expect(campSurveyValid({ bedtime: '', noiseLevel: '', cabinGenderPref: '', roommateRequest: '' }, roommateOnly)).toBe(false);
+    expect(campSurveyValid({ bedtime: '', noiseLevel: '', cabinGenderPref: '', roommateRequest: 'Jamie' }, roommateOnly)).toBe(true);
   });
 
   it('campSurveyToStored returns undefined for a fully-blank draft', () => {

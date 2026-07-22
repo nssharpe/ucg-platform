@@ -167,3 +167,45 @@ Nate walked both creation flows + a camp event page; the resulting changes:
   names like "Session 2 — Orange (MAG)"). EDIT of an existing nationals
   event keeps the classic per-session cards (slots×gyms reconstruction is
   lossy); heavy session management stays on the event page manage tools.
+
+## 2026-07-22 PM feedback pass 2 (applied on `feat/ucg-event-feedback-2`)
+
+Second round after Nate tested the new flows:
+
+- **Camps session-less/level-less:** camp events save `sessions: []`,
+  `secondDisciplineFee: 0` (flat fee), `lastDateToEdit = regCloses`;
+  `disciplines` kept purely as "equipment available" (simple checkbox row in
+  the wizard). `RegistrationEditor` camp mode = discipline checkboxes only
+  (no level/apparatus/session); camp regs save `levelId: ''`,
+  `apparatus: []`, `sessionId: null`. Known follow-up: `RosterToolsCard`
+  still requires level/apparatus (spawned as its own task).
+- **Camp survey configurable + reviewable:** wizard "Registrant survey"
+  section (camps) — master toggle (`campConfig.overnightSurvey`) + the four
+  FIXED questions each with a Mandatory checkbox
+  (`campConfig.surveyMandatory`; absent = legacy 3-of-4 rule).
+  FlipFest template pre-checks everything. New host/admin "Survey responses"
+  card on the event page (totals + individual answers via the scoped
+  `registration_camp_surveys` RPC).
+- **Nationals wizard:** age-calc checkbox hidden for UCG-hosted (Masters-rules
+  meets only); Event director section hidden for UCG-hosted — templates bake
+  `{name:'UCG', email:'info@unitedgymnastics.org', ccOnConfirmation:false}`
+  (director's ONLY consumer is the receipt-cc branch in `_shared/fulfill.ts`);
+  confirmation reply-to defaults to info@unitedgymnastics.org on UCG create.
+- **No host club for UCG events:** the "Flag a club as league host" error is
+  gone — UCG-hosted events save `host_club_id NULL` (eventToRow coerces
+  `''`→null). `eventIsRefundEligible` + `request-refund` treat `ucgHosted`
+  as eligible; host-$0 pricing comparisons hard-guarded against
+  `'' === ''` (unaffiliated camp self-reg would have gotten free entry);
+  `ucg_hosted` made admin-only writable (guard trigger `20260722220449`)
+  since it now grants refund eligibility + UCG branding.
+- **Two-tier Nationals publish:** `events.listing_only`
+  (`20260722221027`) + wizard footer buttons "Publish Dates and Location
+  Only" (validates name/dates/location only; Events list row WITHOUT the
+  Details link; registration suppressed) and "Publish Full Details" (full
+  validation, clears the flag); labels flip to "Edit …" per mode once
+  published. Status Draft/Live radios hidden on this wizard. The slots×gyms
+  UI also shows when EDITING a UCG-nationals event with no sessions yet
+  (dates-only → full path); an event with sessions keeps the classic cards.
+  Compat: `listing_only` is omitted from event writes unless the flag is in
+  play, so ordinary saves work against a pre-migration DB (prod, until
+  Nate's push).

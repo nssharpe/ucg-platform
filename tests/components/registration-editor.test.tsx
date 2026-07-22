@@ -136,3 +136,72 @@ describe('RegistrationEditor change-fee derivation (3h)', () => {
     expect(saveButton()).toHaveTextContent('Register');
   });
 });
+
+// Camp events are truly session-less and level-less (PM feedback 2026-07-22):
+// a discipline is on/off via a single checkbox — no level select, apparatus
+// checkboxes, or session picker. Saved regs carry levelId:'', apparatus:[],
+// sessionId: null.
+describe('RegistrationEditor camp mode (session-less/level-less)', () => {
+  function campEvent(overrides: Partial<Event> = {}): Event {
+    return event({ eventType: 'camp', disciplines: ['MAG', 'WAG'], sessions: [], ...overrides });
+  }
+
+  it('renders only the discipline enable checkbox — no level select or apparatus checkboxes', () => {
+    render(
+      <RegistrationEditor
+        event={campEvent()} athlete={athlete()} clubId="club-a"
+        existing={[]} allAthletes={[athlete()]} levels={levels} season={season}
+        onSave={() => {}} onCancel={() => {}}
+      />,
+    );
+    expect(screen.getByRole('checkbox', { name: /MAG/ })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /WAG/ })).toBeInTheDocument();
+    expect(screen.queryByText(/level/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Apparatus/i)).not.toBeInTheDocument();
+  });
+
+  it('enabling a discipline is enough to enable Save (no apparatus required)', () => {
+    render(
+      <RegistrationEditor
+        event={campEvent()} athlete={athlete()} clubId="club-a"
+        existing={[]} allAthletes={[athlete()]} levels={levels} season={season}
+        onSave={() => {}} onCancel={() => {}}
+      />,
+    );
+    expect(saveButton()).toBeDisabled();
+    fireEvent.click(screen.getByRole('checkbox', { name: /MAG/ }));
+    expect(saveButton()).not.toBeDisabled();
+  });
+
+  it('saves a camp registration with levelId "", apparatus [], sessionId null', () => {
+    let saved: Registration[] = [];
+    render(
+      <RegistrationEditor
+        event={campEvent()} athlete={athlete()} clubId="club-a"
+        existing={[]} allAthletes={[athlete()]} levels={levels} season={season}
+        onSave={(regs) => { saved = regs; }} onCancel={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole('checkbox', { name: /MAG/ }));
+    fireEvent.click(saveButton());
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({ discipline: 'MAG', levelId: '', apparatus: [], sessionId: null });
+  });
+
+  it('editing an existing camp registration can still save (toggling a second discipline)', () => {
+    let saved: Registration[] = [];
+    render(
+      <RegistrationEditor
+        event={campEvent()} athlete={athlete()} clubId="club-a"
+        existing={[reg({ discipline: 'MAG', levelId: '', apparatus: [], sessionId: null })]}
+        allAthletes={[athlete()]} levels={levels} season={season}
+        onSave={(regs) => { saved = regs; }} onCancel={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole('checkbox', { name: /WAG/ }));
+    fireEvent.click(saveButton());
+    expect(saved).toHaveLength(2);
+    expect(saved.every((r) => r.levelId === '' && r.apparatus.length === 0 && r.sessionId === null)).toBe(true);
+  });
+});
