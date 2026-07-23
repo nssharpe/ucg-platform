@@ -236,6 +236,19 @@ export interface ScoringConfig {
   entryMode: 'calculator' | 'simple';
 }
 
+/** One question in a camp's registrant survey (PM requirement 2026-07-23,
+ *  replacing the old fixed 4-question survey). `options` applies only to
+ *  `single`/`multi`; `id` is a stable per-event key (the wizard assigns
+ *  `q-<n>`) used both as the question's React key and as the key under which
+ *  the athlete's answer is stored in `Registration.campSurvey`. */
+export interface CampSurveyQuestion {
+  id: string;
+  label: string;
+  type: 'text' | 'single' | 'multi';
+  options?: string[];
+  required: boolean;
+}
+
 export interface Event {
   id: string;
   slug: string;
@@ -298,15 +311,27 @@ export interface Event {
    *  info and age-calc date moved to the general event-level fields below
    *  (event-mgmt v2 Phase 0 §A) since they apply to competitions too. */
   campConfig?: {
+    /** @deprecated pre-2026-07-23 fixed-question survey on/off flag. Superseded
+     *  by `survey.enabled`. Kept only so `campSurveyQuestionsOf` (pricing.ts)
+     *  can derive the legacy 4-question survey for events saved before this
+     *  field existed; new saves write `survey` instead and mirror this flag
+     *  true/false for any straggler reader. */
     overnightSurvey?: boolean;
     leoAddon?: { price: number; sizes: string[]; lastPurchaseAt?: string };
-    /** Per-question "Mandatory?" toggles for the overnight survey (PM
-     *  requirement 2026-07-22: pre-seed all four checked). Absent ⇒ legacy
-     *  default (bedtime/noiseLevel/cabinGenderPref mandatory, roommateRequest
-     *  optional) so pre-existing events keep their historical behavior.
-     *  `campSurveyValid` (pricing.ts) is the single source of truth for what
-     *  this actually gates. */
+    /** @deprecated pre-2026-07-23 per-question "Mandatory?" toggles for the
+     *  fixed 4-question survey. Superseded by each question's own `required`
+     *  flag in `survey.questions`. Absent ⇒ legacy default (bedtime/
+     *  noiseLevel/cabinGenderPref mandatory, roommateRequest optional) — see
+     *  `campSurveyQuestionsOf` (pricing.ts), the single source of truth for
+     *  deriving legacy events' effective questions. */
     surveyMandatory?: { bedtime?: boolean; noiseLevel?: boolean; cabinGenderPref?: boolean; roommateRequest?: boolean };
+    /** Editable per-event registrant survey (PM requirement 2026-07-23):
+     *  replaces the old fixed 4-question survey with an admin-authored
+     *  question list (text / single-select / multi-select, each with its own
+     *  `required` flag). Absent ⇒ derive from the legacy `overnightSurvey`/
+     *  `surveyMandatory` fields via `campSurveyQuestionsOf` (pricing.ts) so
+     *  pre-existing camps keep their historical 4 questions, editable. */
+    survey?: { enabled: boolean; questions: CampSurveyQuestion[] };
   };
   /** Venue name (distinct from city/state — e.g. "University Arena"). */
   venue?: string;
@@ -460,15 +485,18 @@ export interface Registration {
    *  shape future-proofs per-apparatus levels for MAG/WAG. Absent ⇒ use
    *  `levelId` for all events. */
   apparatusLevels?: Record<string, string>;
-  /** Camp overnight-accommodations survey answers (event-mgmt v2 §G). Present
-   *  only for camp registrations at events with `campConfig.overnightSurvey`
-   *  on. Free to edit until the event's change deadline — never a change fee. */
-  campSurvey?: {
-    bedtime?: 'before-10' | '10-to-midnight' | 'after-midnight';
-    noiseLevel?: 'quiet' | 'moderate' | 'lively';
-    cabinGenderPref?: Gender | 'No preference';
-    roommateRequest?: string;
-  };
+  /** Camp registrant-survey answers (event-mgmt v2 §G; question list made
+   *  editable 2026-07-23). Present only for camp registrations at events
+   *  with a survey configured (`campSurveyQuestionsOf`, pricing.ts) and
+   *  enabled. Free to edit until the event's change deadline — never a
+   *  change fee. Keyed by `CampSurveyQuestion.id`: a `single`/`text`
+   *  question stores its answer as a string, `multi` as a string[]. Legacy
+   *  rows (pre-2026-07-23) are fixed-key objects — `bedtime`/`noiseLevel`/
+   *  `cabinGenderPref`/`roommateRequest` — which are valid values of this
+   *  same `Record<string, string | string[]>` shape (those legacy ids are
+   *  exactly the ones `campSurveyQuestionsOf` derives), so no migration or
+   *  adapter is needed to read them back. */
+  campSurvey?: Record<string, string | string[]>;
   /** DB `created_at` (timestamptz), READ-ONLY: never written by `pushRegistration`
    *  (the app's whole-row upsert never maps this column back, so the DB default
    *  `now()` — stamped once at first INSERT — is preserved across edits). This is

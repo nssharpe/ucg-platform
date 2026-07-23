@@ -8,11 +8,12 @@ import { toDatetimeLocalValue, scoringConfigOf } from '../lib/events-core';
 import { eventCreationBlocked } from '../lib/season-lifecycle';
 import { buildNationalsSessions, singleLeagueHostClubId } from '../lib/ucg-event-templates';
 import { normalizeExternalUrl } from '../lib/url';
+import { campSurveyQuestionsOf } from '../lib/pricing';
 import { Combo, Field, Modal } from './ui';
 import { useToast } from './ui-hooks';
 import { APPARATUS, DISCIPLINES, SHIRT_SIZES, STATE_REGIONS } from '../lib/types';
 import { timezoneForState } from '../lib/timezone';
-import type { Discipline, Level, Event, EventSession, EventStatus, ScoringConfig } from '../lib/types';
+import type { CampSurveyQuestion, Discipline, Level, Event, EventSession, EventStatus, ScoringConfig } from '../lib/types';
 
 const slugify = (name: string) => name.toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
@@ -85,6 +86,44 @@ function sessionsTodrafts(sessions: EventSession[]): SessionDraft[] {
       ),
     };
   });
+}
+
+// Camp registrant-survey question editor draft (PM requirement 2026-07-23:
+// replaces the old fixed 4-question survey with an admin-authored list).
+// `key` is a stable React key (assigned via a keyRef counter, same idiom as
+// SessionDraft above — never Date.now()-per-render); `id` is the STORED
+// answer key and is preserved across edits so re-saving an existing camp
+// doesn't orphan already-collected answers under a new id. `optionsText` is
+// the raw one-option-per-line textarea value for single/multi questions.
+interface SurveyQuestionDraft {
+  key: number;
+  id: string;
+  label: string;
+  type: 'text' | 'single' | 'multi';
+  optionsText: string;
+  required: boolean;
+}
+
+function surveyQuestionsToDrafts(questions: CampSurveyQuestion[], nextKey: () => number): SurveyQuestionDraft[] {
+  return questions.map((q) => ({
+    key: nextKey(), id: q.id, label: q.label, type: q.type,
+    optionsText: (q.options ?? []).join('\n'), required: q.required,
+  }));
+}
+
+/** Drafts → the `CampSurveyQuestion[]` saved onto `campConfig.survey`. Drops
+ *  any question left with a blank label (an abandoned "+ Add question" row);
+ *  options are split on newlines, trimmed, and blank lines dropped. */
+function draftsToSurveyQuestions(drafts: SurveyQuestionDraft[]): CampSurveyQuestion[] {
+  return drafts
+    .filter((d) => d.label.trim())
+    .map((d) => ({
+      id: d.id,
+      label: d.label.trim(),
+      type: d.type,
+      required: d.required,
+      ...(d.type !== 'text' ? { options: d.optionsText.split('\n').map((s) => s.trim()).filter(Boolean) } : {}),
+    }));
 }
 
 // Nationals create-mode "Sessions × Gyms" drafts (PM feedback 2026-07-22 §C).
@@ -332,19 +371,24 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
   const [registrationMode, setRegistrationMode] = useState<'by-discipline' | 'by-session'>(
     seedEvt?.registrationMode ?? 'by-discipline',
   );
-  // Registrant survey (camps only, PM requirement 2026-07-22): the four
-  // questions themselves are fixed (bedtime/noise/cabin-pref/roommate) — only
-  // the master on/off toggle and each question's "Mandatory?" box are
-  // editable. Pre-seeded checked (all four mandatory) for a brand-new camp;
-  // an existing camp's saved config (or its lack of one, pre-dating this
-  // feature) is honored on edit.
-  const [surveyEnabled, setSurveyEnabled] = useState(seedEvt?.campConfig?.overnightSurvey ?? true);
-  const [surveyMandatory, setSurveyMandatory] = useState({
-    bedtime: seedEvt?.campConfig?.surveyMandatory?.bedtime ?? true,
-    noiseLevel: seedEvt?.campConfig?.surveyMandatory?.noiseLevel ?? true,
-    cabinGenderPref: seedEvt?.campConfig?.surveyMandatory?.cabinGenderPref ?? true,
-    roommateRequest: seedEvt?.campConfig?.surveyMandatory?.roommateRequest ?? true,
-  });
+  // Registrant survey (camps only; question list made editable 2026-07-23):
+  // the master on/off toggle plus a fully editable question list (label,
+  // type, options for choice types, required). Seeded via the shared
+  // resolver so a brand-new camp starts from the historical 4 questions
+  // (editable from here on) and an existing camp — whether it already has
+  // `campConfig.survey` or only the pre-2026-07-23 legacy fields — opens
+  // with its actual effective questions. A brand-new camp (no campConfig at
+  // all) defaults enabled=true (the resolver alone would say false, since it
+  // has no signal either way); an existing camp honors its resolved value.
+  const initialSurvey = campSurveyQuestionsOf(seedEvt?.campConfig);
+  const [surveyEnabled, setSurveyEnabled] = useState(seedEvt?.campConfig ? initialSurvey.enabled : true);
+  const initialSurveyQuestions: SurveyQuestionDraft[] = (() => {
+    let key = 1;
+    return surveyQuestionsToDrafts(initialSurvey.questions, () => key++);
+  })();
+  const surveyKeyRef = useRef(initialSurveyQuestions.length + 1);
+  const nextSurveyKey = () => surveyKeyRef.current++;
+  const [surveyQuestions, setSurveyQuestions] = useState<SurveyQuestionDraft[]>(initialSurveyQuestions);
   // Scoring config (PM decision 2026-07-19): judge panels + default entry mode.
   const initialScoringConfig = scoringConfigOf(seedEvt);
   const [scoringPanels, setScoringPanels] = useState<1 | 2>(isNationalsCreate ? 2 : initialScoringConfig.panels);
@@ -691,13 +735,23 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
           }
         : { kind: 'standard' as const }),
       scoringConfig: { panels: scoringPanels, entryMode: scoringEntryMode },
-      // Registrant survey (camps only, PM requirement 2026-07-22) — preserves
-      // any `leoAddon` the sanction-approval flow set (this wizard has no UI
-      // for it) while writing the survey on/off + per-question mandatory
-      // config from the section above. Non-camp events keep whatever
-      // campConfig they already had (there's nothing to edit for them).
+      // Registrant survey (camps only; question list editable 2026-07-23) —
+      // preserves any `leoAddon` the sanction-approval flow set (this wizard
+      // has no UI for it) while writing the new `survey` shape from the
+      // editor above. `overnightSurvey` is mirrored true/false for any
+      // straggler reader that still checks it directly; `surveyMandatory`
+      // is no longer written (each question now carries its own `required`).
+      // Non-camp events keep whatever campConfig they already had — there's
+      // nothing to edit for them.
       ...(isCamp
-        ? { campConfig: { ...seedEvt?.campConfig, overnightSurvey: surveyEnabled, surveyMandatory } }
+        ? {
+            campConfig: {
+              ...seedEvt?.campConfig,
+              overnightSurvey: surveyEnabled,
+              surveyMandatory: undefined,
+              survey: { enabled: surveyEnabled, questions: draftsToSurveyQuestions(surveyQuestions) },
+            },
+          }
         : {}),
       // A full publish clears the dates-only flag, even for an event
       // previously published via "Publish Dates and Location Only". Only
@@ -984,25 +1038,67 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
             Do you want to survey registrants during registration?
           </label>
           {surveyEnabled && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {([
-                { key: 'bedtime' as const, text: 'What time do you plan to go to bed?' },
-                { key: 'noiseLevel' as const, text: 'What is the preferred noise level in your cabin?' },
-                { key: 'cabinGenderPref' as const, text: 'Would you prefer a co-ed or single gender cabin?' },
-                { key: 'roommateRequest' as const, text: 'If you have any roommate requests (including people you DO NOT want to room with), please list them here.' },
-              ]).map((q) => (
-                <div key={q.key} style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap', padding: '8px 10px', border: '1px solid var(--line)', borderRadius: 8 }}>
-                  <span style={{ fontSize: 14, flex: '1 1 320px' }}>{q.text}</span>
-                  <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {surveyQuestions.map((q) => (
+                <div key={q.key} style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 12px', border: '1px solid var(--line)', borderRadius: 8 }}>
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap' }}>
                     <input
-                      type="checkbox"
-                      checked={surveyMandatory[q.key]}
-                      onChange={(e) => setSurveyMandatory((m) => ({ ...m, [q.key]: e.target.checked }))}
+                      className="input"
+                      type="text"
+                      placeholder="Question text"
+                      value={q.label}
+                      onChange={(e) => setSurveyQuestions((qs) => qs.map((x) => x.key === q.key ? { ...x, label: e.target.value } : x))}
+                      style={{ flex: '2 1 260px' }}
                     />
-                    Mandatory?
-                  </label>
+                    <select
+                      className="input"
+                      value={q.type}
+                      onChange={(e) => setSurveyQuestions((qs) => qs.map((x) => x.key === q.key ? { ...x, type: e.target.value as SurveyQuestionDraft['type'] } : x))}
+                      style={{ flex: '1 1 160px' }}
+                    >
+                      <option value="text">Text input</option>
+                      <option value="single">Multiple choice</option>
+                      <option value="multi">Checkboxes</option>
+                    </select>
+                    <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' }}>
+                      <input
+                        type="checkbox"
+                        checked={q.required}
+                        onChange={(e) => setSurveyQuestions((qs) => qs.map((x) => x.key === q.key ? { ...x, required: e.target.checked } : x))}
+                      />
+                      Required?
+                    </label>
+                    <button
+                      type="button"
+                      className="btn small ghost"
+                      onClick={() => setSurveyQuestions((qs) => qs.filter((x) => x.key !== q.key))}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  {q.type !== 'text' && (
+                    <Field label="Options (one per line)">
+                      <textarea
+                        className="input"
+                        rows={3}
+                        value={q.optionsText}
+                        onChange={(e) => setSurveyQuestions((qs) => qs.map((x) => x.key === q.key ? { ...x, optionsText: e.target.value } : x))}
+                      />
+                    </Field>
+                  )}
                 </div>
               ))}
+              <button
+                type="button"
+                className="btn small ghost"
+                style={{ alignSelf: 'flex-start' }}
+                onClick={() => setSurveyQuestions((qs) => {
+                  const n = nextSurveyKey();
+                  return [...qs, { key: n, id: `q-${n}`, label: '', type: 'text', optionsText: '', required: false }];
+                })}
+              >
+                + Add question
+              </button>
             </div>
           )}
         </>

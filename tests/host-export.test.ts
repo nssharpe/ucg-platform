@@ -4,6 +4,7 @@ import {
   buildPurchasedShirtsSheet, buildLeoSizesSheet, buildBanquetSheet, buildCampRosterSheet,
 } from '../src/lib/host-export';
 import type { HostRosterRow, HostAddonRow } from '../src/lib/supabase';
+import type { CampSurveyQuestion } from '../src/lib/types';
 
 const row = (overrides: Partial<HostRosterRow>): HostRosterRow => ({
   regId: 'r1', athleteId: 'a1', firstName: 'Ada', lastName: 'Lovelace',
@@ -198,7 +199,10 @@ describe('buildBanquetSheet', () => {
 });
 
 describe('buildCampRosterSheet', () => {
-  it('gives one row per athlete with survey labels, purchased sizes joined by refUserId, and dedupes multi-reg athletes', () => {
+  // Default (no `questions` arg) falls back to the legacy 4-question survey's
+  // resolved labels — full sentences, since that's what `campSurveyQuestionsOf`
+  // derives (event-mgmt v2 §G question list made editable 2026-07-23).
+  it('gives one row per athlete with legacy survey answers, purchased sizes joined by refUserId, and dedupes multi-reg athletes', () => {
     const rows: HostRosterRow[] = [
       row({
         regId: 'r1', athleteId: 'a1', firstName: 'Ada', lastName: 'Lovelace', dob: '2005-04-01', gender: 'Female',
@@ -223,20 +227,34 @@ describe('buildCampRosterSheet', () => {
     expect(col('Shirt (profile)')).toBe('M');
     expect(col('Shirt (purchased)')).toBe('M');
     expect(col('Leo (purchased)')).toBe('YM');
-    expect(col('Bedtime')).toBe('10pm–midnight');
-    expect(col('Noise level')).toBe('Quiet');
-    expect(col('Cabin preference')).toBe('Female');
-    expect(col('Roommate request')).toBe('Bea');
+    expect(col('What time do you plan to go to bed?')).toBe('10pm–midnight');
+    expect(col('What is the preferred noise level in your cabin?')).toBe('Quiet');
+    expect(col('Would you prefer a co-ed or single gender cabin?')).toBe('Female');
+    expect(col('If you have any roommate requests (including people you DO NOT want to room with), please list them here.')).toBe('Bea');
     expect(col('Date registered')).toBe('2026-06-01T00:00:00Z');
   });
 
   it('leaves survey columns blank when there is no survey', () => {
     const sheet = buildCampRosterSheet([row({ campSurvey: undefined })], []);
+    expect(sheet.rows[0][sheet.columns.indexOf('What time do you plan to go to bed?')]).toBe('');
+  });
+
+  it('builds columns dynamically from a custom question list, joining multi-select answers with "; "', () => {
+    const questions: CampSurveyQuestion[] = [
+      { id: 'q-1', label: 'Favorite color?', type: 'text', required: true },
+      { id: 'q-2', label: 'Activities', type: 'multi', options: ['Archery', 'Swimming'], required: false },
+    ];
+    const sheet = buildCampRosterSheet(
+      [row({ campSurvey: { 'q-1': 'Blue', 'q-2': ['Archery', 'Swimming'] } })],
+      [],
+      questions,
+    );
+    expect(sheet.columns).toContain('Favorite color?');
+    expect(sheet.columns).toContain('Activities');
+    expect(sheet.columns).not.toContain('Bedtime');
     const col = (name: string) => sheet.rows[0][sheet.columns.indexOf(name)];
-    expect(col('Bedtime')).toBe('');
-    expect(col('Noise level')).toBe('');
-    expect(col('Cabin preference')).toBe('');
-    expect(col('Roommate request')).toBe('');
+    expect(col('Favorite color?')).toBe('Blue');
+    expect(col('Activities')).toBe('Archery; Swimming');
   });
 });
 
