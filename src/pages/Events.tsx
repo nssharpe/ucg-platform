@@ -1560,25 +1560,33 @@ export function EventHostPage() {
   const rolesLoaded = useRolesLoaded();
   const event = db.events.find((m) => m.slug === slug);
 
+  // Whether this caller may load the event-wide host roster. Computed BEFORE
+  // the fetch effect so we never call event_host_roster for a viewer the RPC
+  // will reject — an athlete who lands on a /host URL would otherwise trigger a
+  // "Not authorized" console error and a wasted round-trip. Gating on
+  // rolesLoaded also makes the fetch wait for roles instead of racing them (a
+  // real host would briefly read as unauthorized before roles resolve).
+  const canManage = !!event && rolesLoaded && (caps.isEventHost(event.id) || caps.isSanctioning);
+
   // Roster is fetched once here and shared by the registration-summary card
   // and the Excel-export card below, rather than each fetching its own copy.
   const [rosterRows, setRosterRows] = useState<HostRosterRow[] | null>(null);
   const [rosterError, setRosterError] = useState<string | null>(null);
 
   const refreshRoster = useCallback(() => {
-    if (!event) return;
+    if (!event || !canManage) return;
     fetchEventHostRoster(event.id).then((res) => {
       if (!res.ok) { setRosterError(res.error); toast(`Couldn't load the registration roster: ${res.error}`, { variant: 'error' }); return; }
       setRosterError(null);
       setRosterRows(res.rows);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [event?.id]);
+  }, [event?.id, canManage]);
 
   useEffect(() => {
     refreshRoster();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [event?.id]);
+  }, [event?.id, canManage]);
 
   if (!event) return <div className="page"><p>Event not found.</p></div>;
 
@@ -1587,7 +1595,6 @@ export function EventHostPage() {
   // refresh.
   if (!rolesLoaded) return <div className="page"><p>Loading…</p></div>;
 
-  const canManage = caps.isEventHost(event.id) || caps.isSanctioning;
   if (!canManage) {
     return (
       <div className="page">
