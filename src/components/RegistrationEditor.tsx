@@ -72,9 +72,6 @@ interface DiscSectionProps {
     apparatus: string[],
     apparatusLevels: Record<string, string> | undefined,
   ) => boolean;
-  /** Camp events are session-less and level-less (PM feedback 2026-07-22) —
-   *  render ONLY the enable/disable checkbox, nothing else. */
-  isCamp: boolean;
 }
 
 /** Draft shape for one discipline */
@@ -95,7 +92,7 @@ export interface DraftReg {
   sessionId: string | null;
 }
 
-function DiscSection({ disc, event, athlete, levels, draft, onChange, allAthletes, season, incomingPartnerId, incomingPartnerSyLevel, refunded, isAdmin, sessionIsFull, isCamp }: DiscSectionProps) {
+function DiscSection({ disc, event, athlete, levels, draft, onChange, allAthletes, season, incomingPartnerId, incomingPartnerSyLevel, refunded, isAdmin, sessionIsFull }: DiscSectionProps) {
   const discLevels = levels.filter((l) => l.discipline === disc && !l.retired);
   const apparatusDefs = APPARATUS[disc];
   const isTNT = disc === 'TNT';
@@ -223,10 +220,7 @@ function DiscSection({ disc, event, athlete, levels, draft, onChange, allAthlete
         </label>
       </div>
 
-      {/* Camps are session-less and level-less (PM feedback 2026-07-22) —
-          the enable checkbox above is the whole story; no level select,
-          apparatus checkboxes, session picker, or partner UI. */}
-      {!isCamp && draft.enabled && (
+      {draft.enabled && (
         <div style={{ paddingLeft: 24 }}>
           {/* Level selector */}
           <div className="grid cols-2" style={{ gap: 10, marginBottom: 10 }}>
@@ -452,6 +446,18 @@ export function RegistrationEditor({
   // this automatically.
   const isCamp = event.eventType === 'camp';
 
+  // Camps ask NOTHING discipline-related (PM feedback 2026-07-23) — a camp
+  // registration is a single on/off row, not one row per selected
+  // discipline. New registrations always save exactly ONE row, carrying
+  // `event.disciplines[0]` purely because `registrations.discipline` is a
+  // NOT NULL enum — it is never shown or asked about. `campExistingRows` may
+  // legitimately hold MULTIPLE rows for an athlete who registered before this
+  // change (one per discipline they'd selected); editing that legacy set
+  // must not delete/re-add rows (no churn, no double charge) — see
+  // `handleSave` below.
+  const campPrimaryDisc: Discipline = ((event.disciplines as Discipline[])[0]) ?? ('MAG' as Discipline);
+  const campExistingRows = existing.filter((r) => !r.refunded);
+
   // Advisory-only capacity preview (event-mgmt v2 P4): server re-validates
   // and is the sole authority at checkout. `now`/groupsById are stable per
   // render — fine, since this is UX-only, not a security check.
@@ -564,10 +570,33 @@ export function RegistrationEditor({
   };
 
   const handleSave = () => {
+    if (isCamp) {
+      if (campExistingRows.length > 0) {
+        // Editing an existing camp registration — possibly a legacy multi-row
+        // set from before this change. Keep every row exactly as-is (no
+        // delete/re-add churn, no re-priced/duplicated charges); only clubId
+        // is refreshed so a club-only switch actually takes effect.
+        onSave(campExistingRows.map((r) => ({ ...r, clubId })));
+        return;
+      }
+      // Brand-new camp registration: exactly one row.
+      const reg: Registration = {
+        id: `reg-${nowMs()}-${athlete.id}-${campPrimaryDisc}`,
+        eventId: event.id,
+        athleteId: athlete.id,
+        clubId,
+        discipline: campPrimaryDisc,
+        levelId: '',
+        apparatus: [],
+        sessionId: null,
+      };
+      onSave([reg]);
+      return;
+    }
     const regs: Registration[] = [];
     for (const disc of event.disciplines as Discipline[]) {
       const d = drafts[disc];
-      if (!d.enabled || (!isCamp && d.apparatus.length === 0)) continue;
+      if (!d.enabled || d.apparatus.length === 0) continue;
       const activeExisting = existing.find((r) => r.discipline === disc && !r.refunded);
       // An admin-confirmed re-enable of a refunded discipline reuses (and
       // un-refunds) the ORIGINAL row instead of creating a parallel one, so
@@ -577,28 +606,24 @@ export function RegistrationEditor({
       // session, full stop — never the discipline+level auto-pick below
       // (event-mgmt v2 P4). By-discipline events keep the pre-P4 auto-pick
       // (nationals prelim/final squads use `sessions` even outside by-session
-      // mode) for any reg that doesn't already carry one. Camps have no
-      // sessions at all — always null.
+      // mode) for any reg that doesn't already carry one.
       const session = event.sessions.find((s) => s.discipline === disc && s.levelIds.includes(d.levelId))
         ?? event.sessions.find((s) => s.discipline === disc);
-      const sessionId = isCamp
-        ? null
-        : event.registrationMode === 'by-session'
-          ? (d.sessionId ?? null)
-          : (existing_?.sessionId ?? session?.id ?? null);
+      const sessionId = event.registrationMode === 'by-session'
+        ? (d.sessionId ?? null)
+        : (existing_?.sessionId ?? session?.id ?? null);
 
       const reg: Registration = {
-        id: existing_?.id ?? `reg-${Date.now()}-${athlete.id}-${disc}`,
+        id: existing_?.id ?? `reg-${nowMs()}-${athlete.id}-${disc}`,
         eventId: event.id,
         athleteId: athlete.id,
         clubId,
         discipline: disc,
-        // Camps are level-less/apparatus-less — a discipline is on/off, full stop.
-        levelId: isCamp ? '' : d.levelId,
-        apparatus: isCamp ? [] : [...d.apparatus],
+        levelId: d.levelId,
+        apparatus: [...d.apparatus],
         sessionId,
-        ...(isCamp ? {} : (Object.keys(d.apparatusLevels).length > 0 ? { apparatusLevels: d.apparatusLevels } : {})),
-        ...(isCamp ? {} : (d.apparatus.includes('SY') ? { partnerAthleteId: d.partnerUnknown ? null : d.partnerAthleteId } : {})),
+        ...(Object.keys(d.apparatusLevels).length > 0 ? { apparatusLevels: d.apparatusLevels } : {}),
+        ...(d.apparatus.includes('SY') ? { partnerAthleteId: d.partnerUnknown ? null : d.partnerAthleteId } : {}),
         // A confirmed admin override clears the refunded/keepListed flags on
         // the reused row — that IS the "re-enable" (spec §H).
         ...(existing_?.refunded !== undefined ? { refunded: d.refundOverridden ? false : existing_.refunded } : {}),
@@ -617,8 +642,11 @@ export function RegistrationEditor({
     onSave(regs);
   };
 
-  // Camp save-enablement is discipline-only (no apparatus concept exists).
-  const anyEnabled = (event.disciplines as Discipline[]).some((d) => drafts[d]?.enabled && (isCamp || drafts[d].apparatus.length > 0));
+  // Camps have no discipline/apparatus concept to enable — a camp
+  // registration is implicitly "on" (new: about to register; existing: must
+  // stay registered, see the guard above) the moment this editor is open.
+  const anyEnabled = isCamp
+    || (event.disciplines as Discipline[]).some((d) => drafts[d]?.enabled && drafts[d].apparatus.length > 0);
 
   // Are we editing an EXISTING registration (vs creating a brand-new one)? An
   // existing-reg edit must make an ELIGIBLE (chargeable) change before it can be
@@ -630,6 +658,16 @@ export function RegistrationEditor({
   const draftToEntries = (
     fromExisting: boolean,
   ): RegDisciplineEntry[] => {
+    if (isCamp) {
+      // Camps have no discipline-level distinction to diff — the only
+      // chargeable change possible on a camp edit is a club switch (handled
+      // via clubId in `eligible`/`hasChange` below), so before/after resolve
+      // to the SAME synthetic "registered" entry as long as the athlete is
+      // (and — since there's no deselect UI for camps — stays) registered.
+      return (fromExisting ? campExistingRows.length > 0 : true)
+        ? [{ discipline: campPrimaryDisc, levelId: '', apparatus: [] }]
+        : [];
+    }
     const out: RegDisciplineEntry[] = [];
     for (const disc of event.disciplines as Discipline[]) {
       if (fromExisting) {
@@ -637,23 +675,20 @@ export function RegistrationEditor({
         if (!reg) continue;
         out.push({
           discipline: disc,
-          // Camp regs carry no meaningful level/apparatus/session — compare
-          // on discipline presence only, so a pure enable/disable toggle is
-          // the only thing that can register as a change here.
-          levelId: isCamp ? '' : reg.levelId,
-          apparatus: isCamp ? [] : [...reg.apparatus],
-          ...(isCamp ? {} : (reg.apparatusLevels ? { apparatusLevels: reg.apparatusLevels } : {})),
-          ...(isCamp ? {} : (reg.sessionId ? { sessionId: reg.sessionId } : {})),
+          levelId: reg.levelId,
+          apparatus: [...reg.apparatus],
+          ...(reg.apparatusLevels ? { apparatusLevels: reg.apparatusLevels } : {}),
+          ...(reg.sessionId ? { sessionId: reg.sessionId } : {}),
         });
       } else {
         const d = drafts[disc];
-        if (!d?.enabled || (!isCamp && d.apparatus.length === 0)) continue;
+        if (!d?.enabled || d.apparatus.length === 0) continue;
         out.push({
           discipline: disc,
-          levelId: isCamp ? '' : d.levelId,
-          apparatus: isCamp ? [] : [...d.apparatus],
-          ...(isCamp ? {} : (Object.keys(d.apparatusLevels).length > 0 ? { apparatusLevels: d.apparatusLevels } : {})),
-          ...(isCamp ? {} : (d.sessionId ? { sessionId: d.sessionId } : {})),
+          levelId: d.levelId,
+          apparatus: [...d.apparatus],
+          ...(Object.keys(d.apparatusLevels).length > 0 ? { apparatusLevels: d.apparatusLevels } : {}),
+          ...(d.sessionId ? { sessionId: d.sessionId } : {}),
         });
       }
     }
@@ -705,10 +740,27 @@ export function RegistrationEditor({
   // approach as `sessionIsFull` above.
   const computeCapacityViolations = (): CapacityViolation[] => {
     if (!capacityConfigured) return [];
+    if (isCamp) {
+      // Single synthetic row representing the one camp registration this
+      // editor can produce — reuses the first existing row's id (if any) so
+      // it dedupes against its own baseline instead of double-counting.
+      const draftRegs: Registration[] = [{
+        id: campExistingRows[0]?.id ?? `draft-${campPrimaryDisc}`,
+        eventId: event.id,
+        athleteId: athlete.id,
+        clubId,
+        discipline: campPrimaryDisc,
+        levelId: '',
+        apparatus: [],
+        sessionId: null,
+        refunded: false,
+      }];
+      return checkCapacity(event, event.sessions, allEventRegs, draftRegs, groupsById, nowMs());
+    }
     const draftRegs: Registration[] = [];
     for (const disc of event.disciplines as Discipline[]) {
       const d = drafts[disc];
-      if (!d?.enabled || (!isCamp && d.apparatus.length === 0)) continue;
+      if (!d?.enabled || d.apparatus.length === 0) continue;
       const activeExisting = existing.find((r) => r.discipline === disc && !r.refunded);
       draftRegs.push({
         id: activeExisting?.id ?? `draft-${disc}`,
@@ -716,11 +768,11 @@ export function RegistrationEditor({
         athleteId: athlete.id,
         clubId,
         discipline: disc,
-        levelId: isCamp ? '' : d.levelId,
-        apparatus: isCamp ? [] : [...d.apparatus],
-        sessionId: isCamp ? null : (d.sessionId ?? null),
+        levelId: d.levelId,
+        apparatus: [...d.apparatus],
+        sessionId: d.sessionId ?? null,
         refunded: false,
-        ...(isCamp ? {} : (Object.keys(d.apparatusLevels).length > 0 ? { apparatusLevels: d.apparatusLevels } : {})),
+        ...(Object.keys(d.apparatusLevels).length > 0 ? { apparatusLevels: d.apparatusLevels } : {}),
       });
     }
     return checkCapacity(event, event.sessions, allEventRegs, draftRegs, groupsById, nowMs());
@@ -770,26 +822,37 @@ export function RegistrationEditor({
         <span style={{ fontSize: 13, color: 'var(--ink-soft)' }}>{event.name}</span>
       </div>
 
-      {(event.disciplines as Discipline[]).map((disc) => (
-        <DiscSection
-          key={disc}
-          disc={disc}
-          event={event}
-          athlete={athlete}
-          levels={levels}
-          existing={existing.find((r) => r.discipline === disc && !r.refunded)}
-          draft={drafts[disc] ?? { enabled: false, levelId: '', apparatus: [], apparatusLevels: {}, partnerAthleteId: null, partnerUnknown: false, sessionId: null }}
-          onChange={(d) => updateDisc(disc, d)}
-          allAthletes={allAthletes}
-          season={season}
-          incomingPartnerId={disc === 'TNT' ? incomingPartnerId : null}
-          incomingPartnerSyLevel={disc === 'TNT' ? incomingPartnerSyLevel : null}
-          refunded={!!refundedRegFor(disc) && !(drafts[disc]?.refundOverridden)}
-          isAdmin={isAdmin}
-          sessionIsFull={sessionIsFull}
-          isCamp={isCamp}
-        />
-      ))}
+      {isCamp ? (
+        // Camps ask NOTHING discipline-related (PM feedback 2026-07-23): a
+        // single confirmation line replaces the per-discipline checkboxes —
+        // registration is implicit on create and can't be undone via edit
+        // (withdrawal stays a refund action).
+        <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, marginTop: 14, fontSize: 14 }}>
+          {campExistingRows.length > 0
+            ? <p style={{ margin: 0 }}>Registered for <strong>{event.name}</strong>.</p>
+            : <p style={{ margin: 0 }}>{athlete.firstName} will be registered for <strong>{event.name}</strong>.</p>}
+        </div>
+      ) : (
+        (event.disciplines as Discipline[]).map((disc) => (
+          <DiscSection
+            key={disc}
+            disc={disc}
+            event={event}
+            athlete={athlete}
+            levels={levels}
+            existing={existing.find((r) => r.discipline === disc && !r.refunded)}
+            draft={drafts[disc] ?? { enabled: false, levelId: '', apparatus: [], apparatusLevels: {}, partnerAthleteId: null, partnerUnknown: false, sessionId: null }}
+            onChange={(d) => updateDisc(disc, d)}
+            allAthletes={allAthletes}
+            season={season}
+            incomingPartnerId={disc === 'TNT' ? incomingPartnerId : null}
+            incomingPartnerSyLevel={disc === 'TNT' ? incomingPartnerSyLevel : null}
+            refunded={!!refundedRegFor(disc) && !(drafts[disc]?.refundOverridden)}
+            isAdmin={isAdmin}
+            sessionIsFull={sessionIsFull}
+          />
+        ))
+      )}
 
       {/* Advisory capacity warning (event-mgmt v2 P4) — non-blocking; the
           server enforces the real cap at checkout and offers a waitlist. */}

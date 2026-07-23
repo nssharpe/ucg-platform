@@ -137,16 +137,19 @@ describe('RegistrationEditor change-fee derivation (3h)', () => {
   });
 });
 
-// Camp events are truly session-less and level-less (PM feedback 2026-07-22):
-// a discipline is on/off via a single checkbox — no level select, apparatus
-// checkboxes, or session picker. Saved regs carry levelId:'', apparatus:[],
-// sessionId: null.
-describe('RegistrationEditor camp mode (session-less/level-less)', () => {
+// Camps ask NOTHING discipline-related (PM feedback 2026-07-23): a single
+// confirmation line replaces the per-discipline checkboxes entirely. A
+// brand-new camp registration always saves exactly ONE row, carrying
+// event.disciplines[0] (levelId:'', apparatus:[], sessionId:null) purely
+// because `registrations.discipline` is a NOT NULL enum — never shown or
+// asked about. Editing a legacy (pre-change) multi-row camp registration
+// must not delete/re-add rows.
+describe('RegistrationEditor camp mode (no discipline UI)', () => {
   function campEvent(overrides: Partial<Event> = {}): Event {
     return event({ eventType: 'camp', disciplines: ['MAG', 'WAG'], sessions: [], ...overrides });
   }
 
-  it('renders only the discipline enable checkbox — no level select or apparatus checkboxes', () => {
+  it('renders no discipline checkboxes, level select, apparatus checkboxes, or session picker — just a confirmation line', () => {
     render(
       <RegistrationEditor
         event={campEvent()} athlete={athlete()} clubId="club-a"
@@ -154,14 +157,14 @@ describe('RegistrationEditor camp mode (session-less/level-less)', () => {
         onSave={() => {}} onCancel={() => {}}
       />,
     );
-    expect(screen.getByRole('checkbox', { name: /MAG/ })).toBeInTheDocument();
-    expect(screen.getByRole('checkbox', { name: /WAG/ })).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
     expect(screen.queryByText(/level/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
     expect(screen.queryByText(/Apparatus/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/will be registered for/)).toBeInTheDocument();
   });
 
-  it('enabling a discipline is enough to enable Save (no apparatus required)', () => {
+  it('Save is enabled immediately for a brand-new camp registration — no toggle needed', () => {
     render(
       <RegistrationEditor
         event={campEvent()} athlete={athlete()} clubId="club-a"
@@ -169,12 +172,11 @@ describe('RegistrationEditor camp mode (session-less/level-less)', () => {
         onSave={() => {}} onCancel={() => {}}
       />,
     );
-    expect(saveButton()).toBeDisabled();
-    fireEvent.click(screen.getByRole('checkbox', { name: /MAG/ }));
     expect(saveButton()).not.toBeDisabled();
+    expect(saveButton()).toHaveTextContent('Register');
   });
 
-  it('saves a camp registration with levelId "", apparatus [], sessionId null', () => {
+  it('saves exactly ONE row for a brand-new camp registration, carrying the first event discipline', () => {
     let saved: Registration[] = [];
     render(
       <RegistrationEditor
@@ -183,25 +185,62 @@ describe('RegistrationEditor camp mode (session-less/level-less)', () => {
         onSave={(regs) => { saved = regs; }} onCancel={() => {}}
       />,
     );
-    fireEvent.click(screen.getByRole('checkbox', { name: /MAG/ }));
     fireEvent.click(saveButton());
     expect(saved).toHaveLength(1);
     expect(saved[0]).toMatchObject({ discipline: 'MAG', levelId: '', apparatus: [], sessionId: null });
   });
 
-  it('editing an existing camp registration can still save (toggling a second discipline)', () => {
+  it('falls back to MAG when the camp event has no disciplines configured', () => {
     let saved: Registration[] = [];
     render(
       <RegistrationEditor
+        event={campEvent({ disciplines: [] })} athlete={athlete()} clubId="club-a"
+        existing={[]} allAthletes={[athlete()]} levels={levels} season={season}
+        onSave={(regs) => { saved = regs; }} onCancel={() => {}}
+      />,
+    );
+    fireEvent.click(saveButton());
+    expect(saved).toHaveLength(1);
+    expect(saved[0].discipline).toBe('MAG');
+  });
+
+  it('editing a legacy multi-row camp registration keeps every row as-is — no delete/re-add churn', () => {
+    const legacyRows = [
+      reg({ id: 'r-mag', discipline: 'MAG', levelId: '', apparatus: [], sessionId: null }),
+      reg({ id: 'r-wag', discipline: 'WAG', levelId: '', apparatus: [], sessionId: null }),
+    ];
+    render(
+      <RegistrationEditor
         event={campEvent()} athlete={athlete()} clubId="club-a"
-        existing={[reg({ discipline: 'MAG', levelId: '', apparatus: [], sessionId: null })]}
+        existing={legacyRows}
+        allAthletes={[athlete()]} levels={levels} season={season}
+        onSave={() => {}} onCancel={() => {}}
+      />,
+    );
+    expect(screen.getByText(/^Registered for/)).toBeInTheDocument();
+    // Nothing to change (same club) — Save is disabled, matching the
+    // must-stay-registered / no-op-edit guard for non-camp events.
+    expect(saveButton()).toBeDisabled();
+  });
+
+  it('a club-only switch on a legacy multi-row camp registration is chargeable and preserves both rows', () => {
+    let saved: Registration[] = [];
+    const legacyRows = [
+      reg({ id: 'r-mag', clubId: 'club-a', discipline: 'MAG', levelId: '', apparatus: [], sessionId: null }),
+      reg({ id: 'r-wag', clubId: 'club-a', discipline: 'WAG', levelId: '', apparatus: [], sessionId: null }),
+    ];
+    render(
+      <RegistrationEditor
+        event={campEvent()} athlete={athlete()} clubId="club-b" originalClubId="club-a"
+        existing={legacyRows}
         allAthletes={[athlete()]} levels={levels} season={season}
         onSave={(regs) => { saved = regs; }} onCancel={() => {}}
       />,
     );
-    fireEvent.click(screen.getByRole('checkbox', { name: /WAG/ }));
+    expect(saveButton()).toHaveTextContent('Add change to cart');
     fireEvent.click(saveButton());
     expect(saved).toHaveLength(2);
-    expect(saved.every((r) => r.levelId === '' && r.apparatus.length === 0 && r.sessionId === null)).toBe(true);
+    expect(saved.map((r) => r.id).sort()).toEqual(['r-mag', 'r-wag']);
+    expect(saved.every((r) => r.clubId === 'club-b')).toBe(true);
   });
 });

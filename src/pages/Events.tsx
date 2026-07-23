@@ -1544,26 +1544,32 @@ export function EventHostPage() {
 
       <JudgeAccessCard event={event} toast={toast} />
 
-      <div className="card card-pad" style={{ marginBottom: 18 }}>
-        <h3 className="card-title">Competition setup</h3>
-        {isPast(event.regCloses) ? (
-          <>
-            <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--ink-soft)' }}>
-              Registration is closed. Build session squads and run scoring from Manage this event, or use Roster
-              tools below for last-minute roster corrections.
+      {/* Camps have no competition to set up and no roster to correct — the
+          Camp roster EXPORT sheet (HostExportCard above) still carries the
+          survey answers, so that card stays; Competition setup + Roster tools
+          are removed entirely for camps (PM feedback 2026-07-23). */}
+      {event.eventType !== 'camp' && (
+        <div className="card card-pad" style={{ marginBottom: 18 }}>
+          <h3 className="card-title">Competition setup</h3>
+          {isPast(event.regCloses) ? (
+            <>
+              <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--ink-soft)' }}>
+                Registration is closed. Build session squads and run scoring from Manage this event, or use Roster
+                tools below for last-minute roster corrections.
+              </p>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <Link className="btn ghost small" to={`/events/${event.slug}/manage`}>Sessions & squads →</Link>
+              </div>
+            </>
+          ) : (
+            <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)' }}>
+              Competition setup (roster corrections, sessions/squads) unlocks when registration closes.
             </p>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <Link className="btn ghost small" to={`/events/${event.slug}/manage`}>Sessions & squads →</Link>
-            </div>
-          </>
-        ) : (
-          <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)' }}>
-            Competition setup (roster corrections, sessions/squads) unlocks when registration closes.
-          </p>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
-      {isPast(event.regCloses) && (
+      {event.eventType !== 'camp' && isPast(event.regCloses) && (
         <RosterToolsCard event={event} rows={rosterRows} onChanged={refreshRoster} toast={toast} />
       )}
     </div>
@@ -2234,9 +2240,12 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
           .join(', ');
         const surveySummary = storedSurvey ? campSurveySummary(storedSurvey) : '';
         const summarySuffix = [addonSummary, surveySummary].filter(Boolean).join('; ');
+        // Camps ask nothing discipline-related — no "(MAG)"/"(MAG+WAG)"
+        // parenthetical on the cart label (PM feedback 2026-07-23).
+        const discParen = event.eventType === 'camp' ? '' : ` (${addedRegs.map((r) => r.discipline).join('+')})`;
         cart.push({
           id: `ci-self-${Date.now()}-${athlete.id}`,
-          label: `${event.name} entry — ${athlete.firstName} ${athlete.lastName} (${addedRegs.map((r) => r.discipline).join('+')})${lateSuffix}${summarySuffix ? ` [${summarySuffix}]` : ''}`,
+          label: `${event.name} entry — ${athlete.firstName} ${athlete.lastName}${discParen}${lateSuffix}${summarySuffix ? ` [${summarySuffix}]` : ''}`,
           amount: entryTotal,
           kind: 'meet-entry',
           refUserId: athlete.id,
