@@ -21,7 +21,7 @@ import { SizedAddonPicker } from '../components/AddonPickers';
 import {
   deleteRegistration, fetchCampSurveys, fetchEventCollectedTotal, fetchEventHostAddons, fetchEventHostRoster, fetchEventWaitlist, findPersonForHost, grantEventAdmin,
   hostDeleteRegistration, hostUpsertRegistration, insuranceCertificateUrl,
-  listSanctioningTeam, manageWaitlist, markMedalsReceived, pushCart, pushEvent, pushEventSessions, pushJudgeAccessCode, pushRegistration,
+  listSanctioningTeam, manageWaitlist, markMedalsReceived, pushCampSurvey, pushCart, pushEvent, pushEventSessions, pushJudgeAccessCode, pushRegistration,
   revokeEventAdmin, revokeJudgeAccessCode, syncSynchroPartnerLevelRemote, uploadInsuranceCertificate,
 } from '../lib/supabase';
 import type { HostRosterRow, SanctioningTeamMember, WaitlistQueueRow } from '../lib/supabase';
@@ -2206,6 +2206,9 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
         if (idx >= 0) d.registrations[idx] = reg;
         else d.registrations.push(reg);
         pushRegistration(reg);
+        // camp_survey travels through its own targeted-update write (see
+        // pushCampSurvey's doc comment) — never via the row upsert above.
+        if (reg.campSurvey) pushCampSurvey(reg.id, reg.campSurvey);
       }
 
       // Synchro same-level auto-sync (B4.4): whoever actively saves a partner

@@ -353,14 +353,39 @@ const squadToRow = (sessionId: string, q: Event['sessions'][number]['squads'][nu
   holding: q.holding ?? false, sort_order: i,
 });
 
+// `camp_survey` is DELIBERATELY OMITTED here (bugfix 2026-07-23): the app
+// writes whole-row registrations upserts (INSERT ... ON CONFLICT (id) DO
+// UPDATE SET col = EXCLUDED.col for every written column) — Postgres requires
+// SELECT privilege on any column referenced via EXCLUDED, even though the
+// upsert itself uses `Prefer: return=minimal` and requests no representation
+// back. Migration 20260717205348_camp_survey_scoped_read.sql revoked
+// table-wide SELECT on `registrations` from anon/authenticated and granted it
+// back on every column EXCEPT camp_survey — that migration's write-path
+// reasoning ("no .select() chained ⇒ return=minimal ⇒ the revoke can't break
+// writes") checked the wrong mechanism; it missed the EXCLUDED-read
+// requirement, so EVERY registrations upsert by ANY authenticated user was
+// failing prod-wide with "permission denied for table registrations" since
+// 2026-07-17. Fix: never reference camp_survey from an upsert — write it
+// through the targeted-column-UPDATE path instead (pushCampSurvey below),
+// which compiles to a plain `UPDATE ... SET camp_survey = $1` with no
+// EXCLUDED reference and no revoked-column read.
 const registrationToRow = (r: Registration, squadId: string | null = null) => ({
   id: r.id, event_id: r.eventId, athlete_id: r.athleteId, club_id: r.clubId, discipline: r.discipline,
-  level_id: r.levelId, apparatus: r.apparatus, session_id: r.sessionId || null, squad_id: squadId,
+  // '' (the camp-registration "no level" sentinel, CLAUDE.md "Camps are
+  // session-less/level-less") must become null, not the literal empty
+  // string -- level_id is a nullable FK into levels(id) with no row whose id
+  // is '', so writing '' verbatim violates registrations_level_id_fkey
+  // (23503). Bug found 2026-07-23 while live-verifying the camp_survey
+  // permission fix above: it was masked until now because the camp_survey
+  // privilege error aborted every upsert before Postgres ever reached the FK
+  // check, so no camp registration write has actually succeeded since camps
+  // shipped (2026-07-22) -- matches the pre-existing `sessionId || null`
+  // pattern on the very next line.
+  level_id: r.levelId || null, apparatus: r.apparatus, session_id: r.sessionId || null, squad_id: squadId,
   refunded: r.refunded ?? false, refund_requested: r.refundRequested ?? false,
   keep_listed: r.keepListed ?? false,
   partner_athlete_id: r.partnerAthleteId ?? null, apparatus_levels: r.apparatusLevels ?? null,
   paid: r.paid ?? false, updated_pending: r.updatedPending ?? false,
-  camp_survey: r.campSurvey ?? null,
   waitlisted: r.waitlisted ?? false, waitlist_group_id: r.waitlistGroupId ?? null,
   hold_expires_at: r.holdExpiresAt ?? null,
 });
@@ -856,6 +881,22 @@ export function pushRegistration(r: Registration, squadId: string | null = null)
   remoteUpsert('registrations', [registrationToRow(r, squadId)]);
 }
 export function deleteRegistration(id: string) { remoteDelete('registrations', id); }
+
+/** Write ONLY a registration's camp_survey answers, via a targeted column
+ *  UPDATE (not the whole-row upsert `pushRegistration` does) — see the long
+ *  comment on `registrationToRow` above for why: camp_survey's SELECT
+ *  privilege is revoked from anon/authenticated (20260717205348), and an
+ *  upsert's ON CONFLICT DO UPDATE needs SELECT on every EXCLUDED column,
+ *  while a plain `UPDATE ... SET camp_survey = $1` does not. Call this AFTER
+ *  `pushRegistration` for the same reg when both need writing in the same
+ *  save — the write queue is strict FIFO per entry (write-queue.ts `process()`
+ *  fully resolves each entry, in enqueue order, before starting the next), so
+ *  enqueuing this call synchronously right after `pushRegistration(reg)`
+ *  guarantees the row exists (or already existed) before the survey column
+ *  update runs against it. */
+export function pushCampSurvey(regId: string, survey: Registration['campSurvey']) {
+  remoteUpdate('registrations', regId, { camp_survey: survey ?? null });
+}
 
 /** Scoped camp-survey read (privacy fix, docs/research/2026-07-17-supabomb-
  *  scan-results.md "camp_survey is world-readable"): `camp_survey` is no

@@ -4,7 +4,7 @@ import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { Badge, Combo, Field, Modal, Tabs } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
-import { pushRegistration, pushCart, syncSynchroPartnerLevelRemote, cancelWaitlistGroup, deleteRegistration, fetchCampSurveys } from '../lib/supabase';
+import { pushRegistration, pushCampSurvey, pushCart, syncSynchroPartnerLevelRemote, cancelWaitlistGroup, deleteRegistration, fetchCampSurveys } from '../lib/supabase';
 import { RegistrationEditor } from '../components/RegistrationEditor';
 import {
   newRegistrationEntryTotal, registrationChangeFee, changeIsEligible, syncSynchroPartnerLevel, lateFeeApplies, lateFeeAnchor,
@@ -724,6 +724,9 @@ function EditRegistrationModal({
         const updated: Registration = { ...(idx >= 0 ? d.registrations[idx] : r), campSurvey: stored };
         if (idx >= 0) d.registrations[idx] = updated; else d.registrations.push(updated);
         pushRegistration(updated);
+        // camp_survey travels through its own targeted-update write (see
+        // pushCampSurvey's doc comment) — never via the row upsert above.
+        pushCampSurvey(updated.id, stored);
       }
     });
     if (!applied) return; // offline read-only gate — no false success toast
