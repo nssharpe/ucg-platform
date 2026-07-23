@@ -11,7 +11,6 @@ import { Badge, Field, Modal, Tabs } from '../components/ui';
 import { useToast, useFmtDate } from '../components/ui-hooks';
 import { EventWizard } from '../components/EventWizard';
 import { RegistrationEditor } from '../components/RegistrationEditor';
-import { NationalsDashboard, type NationalsDashboardScope } from '../components/NationalsDashboard';
 import { EventCheckinAdminCard } from '../components/EventCheckinCard';
 import { EventStatusBadge } from './Home';
 import { APPARATUS, SHIRT_SIZES } from '../lib/types';
@@ -24,7 +23,7 @@ import {
   listSanctioningTeam, manageWaitlist, markMedalsReceived, pushCampSurvey, pushCart, pushEvent, pushEventSessions, pushJudgeAccessCode, pushRegistration,
   revokeEventAdmin, revokeJudgeAccessCode, syncSynchroPartnerLevelRemote, uploadInsuranceCertificate,
 } from '../lib/supabase';
-import type { HostRosterRow, SanctioningTeamMember, WaitlistQueueRow } from '../lib/supabase';
+import type { HostAddonRow, HostRosterRow, SanctioningTeamMember, WaitlistQueueRow } from '../lib/supabase';
 import { summarizeRoster, levelNameResolver } from '../lib/host-page';
 import { buildRegistrationWorkbookSheets } from '../lib/host-export';
 import { downloadWorkbook } from '../lib/xlsx-download';
@@ -239,6 +238,7 @@ export function EventDetail() {
   const caps = useCapabilities();
   const toast = useToast();
   const fmtDate = useFmtDate();
+  const navigate = useNavigate();
   const event = db.events.find((m) => m.slug === slug);
   const [editWizardOpen, setEditWizardOpen] = useState(false);
   const [selfRegOpen, setSelfRegOpen] = useState(false);
@@ -259,6 +259,22 @@ export function EventDetail() {
   // || sanctioning.)
   const canEditEvent = caps.isSanctioning;
   const tz = tzAbbrev(event.timezone);
+  const isUcg = !!event.ucgHosted;
+  // UCG-run events (feedback-2 §5): an admin edits via the dedicated
+  // full-page admin editor (`/admin/ucg-event/:template/:seasonId`), not the
+  // overlay wizard — it's the same editor the Seasons card links to, opened
+  // straight into edit mode via router state. Non-admin sanctioning users
+  // (no route access — RequireAdmin-gated) keep the overlay.
+  const openEditEvent = () => {
+    if (isUcg && caps.isAdmin) {
+      const seasonId = seasonForDate(db, event.startDate);
+      if (seasonId) {
+        navigate(`/admin/ucg-event/${event.ucgHosted}/${seasonId}`, { state: { edit: true } });
+        return;
+      }
+    }
+    setEditWizardOpen(true);
+  };
 
   // Standalone add-on purchase (Phase 2 T3): available to a signed-in user who
   // already has a (non-refunded) registration for this event, for as long as ANY
@@ -295,7 +311,7 @@ export function EventDetail() {
             <Link className="btn small ghost" to={`/events/${event.slug}/host`}>Host dashboard →</Link>
           )}
           {canEditEvent && (
-            <button className="btn small ghost" onClick={() => setEditWizardOpen(true)}>Edit event</button>
+            <button className="btn small ghost" onClick={openEditEvent}>Edit event</button>
           )}
         </div>
       </div>
@@ -304,8 +320,11 @@ export function EventDetail() {
 
       {/* Event-owner assignment + task checklist (event-mgmt v2 §B3-4) — visible to
           the Sanctioning Team (not just the event's host manager) for competitions,
-          which is what actually goes through the sanctioning workflow. */}
-      {caps.isSanctioning && event.eventType !== 'camp' && (
+          which is what actually goes through the sanctioning workflow. Not
+          applicable to UCG-run events (FlipFest/Nationals) — there's no host
+          to own tasks for; the Director of Nationals tracks work elsewhere
+          (PM feedback-2 §1). */}
+      {caps.isSanctioning && event.eventType !== 'camp' && !isUcg && (
         <>
           <OwnerAssignBlock event={event} toast={toast} />
           <OwnerChecklistCard event={event} fmtDate={fmtDate} toast={toast} />
@@ -314,8 +333,9 @@ export function EventDetail() {
 
       {/* Per-event admin grants (event-mgmt v2 §C) — visible to anyone with
           host-level access (host-club managers, league admins, and granted
-          event admins themselves). */}
-      {canManage && <EventAdminsCard event={event} toast={toast} />}
+          event admins themselves). Not applicable to UCG-run events — there's
+          no separate host account to delegate to (PM feedback-2 §2). */}
+      {canManage && !isUcg && <EventAdminsCard event={event} toast={toast} />}
 
       {/* Waitlist queue (event-mgmt v2 P4 T7) — visible to anyone with
           host-level access; Promote/Requeue renders only for
@@ -341,12 +361,12 @@ export function EventDetail() {
         <CompetitionOrderLockCard event={event} toast={toast} />
       )}
 
-      {/* Nationals summary dashboard, admin "view as" (event-mgmt v2 Phase 5
-          D1, spec §L.3): lets an admin pick any club or independent athlete
-          registered for this event and see their scoped dashboard, without
-          needing to sign in as them. */}
-      {caps.isAdmin && event.kind === 'nationals' && (
-        <NationalsAdminViewCard event={event} />
+      {/* Nationals event summary (event-mgmt v2 Phase 5 D1, spec §L.3 —
+          REPLACED per PM feedback-2 §3: the old "view as club/athlete"
+          scoped-dashboard picker was cut in favor of a real aggregate
+          summary of the event). Visible to admin + sanctioning. */}
+      {(caps.isAdmin || caps.isSanctioning) && event.kind === 'nationals' && (
+        <NationalsSummaryCard event={event} />
       )}
 
       {/* Nationals check-in — admin open + view-as (event-mgmt v2 Phase 5
@@ -402,7 +422,7 @@ export function EventDetail() {
           )}
           {canEditEvent && event.status === 'live' && !eventIsInPhase(event, 'reg-open') && (
             <div style={{ marginTop: 10, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              <button className="btn small ghost" onClick={() => setEditWizardOpen(true)}>Edit event to adjust registration dates</button>
+              <button className="btn small ghost" onClick={openEditEvent}>Edit event to adjust registration dates</button>
               <button className="btn small ghost" data-tip="Generates a private reg link + password for late adds" onClick={() => toast(`Private link: ucg.org/#/events/${event.slug}?code=LATE26 (demo)`)}>Private reg link</button>
             </div>
           )}
@@ -1023,62 +1043,102 @@ function CompetitionOrderLockCard({ event, toast }: {
 }
 
 // ---------------------------------------------------------------------------
-// NationalsAdminViewCard — admin "view as" scope selector for the nationals
-// summary dashboard (event-mgmt v2 P5 D1, spec §L.3)
+// NationalsSummaryCard — event-wide aggregate summary (event-mgmt v2 P5 D1,
+// spec §L.3, REPLACED per PM feedback-2 §3). The prior version was a "view
+// as club/athlete" dropdown that just rendered a scoped NationalsDashboard —
+// testing showed that's not what an admin/sanctioning reviewer wants when
+// they land here; they want the numbers for the whole event. Registration
+// counts come from the already-loaded local `db` (same source as the
+// Participants stat tile above); add-on purchase counts reuse the
+// `event_host_addons` RPC (`fetchEventHostAddons`) — the same server source
+// the host export workbook uses — rather than standing up a new fetch path.
 // ---------------------------------------------------------------------------
 
-function NationalsAdminViewCard({ event }: { event: Event }) {
+const ADDON_LABEL: Record<NonNullable<HostAddonRow['refLineType']>, string> = {
+  tshirt: 'T-shirts', leo: 'Leotards', banquet: 'Banquet seats',
+};
+
+function NationalsSummaryCard({ event }: { event: Event }) {
   const db = useDB();
-  const regs = db.registrations.filter((r) => r.eventId === event.id && !r.refunded && !r.waitlisted);
+  const [addons, setAddons] = useState<HostAddonRow[] | null>(null);
+  const [addonsError, setAddonsError] = useState<string | null>(null);
 
-  const clubOptions = [...new Set(regs.map((r) => r.clubId))]
-    .map((clubId) => db.clubs.find((c) => c.id === clubId))
-    .filter((c): c is NonNullable<typeof c> => !!c)
-    .sort((a, b) => a.name.localeCompare(b.name));
+  useEffect(() => {
+    let cancelled = false;
+    fetchEventHostAddons(event.id).then((res) => {
+      if (cancelled) return;
+      if (!res.ok) { setAddonsError(res.error); return; }
+      setAddons(res.rows);
+    });
+    return () => { cancelled = true; };
+  }, [event.id]);
 
-  const independentOptions = [...new Set(
-    regs.filter((r) => db.people.find((p) => p.id === r.athleteId)?.mainClubId === null).map((r) => r.athleteId),
-  )]
-    .map((athleteId) => db.people.find((p) => p.id === athleteId))
-    .filter((p): p is NonNullable<typeof p> => !!p)
-    .sort((a, b) => `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`));
+  const regs = db.registrations.filter((r) => r.eventId === event.id && !r.refunded);
+  const active = regs.filter((r) => !r.waitlisted);
+  const waitlisted = regs.filter((r) => r.waitlisted).length;
 
-  const options = [
-    ...clubOptions.map((c) => ({ value: `club:${c.id}`, label: `${c.name} (club)` })),
-    ...independentOptions.map((p) => ({ value: `person:${p.id}`, label: `${p.firstName} ${p.lastName} (independent)` })),
-  ];
-
-  const [selected, setSelected] = useState<string>('');
-
-  if (options.length === 0) {
+  if (active.length === 0) {
     return (
       <div className="card card-pad" style={{ marginBottom: 18 }}>
-        <h3 className="card-title">Nationals summary — view as</h3>
-        <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)' }}>No registrations yet for this event.</p>
+        <h3 className="card-title">Event summary</h3>
+        <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)' }}>No registrations yet.</p>
       </div>
     );
   }
 
-  const scope: NationalsDashboardScope | null = selected.startsWith('club:')
-    ? { clubId: selected.slice(5) }
-    : selected.startsWith('person:')
-      ? { personId: selected.slice(7) }
-      : null;
+  const byDiscipline = new Map<string, number>();
+  for (const r of active) byDiscipline.set(r.discipline, (byDiscipline.get(r.discipline) ?? 0) + 1);
+
+  const athleteCount = new Set(active.map((r) => r.athleteId)).size;
+  const clubIds = new Set(active.map((r) => r.clubId).filter((id): id is string => !!id));
+  const independentCount = new Set(
+    active.filter((r) => db.people.find((p) => p.id === r.athleteId)?.mainClubId === null).map((r) => r.athleteId),
+  ).size;
+
+  const addonCounts = new Map<string, number>();
+  if (addons) {
+    for (const a of addons) {
+      if (!a.refLineType) continue;
+      addonCounts.set(a.refLineType, (addonCounts.get(a.refLineType) ?? 0) + 1);
+    }
+  }
+  const addonTypes = (['tshirt', 'leo', 'banquet'] as const).filter((t) => addonCounts.has(t));
 
   return (
-    <div style={{ marginBottom: 18 }}>
-      <div className="card card-pad" style={{ marginBottom: 18 }}>
-        <h3 className="card-title">Nationals summary — view as</h3>
-        <div style={{ maxWidth: 360 }}>
-          <Field label="Club or independent athlete">
-            <select className="input" value={selected} onChange={(e) => setSelected(e.target.value)}>
-              <option value="">Choose…</option>
-              {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-          </Field>
+    <div className="card card-pad" style={{ marginBottom: 18 }}>
+      <h3 className="card-title">Event summary</h3>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, fontSize: 14 }}>
+        <div>
+          <strong>{active.length}</strong> registrations
+          {[...byDiscipline.entries()].map(([d, n]) => (
+            <span key={d} style={{ color: 'var(--ink-soft)' }}> · {n} {d === 'TNT' ? 'T&T' : d}</span>
+          ))}
         </div>
+        <div><strong>{athleteCount}</strong> unique athletes</div>
+        <div>
+          <strong>{clubIds.size}</strong> clubs
+          {independentCount > 0 && <span style={{ color: 'var(--ink-soft)' }}> · {independentCount} independent</span>}
+        </div>
+        {waitlisted > 0 && <div><strong>{waitlisted}</strong> waitlisted</div>}
       </div>
-      {scope && <NationalsDashboard eventId={event.id} scope={scope} />}
+      {(event.tshirtAddon || event.campConfig?.leoAddon || event.banquet) && (
+        <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--line)' }}>
+          <h4 style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 700, color: 'var(--ink-soft)' }}>Add-on purchases</h4>
+          {addonsError ? (
+            <p style={{ margin: 0, fontSize: 13, color: 'var(--coral-700)' }}>Couldn't load add-on counts: {addonsError}</p>
+          ) : !addons ? (
+            <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)' }}>Loading…</p>
+          ) : addonTypes.length === 0 ? (
+            <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)' }}>No add-on purchases yet.</p>
+          ) : (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, fontSize: 14 }}>
+              {addonTypes.map((t) => (
+                <div key={t}><strong>{addonCounts.get(t)}</strong> {ADDON_LABEL[t]}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1536,6 +1596,8 @@ export function EventHostPage() {
     );
   }
 
+  const isUcg = !!event.ucgHosted;
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
@@ -1549,12 +1611,17 @@ export function EventHostPage() {
         </div>
       </div>
 
-      <HostStatusCard event={event} fmtDate={fmtDate} toast={toast} />
+      {/* Event status (§C) — hidden for UCG-run events: every row (UCG
+          owner contact, hotel block, insurance, medal order, payment-to-host)
+          is meaningless when UCG runs the event itself (PM feedback-2 §6). */}
+      {!isUcg && <HostStatusCard event={event} fmtDate={fmtDate} toast={toast} />}
       <HostRegistrationSummaryCard rows={rosterRows} error={rosterError} />
 
       <HostExportCard event={event} rows={rosterRows} error={rosterError} toast={toast} />
 
-      <EventAdminsCard event={event} toast={toast} />
+      {/* Per-event admin grants — not applicable to UCG-run events (PM
+          feedback-2 §2, mirrors the detail-page gate). */}
+      {!isUcg && <EventAdminsCard event={event} toast={toast} />}
 
       <JudgeAccessCard event={event} toast={toast} />
 
