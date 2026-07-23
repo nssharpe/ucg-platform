@@ -304,14 +304,25 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   (pending regs don't lock). **Change eligibility:** `changeIsEligible(before,after)`
   (`pricing.ts`) gates "Add change to cart" (add discipline / change level / change club /
   swap athlete — NOT apparatus tweaks within a discipline).
-- **Camps are session-less/level-less (2026-07-22):** camp events
-  (`eventType === 'camp'`) save `sessions: []` and `secondDisciplineFee: 0` (flat
-  fee), auto-set `lastDateToEdit = regCloses`, and keep `disciplines` only as
-  "equipment available". Camp regs save `levelId: ''`, `apparatus: []`,
-  `sessionId: null` (RegistrationEditor camp mode = discipline checkboxes only) —
-  don't add code that assumes a reg has a level/apparatus without a camp branch.
-  Overnight-survey mandatory flags: `campConfig.surveyMandatory` (absent = legacy
-  3-of-4), validated by `campSurveyValid(draft, config)` (`pricing.ts`).
+- **Camps are session-less/level-less/discipline-less (2026-07-22, UI stripped
+  2026-07-23):** camp events (`eventType === 'camp'`) save `sessions: []` and
+  `secondDisciplineFee: 0` (flat fee), auto-set `lastDateToEdit = regCloses`,
+  and keep `disciplines` only as "equipment available", defined at event
+  creation/edit for display on the Event page — registration itself asks
+  nothing discipline-related. `RegistrationEditor` camp mode shows a single
+  confirmation line (no checkboxes) and a brand-new camp registration always
+  saves exactly ONE row: `discipline: event.disciplines[0]` (fallback `'MAG'`),
+  `levelId: ''`, `apparatus: []`, `sessionId: null` — the discipline value only
+  exists to satisfy the NOT NULL enum column, never shown/asked about. Editing
+  a LEGACY multi-row camp registration (one row per discipline, from before
+  2026-07-23) keeps every row as-is (no delete/re-add churn) — only `clubId`
+  refreshes, so a club-only switch stays chargeable. Don't add code that
+  assumes a reg has a level/apparatus without a camp branch. Overnight-survey
+  mandatory flags: `campConfig.surveyMandatory` (absent = legacy 3-of-4),
+  validated by `campSurveyValid(draft, config)` (`pricing.ts`). **Roster tools
+  and "Competition setup" are removed entirely from the camp host dashboard**
+  (irrelevant for camps) — only the registration-workbook export (which still
+  carries the overnight-survey roster) remains.
 - **Member self-edit (`MyRegistrations.tsx`)** embeds the shared `RegistrationEditor`,
   targets the member's OWN cart, same paid/`updatedPending` semantics as `Club.tsx`.
   **CRITICAL divergence:** the member side NEVER deletes a registration — a fully

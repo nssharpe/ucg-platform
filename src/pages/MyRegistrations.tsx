@@ -4,7 +4,7 @@ import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { Badge, Combo, Field, Modal, Tabs } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
-import { pushRegistration, pushCart, syncSynchroPartnerLevelRemote, cancelWaitlistGroup, deleteRegistration, fetchCampSurveys } from '../lib/supabase';
+import { pushRegistration, pushCampSurvey, pushCart, syncSynchroPartnerLevelRemote, cancelWaitlistGroup, deleteRegistration, fetchCampSurveys } from '../lib/supabase';
 import { RegistrationEditor } from '../components/RegistrationEditor';
 import {
   newRegistrationEntryTotal, registrationChangeFee, changeIsEligible, syncSynchroPartnerLevel, lateFeeApplies, lateFeeAnchor,
@@ -197,9 +197,12 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
       if (entryTotal > 0) {
         const cart = d.carts[personId] ?? (d.carts[personId] = []);
         const lateSuffix = lineAnchor !== null && lateFeeApplies(event, lineAnchor) ? ' (incl. late fee)' : '';
+        // Camps ask nothing discipline-related — omit the parenthetical
+        // (PM feedback 2026-07-23).
+        const discParen = event.eventType === 'camp' ? '' : ` (${groupRegs.map((r) => r.discipline).join('+')})`;
         cart.push({
           id: `ci-self-${Date.now()}-${personId}`,
-          label: `${event.name} entry — ${me?.firstName ?? ''} ${me?.lastName ?? ''} (${groupRegs.map((r) => r.discipline).join('+')})${lateSuffix}`,
+          label: `${event.name} entry — ${me?.firstName ?? ''} ${me?.lastName ?? ''}${discParen}${lateSuffix}`,
           amount: entryTotal,
           kind: 'meet-entry',
           refUserId: personId,
@@ -395,9 +398,12 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
       } else if (entryTotal > 0) {
         const cart = d.carts[personId] ?? (d.carts[personId] = []);
         const lateSuffix = lateAnchor !== null && lateFeeApplies(event, lateAnchor) ? ' (incl. late fee)' : '';
+        // Camps ask nothing discipline-related — omit the parenthetical
+        // (PM feedback 2026-07-23).
+        const discSuffix = event.eventType === 'camp' ? '' : ` — ${newRegs.map((r) => r.discipline).join('+')}`;
         cart.push({
           id: `ci-${Date.now()}`,
-          label: `${event.name} entry — ${newRegs.map((r) => r.discipline).join('+')}${lateSuffix}`,
+          label: `${event.name} entry${discSuffix}${lateSuffix}`,
           amount: entryTotal,
           kind: 'meet-entry',
           refUserId: personId,
@@ -718,6 +724,9 @@ function EditRegistrationModal({
         const updated: Registration = { ...(idx >= 0 ? d.registrations[idx] : r), campSurvey: stored };
         if (idx >= 0) d.registrations[idx] = updated; else d.registrations.push(updated);
         pushRegistration(updated);
+        // camp_survey travels through its own targeted-update write (see
+        // pushCampSurvey's doc comment) — never via the row upsert above.
+        pushCampSurvey(updated.id, stored);
       }
     });
     if (!applied) return; // offline read-only gate — no false success toast

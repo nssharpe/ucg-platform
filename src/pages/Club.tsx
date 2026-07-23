@@ -1235,9 +1235,12 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
         }
         if (entryTotal > 0) {
           const athlete = d.people.find((p) => p.id === athleteId);
+          // Camps ask nothing discipline-related — omit the parenthetical
+          // (PM feedback 2026-07-23).
+          const discParen = event.eventType === 'camp' ? '' : ` (${regs.map((r) => r.discipline).join('+')})`;
           cart.push({
             id: `ci-${Date.now()}-${athleteId}`,
-            label: `${event.name} entry — ${athlete?.firstName ?? ''} ${athlete?.lastName ?? ''} (${regs.map((r) => r.discipline).join('+')})${lateFeeSuffix(lineAnchor)}`,
+            label: `${event.name} entry — ${athlete?.firstName ?? ''} ${athlete?.lastName ?? ''}${discParen}${lateFeeSuffix(lineAnchor)}`,
             amount: entryTotal,
             kind: 'meet-entry',
             refUserId: athleteId,
@@ -1452,9 +1455,12 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
         const cart = d.carts[clubId] ?? (d.carts[clubId] = []);
         const athlete = d.people.find((p) => p.id === athleteId)!;
         addedEntryFee = entryTotal;
+        // Camps ask nothing discipline-related — omit the parenthetical
+        // (PM feedback 2026-07-23).
+        const discParen = event.eventType === 'camp' ? '' : ` (${newOnlyRegs.map((r) => r.discipline).join('+')})`;
         cart.push({
           id: `ci-${Date.now()}-${athleteId}`,
-          label: `${event.name} entry — ${athlete.firstName} ${athlete.lastName} (${newOnlyRegs.map((r) => r.discipline).join('+')})${lateFeeSuffix(editLateAnchor)}`,
+          label: `${event.name} entry — ${athlete.firstName} ${athlete.lastName}${discParen}${lateFeeSuffix(editLateAnchor)}`,
           amount: entryTotal,
           kind: 'meet-entry',
           refUserId: athleteId,
@@ -1537,9 +1543,12 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
             && !regs.some((nr) => nr.id === r.id),
         );
         const lineAnchor = lateAnchorFor(regs, priorRegsForLine);
+        // Camps ask nothing discipline-related — omit the parenthetical
+        // (PM feedback 2026-07-23).
+        const discParen = event.eventType === 'camp' ? '' : ` (${regs.map((r) => r.discipline).join('+')})`;
         cart.push({
           id: `ci-${Date.now()}-${athleteId}`,
-          label: `${event.name} entry — ${athlete.firstName} ${athlete.lastName} (${regs.map((r) => r.discipline).join('+')})${lateFeeSuffix(lineAnchor)}`,
+          label: `${event.name} entry — ${athlete.firstName} ${athlete.lastName}${discParen}${lateFeeSuffix(lineAnchor)}`,
           amount: newRegistrationEntryTotal(event, {
             competingClubId: clubId,
             priorDisciplineCount: priorRegsForLine.length,
