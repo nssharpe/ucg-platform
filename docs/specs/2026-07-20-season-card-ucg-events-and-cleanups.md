@@ -209,3 +209,34 @@ Second round after Nate tested the new flows:
   Compat: `listing_only` is omitted from event writes unless the flag is in
   play, so ordinary saves work against a pre-migration DB (prod, until
   Nate's push).
+
+## 2026-07-23 PM feedback pass 3 (applied on `feat/ucg-event-feedback-2`)
+
+- **Camp registration is discipline-less:** RegistrationEditor camp mode is a
+  single confirmation (no checkboxes); a new camp reg saves exactly ONE row
+  (`discipline: event.disciplines[0]` — enum NOT NULL demands a value, never
+  shown), legacy multi-row camp regs edit without churn. Cart labels drop the
+  "(MAG)" suffix for camps. Roster tools + Competition setup removed from the
+  camp host dashboard; registration-workbook export stays.
+- **URGENT prod fix (shipped early, merge 2ba474e):** every client
+  `registrations` upsert had failed `42501` since 2026-07-17 — the
+  camp_survey column-SELECT revoke breaks `ON CONFLICT DO UPDATE SET
+  camp_survey = EXCLUDED.camp_survey` (EXCLUDED reads need SELECT). Fixed by
+  dropping camp_survey from the upsert mapping + targeted-UPDATE
+  `pushCampSurvey`; also fixed the masked `level_id: ''` FK violation for
+  camp regs. Live-verified against prod (201/204, row + survey persisted).
+- **Camp survey question builder:** `campConfig.survey.questions`
+  (text / single / multi + options + required), wizard editor seeded with the
+  classic 4; legacy events derive them via `campSurveyQuestionsOf`. Answers
+  keyed by question id; dynamic rendering in reg flows, responses card,
+  receipt email (`_shared/camp-confirmation.ts`), host export. stripe-webhook
+  / create-checkout-session / reconcile-payments redeployed (prod+staging,
+  trio verify_jwt re-checked).
+- **UCG event page cleanup:** Owner checklist/assignment, Event Admins, and
+  the host-dashboard Event status card hidden for `ucgHosted` events; the
+  admin "Nationals summary — view as" card replaced by a real Event summary
+  (regs per discipline, athletes, clubs, waitlist, add-on counts via
+  `event_host_addons`); check-in card kept with an explainer + "Preview as"
+  label; "Edit event" on a UCG event now routes admins to
+  `/admin/ucg-event/:template/:seasonId` (via `seasonForDate`) with the
+  editor auto-opened.

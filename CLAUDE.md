@@ -131,7 +131,18 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
 - **RLS upsert trap:** an upsert must pass an INSERT policy's WITH CHECK even on the
   conflict-update path — a manager-editable table needs BOTH insert+update policies.
   Prefer separate insert/update policies over `for all` (which silently grants DELETE).
-- **RLS self-reference trap:** never client-side delete-then-insert rows the caller's
+- **Column-revoke × whole-row-upsert trap (broke prod 2026-07-17→23):** a
+  column-scoped SELECT lockdown (`revoke select on <table>` + `grant select
+  (<cols>)`) breaks EVERY whole-row upsert that writes the revoked column —
+  PostgREST compiles upserts to `ON CONFLICT DO UPDATE SET col = EXCLUDED.col`,
+  and Postgres requires SELECT privilege on columns referenced via EXCLUDED
+  (`return=minimal` does NOT save you; the 20260717205348 header's write-path
+  reasoning was wrong). `registrations.camp_survey` did this — every client
+  registration upsert failed 42501 for 6 days. Rule: a column with revoked
+  SELECT must NEVER appear in a `*ToRow` upsert mapping; write it via a
+  targeted column UPDATE (`pushCampSurvey` is the pattern). After ANY
+  column-privilege migration, live-probe the affected table's WRITE path as a
+  non-admin, not just reads. never client-side delete-then-insert rows the caller's
   own permission derives from (e.g. `club_managers`) — the delete revokes the actor's
   right to re-insert. Use a security-definer RPC that authorizes ONCE up front
   (`replace_club_managers` is the pattern; write-queue op kind `'rpc'`).
@@ -317,9 +328,16 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   a LEGACY multi-row camp registration (one row per discipline, from before
   2026-07-23) keeps every row as-is (no delete/re-add churn) — only `clubId`
   refreshes, so a club-only switch stays chargeable. Don't add code that
-  assumes a reg has a level/apparatus without a camp branch. Overnight-survey
-  mandatory flags: `campConfig.surveyMandatory` (absent = legacy 3-of-4),
-  validated by `campSurveyValid(draft, config)` (`pricing.ts`). **Roster tools
+  assumes a reg has a level/apparatus without a camp branch. **Camp survey is a
+  per-event question BUILDER (2026-07-23):** `campConfig.survey = { enabled,
+  questions: [{id,label,type:'text'|'single'|'multi',options?,required}] }`,
+  resolved via `campSurveyQuestionsOf(campConfig)` (`pricing.ts` — legacy
+  `overnightSurvey`/`surveyMandatory` events derive the classic 4 questions);
+  answers are `Registration.campSurvey: Record<questionId, string|string[]>`,
+  validated by `campSurveyAnswersValid`, written ONLY via `pushCampSurvey`
+  (targeted UPDATE — see the column-revoke × upsert trap above), rendered
+  generically in the wizard editor / reg flows / responses card / receipt email
+  (`_shared/camp-confirmation.ts`, keep in lockstep) / host export. **Roster tools
   and "Competition setup" are removed entirely from the camp host dashboard**
   (irrelevant for camps) — only the registration-workbook export (which still
   carries the overnight-survey roster) remains.
