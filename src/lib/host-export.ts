@@ -48,9 +48,9 @@
 // merged/clashing row. This is a one-line change from "1 row per athlete"
 // if that's preferred later; the grouping key would just become athleteId.
 
-import { APPARATUS, type Discipline } from './types';
+import { APPARATUS, type Discipline, type CampSurveyQuestion } from './types';
 import type { HostRosterRow, HostAddonRow } from './supabase';
-import { CAMP_BEDTIME_LABELS, CAMP_NOISE_LABELS } from './pricing';
+import { campSurveyQuestionsOf, campSurveyAnswerLabel } from './pricing';
 
 export interface SheetModel {
   name: string;
@@ -303,15 +303,23 @@ function purchasedSizesForAthlete(addonRows: HostAddonRow[], athleteId: string, 
  *  normally the same thing, but a roster is deduped by athleteId to
  *  guarantee "one line per athlete" even if that ever changes) with the
  *  detail a camp host needs beyond the generic Athletes sheet: birthday,
- *  gender, profile vs. purchased shirt size, purchased leo size, all four
- *  overnight-survey answers (human labels, mirroring
- *  supabase/functions/_shared/camp-confirmation.ts), and date registered
- *  (`Registration.createdAt`, added to `event_host_roster` for this). */
-export function buildCampRosterSheet(rows: HostRosterRow[], addonRows: HostAddonRow[]): SheetModel {
+ *  gender, profile vs. purchased shirt size, purchased leo size, the event's
+ *  configured survey answers (dynamic columns, human labels via
+ *  `campSurveyAnswerLabel` -- mirrors supabase/functions/_shared/camp-
+ *  confirmation.ts), and date registered (`Registration.createdAt`, added to
+ *  `event_host_roster` for this). `questions` defaults to the legacy 4-question
+ *  survey (`campSurveyQuestionsOf(undefined).questions`) so existing callers
+ *  that don't yet thread the event's actual config through still get the
+ *  historical columns. */
+export function buildCampRosterSheet(
+  rows: HostRosterRow[],
+  addonRows: HostAddonRow[],
+  questions: CampSurveyQuestion[] = campSurveyQuestionsOf(undefined).questions,
+): SheetModel {
   const columns = [
     'Athlete', 'Club', 'Birthday', 'Gender',
     'Shirt (profile)', 'Shirt (purchased)', 'Leo (purchased)',
-    'Bedtime', 'Noise level', 'Cabin preference', 'Roommate request',
+    ...questions.map((q) => q.label),
     'Date registered',
   ];
 
@@ -326,6 +334,11 @@ export function buildCampRosterSheet(rows: HostRosterRow[], addonRows: HostAddon
 
   const dataRows = sorted.map((r) => {
     const survey = r.campSurvey;
+    const answerCells = questions.map((q) => {
+      const v = survey?.[q.id];
+      if (v == null) return '';
+      return Array.isArray(v) ? v.map((x) => campSurveyAnswerLabel(q.id, x)).join('; ') : campSurveyAnswerLabel(q.id, v);
+    });
     return [
       fullName(r),
       r.clubName ?? '',
@@ -334,10 +347,7 @@ export function buildCampRosterSheet(rows: HostRosterRow[], addonRows: HostAddon
       r.shirt ?? '',
       purchasedSizesForAthlete(addonRows, r.athleteId, 'tshirt'),
       purchasedSizesForAthlete(addonRows, r.athleteId, 'leo'),
-      survey?.bedtime ? (CAMP_BEDTIME_LABELS[survey.bedtime] ?? survey.bedtime) : '',
-      survey?.noiseLevel ? (CAMP_NOISE_LABELS[survey.noiseLevel] ?? survey.noiseLevel) : '',
-      survey?.cabinGenderPref ?? '',
-      survey?.roommateRequest ?? '',
+      ...answerCells,
       r.createdAt ?? '',
     ];
   });
@@ -354,6 +364,10 @@ export interface WorkbookAddonConfig {
   leoConfigured: boolean;
   banquetConfigured: boolean;
   isCamp: boolean;
+  /** The camp event's resolved survey questions (`campSurveyQuestionsOf`,
+   *  pricing.ts) — dynamic columns for the Camp roster sheet. Only read when
+   *  `isCamp`; defaults to the legacy 4-question survey. */
+  campSurveyQuestions?: CampSurveyQuestion[];
 }
 
 /** Build every sheet for the registration workbook: the Phase-1 core three
@@ -387,7 +401,7 @@ export function buildRegistrationWorkbookSheets(
     if (s) sheets.push(s);
   }
   if (config.isCamp) {
-    sheets.push(buildCampRosterSheet(rows, addonRows));
+    sheets.push(buildCampRosterSheet(rows, addonRows, config.campSurveyQuestions));
   }
   return sheets;
 }

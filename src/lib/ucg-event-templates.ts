@@ -4,7 +4,19 @@
 // into `EventWizard`'s new `template` prop — the admin reviews/adjusts every
 // field before saving; nothing here is written to the DB directly.
 import { DISCIPLINES } from './types';
-import type { DB, Discipline, Event, EventSession, Season } from './types';
+import type { CampSurveyQuestion, DB, Discipline, Event, EventSession, Season } from './types';
+
+/** FlipFest's default 4 registrant-survey questions, all required (PM
+ *  requirement 2026-07-22; question list made editable 2026-07-23 — the
+ *  admin can still add/edit/remove questions in the wizard after this
+ *  prefill). Mirrors the legacy fixed-4-question wording exactly so an
+ *  existing FlipFest event's history reads the same either way. */
+const FLIPFEST_SURVEY_QUESTIONS: CampSurveyQuestion[] = [
+  { id: 'bedtime', label: 'What time do you plan to go to bed?', type: 'single', options: ['before-10', '10-to-midnight', 'after-midnight'], required: true },
+  { id: 'noiseLevel', label: 'What is the preferred noise level in your cabin?', type: 'single', options: ['quiet', 'moderate', 'lively'], required: true },
+  { id: 'cabinGenderPref', label: 'Would you prefer a co-ed or single gender cabin?', type: 'single', options: ['Male', 'Female', 'Non-binary', 'Genderfluid', 'Agender', 'Other', 'No preference'], required: true },
+  { id: 'roommateRequest', label: 'If you have any roommate requests (including people you DO NOT want to room with), please list them here.', type: 'text', required: true },
+];
 
 function isoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -82,10 +94,12 @@ export function flipfestTemplate(season: Season, db: DB): Partial<Event> {
     startDate,
     endDate,
     // Pre-seeded per PM requirement 2026-07-22: survey on, all four questions
-    // mandatory (the admin can still relax individual questions in the wizard).
+    // required (the admin can still relax/edit/add/remove questions in the
+    // wizard's question editor). `overnightSurvey` is mirrored true for any
+    // straggler reader that still checks the legacy flag directly.
     campConfig: {
       overnightSurvey: true,
-      surveyMandatory: { bedtime: true, noiseLevel: true, cabinGenderPref: true, roommateRequest: true },
+      survey: { enabled: true, questions: FLIPFEST_SURVEY_QUESTIONS },
     },
     // All three disciplines by default — the wizard's discipline/session
     // picker is hidden for camps, so this seeds the default sessions the

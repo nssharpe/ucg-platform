@@ -1,7 +1,7 @@
 // Pure pricing & coupon-validity logic — no React/store/Supabase imports (types
 // erase at compile time). Unit-tested in tests/pricing.test.ts. Used by the
 // membership purchase flow (W6) and promo codes (W14).
-import type { Athlete, CartItem, Coupon, Discipline, Membership, MembershipType, Registration, Season, SessionRequestAnswers } from './types';
+import type { Athlete, CampSurveyQuestion, CartItem, Coupon, Discipline, Membership, MembershipType, Registration, Season, SessionRequestAnswers } from './types';
 
 /** Base fee for a membership type in a season. */
 export function membershipFee(season: Season, type: MembershipType): number {
@@ -458,106 +458,136 @@ export function buildAddonCartItems(
   return items;
 }
 
-// --- Camp overnight-accommodations survey (event-mgmt v2 Phase 2 §G) -------
+// --- Camp registrant survey (event-mgmt v2 §G; editable questions 2026-07-23)
 // Asked per athlete, LAST in the camp registration popup (after add-ons),
-// only when `event.campConfig.overnightSurvey` is on. Persists onto
-// `Registration.campSurvey` (jsonb `camp_survey` column). Survey edits are
-// FREE — never a change fee — so this stays entirely outside the pricing/
-// cart-line logic above; it only affects a line's LABEL summary.
+// only when the event's survey is enabled. Persists onto
+// `Registration.campSurvey` (jsonb `camp_survey` column), keyed by question
+// id. Survey edits are FREE — never a change fee — so this stays entirely
+// outside the pricing/cart-line logic above; it only affects a line's LABEL
+// summary. `campSurveyQuestionsOf` is the SINGLE resolver every consumer
+// (wizard editor, registration UI, responses card, exports, edge functions)
+// must go through — it's what makes the old fixed 4-question events keep
+// working without a data migration.
 
 /** Cabin-gender-preference options: the app's existing Gender option
- *  conventions (Profile.tsx) + "No preference". */
+ *  conventions (Profile.tsx) + "No preference". Reused as the legacy
+ *  `cabinGenderPref` question's option list. */
 export const CABIN_GENDER_OPTIONS = ['Male', 'Female', 'Non-binary', 'Genderfluid', 'Agender', 'Other', 'No preference'];
 
-export type CampSurveyDraft = {
-  bedtime: '' | 'before-10' | '10-to-midnight' | 'after-midnight';
-  noiseLevel: '' | 'quiet' | 'moderate' | 'lively';
-  /** A Gender value or 'No preference'; kept as a plain string here so this
-   *  module doesn't need to import the Gender union. */
-  cabinGenderPref: string;
-  roommateRequest: string;
+/** Minimal `Event.campConfig` slice the resolver needs — kept as a standalone
+ *  type (rather than importing `Event`) so this module's camp-survey helpers
+ *  stay decoupled from the full Event shape. Matches the deprecated fields'
+ *  doc comments in types.ts. */
+export type CampConfigForSurvey = {
+  overnightSurvey?: boolean;
+  surveyMandatory?: { bedtime?: boolean; noiseLevel?: boolean; cabinGenderPref?: boolean; roommateRequest?: boolean };
+  survey?: { enabled: boolean; questions: CampSurveyQuestion[] };
 };
 
-/** Fresh (or edit-seeded) survey draft. Pass the athlete's existing
- *  `campSurvey` (if any) to prefill an edit. */
-export function initialCampSurveyDraft(existing?: Registration['campSurvey']): CampSurveyDraft {
-  return {
-    bedtime: existing?.bedtime ?? '',
-    noiseLevel: existing?.noiseLevel ?? '',
-    cabinGenderPref: existing?.cabinGenderPref ?? '',
-    roommateRequest: existing?.roommateRequest ?? '',
-  };
-}
-
-// Exported so other client modules needing the same human labels (the host
-// workbook's camp export, src/lib/host-export.ts) reuse these rather than
-// keeping a third copy — mirrors supabase/functions/_shared/camp-
-// confirmation.ts's CAMP_BEDTIME_LABELS/CAMP_NOISE_LABELS (that file can't be
-// imported directly: it lives outside tsconfig.app.json's `src` rootDir).
-export const CAMP_BEDTIME_LABELS: Record<string, string> = {
+/** Legacy (pre-2026-07-23) label maps for the 4 fixed-id questions' option
+ *  values — used only by `campSurveyAnswerLabel` and the legacy-question
+ *  option lists below. Custom questions store option text verbatim, so their
+ *  answers ARE their own label (no map needed). */
+const LEGACY_BEDTIME_LABELS: Record<string, string> = {
   'before-10': 'Before 10pm', '10-to-midnight': '10pm–midnight', 'after-midnight': 'After midnight',
 };
-export const CAMP_NOISE_LABELS: Record<string, string> = { quiet: 'Quiet', moderate: 'Moderate', lively: 'Lively' };
+const LEGACY_NOISE_LABELS: Record<string, string> = { quiet: 'Quiet', moderate: 'Moderate', lively: 'Lively' };
 
-/** Per-question "Mandatory?" config, matching `Event.campConfig.surveyMandatory`.
- *  Kept as a standalone type (rather than importing `Event`) so this module's
- *  camp-survey helpers stay decoupled from the full Event shape. */
-export type CampSurveyMandatoryConfig = {
-  bedtime?: boolean; noiseLevel?: boolean; cabinGenderPref?: boolean; roommateRequest?: boolean;
-};
-
-/** Legacy default (pre-2026-07-22 events, or any event with no explicit
- *  `surveyMandatory` config): bedtime/noise/cabin-pref required, roommate
- *  request optional. */
-const LEGACY_SURVEY_MANDATORY: Required<CampSurveyMandatoryConfig> = {
-  bedtime: true, noiseLevel: true, cabinGenderPref: true, roommateRequest: false,
-};
-
-/** A question is answered iff its draft field is non-blank. */
-function campSurveyQuestionAnswered(draft: CampSurveyDraft, key: keyof CampSurveyDraft): boolean {
-  return !!draft[key];
+/** The 4 legacy fixed questions, in their historical order/wording, with the
+ *  legacy default "Mandatory?" values (bedtime/noise/cabin-pref required,
+ *  roommate optional) — overridden per-question by `campConfigForSurvey.
+ *  surveyMandatory` when present. */
+function legacyQuestions(config?: CampConfigForSurvey): CampSurveyQuestion[] {
+  const m = config?.surveyMandatory;
+  return [
+    {
+      id: 'bedtime', label: 'What time do you plan to go to bed?', type: 'single',
+      options: ['before-10', '10-to-midnight', 'after-midnight'], required: m?.bedtime ?? true,
+    },
+    {
+      id: 'noiseLevel', label: 'What is the preferred noise level in your cabin?', type: 'single',
+      options: ['quiet', 'moderate', 'lively'], required: m?.noiseLevel ?? true,
+    },
+    {
+      id: 'cabinGenderPref', label: 'Would you prefer a co-ed or single gender cabin?', type: 'single',
+      options: [...CABIN_GENDER_OPTIONS], required: m?.cabinGenderPref ?? true,
+    },
+    {
+      id: 'roommateRequest',
+      label: 'If you have any roommate requests (including people you DO NOT want to room with), please list them here.',
+      type: 'text', required: m?.roommateRequest ?? false,
+    },
+  ];
 }
 
-/** Resolve a possibly-partial `surveyMandatory` config against the legacy
- *  default, so every caller (validity check + "Mandatory?" field markers)
- *  agrees on which questions are required. */
-export function campSurveyMandatoryOf(config?: CampSurveyMandatoryConfig): Required<CampSurveyMandatoryConfig> {
-  return { ...LEGACY_SURVEY_MANDATORY, ...config };
+/** Resolve an event's effective survey (enabled + question list) — the
+ *  single source of truth every consumer must call rather than reading
+ *  `campConfig.survey`/`overnightSurvey`/`surveyMandatory` directly:
+ *   - `campConfig.survey` present ⇒ used as-is (the current, editable shape).
+ *   - Otherwise derived from the legacy `overnightSurvey` on/off flag + the
+ *     legacy `surveyMandatory` per-question toggles, so pre-2026-07-23 camps
+ *     (including ones with no campConfig at all) keep their historical
+ *     4-question survey, editable going forward. */
+export function campSurveyQuestionsOf(config?: CampConfigForSurvey): { enabled: boolean; questions: CampSurveyQuestion[] } {
+  if (config?.survey) return config.survey;
+  return { enabled: !!config?.overnightSurvey, questions: legacyQuestions(config) };
 }
 
-/** Every question configured as mandatory (`config`, falling back to the
- *  legacy default when absent) must be explicitly answered; anything not
- *  marked mandatory is optional regardless of draft content. */
-export function campSurveyValid(draft: CampSurveyDraft, config?: CampSurveyMandatoryConfig): boolean {
-  const mandatory = campSurveyMandatoryOf(config);
-  return (Object.keys(mandatory) as (keyof CampSurveyMandatoryConfig)[])
-    .every((key) => !mandatory[key] || campSurveyQuestionAnswered(draft, key));
+/** Human-readable label for one answer VALUE to question `questionId`. Legacy
+ *  fixed-id questions map their coded values (`before-10`, `quiet`, …)
+ *  through the historical label maps; every other question (including all
+ *  custom ones) stores its option text verbatim, so the value already IS the
+ *  label. */
+export function campSurveyAnswerLabel(questionId: string, value: string): string {
+  if (questionId === 'bedtime') return LEGACY_BEDTIME_LABELS[value] ?? value;
+  if (questionId === 'noiseLevel') return LEGACY_NOISE_LABELS[value] ?? value;
+  return value;
 }
 
-/** Draft → the shape stored on `Registration.campSurvey`. Returns `undefined`
- *  when nothing was answered (so a reg with the survey skipped doesn't carry
- *  an empty-object stub). */
-export function campSurveyToStored(draft: CampSurveyDraft): Registration['campSurvey'] {
-  const roommateRequest = draft.roommateRequest.trim();
-  if (!draft.bedtime && !draft.noiseLevel && !draft.cabinGenderPref && !roommateRequest) return undefined;
-  return {
-    ...(draft.bedtime ? { bedtime: draft.bedtime } : {}),
-    ...(draft.noiseLevel ? { noiseLevel: draft.noiseLevel } : {}),
-    ...(draft.cabinGenderPref ? { cabinGenderPref: draft.cabinGenderPref as NonNullable<Registration['campSurvey']>['cabinGenderPref'] } : {}),
-    ...(roommateRequest ? { roommateRequest } : {}),
-  };
+/** A question is "answered" iff its stored value is non-blank (text/single)
+ *  or has at least one selection (multi). */
+function campSurveyQuestionAnswered(answers: Registration['campSurvey'] | undefined, q: CampSurveyQuestion): boolean {
+  const v = answers?.[q.id];
+  if (q.type === 'multi') return Array.isArray(v) && v.length > 0;
+  return typeof v === 'string' && v.trim().length > 0;
+}
+
+/** Every `required` question in `questions` must be answered; anything not
+ *  required is optional regardless of what's in `answers`. */
+export function campSurveyAnswersValid(answers: Registration['campSurvey'] | undefined, questions: CampSurveyQuestion[]): boolean {
+  return questions.every((q) => !q.required || campSurveyQuestionAnswered(answers, q));
+}
+
+/** Answers → the shape stored on `Registration.campSurvey`. Returns
+ *  `undefined` when nothing was answered (so a reg with the survey skipped
+ *  doesn't carry an empty-object stub). Drops blank text answers and
+ *  empty-array multi answers so a stored survey never carries "answered but
+ *  empty" noise. */
+export function campSurveyToStored(answers: Record<string, string | string[]>): Registration['campSurvey'] {
+  const out: Record<string, string | string[]> = {};
+  for (const [id, v] of Object.entries(answers)) {
+    if (Array.isArray(v)) {
+      if (v.length > 0) out[id] = v;
+    } else if (v.trim()) {
+      out[id] = v.trim();
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /** Short human-readable summary for a cart/reg line-item label, e.g.
- *  "bedtime: 10pm–midnight, noise: Quiet, cabin: Female". Empty string when
- *  there's nothing to summarize. */
-export function campSurveySummary(survey: Registration['campSurvey'] | undefined): string {
+ *  "Bedtime: 10pm–midnight, Noise level: Quiet". Empty string when there's
+ *  nothing to summarize. Iterates `questions` (not the raw answers object) so
+ *  the order matches the event's configured question order. */
+export function campSurveySummary(survey: Registration['campSurvey'] | undefined, questions: CampSurveyQuestion[]): string {
   if (!survey) return '';
   const parts: string[] = [];
-  if (survey.bedtime) parts.push(`bedtime: ${CAMP_BEDTIME_LABELS[survey.bedtime] ?? survey.bedtime}`);
-  if (survey.noiseLevel) parts.push(`noise: ${CAMP_NOISE_LABELS[survey.noiseLevel] ?? survey.noiseLevel}`);
-  if (survey.cabinGenderPref) parts.push(`cabin: ${survey.cabinGenderPref}`);
-  if (survey.roommateRequest) parts.push(`roommate: ${survey.roommateRequest}`);
+  for (const q of questions) {
+    const v = survey[q.id];
+    if (v == null || (Array.isArray(v) && v.length === 0) || v === '') continue;
+    const label = Array.isArray(v) ? v.map((x) => campSurveyAnswerLabel(q.id, x)).join(', ') : campSurveyAnswerLabel(q.id, v);
+    parts.push(`${q.label}: ${label}`);
+  }
   return parts.join(', ');
 }
 

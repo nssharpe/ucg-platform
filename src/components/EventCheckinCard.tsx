@@ -203,10 +203,18 @@ export function EventCheckinAdminCard({ eventId }: { eventId: string }) {
     pushEventCheckin(row);
   };
 
+  const explainer = (
+    <p style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--ink-soft)' }}>
+      On-site check-in for Nationals: "Open check-in" lets a club (or independent athlete) complete their
+      check-in from their own account; the selector below previews a specific club's check-in screen.
+    </p>
+  );
+
   if (rows.length === 0) {
     return (
       <div className="card card-pad" style={{ marginBottom: 18 }}>
         <h3 className="card-title">Check-in — open &amp; view as</h3>
+        {explainer}
         <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)' }}>No registrations yet for this event.</p>
       </div>
     );
@@ -216,6 +224,7 @@ export function EventCheckinAdminCard({ eventId }: { eventId: string }) {
     <div style={{ marginBottom: 18 }}>
       <div className="card card-pad" style={{ marginBottom: 18, overflowX: 'auto' }}>
         <h3 className="card-title">Check-in — open &amp; view as</h3>
+        {explainer}
         <table className="tbl">
           <thead><tr><th>Club / athlete</th><th>Status</th><th></th></tr></thead>
           <tbody>
@@ -241,7 +250,7 @@ export function EventCheckinAdminCard({ eventId }: { eventId: string }) {
         </table>
 
         <div style={{ maxWidth: 360, marginTop: 14 }}>
-          <Field label="View as">
+          <Field label="Preview as">
             <select className="input" value={selected} onChange={(e) => setSelected(e.target.value)}>
               <option value="">Choose…</option>
               {rows.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}

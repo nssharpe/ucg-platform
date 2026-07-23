@@ -11,7 +11,6 @@ import { Badge, Field, Modal, Tabs } from '../components/ui';
 import { useToast, useFmtDate } from '../components/ui-hooks';
 import { EventWizard } from '../components/EventWizard';
 import { RegistrationEditor } from '../components/RegistrationEditor';
-import { NationalsDashboard, type NationalsDashboardScope } from '../components/NationalsDashboard';
 import { EventCheckinAdminCard } from '../components/EventCheckinCard';
 import { EventStatusBadge } from './Home';
 import { APPARATUS, SHIRT_SIZES } from '../lib/types';
@@ -24,7 +23,7 @@ import {
   listSanctioningTeam, manageWaitlist, markMedalsReceived, pushCampSurvey, pushCart, pushEvent, pushEventSessions, pushJudgeAccessCode, pushRegistration,
   revokeEventAdmin, revokeJudgeAccessCode, syncSynchroPartnerLevelRemote, uploadInsuranceCertificate,
 } from '../lib/supabase';
-import type { HostRosterRow, SanctioningTeamMember, WaitlistQueueRow } from '../lib/supabase';
+import type { HostAddonRow, HostRosterRow, SanctioningTeamMember, WaitlistQueueRow } from '../lib/supabase';
 import { summarizeRoster, levelNameResolver } from '../lib/host-page';
 import { buildRegistrationWorkbookSheets } from '../lib/host-export';
 import { downloadWorkbook } from '../lib/xlsx-download';
@@ -34,8 +33,7 @@ import {
   newRegistrationEntryTotal, registrationChangeFee, syncSynchroPartnerLevel, findIncomingSynchroPartner,
   lateFeeApplies, lateFeeAnchor, addonPurchaseOpen, initialAddonDraft, anyAddonWindowOpen, addonDraftValid,
   buildAddonCartItems, type AddonDraft,
-  initialCampSurveyDraft, campSurveyValid, campSurveyToStored, campSurveySummary, campSurveyMandatoryOf,
-  CABIN_GENDER_OPTIONS, CAMP_BEDTIME_LABELS, CAMP_NOISE_LABELS, type CampSurveyDraft,
+  campSurveyQuestionsOf, campSurveyAnswersValid, campSurveyToStored, campSurveySummary, campSurveyAnswerLabel,
 } from '../lib/pricing';
 import { holdStamp } from '../lib/capacity';
 import { OWNER_TASKS, ownerTaskDueDate } from '../../supabase/functions/_shared/owner-checklist';
@@ -240,6 +238,7 @@ export function EventDetail() {
   const caps = useCapabilities();
   const toast = useToast();
   const fmtDate = useFmtDate();
+  const navigate = useNavigate();
   const event = db.events.find((m) => m.slug === slug);
   const [editWizardOpen, setEditWizardOpen] = useState(false);
   const [selfRegOpen, setSelfRegOpen] = useState(false);
@@ -260,6 +259,22 @@ export function EventDetail() {
   // || sanctioning.)
   const canEditEvent = caps.isSanctioning;
   const tz = tzAbbrev(event.timezone);
+  const isUcg = !!event.ucgHosted;
+  // UCG-run events (feedback-2 §5): an admin edits via the dedicated
+  // full-page admin editor (`/admin/ucg-event/:template/:seasonId`), not the
+  // overlay wizard — it's the same editor the Seasons card links to, opened
+  // straight into edit mode via router state. Non-admin sanctioning users
+  // (no route access — RequireAdmin-gated) keep the overlay.
+  const openEditEvent = () => {
+    if (isUcg && caps.isAdmin) {
+      const seasonId = seasonForDate(db, event.startDate);
+      if (seasonId) {
+        navigate(`/admin/ucg-event/${event.ucgHosted}/${seasonId}`, { state: { edit: true } });
+        return;
+      }
+    }
+    setEditWizardOpen(true);
+  };
 
   // Standalone add-on purchase (Phase 2 T3): available to a signed-in user who
   // already has a (non-refunded) registration for this event, for as long as ANY
@@ -296,7 +311,7 @@ export function EventDetail() {
             <Link className="btn small ghost" to={`/events/${event.slug}/host`}>Host dashboard →</Link>
           )}
           {canEditEvent && (
-            <button className="btn small ghost" onClick={() => setEditWizardOpen(true)}>Edit event</button>
+            <button className="btn small ghost" onClick={openEditEvent}>Edit event</button>
           )}
         </div>
       </div>
@@ -305,8 +320,11 @@ export function EventDetail() {
 
       {/* Event-owner assignment + task checklist (event-mgmt v2 §B3-4) — visible to
           the Sanctioning Team (not just the event's host manager) for competitions,
-          which is what actually goes through the sanctioning workflow. */}
-      {caps.isSanctioning && event.eventType !== 'camp' && (
+          which is what actually goes through the sanctioning workflow. Not
+          applicable to UCG-run events (FlipFest/Nationals) — there's no host
+          to own tasks for; the Director of Nationals tracks work elsewhere
+          (PM feedback-2 §1). */}
+      {caps.isSanctioning && event.eventType !== 'camp' && !isUcg && (
         <>
           <OwnerAssignBlock event={event} toast={toast} />
           <OwnerChecklistCard event={event} fmtDate={fmtDate} toast={toast} />
@@ -315,8 +333,9 @@ export function EventDetail() {
 
       {/* Per-event admin grants (event-mgmt v2 §C) — visible to anyone with
           host-level access (host-club managers, league admins, and granted
-          event admins themselves). */}
-      {canManage && <EventAdminsCard event={event} toast={toast} />}
+          event admins themselves). Not applicable to UCG-run events — there's
+          no separate host account to delegate to (PM feedback-2 §2). */}
+      {canManage && !isUcg && <EventAdminsCard event={event} toast={toast} />}
 
       {/* Waitlist queue (event-mgmt v2 P4 T7) — visible to anyone with
           host-level access; Promote/Requeue renders only for
@@ -342,12 +361,12 @@ export function EventDetail() {
         <CompetitionOrderLockCard event={event} toast={toast} />
       )}
 
-      {/* Nationals summary dashboard, admin "view as" (event-mgmt v2 Phase 5
-          D1, spec §L.3): lets an admin pick any club or independent athlete
-          registered for this event and see their scoped dashboard, without
-          needing to sign in as them. */}
-      {caps.isAdmin && event.kind === 'nationals' && (
-        <NationalsAdminViewCard event={event} />
+      {/* Nationals event summary (event-mgmt v2 Phase 5 D1, spec §L.3 —
+          REPLACED per PM feedback-2 §3: the old "view as club/athlete"
+          scoped-dashboard picker was cut in favor of a real aggregate
+          summary of the event). Visible to admin + sanctioning. */}
+      {(caps.isAdmin || caps.isSanctioning) && event.kind === 'nationals' && (
+        <NationalsSummaryCard event={event} />
       )}
 
       {/* Nationals check-in — admin open + view-as (event-mgmt v2 Phase 5
@@ -403,7 +422,7 @@ export function EventDetail() {
           )}
           {canEditEvent && event.status === 'live' && !eventIsInPhase(event, 'reg-open') && (
             <div style={{ marginTop: 10, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              <button className="btn small ghost" onClick={() => setEditWizardOpen(true)}>Edit event to adjust registration dates</button>
+              <button className="btn small ghost" onClick={openEditEvent}>Edit event to adjust registration dates</button>
               <button className="btn small ghost" data-tip="Generates a private reg link + password for late adds" onClick={() => toast(`Private link: ucg.org/#/events/${event.slug}?code=LATE26 (demo)`)}>Private reg link</button>
             </div>
           )}
@@ -880,6 +899,8 @@ function CampSurveyResponsesCard({ event, regs }: { event: Event; regs: Registra
     return () => { live = false; };
   }, [event.id]);
 
+  const { enabled, questions } = campSurveyQuestionsOf(event.campConfig);
+
   const rows = surveys === null ? null : regs
     .filter((r) => surveys[r.id])
     .map((r) => ({
@@ -892,40 +913,54 @@ function CampSurveyResponsesCard({ event, regs }: { event: Event; regs: Registra
     }))
     .sort((a, b) => a.athleteName.localeCompare(b.athleteName));
 
-  const countBy = <K extends string>(values: (K | undefined)[], labels: Record<string, string>) => {
-    const counts = new Map<string, number>();
-    for (const v of values) {
-      if (!v) continue;
-      const label = labels[v] ?? v;
-      counts.set(label, (counts.get(label) ?? 0) + 1);
+  // Per-question totals: for text questions, count of non-empty answers; for
+  // single/multi, count per option (labeled via campSurveyAnswerLabel so
+  // legacy coded values — 'before-10', 'quiet', … — read as their historical
+  // human labels; custom questions' option text is already the label).
+  const summaryFor = (q: ReturnType<typeof campSurveyQuestionsOf>['questions'][number]) => {
+    if (!rows) return { kind: 'counts' as const, counts: [] as [string, number][] };
+    if (q.type === 'text') {
+      const n = rows.filter((r) => typeof r.survey[q.id] === 'string' && (r.survey[q.id] as string).trim()).length;
+      return { kind: 'text' as const, count: n };
     }
-    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+    const counts = new Map<string, number>();
+    for (const r of rows) {
+      const v = r.survey[q.id];
+      const values = Array.isArray(v) ? v : v ? [v] : [];
+      for (const raw of values) {
+        const label = campSurveyAnswerLabel(q.id, raw);
+        counts.set(label, (counts.get(label) ?? 0) + 1);
+      }
+    }
+    return { kind: 'counts' as const, counts: [...counts.entries()].sort((a, b) => b[1] - a[1]) };
   };
 
-  const bedtimeCounts = rows ? countBy(rows.map((r) => r.survey.bedtime), CAMP_BEDTIME_LABELS) : [];
-  const noiseCounts = rows ? countBy(rows.map((r) => r.survey.noiseLevel), CAMP_NOISE_LABELS) : [];
-  const cabinCounts = rows ? countBy(rows.map((r) => r.survey.cabinGenderPref), {}) : [];
-  const roommateCount = rows ? rows.filter((r) => r.survey.roommateRequest?.trim()).length : 0;
-
-  const summaryBlock = (title: string, counts: [string, number][]) => (
-    <div>
-      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>{title}</div>
-      {counts.length === 0
-        ? <div style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>No answers yet</div>
-        : counts.map(([label, n]) => (
+  const summaryBlock = (q: ReturnType<typeof campSurveyQuestionsOf>['questions'][number]) => {
+    const s = summaryFor(q);
+    return (
+      <div key={q.id}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>{q.label}</div>
+        {s.kind === 'text' ? (
+          <div style={{ fontSize: 13 }}><strong>{s.count}</strong> of {rows?.length ?? 0} answered</div>
+        ) : s.counts.length === 0 ? (
+          <div style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>No answers yet</div>
+        ) : (
+          s.counts.map(([label, n]) => (
             <div key={label} style={{ fontSize: 13, display: 'flex', justifyContent: 'space-between', gap: 8, maxWidth: 240 }}>
               <span>{label}</span><strong>{n}</strong>
             </div>
-          ))}
-    </div>
-  );
+          ))
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="card card-pad" style={{ marginBottom: 18 }}>
       <h3 className="card-title">Survey responses{rows !== null ? ` (${rows.length})` : ''}</h3>
       <p style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--ink-soft)' }}>
-        Overnight-accommodations answers from camp registrants.
-        {!event.campConfig?.overnightSurvey && ' The survey is currently turned off in "Edit event" — no new answers will come in.'}
+        Registrant-survey answers from camp registrants.
+        {!enabled && ' The survey is currently turned off in "Edit event" — no new answers will come in.'}
       </p>
       {rows === null ? (
         <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)' }}>Loading…</p>
@@ -934,13 +969,8 @@ function CampSurveyResponsesCard({ event, regs }: { event: Event; regs: Registra
       ) : (
         <>
           <div className="grid cols-3" style={{ gap: 16, marginBottom: 14 }}>
-            {summaryBlock('Bedtime', bedtimeCounts)}
-            {summaryBlock('Noise level', noiseCounts)}
-            {summaryBlock('Cabin preference', cabinCounts)}
+            {questions.map((q) => summaryBlock(q))}
           </div>
-          <p style={{ margin: '0 0 12px', fontSize: 13 }}>
-            <strong>{roommateCount}</strong> of {rows.length} left a roommate request.
-          </p>
           <button className="btn small ghost" onClick={() => setShowIndividual((v) => !v)}>
             {showIndividual ? 'Hide individual answers' : 'Show individual answers'}
           </button>
@@ -949,17 +979,21 @@ function CampSurveyResponsesCard({ event, regs }: { event: Event; regs: Registra
               <table className="tbl">
                 <thead>
                   <tr>
-                    <th>Athlete</th><th>Bedtime</th><th>Noise</th><th>Cabin pref</th><th>Roommate request</th>
+                    <th>Athlete</th>
+                    {questions.map((q) => <th key={q.id}>{q.label}</th>)}
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map(({ reg, athleteName, survey }) => (
                     <tr key={reg.id}>
                       <td>{athleteName}</td>
-                      <td>{survey.bedtime ? CAMP_BEDTIME_LABELS[survey.bedtime] ?? survey.bedtime : '—'}</td>
-                      <td>{survey.noiseLevel ? CAMP_NOISE_LABELS[survey.noiseLevel] ?? survey.noiseLevel : '—'}</td>
-                      <td>{survey.cabinGenderPref ?? '—'}</td>
-                      <td style={{ maxWidth: 260, whiteSpace: 'normal' }}>{survey.roommateRequest || '—'}</td>
+                      {questions.map((q) => {
+                        const v = survey[q.id];
+                        const text = Array.isArray(v)
+                          ? v.map((x) => campSurveyAnswerLabel(q.id, x)).join(', ')
+                          : v ? campSurveyAnswerLabel(q.id, v) : '';
+                        return <td key={q.id} style={{ maxWidth: 260, whiteSpace: 'normal' }}>{text || '—'}</td>;
+                      })}
                     </tr>
                   ))}
                 </tbody>
@@ -1009,62 +1043,102 @@ function CompetitionOrderLockCard({ event, toast }: {
 }
 
 // ---------------------------------------------------------------------------
-// NationalsAdminViewCard — admin "view as" scope selector for the nationals
-// summary dashboard (event-mgmt v2 P5 D1, spec §L.3)
+// NationalsSummaryCard — event-wide aggregate summary (event-mgmt v2 P5 D1,
+// spec §L.3, REPLACED per PM feedback-2 §3). The prior version was a "view
+// as club/athlete" dropdown that just rendered a scoped NationalsDashboard —
+// testing showed that's not what an admin/sanctioning reviewer wants when
+// they land here; they want the numbers for the whole event. Registration
+// counts come from the already-loaded local `db` (same source as the
+// Participants stat tile above); add-on purchase counts reuse the
+// `event_host_addons` RPC (`fetchEventHostAddons`) — the same server source
+// the host export workbook uses — rather than standing up a new fetch path.
 // ---------------------------------------------------------------------------
 
-function NationalsAdminViewCard({ event }: { event: Event }) {
+const ADDON_LABEL: Record<NonNullable<HostAddonRow['refLineType']>, string> = {
+  tshirt: 'T-shirts', leo: 'Leotards', banquet: 'Banquet seats',
+};
+
+function NationalsSummaryCard({ event }: { event: Event }) {
   const db = useDB();
-  const regs = db.registrations.filter((r) => r.eventId === event.id && !r.refunded && !r.waitlisted);
+  const [addons, setAddons] = useState<HostAddonRow[] | null>(null);
+  const [addonsError, setAddonsError] = useState<string | null>(null);
 
-  const clubOptions = [...new Set(regs.map((r) => r.clubId))]
-    .map((clubId) => db.clubs.find((c) => c.id === clubId))
-    .filter((c): c is NonNullable<typeof c> => !!c)
-    .sort((a, b) => a.name.localeCompare(b.name));
+  useEffect(() => {
+    let cancelled = false;
+    fetchEventHostAddons(event.id).then((res) => {
+      if (cancelled) return;
+      if (!res.ok) { setAddonsError(res.error); return; }
+      setAddons(res.rows);
+    });
+    return () => { cancelled = true; };
+  }, [event.id]);
 
-  const independentOptions = [...new Set(
-    regs.filter((r) => db.people.find((p) => p.id === r.athleteId)?.mainClubId === null).map((r) => r.athleteId),
-  )]
-    .map((athleteId) => db.people.find((p) => p.id === athleteId))
-    .filter((p): p is NonNullable<typeof p> => !!p)
-    .sort((a, b) => `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`));
+  const regs = db.registrations.filter((r) => r.eventId === event.id && !r.refunded);
+  const active = regs.filter((r) => !r.waitlisted);
+  const waitlisted = regs.filter((r) => r.waitlisted).length;
 
-  const options = [
-    ...clubOptions.map((c) => ({ value: `club:${c.id}`, label: `${c.name} (club)` })),
-    ...independentOptions.map((p) => ({ value: `person:${p.id}`, label: `${p.firstName} ${p.lastName} (independent)` })),
-  ];
-
-  const [selected, setSelected] = useState<string>('');
-
-  if (options.length === 0) {
+  if (active.length === 0) {
     return (
       <div className="card card-pad" style={{ marginBottom: 18 }}>
-        <h3 className="card-title">Nationals summary — view as</h3>
-        <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)' }}>No registrations yet for this event.</p>
+        <h3 className="card-title">Event summary</h3>
+        <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)' }}>No registrations yet.</p>
       </div>
     );
   }
 
-  const scope: NationalsDashboardScope | null = selected.startsWith('club:')
-    ? { clubId: selected.slice(5) }
-    : selected.startsWith('person:')
-      ? { personId: selected.slice(7) }
-      : null;
+  const byDiscipline = new Map<string, number>();
+  for (const r of active) byDiscipline.set(r.discipline, (byDiscipline.get(r.discipline) ?? 0) + 1);
+
+  const athleteCount = new Set(active.map((r) => r.athleteId)).size;
+  const clubIds = new Set(active.map((r) => r.clubId).filter((id): id is string => !!id));
+  const independentCount = new Set(
+    active.filter((r) => db.people.find((p) => p.id === r.athleteId)?.mainClubId === null).map((r) => r.athleteId),
+  ).size;
+
+  const addonCounts = new Map<string, number>();
+  if (addons) {
+    for (const a of addons) {
+      if (!a.refLineType) continue;
+      addonCounts.set(a.refLineType, (addonCounts.get(a.refLineType) ?? 0) + 1);
+    }
+  }
+  const addonTypes = (['tshirt', 'leo', 'banquet'] as const).filter((t) => addonCounts.has(t));
 
   return (
-    <div style={{ marginBottom: 18 }}>
-      <div className="card card-pad" style={{ marginBottom: 18 }}>
-        <h3 className="card-title">Nationals summary — view as</h3>
-        <div style={{ maxWidth: 360 }}>
-          <Field label="Club or independent athlete">
-            <select className="input" value={selected} onChange={(e) => setSelected(e.target.value)}>
-              <option value="">Choose…</option>
-              {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-          </Field>
+    <div className="card card-pad" style={{ marginBottom: 18 }}>
+      <h3 className="card-title">Event summary</h3>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, fontSize: 14 }}>
+        <div>
+          <strong>{active.length}</strong> registrations
+          {[...byDiscipline.entries()].map(([d, n]) => (
+            <span key={d} style={{ color: 'var(--ink-soft)' }}> · {n} {d === 'TNT' ? 'T&T' : d}</span>
+          ))}
         </div>
+        <div><strong>{athleteCount}</strong> unique athletes</div>
+        <div>
+          <strong>{clubIds.size}</strong> clubs
+          {independentCount > 0 && <span style={{ color: 'var(--ink-soft)' }}> · {independentCount} independent</span>}
+        </div>
+        {waitlisted > 0 && <div><strong>{waitlisted}</strong> waitlisted</div>}
       </div>
-      {scope && <NationalsDashboard eventId={event.id} scope={scope} />}
+      {(event.tshirtAddon || event.campConfig?.leoAddon || event.banquet) && (
+        <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--line)' }}>
+          <h4 style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 700, color: 'var(--ink-soft)' }}>Add-on purchases</h4>
+          {addonsError ? (
+            <p style={{ margin: 0, fontSize: 13, color: 'var(--coral-700)' }}>Couldn't load add-on counts: {addonsError}</p>
+          ) : !addons ? (
+            <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)' }}>Loading…</p>
+          ) : addonTypes.length === 0 ? (
+            <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)' }}>No add-on purchases yet.</p>
+          ) : (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, fontSize: 14 }}>
+              {addonTypes.map((t) => (
+                <div key={t}><strong>{addonCounts.get(t)}</strong> {ADDON_LABEL[t]}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1522,6 +1596,8 @@ export function EventHostPage() {
     );
   }
 
+  const isUcg = !!event.ucgHosted;
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
@@ -1535,12 +1611,17 @@ export function EventHostPage() {
         </div>
       </div>
 
-      <HostStatusCard event={event} fmtDate={fmtDate} toast={toast} />
+      {/* Event status (§C) — hidden for UCG-run events: every row (UCG
+          owner contact, hotel block, insurance, medal order, payment-to-host)
+          is meaningless when UCG runs the event itself (PM feedback-2 §6). */}
+      {!isUcg && <HostStatusCard event={event} fmtDate={fmtDate} toast={toast} />}
       <HostRegistrationSummaryCard rows={rosterRows} error={rosterError} />
 
       <HostExportCard event={event} rows={rosterRows} error={rosterError} toast={toast} />
 
-      <EventAdminsCard event={event} toast={toast} />
+      {/* Per-event admin grants — not applicable to UCG-run events (PM
+          feedback-2 §2, mirrors the detail-page gate). */}
+      {!isUcg && <EventAdminsCard event={event} toast={toast} />}
 
       <JudgeAccessCard event={event} toast={toast} />
 
@@ -1608,6 +1689,7 @@ function HostExportCard({ event, rows, error, toast }: { event: Event; rows: Hos
         leoConfigured: !!event.campConfig?.leoAddon,
         banquetConfigured: !!event.banquet,
         isCamp: event.eventType === 'camp',
+        campSurveyQuestions: campSurveyQuestionsOf(event.campConfig).questions,
       });
       await downloadWorkbook(sheets, `${event.slug}-registrations.xlsx`);
     } catch (err) {
@@ -2055,16 +2137,15 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
     (r) => r.eventId === event.id && r.athleteId === athlete.id && !r.refunded,
   );
 
-  // Camp overnight-accommodations survey (event-mgmt v2 §G): asked LAST in
-  // the popup, after add-ons, only when the event turns it on. Seeded from
-  // any prior answer on this athlete's existing reg (re-registering keeps it).
-  const surveyRequired = event.eventType === 'camp' && !!event.campConfig?.overnightSurvey;
-  // Per-question "Mandatory?" config (PM requirement 2026-07-22) — resolved
-  // against the legacy default so pre-existing camps without an explicit
-  // config keep behaving as before.
-  const surveyMandatory = useMemo(() => campSurveyMandatoryOf(event.campConfig?.surveyMandatory), [event.campConfig?.surveyMandatory]);
-  const [surveyDraft, setSurveyDraft] = useState<CampSurveyDraft>(
-    () => initialCampSurveyDraft(existingRegs[0]?.campSurvey),
+  // Camp registrant survey (event-mgmt v2 §G; editable questions 2026-07-23):
+  // asked LAST in the popup, after add-ons, only when the event's resolved
+  // survey is enabled. Seeded from any prior answer on this athlete's
+  // existing reg (re-registering keeps it).
+  const surveyConfig = useMemo(() => campSurveyQuestionsOf(event.campConfig), [event.campConfig]);
+  const surveyRequired = event.eventType === 'camp' && surveyConfig.enabled;
+  const surveyQuestions = surveyConfig.questions;
+  const [surveyAnswers, setSurveyAnswers] = useState<Record<string, string | string[]>>(
+    () => existingRegs[0]?.campSurvey ?? {},
   );
   // camp_survey is no longer part of the broad loadAll read (privacy fix,
   // docs/research/2026-07-17-supabomb-scan-results.md) — existingRegs[0]
@@ -2077,11 +2158,16 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
     fetchCampSurveys(event.id).then((surveys) => {
       if (cancelled) return;
       const prior = surveys[existingRegs[0].id];
-      if (prior) setSurveyDraft(initialCampSurveyDraft(prior));
+      if (prior) setSurveyAnswers(prior);
     });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  const setSurveyAnswer = (id: string, value: string | string[]) => setSurveyAnswers((a) => ({ ...a, [id]: value }));
+  const toggleSurveyMultiOption = (id: string, option: string) => setSurveyAnswers((a) => {
+    const cur = Array.isArray(a[id]) ? a[id] as string[] : [];
+    return { ...a, [id]: cur.includes(option) ? cur.filter((x) => x !== option) : [...cur, option] };
+  });
 
   const changeFeeApplies = !!(
     event.changeFee && new Date() >= new Date(event.changeFee.startsAt)
@@ -2123,7 +2209,7 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
   const persistRegs = (regs: Registration[], addonItems: CartItem[]) => {
     // Camp survey answers (§G) are stored per-registration and are free to
     // change — never part of the pricing above.
-    const storedSurvey = surveyRequired ? campSurveyToStored(surveyDraft) : undefined;
+    const storedSurvey = surveyRequired ? campSurveyToStored(surveyAnswers) : undefined;
     if (storedSurvey) {
       for (const r of regs) r.campSurvey = storedSurvey;
     }
@@ -2241,7 +2327,7 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
           .map((it) => (it.refLineType ? ADDON_TYPE_LABELS[it.refLineType] ?? it.refLineType : null))
           .filter((v): v is string => !!v)
           .join(', ');
-        const surveySummary = storedSurvey ? campSurveySummary(storedSurvey) : '';
+        const surveySummary = storedSurvey ? campSurveySummary(storedSurvey, surveyQuestions) : '';
         const summarySuffix = [addonSummary, surveySummary].filter(Boolean).join('; ');
         // Camps ask nothing discipline-related — no "(MAG)"/"(MAG+WAG)"
         // parenthetical on the cart label (PM feedback 2026-07-23).
@@ -2314,7 +2400,7 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
   // Survey questions come LAST in the popup (§G), after add-ons.
   const handleSurvey = () => {
     if (!pendingRegs) return;
-    if (!campSurveyValid(surveyDraft, surveyMandatory)) {
+    if (!campSurveyAnswersValid(surveyAnswers, surveyQuestions)) {
       toast('Answer every required survey question before continuing.', { variant: 'error' });
       return;
     }
@@ -2400,62 +2486,62 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
       {step === 'survey' && (
         <div>
           <p style={{ fontSize: 14, color: 'var(--ink-soft)', marginBottom: 14 }}>
-            A few questions about overnight accommodations for {athlete.firstName}. You can update these
-            answers any time before the event's edit deadline.
+            A few questions for {athlete.firstName}. You can update these answers any time before the
+            event's edit deadline.
           </p>
 
-          <div className="grid cols-2" style={{ gap: 12 }}>
-            <Field label="Bedtime" required={surveyMandatory.bedtime}>
-              <select
-                className="input"
-                value={surveyDraft.bedtime}
-                onChange={(e) => setSurveyDraft((d) => ({ ...d, bedtime: e.target.value as CampSurveyDraft['bedtime'] }))}
-              >
-                <option value="" disabled>— select —</option>
-                <option value="before-10">Before 10pm</option>
-                <option value="10-to-midnight">10pm–midnight</option>
-                <option value="after-midnight">After midnight</option>
-              </select>
-            </Field>
-            <Field label="Noise level preference" required={surveyMandatory.noiseLevel}>
-              <select
-                className="input"
-                value={surveyDraft.noiseLevel}
-                onChange={(e) => setSurveyDraft((d) => ({ ...d, noiseLevel: e.target.value as CampSurveyDraft['noiseLevel'] }))}
-              >
-                <option value="" disabled>— select —</option>
-                <option value="quiet">Quiet</option>
-                <option value="moderate">Moderate</option>
-                <option value="lively">Lively</option>
-              </select>
-            </Field>
-            <Field label="Cabin gender preference" required={surveyMandatory.cabinGenderPref}>
-              <select
-                className="input"
-                value={surveyDraft.cabinGenderPref}
-                onChange={(e) => setSurveyDraft((d) => ({ ...d, cabinGenderPref: e.target.value }))}
-              >
-                <option value="" disabled>— select —</option>
-                {CABIN_GENDER_OPTIONS.map((g) => <option key={g} value={g}>{g}</option>)}
-              </select>
-            </Field>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {surveyQuestions.map((q) => {
+              const value = surveyAnswers[q.id];
+              if (q.type === 'text') {
+                return (
+                  <Field key={q.id} label={q.required ? q.label : `${q.label} (optional)`} required={q.required}>
+                    <input
+                      className="input"
+                      value={typeof value === 'string' ? value : ''}
+                      onChange={(e) => setSurveyAnswer(q.id, e.target.value)}
+                    />
+                  </Field>
+                );
+              }
+              if (q.type === 'single') {
+                return (
+                  <Field key={q.id} label={q.required ? q.label : `${q.label} (optional)`} required={q.required}>
+                    <select
+                      className="input"
+                      value={typeof value === 'string' ? value : ''}
+                      onChange={(e) => setSurveyAnswer(q.id, e.target.value)}
+                    >
+                      <option value="" disabled>— select —</option>
+                      {(q.options ?? []).map((opt) => (
+                        <option key={opt} value={opt}>{campSurveyAnswerLabel(q.id, opt)}</option>
+                      ))}
+                    </select>
+                  </Field>
+                );
+              }
+              const selected = Array.isArray(value) ? value : [];
+              return (
+                <Field key={q.id} label={q.required ? q.label : `${q.label} (optional)`} required={q.required}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {(q.options ?? []).map((opt) => (
+                      <label key={opt} style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
+                        <input
+                          type="checkbox"
+                          checked={selected.includes(opt)}
+                          onChange={() => toggleSurveyMultiOption(q.id, opt)}
+                        />
+                        {campSurveyAnswerLabel(q.id, opt)}
+                      </label>
+                    ))}
+                  </div>
+                </Field>
+              );
+            })}
           </div>
 
-          <Field
-            label={surveyMandatory.roommateRequest ? 'Roommate request' : 'Roommate request (optional)'}
-            required={surveyMandatory.roommateRequest}
-            hint="Who would you like to room with?"
-          >
-            <input
-              className="input"
-              value={surveyDraft.roommateRequest}
-              onChange={(e) => setSurveyDraft((d) => ({ ...d, roommateRequest: e.target.value }))}
-              placeholder="e.g. Jamie Lee"
-            />
-          </Field>
-
           <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
-            <button className="btn primary" onClick={handleSurvey} disabled={!campSurveyValid(surveyDraft, surveyMandatory)}>
+            <button className="btn primary" onClick={handleSurvey} disabled={!campSurveyAnswersValid(surveyAnswers, surveyQuestions)}>
               Continue to cart
             </button>
           </div>

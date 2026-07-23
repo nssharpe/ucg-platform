@@ -25,7 +25,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendOne } from './resend.ts';
 import { renderEmail } from './email-layout.ts';
-import { buildCampConfirmationHtml, type CampAthleteSurvey } from './camp-confirmation.ts';
+import { buildCampConfirmationHtml, campSurveyQuestionsOfConfig, type CampAthleteSurvey, type CampConfigLike } from './camp-confirmation.ts';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const fmtMoney = (cents: number) =>
@@ -349,15 +349,15 @@ async function emailReceipt(
   const fromAliases = new Set<string>();
   // Hoisted so the camp-confirmation block (built in its own try/catch below)
   // can reuse the same event rows without a second round trip.
-  let evs: { id: string; name: string | null; event_type: string | null }[] = [];
+  let evs: { id: string; name: string | null; event_type: string | null; camp_config: CampConfigLike | null }[] = [];
   try {
     const eventIds = [...new Set(items.map((i) => i.ref_event_id).filter((id): id is string => !!id))];
     if (eventIds.length) {
       const { data: evRows } = await db
         .from('events')
-        .select('id, name, confirmation_email, director, event_type')
+        .select('id, name, confirmation_email, director, event_type, camp_config')
         .in('id', eventIds);
-      evs = (evRows ?? []) as unknown as { id: string; name: string | null; event_type: string | null }[];
+      evs = (evRows ?? []) as unknown as { id: string; name: string | null; event_type: string | null; camp_config: CampConfigLike | null }[];
       for (const evRow of evRows ?? []) {
         const ev = evRow as unknown as {
           id: string; name: string | null;
@@ -394,13 +394,22 @@ async function emailReceipt(
   // than touching eventSectionsHtml/ccSet/etc. above.
   let campSectionHtml = '';
   try {
-    const campEventIds = new Set(evs.filter((ev) => ev.event_type === 'camp').map((ev) => ev.id));
+    const campEvents = evs.filter((ev) => ev.event_type === 'camp');
+    const campEventIds = new Set(campEvents.map((ev) => ev.id));
+    // Per-event resolved question list (`campSurveyQuestionsOfConfig` mirrors
+    // `campSurveyQuestionsOf`, src/lib/pricing.ts) — a reg's own event decides
+    // which questions render for it, so a multi-camp cart renders each
+    // athlete against the RIGHT event's question set.
+    const questionsByEventId = new Map(campEvents.map((ev) => [ev.id, campSurveyQuestionsOfConfig(ev.camp_config ?? undefined).questions]));
     if (campEventIds.size) {
-      const regIds = [...new Set(
-        items
-          .filter((i) => i.ref_event_id && campEventIds.has(i.ref_event_id) && i.kind !== 'addon')
-          .flatMap((i) => i.ref_reg_ids ?? []),
-      )];
+      // regId → its event id, so each registration's answers render against
+      // that event's own question list (not just any camp event's).
+      const eventIdByRegId = new Map<string, string>();
+      for (const i of items) {
+        if (!i.ref_event_id || !campEventIds.has(i.ref_event_id) || i.kind === 'addon') continue;
+        for (const regId of i.ref_reg_ids ?? []) eventIdByRegId.set(regId, i.ref_event_id);
+      }
+      const regIds = [...eventIdByRegId.keys()];
       let athletes: CampAthleteSurvey[] = [];
       if (regIds.length) {
         const { data: regRows } = await db.from('registrations')
@@ -420,6 +429,7 @@ async function emailReceipt(
         athletes = regs.map((r) => ({
           name: (r.athlete_id && nameById.get(r.athlete_id)) || 'Athlete',
           survey: r.camp_survey,
+          questions: questionsByEventId.get(eventIdByRegId.get(r.id) ?? '') ?? [],
         }));
       }
       // Add-on lines already carry a fully human-readable label (athlete name

@@ -18,16 +18,17 @@ import {
   anyAddonWindowOpen,
   initialClubAddonDraft,
   buildClubAddonCartItems,
-  initialCampSurveyDraft,
-  campSurveyValid,
+  campSurveyQuestionsOf,
+  campSurveyAnswersValid,
   campSurveyToStored,
   campSurveySummary,
+  campSurveyAnswerLabel,
   refundAmountCents,
   capRefundCents,
   shrinkOrDropCartLines,
 } from '../src/lib/pricing';
 import type { AddonPricingEvent, AddonDraftEvent, ClubAddonDraftEvent, PartnerReg, RegFeeEvent, SynchroReg } from '../src/lib/pricing';
-import type { CartItem, Coupon, Membership, Season } from '../src/lib/types';
+import type { CampSurveyQuestion, CartItem, Coupon, Membership, Season } from '../src/lib/types';
 
 const season: Season = {
   id: 's26', name: '2025–26', startsOn: '2025-07-01', endsOn: '2026-06-30',
@@ -525,59 +526,121 @@ describe('club-manager per-unit add-on draft (emv2 P2 T4)', () => {
   });
 });
 
-describe('camp overnight-accommodations survey (emv2 P2 T5, spec §G)', () => {
-  it('initialCampSurveyDraft starts blank with no existing answers', () => {
-    expect(initialCampSurveyDraft()).toEqual({ bedtime: '', noiseLevel: '', cabinGenderPref: '', roommateRequest: '' });
-  });
-  it('initialCampSurveyDraft prefills from an existing stored survey (edit case)', () => {
-    expect(initialCampSurveyDraft({ bedtime: 'after-midnight', noiseLevel: 'lively', cabinGenderPref: 'Female', roommateRequest: 'Jamie' }))
-      .toEqual({ bedtime: 'after-midnight', noiseLevel: 'lively', cabinGenderPref: 'Female', roommateRequest: 'Jamie' });
+describe('camp registrant survey (emv2 P2 T5, spec §G; editable questions 2026-07-23)', () => {
+  const customQuestions: CampSurveyQuestion[] = [
+    { id: 'q-1', label: 'Favorite color?', type: 'text', required: true },
+    { id: 'q-2', label: 'T-shirt style', type: 'single', options: ['Crew', 'V-neck'], required: true },
+    { id: 'q-3', label: 'Activities interested in', type: 'multi', options: ['Archery', 'Swimming'], required: false },
+  ];
+
+  describe('campSurveyQuestionsOf (legacy resolver)', () => {
+    it('derives the legacy 4-question survey, disabled, when there is no campConfig at all', () => {
+      const { enabled, questions } = campSurveyQuestionsOf(undefined);
+      expect(enabled).toBe(false);
+      expect(questions.map((q) => q.id)).toEqual(['bedtime', 'noiseLevel', 'cabinGenderPref', 'roommateRequest']);
+      expect(questions.map((q) => q.required)).toEqual([true, true, true, false]);
+    });
+
+    it('reads the legacy overnightSurvey on/off flag', () => {
+      expect(campSurveyQuestionsOf({ overnightSurvey: true }).enabled).toBe(true);
+      expect(campSurveyQuestionsOf({ overnightSurvey: false }).enabled).toBe(false);
+    });
+
+    it('honors legacy surveyMandatory per-question overrides', () => {
+      const allMandatory = { bedtime: true, noiseLevel: true, cabinGenderPref: true, roommateRequest: true };
+      const { questions } = campSurveyQuestionsOf({ overnightSurvey: true, surveyMandatory: allMandatory });
+      expect(questions.every((q) => q.required)).toBe(true);
+    });
+
+    it('falls back to the legacy default with an empty surveyMandatory object', () => {
+      const { questions } = campSurveyQuestionsOf({ overnightSurvey: true, surveyMandatory: {} });
+      expect(questions.find((q) => q.id === 'bedtime')?.required).toBe(true);
+      expect(questions.find((q) => q.id === 'roommateRequest')?.required).toBe(false);
+    });
+
+    it('prefers the new `survey` shape over any legacy fields when present', () => {
+      const resolved = campSurveyQuestionsOf({
+        overnightSurvey: false, // stale mirrored flag — ignored once `survey` is set
+        survey: { enabled: true, questions: customQuestions },
+      });
+      expect(resolved.enabled).toBe(true);
+      expect(resolved.questions).toBe(customQuestions);
+    });
   });
 
-  it('campSurveyValid (legacy default, no config) requires bedtime + noiseLevel + cabinGenderPref, not roommateRequest', () => {
-    expect(campSurveyValid({ bedtime: '', noiseLevel: '', cabinGenderPref: '', roommateRequest: '' })).toBe(false);
-    expect(campSurveyValid({ bedtime: 'before-10', noiseLevel: 'quiet', cabinGenderPref: '', roommateRequest: '' })).toBe(false);
-    expect(campSurveyValid({ bedtime: 'before-10', noiseLevel: 'quiet', cabinGenderPref: 'No preference', roommateRequest: '' })).toBe(true);
+  describe('campSurveyAnswersValid', () => {
+    it('requires every required legacy question to be answered', () => {
+      const legacy = campSurveyQuestionsOf({ overnightSurvey: true }).questions;
+      expect(campSurveyAnswersValid({}, legacy)).toBe(false);
+      expect(campSurveyAnswersValid({ bedtime: 'before-10', noiseLevel: 'quiet', cabinGenderPref: '' }, legacy)).toBe(false);
+      expect(campSurveyAnswersValid({ bedtime: 'before-10', noiseLevel: 'quiet', cabinGenderPref: 'No preference' }, legacy)).toBe(true);
+    });
+
+    it('treats non-required questions as always valid regardless of content', () => {
+      const legacy = campSurveyQuestionsOf({ overnightSurvey: true }).questions;
+      expect(campSurveyAnswersValid({ bedtime: 'before-10', noiseLevel: 'quiet', cabinGenderPref: 'No preference' }, legacy)).toBe(true);
+    });
+
+    it('requires a multi question to have at least one selection when required', () => {
+      const q: CampSurveyQuestion[] = [{ id: 'm', label: 'Pick one', type: 'multi', options: ['a', 'b'], required: true }];
+      expect(campSurveyAnswersValid({}, q)).toBe(false);
+      expect(campSurveyAnswersValid({ m: [] }, q)).toBe(false);
+      expect(campSurveyAnswersValid({ m: ['a'] }, q)).toBe(true);
+    });
+
+    it('validates a custom question set', () => {
+      expect(campSurveyAnswersValid({}, customQuestions)).toBe(false);
+      expect(campSurveyAnswersValid({ 'q-1': 'Blue', 'q-2': 'Crew' }, customQuestions)).toBe(true);
+    });
   });
 
-  it('campSurveyValid with an explicit all-mandatory config also requires roommateRequest', () => {
-    const allMandatory = { bedtime: true, noiseLevel: true, cabinGenderPref: true, roommateRequest: true };
-    expect(campSurveyValid({ bedtime: 'before-10', noiseLevel: 'quiet', cabinGenderPref: 'No preference', roommateRequest: '' }, allMandatory)).toBe(false);
-    expect(campSurveyValid({ bedtime: 'before-10', noiseLevel: 'quiet', cabinGenderPref: 'No preference', roommateRequest: 'Jamie' }, allMandatory)).toBe(true);
+  describe('campSurveyToStored', () => {
+    it('returns undefined when nothing was answered', () => {
+      expect(campSurveyToStored({ bedtime: '', roommateRequest: '   ' })).toBeUndefined();
+    });
+    it('trims text answers and drops blank/empty-array entries', () => {
+      expect(campSurveyToStored({ bedtime: 'before-10', noiseLevel: '', roommateRequest: '  Jamie Lee  ', extras: [] }))
+        .toEqual({ bedtime: 'before-10', roommateRequest: 'Jamie Lee' });
+    });
+    it('carries multi (array) answers through untouched', () => {
+      expect(campSurveyToStored({ 'q-3': ['Archery', 'Swimming'] })).toEqual({ 'q-3': ['Archery', 'Swimming'] });
+    });
   });
 
-  it('campSurveyValid with an empty config object ({}) falls back to the legacy default', () => {
-    expect(campSurveyValid({ bedtime: 'before-10', noiseLevel: 'quiet', cabinGenderPref: 'No preference', roommateRequest: '' }, {})).toBe(true);
-    expect(campSurveyValid({ bedtime: '', noiseLevel: 'quiet', cabinGenderPref: 'No preference', roommateRequest: '' }, {})).toBe(false);
+  describe('campSurveyAnswerLabel', () => {
+    it('maps legacy bedtime/noiseLevel coded values to their labels', () => {
+      expect(campSurveyAnswerLabel('bedtime', '10-to-midnight')).toBe('10pm–midnight');
+      expect(campSurveyAnswerLabel('noiseLevel', 'quiet')).toBe('Quiet');
+    });
+    it('is the identity function for any other question id (custom questions store option text verbatim)', () => {
+      expect(campSurveyAnswerLabel('cabinGenderPref', 'Female')).toBe('Female');
+      expect(campSurveyAnswerLabel('q-2', 'Crew')).toBe('Crew');
+    });
   });
 
-  it('campSurveyValid with roommateRequest mandatory but the other three optional', () => {
-    const roommateOnly = { bedtime: false, noiseLevel: false, cabinGenderPref: false, roommateRequest: true };
-    expect(campSurveyValid({ bedtime: '', noiseLevel: '', cabinGenderPref: '', roommateRequest: '' }, roommateOnly)).toBe(false);
-    expect(campSurveyValid({ bedtime: '', noiseLevel: '', cabinGenderPref: '', roommateRequest: 'Jamie' }, roommateOnly)).toBe(true);
-  });
+  describe('campSurveySummary', () => {
+    const legacy = campSurveyQuestionsOf({ overnightSurvey: true }).questions;
 
-  it('campSurveyToStored returns undefined for a fully-blank draft', () => {
-    expect(campSurveyToStored({ bedtime: '', noiseLevel: '', cabinGenderPref: '', roommateRequest: '   ' })).toBeUndefined();
-  });
-  it('campSurveyToStored trims roommateRequest and omits unanswered keys', () => {
-    expect(campSurveyToStored({ bedtime: 'before-10', noiseLevel: '', cabinGenderPref: '', roommateRequest: '  Jamie Lee  ' }))
-      .toEqual({ bedtime: 'before-10', roommateRequest: 'Jamie Lee' });
-  });
-  it('campSurveyToStored carries every answered field', () => {
-    expect(campSurveyToStored({ bedtime: '10-to-midnight', noiseLevel: 'moderate', cabinGenderPref: 'Male', roommateRequest: 'Alex' }))
-      .toEqual({ bedtime: '10-to-midnight', noiseLevel: 'moderate', cabinGenderPref: 'Male', roommateRequest: 'Alex' });
-  });
-
-  it('campSurveySummary is empty for no survey', () => {
-    expect(campSurveySummary(undefined)).toBe('');
-  });
-  it('campSurveySummary joins answered fields with human labels', () => {
-    expect(campSurveySummary({ bedtime: '10-to-midnight', noiseLevel: 'quiet', cabinGenderPref: 'Female', roommateRequest: 'Jamie' }))
-      .toBe('bedtime: 10pm–midnight, noise: Quiet, cabin: Female, roommate: Jamie');
-  });
-  it('campSurveySummary only includes fields that were actually answered', () => {
-    expect(campSurveySummary({ noiseLevel: 'lively' })).toBe('noise: Lively');
+    it('is empty for no survey', () => {
+      expect(campSurveySummary(undefined, legacy)).toBe('');
+    });
+    it('joins answered fields with human labels in question order', () => {
+      expect(campSurveySummary(
+        { bedtime: '10-to-midnight', noiseLevel: 'quiet', cabinGenderPref: 'Female', roommateRequest: 'Jamie' },
+        legacy,
+      )).toBe(
+        'What time do you plan to go to bed?: 10pm–midnight, '
+        + 'What is the preferred noise level in your cabin?: Quiet, '
+        + 'Would you prefer a co-ed or single gender cabin?: Female, '
+        + 'If you have any roommate requests (including people you DO NOT want to room with), please list them here.: Jamie',
+      );
+    });
+    it('only includes questions that were actually answered', () => {
+      expect(campSurveySummary({ noiseLevel: 'lively' }, legacy)).toBe('What is the preferred noise level in your cabin?: Lively');
+    });
+    it('joins a multi answer with commas', () => {
+      expect(campSurveySummary({ 'q-3': ['Archery', 'Swimming'] }, customQuestions)).toBe('Activities interested in: Archery, Swimming');
+    });
   });
 });
 

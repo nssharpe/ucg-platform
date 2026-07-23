@@ -8,9 +8,9 @@ import { pushRegistration, pushCampSurvey, pushCart, syncSynchroPartnerLevelRemo
 import { RegistrationEditor } from '../components/RegistrationEditor';
 import {
   newRegistrationEntryTotal, registrationChangeFee, changeIsEligible, syncSynchroPartnerLevel, lateFeeApplies, lateFeeAnchor,
-  initialCampSurveyDraft, campSurveyValid, campSurveyToStored, campSurveyMandatoryOf, CABIN_GENDER_OPTIONS, requiredSessionRequests,
+  campSurveyQuestionsOf, campSurveyAnswersValid, campSurveyToStored, campSurveyAnswerLabel, requiredSessionRequests,
 } from '../lib/pricing';
-import type { RegChangeState, CampSurveyDraft } from '../lib/pricing';
+import type { RegChangeState } from '../lib/pricing';
 import { holdStamp, waitlistPosition } from '../lib/capacity';
 import { fmtMoney } from '../lib/scoring';
 import type { Athlete, Club, Level, Event, Registration, Season, WaitlistGroup } from '../lib/types';
@@ -681,19 +681,17 @@ function EditRegistrationModal({
   const toast = useToast();
   const caps = useCapabilities();
 
-  // Camp overnight-accommodations survey (event-mgmt v2 §G): editable any
-  // time up to the event's edit deadline (this whole modal is only reachable
-  // then — MyRegistrationsInner's "Edit" button is hidden past it). Survey
-  // edits are FREE — saved directly here, entirely separate from
-  // RegistrationEditor's discipline/change-fee flow below.
+  // Camp registrant survey (event-mgmt v2 §G; editable questions 2026-07-23):
+  // editable any time up to the event's edit deadline (this whole modal is
+  // only reachable then — MyRegistrationsInner's "Edit" button is hidden
+  // past it). Survey edits are FREE — saved directly here, entirely separate
+  // from RegistrationEditor's discipline/change-fee flow below.
   const isCamp = event.eventType === 'camp';
-  const surveyRequired = isCamp && !!event.campConfig?.overnightSurvey;
-  // Per-question "Mandatory?" config (PM requirement 2026-07-22) — resolved
-  // against the legacy default so pre-existing camps without an explicit
-  // config keep behaving as before.
-  const surveyMandatory = useMemo(() => campSurveyMandatoryOf(event.campConfig?.surveyMandatory), [event.campConfig?.surveyMandatory]);
-  const [surveyDraft, setSurveyDraft] = useState<CampSurveyDraft>(
-    () => initialCampSurveyDraft(existing[0]?.campSurvey),
+  const surveyConfig = useMemo(() => campSurveyQuestionsOf(event.campConfig), [event.campConfig]);
+  const surveyRequired = isCamp && surveyConfig.enabled;
+  const surveyQuestions = surveyConfig.questions;
+  const [surveyAnswers, setSurveyAnswers] = useState<Record<string, string | string[]>>(
+    () => existing[0]?.campSurvey ?? {},
   );
   // camp_survey is no longer part of the broad loadAll read (privacy fix,
   // docs/research/2026-07-17-supabomb-scan-results.md) — existing[0] above
@@ -706,18 +704,23 @@ function EditRegistrationModal({
     fetchCampSurveys(event.id).then((surveys) => {
       if (cancelled) return;
       const prior = surveys[existing[0].id];
-      if (prior) setSurveyDraft(initialCampSurveyDraft(prior));
+      if (prior) setSurveyAnswers(prior);
     });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  const setSurveyAnswer = (id: string, value: string | string[]) => setSurveyAnswers((a) => ({ ...a, [id]: value }));
+  const toggleSurveyMultiOption = (id: string, option: string) => setSurveyAnswers((a) => {
+    const cur = Array.isArray(a[id]) ? a[id] as string[] : [];
+    return { ...a, [id]: cur.includes(option) ? cur.filter((x) => x !== option) : [...cur, option] };
+  });
 
   const saveSurvey = () => {
-    if (!campSurveyValid(surveyDraft, surveyMandatory)) {
+    if (!campSurveyAnswersValid(surveyAnswers, surveyQuestions)) {
       toast('Answer every required survey question before saving.', { variant: 'error' });
       return;
     }
-    const stored = campSurveyToStored(surveyDraft);
+    const stored = campSurveyToStored(surveyAnswers);
     const applied = mutate((d) => {
       for (const r of existing) {
         const idx = d.registrations.findIndex((x) => x.id === r.id);
@@ -764,59 +767,60 @@ function EditRegistrationModal({
 
       {surveyRequired && (
         <div style={{ marginTop: 18, paddingTop: 14, borderTop: '1px solid var(--line)' }}>
-          <h4 style={{ margin: '0 0 4px' }}>Overnight accommodations</h4>
+          <h4 style={{ margin: '0 0 4px' }}>Registrant survey</h4>
           <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '0 0 12px' }}>
             Free to update any time before the edit deadline — never a change fee.
           </p>
-          <div className="grid cols-2" style={{ gap: 12 }}>
-            <Field label="Bedtime" required={surveyMandatory.bedtime}>
-              <select
-                className="input"
-                value={surveyDraft.bedtime}
-                onChange={(e) => setSurveyDraft((d) => ({ ...d, bedtime: e.target.value as CampSurveyDraft['bedtime'] }))}
-              >
-                <option value="" disabled>— select —</option>
-                <option value="before-10">Before 10pm</option>
-                <option value="10-to-midnight">10pm–midnight</option>
-                <option value="after-midnight">After midnight</option>
-              </select>
-            </Field>
-            <Field label="Noise level preference" required={surveyMandatory.noiseLevel}>
-              <select
-                className="input"
-                value={surveyDraft.noiseLevel}
-                onChange={(e) => setSurveyDraft((d) => ({ ...d, noiseLevel: e.target.value as CampSurveyDraft['noiseLevel'] }))}
-              >
-                <option value="" disabled>— select —</option>
-                <option value="quiet">Quiet</option>
-                <option value="moderate">Moderate</option>
-                <option value="lively">Lively</option>
-              </select>
-            </Field>
-            <Field label="Cabin gender preference" required={surveyMandatory.cabinGenderPref}>
-              <select
-                className="input"
-                value={surveyDraft.cabinGenderPref}
-                onChange={(e) => setSurveyDraft((d) => ({ ...d, cabinGenderPref: e.target.value }))}
-              >
-                <option value="" disabled>— select —</option>
-                {CABIN_GENDER_OPTIONS.map((g) => <option key={g} value={g}>{g}</option>)}
-              </select>
-            </Field>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {surveyQuestions.map((q) => {
+              const value = surveyAnswers[q.id];
+              if (q.type === 'text') {
+                return (
+                  <Field key={q.id} label={q.required ? q.label : `${q.label} (optional)`} required={q.required}>
+                    <input
+                      className="input"
+                      value={typeof value === 'string' ? value : ''}
+                      onChange={(e) => setSurveyAnswer(q.id, e.target.value)}
+                    />
+                  </Field>
+                );
+              }
+              if (q.type === 'single') {
+                return (
+                  <Field key={q.id} label={q.required ? q.label : `${q.label} (optional)`} required={q.required}>
+                    <select
+                      className="input"
+                      value={typeof value === 'string' ? value : ''}
+                      onChange={(e) => setSurveyAnswer(q.id, e.target.value)}
+                    >
+                      <option value="" disabled>— select —</option>
+                      {(q.options ?? []).map((opt) => (
+                        <option key={opt} value={opt}>{campSurveyAnswerLabel(q.id, opt)}</option>
+                      ))}
+                    </select>
+                  </Field>
+                );
+              }
+              const selected = Array.isArray(value) ? value : [];
+              return (
+                <Field key={q.id} label={q.required ? q.label : `${q.label} (optional)`} required={q.required}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {(q.options ?? []).map((opt) => (
+                      <label key={opt} style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
+                        <input
+                          type="checkbox"
+                          checked={selected.includes(opt)}
+                          onChange={() => toggleSurveyMultiOption(q.id, opt)}
+                        />
+                        {campSurveyAnswerLabel(q.id, opt)}
+                      </label>
+                    ))}
+                  </div>
+                </Field>
+              );
+            })}
           </div>
-          <Field
-            label={surveyMandatory.roommateRequest ? 'Roommate request' : 'Roommate request (optional)'}
-            required={surveyMandatory.roommateRequest}
-            hint="Who would you like to room with?"
-          >
-            <input
-              className="input"
-              value={surveyDraft.roommateRequest}
-              onChange={(e) => setSurveyDraft((d) => ({ ...d, roommateRequest: e.target.value }))}
-              placeholder="e.g. Jamie Lee"
-            />
-          </Field>
-          <button className="btn ghost" style={{ marginTop: 8 }} onClick={saveSurvey} disabled={!campSurveyValid(surveyDraft, surveyMandatory)}>
+          <button className="btn ghost" style={{ marginTop: 8 }} onClick={saveSurvey} disabled={!campSurveyAnswersValid(surveyAnswers, surveyQuestions)}>
             Save survey answers
           </button>
         </div>
