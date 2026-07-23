@@ -1173,7 +1173,7 @@ export interface HostAddonRow {
 export async function fetchEventHostRoster(eventId: string): Promise<{ ok: true; rows: HostRosterRow[] } | { ok: false; error: string }> {
   if (!supabase) return { ok: false, error: 'Not configured.' };
   const { data, error } = await supabase.rpc('event_host_roster', { p_event_id: eventId });
-  if (error) { console.error('[supabase] event_host_roster failed:', error); return { ok: false, error: error.message }; }
+  if (error) { console.error(`[supabase] event_host_roster failed: ${error.message}${error.code ? ` (${error.code})` : ''}`); return { ok: false, error: error.message }; }
   const rows = ((data ?? []) as FnReturns<'event_host_roster'>).map((r) => ({
     regId: r.reg_id, athleteId: r.athlete_id, firstName: r.first_name, lastName: r.last_name,
     clubId: r.club_id, clubName: r.club_name, discipline: r.discipline, levelId: r.level_id,
@@ -1195,7 +1195,7 @@ export async function fetchEventHostRoster(eventId: string): Promise<{ ok: true;
 export async function fetchEventHostAddons(eventId: string): Promise<{ ok: true; rows: HostAddonRow[] } | { ok: false; error: string }> {
   if (!supabase) return { ok: false, error: 'Not configured.' };
   const { data, error } = await supabase.rpc('event_host_addons', { p_event_id: eventId });
-  if (error) { console.error('[supabase] event_host_addons failed:', error); return { ok: false, error: error.message }; }
+  if (error) { console.error(`[supabase] event_host_addons failed: ${error.message}${error.code ? ` (${error.code})` : ''}`); return { ok: false, error: error.message }; }
   const rows = ((data ?? []) as FnReturns<'event_host_addons'>).map((r) => ({
     itemId: r.item_id,
     refLineType: (r.ref_line_type as HostAddonRow['refLineType']) ?? null,

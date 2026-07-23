@@ -110,10 +110,12 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   (detail goes THERE, not here). All migrations through
   `20260720212144` are applied (staging + prod); the 2026-07-22 pair
   (`20260722220449_guard_events_ucg_hosted`, `20260722221027_events_listing_only`)
-  is applied to STAGING only — prod `supabase db push` is on Nate (in-session CLI
-  pushes to prod stay classifier-blocked, reconfirmed 2026-07-22; function
-  deploys were ALSO blocked this session — `request-refund` needs a redeploy
-  to prod+staging, on Nate). Security hardening:
+  plus `20260723153216_fix_event_host_rpcs_null_host_club` (host RPCs mistook
+  a NULL host_club_id for a missing event — broke the roster/summary fetch on
+  host-club-less UCG events) are applied to STAGING only — prod `supabase db
+  push` is on Nate (in-session CLI pushes to prod stay classifier-blocked,
+  reconfirmed 2026-07-22; function deploys were ALSO blocked this session —
+  `request-refund` needs a redeploy to prod+staging, on Nate). Security hardening:
   Phase 1+2 applied; Phase 3 TODO (`docs/plans/2026-07-02-security-hardening.md`).
 - New migrations: `supabase migration new <name>` (timestamp filename format is required).
   Apply via `supabase db push` — network is sandbox-blocked, run with sandbox disabled.
