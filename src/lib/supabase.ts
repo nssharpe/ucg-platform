@@ -14,6 +14,7 @@ import { writeQueue, humanizeWriteError, type WriteOp, type ExecResult, type Wri
 import { pushToast } from './toast-bus';
 import type { Database } from './database.types';
 import type { CapacityViolation } from './capacity';
+import { PAGE_SIZE, sortKeysForTable, hasMorePages } from './pagination';
 
 /** A table's Row type — the shape Supabase returns, used to type the DB→app
  *  row mappers so a schema change (renamed/dropped column) fails the build. */
@@ -49,8 +50,6 @@ function chunk<T>(rows: T[], size = CHUNK_SIZE): T[][] {
   return out;
 }
 
-const PAGE_SIZE = 1000;
-
 /** Explicit `registrations` column list for the broad `loadAll` read,
  *  EXCLUDING `camp_survey` — see the privacy fix in migration
  *  20260717205348_camp_survey_scoped_read.sql / docs/research/2026-07-17-
@@ -69,16 +68,29 @@ const PAGE_SIZE = 1000;
 const REGISTRATION_COLUMNS_NO_SURVEY = 'id, event_id, athlete_id, club_id, discipline, level_id, apparatus, apparatus_levels, session_id, squad_id, refunded, refund_requested, keep_listed, partner_athlete_id, paid, updated_pending, created_at, waitlisted, waitlist_group_id, hold_expires_at' as const;
 
 /** Fetch every row from a table, paging past PostgREST's default row cap
- *  (1000) — needed for `people`, which now exceeds that with the full
- *  ScoreFlippers import. */
-async function fetchAllRows<T>(table: string): Promise<{ data: T[]; error: PostgrestError | null }> {
+ *  (1000) — used by every `loadAll` table read (not just `people`, which is
+ *  what originally needed it: a single nationals alone puts `scores` well
+ *  past the cap). `columns` defaults to `'*'`; pass an explicit column list
+ *  for tables (like `registrations`) where `select('*')` would ask for a
+ *  column with SELECT revoked and fail the whole query (see the
+ *  column-revoke trap in CLAUDE.md).
+ *
+ *  Postgres gives no row-order guarantee across separate queries without an
+ *  explicit ORDER BY, so every page here is sorted by the table's
+ *  deterministic key (`sortKeysForTable`, src/lib/pagination.ts) — without
+ *  it, `.range()` pagination can silently duplicate some rows and skip
+ *  others. */
+async function fetchAllRows<T = unknown>(table: string, columns: string = '*'): Promise<{ data: T[]; error: PostgrestError | null }> {
+  const sortKeys = sortKeysForTable(table);
   const out: T[] = [];
   let from = 0;
   for (;;) {
-    const { data, error } = await supabase!.from(table).select('*').range(from, from + PAGE_SIZE - 1);
+    let query = supabase!.from(table).select(columns).range(from, from + PAGE_SIZE - 1);
+    for (const key of sortKeys) query = query.order(key, { ascending: true });
+    const { data, error } = await query;
     if (error) return { data: out, error };
-    out.push(...(data ?? []));
-    if (!data || data.length < PAGE_SIZE) break;
+    out.push(...((data ?? []) as T[]));
+    if (!data || !hasMorePages(data.length)) break;
     from += PAGE_SIZE;
   }
   return { data: out, error: null };
@@ -2140,41 +2152,52 @@ export async function loadAll(): Promise<DB | null> {
       sessionRequestsR, competitionOrdersR, finalsLineupsR, eventCheckinsR, accountingCodesR, hostPayoutsR,
       judgeAccessCodesR,
     ] = await Promise.all([
-      supabase.from('seasons').select('*'),
-      supabase.from('levels').select('*'),
-      supabase.from('clubs').select('*'),
-      supabase.from('club_managers').select('*'),
+      fetchAllRows<Row<'seasons'>>('seasons'),
+      fetchAllRows<Row<'levels'>>('levels'),
+      fetchAllRows<Row<'clubs'>>('clubs'),
+      fetchAllRows<Row<'club_managers'>>('club_managers'),
       fetchAllRows<Row<'people'>>('people'),
-      supabase.from('person_alt_clubs').select('*'),
-      supabase.from('memberships').select('*'),
-      supabase.from('events').select('*'),
-      supabase.from('event_sessions').select('*'),
-      supabase.from('squads').select('*'),
-      supabase.from('registrations').select(REGISTRATION_COLUMNS_NO_SURVEY),
-      supabase.from('scores').select('*'),
-      supabase.from('coupons').select('*'),
-      supabase.from('cart_items').select('*'),
-      supabase.from('invoices').select('*'),
-      supabase.from('invoice_items').select('*'),
-      supabase.from('club_requests').select('*'),
-      supabase.from('app_settings').select('*'),       // 0007; tolerated if absent
-      supabase.from('account_invites').select('*'),     // 0007; tolerated if absent
-      supabase.from('sanction_requests').select('*'),   // 0008; tolerated if absent
-      supabase.from('sanction_votes').select('*'),      // 0008; tolerated if absent
-      supabase.from('waiver_documents').select('*'),    // tolerated if absent
-      supabase.from('waiver_signatures').select('*'),   // tolerated if absent
-      supabase.from('club_memberships').select('*'),    // tolerated if absent
-      supabase.from('payments').select('*'),            // S1; tolerated if absent
-      supabase.from('event_admins').select('*'),        // emv2 P1 T3; tolerated if absent
-      supabase.from('refund_requests').select('*'),     // emv2 P3 T4; tolerated if absent
-      supabase.from('waitlist_groups').select('*'),     // emv2 P4 T1; tolerated if absent
-      supabase.from('session_requests').select('*'),    // emv2 P5 A1; tolerated if absent
-      supabase.from('competition_orders').select('*'),  // emv2 P5 B1; tolerated if absent
-      supabase.from('finals_lineups').select('*'),      // emv2 P5 C1; tolerated if absent
-      supabase.from('event_checkins').select('*'),      // emv2 P5 E1; tolerated if absent
-      supabase.from('accounting_codes').select('*'),    // emv2 P6 T1; tolerated if absent
-      supabase.from('host_payouts').select('*'),        // emv2 P6 T1; tolerated if absent
-      supabase.from('judge_access_codes').select('*'),  // 2026-07-19; RLS-empty for non-hosts, tolerated if absent
+      fetchAllRows<Row<'person_alt_clubs'>>('person_alt_clubs'),
+      fetchAllRows<Row<'memberships'>>('memberships'),
+      fetchAllRows<Row<'events'>>('events'),
+      // event_sessions: `any` (not a stricter Row<'event_sessions'>) deliberately —
+      // this table's generated `phase` column type (`string | null`) is looser than
+      // the app-level EventSession['phase'] literal union, and the object-building
+      // code below already assumes the looser typing the (untyped) Supabase client
+      // gave every table before this fetch-mechanism change. Fixing that typing gap
+      // is out of scope here (no shape changes).
+      fetchAllRows<any>('event_sessions'), // eslint-disable-line @typescript-eslint/no-explicit-any
+      fetchAllRows<Row<'squads'>>('squads'),
+      fetchAllRows<RegistrationRowMaybeSurvey>('registrations', REGISTRATION_COLUMNS_NO_SURVEY),
+      fetchAllRows<Row<'scores'>>('scores'),
+      fetchAllRows<Row<'coupons'>>('coupons'),
+      fetchAllRows<Row<'cart_items'>>('cart_items'),
+      fetchAllRows<Row<'invoices'>>('invoices'),
+      fetchAllRows<Row<'invoice_items'>>('invoice_items'),
+      fetchAllRows<Row<'club_requests'>>('club_requests'),
+      fetchAllRows<Row<'app_settings'>>('app_settings'),       // 0007; tolerated if absent
+      fetchAllRows<Row<'account_invites'>>('account_invites'),     // 0007; tolerated if absent
+      fetchAllRows<Row<'sanction_requests'>>('sanction_requests'),   // 0008; tolerated if absent
+      fetchAllRows<Row<'sanction_votes'>>('sanction_votes'),      // 0008; tolerated if absent
+      fetchAllRows<Row<'waiver_documents'>>('waiver_documents'),    // tolerated if absent
+      fetchAllRows<Row<'waiver_signatures'>>('waiver_signatures'),   // tolerated if absent
+      fetchAllRows<Row<'club_memberships'>>('club_memberships'),    // tolerated if absent
+      // payments / event_admins onward: several of these tables (see comment above
+      // rowToRefundRequest, ~line 546) predate database.types.ts regeneration, so
+      // there is no Row<'table'> to key off — use each table's own rowToX mapper
+      // parameter type instead (Parameters<typeof rowToX>[0]) so the fetched shape
+      // stays in lockstep with what the mapper already declares it needs.
+      fetchAllRows<Parameters<typeof rowToPayment>[0]>('payments'),            // S1; tolerated if absent
+      fetchAllRows<Row<'event_admins'>>('event_admins'),        // emv2 P1 T3; tolerated if absent
+      fetchAllRows<Parameters<typeof rowToRefundRequest>[0]>('refund_requests'),     // emv2 P3 T4; tolerated if absent (not in generated types)
+      fetchAllRows<Parameters<typeof rowToWaitlistGroup>[0]>('waitlist_groups'),     // emv2 P4 T1; tolerated if absent (not in generated types)
+      fetchAllRows<Parameters<typeof rowToSessionRequest>[0]>('session_requests'),    // emv2 P5 A1; tolerated if absent (not in generated types)
+      fetchAllRows<Parameters<typeof rowToCompetitionOrder>[0]>('competition_orders'),  // emv2 P5 B1; tolerated if absent (not in generated types)
+      fetchAllRows<Parameters<typeof rowToFinalsLineup>[0]>('finals_lineups'),      // emv2 P5 C1; tolerated if absent (not in generated types)
+      fetchAllRows<Parameters<typeof rowToEventCheckin>[0]>('event_checkins'),      // emv2 P5 E1; tolerated if absent (not in generated types)
+      fetchAllRows<Parameters<typeof rowToAccountingCode>[0]>('accounting_codes'),    // emv2 P6 T1; tolerated if absent (not in generated types)
+      fetchAllRows<Parameters<typeof rowToHostPayout>[0]>('host_payouts'),        // emv2 P6 T1; tolerated if absent (not in generated types)
+      fetchAllRows<Parameters<typeof rowToJudgeAccessCode>[0]>('judge_access_codes'),  // 2026-07-19; RLS-empty for non-hosts, tolerated if absent (not in generated types)
     ]);
 
     // club_requests may not exist on a pre-0005 DB — tolerate its error, fail on the rest.
