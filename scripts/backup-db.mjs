@@ -51,9 +51,37 @@ const envFile = Object.fromEntries(
 )
 
 const TARGETS = {
-  prod: { ref: 'wkyerxlgricfphopocoz', password: envFile.PROD_DB_PASSWORD },
-  staging: { ref: 'xogpiksqtkayxwmczlbx', password: envFile.STAGING_DB_PASSWORD },
+  prod: { ref: 'wkyerxlgricfphopocoz', password: envFile.PROD_DB_PASSWORD, region: 'us-west-2' },
+  staging: { ref: 'xogpiksqtkayxwmczlbx', password: envFile.STAGING_DB_PASSWORD, region: 'us-west-2' },
 }
+
+// Connection routing (fixed 2026-07-24 — this script had been failing silently).
+// Supabase's direct host `db.<ref>.supabase.co` is now **IPv6-only** (no A
+// record). On a host without IPv6 egress, Node's resolver returns ENOTFOUND and
+// every backup fails — which is exactly what happened here. The last successful
+// run was 2026-07-23 01:00; the next scheduled run died on connect, so the
+// IPv4 cutover landed between those. Caught 2026-07-24 while pushing an
+// unrelated migration, i.e. by luck — the scheduled task fails silently.
+// So: try the direct host first (it stays correct wherever IPv6 works, and its
+// cert is the pinned Supabase CA), and fall back to the IPv4 Supavisor session
+// pooler on a resolution/connection failure. Session mode (port 5432, NOT the
+// 6543 transaction port) is required — a plain dump needs session semantics.
+// TLS: BOTH routes verify against Supabase's pinned CA (`sslConfig`). The
+// pooler serves a Supabase-signed chain, not a public-CA one — verified
+// 2026-07-24: trusting only Node's bundled store fails SELF_SIGNED_CERT_IN_CHAIN.
+// Neither path disables TLS verification.
+const routesFor = ({ ref, password, region }) => [
+  {
+    label: 'direct',
+    connectionString: `postgresql://postgres:${encodeURIComponent(password)}@db.${ref}.supabase.co:5432/postgres`,
+    ssl: () => sslConfig,
+  },
+  {
+    label: 'pooler',
+    connectionString: `postgresql://postgres.${ref}:${encodeURIComponent(password)}@aws-1-${region}.pooler.supabase.com:5432/postgres`,
+    ssl: () => sslConfig,
+  },
+]
 
 let sslConfig
 try {
@@ -66,13 +94,32 @@ try {
   sslConfig = { rejectUnauthorized: false }
 }
 
-async function dumpEnv(name, { ref, password }) {
-  const client = new Client({
-    connectionString: `postgresql://postgres:${encodeURIComponent(password)}@db.${ref}.supabase.co:5432/postgres`,
-    ssl: sslConfig,
-    statement_timeout: 120_000,
-  })
-  await client.connect()
+/** Connect via the first route that works (see `routesFor`). Throws the LAST
+ *  error with every route's failure attached, so a genuine outage still fails
+ *  loudly instead of degrading into a silent no-backup. */
+async function connectVia(target) {
+  const failures = []
+  for (const route of routesFor(target)) {
+    const client = new Client({
+      connectionString: route.connectionString,
+      ssl: route.ssl(),
+      statement_timeout: 120_000,
+    })
+    try {
+      await client.connect()
+      if (route.label !== 'direct') console.log(`  (connected via ${route.label} — direct host unreachable)`)
+      return client
+    } catch (err) {
+      failures.push(`${route.label}: ${err.code ?? err.message}`)
+      await client.end().catch(() => {})
+    }
+  }
+  throw new Error(`all connection routes failed — ${failures.join('; ')}`)
+}
+
+async function dumpEnv(name, target) {
+  const { ref } = target
+  const client = await connectVia(target)
   try {
     const { rows: tables } = await client.query(
       `select table_schema, table_name from information_schema.tables
