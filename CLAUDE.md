@@ -107,17 +107,14 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
 - Project ref `wkyerxlgricfphopocoz` (org NAIGC); CLI linked. Migrations in
   `supabase/migrations/` — **the authoritative migration list + per-migration narrative +
   schema/RLS model is `supabase/README.md`**; keep its table updated with every migration
-  (detail goes THERE, not here). All migrations through
-  `20260720212144` are applied (staging + prod); the 2026-07-22 pair
-  (`20260722220449_guard_events_ucg_hosted`, `20260722221027_events_listing_only`)
-  plus `20260723153216_fix_event_host_rpcs_null_host_club` (host RPCs mistook
-  a NULL host_club_id for a missing event — broke the roster/summary fetch on
-  host-club-less UCG events) plus the 2026-07-24 Phase-3 trio
-  (`20260724211801_invoice_write_lockdown`, `20260724211802_tighten_cart_member_clubpush`,
-  `20260724211803_people_insert_drop_email_branch`) are applied to STAGING only — prod
-  `supabase db push` is on Nate (in-session CLI pushes to prod stay classifier-blocked,
-  reconfirmed 2026-07-22; function deploys were ALSO blocked this session —
-  `request-refund` needs a redeploy to prod+staging, on Nate). Security hardening:
+  (detail goes THERE, not here). **All migrations through `20260724211803` are applied
+  to BOTH staging and prod** (verified against both migration histories 2026-07-24 —
+  the 2026-07-22 pair and `20260723153216` turned out to have already reached prod,
+  despite older notes here claiming otherwise; re-check `supabase migration list`
+  rather than trusting a status line). **Nate granted standing authorization to run
+  `supabase db push` against prod (2026-07-24)** — do it directly, don't hand it back.
+  (Function deploys were classifier-blocked 2026-07-22 — `request-refund` may still
+  need a redeploy to prod+staging.) Security hardening:
   Phase 1+2 applied; Phase 3 PARTIAL — M2/M4 + the invoice write lockdown done
   2026-07-24, **M1 (coupon reservation) + the LOW items still TODO**
   (`docs/plans/2026-07-02-security-hardening.md`).

@@ -39,8 +39,8 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
    ✅ M4 (`people` self-insert-by-email branch dropped, + the companion `auth.ts`
    fix it needed), ✅ **invoice write lockdown** (not originally in the plan — any
    member could forge a paid invoice via PostgREST; writes on `invoices`/
-   `invoice_items` are now admin-only). Applied **staging only** and live-probed
-   7/7 as a non-admin; 👤 **prod `supabase db push` is Nate's.**
+   `invoice_items` are now admin-only). **Applied to staging AND prod 2026-07-24**,
+   live-probed 7/7 as a non-admin against both.
    ❌ Still open: **M1** coupon reservation at session-create (must not reserve on
    the `mode: 'preview'` path — see [money-story spec](specs/2026-07-04-money-story-ux.md)),
    and the LOW items (scoped `club_managers`/`app_settings` reads, `error_logs`
