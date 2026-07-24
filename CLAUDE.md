@@ -214,7 +214,7 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
 ## Tests
 - Vitest, **node environment by default** (`vitest.config.ts`, no app plugins). Tests
   in `tests/**/*.test.{ts,tsx}` cover the **pure** logic: scoring engines
-  (`src/scoring/*`), `src/lib/capabilities-core.ts` (split from React hooks so it
+  (`src/scoring/*`), `src/lib/pagination.ts`, `src/lib/capabilities-core.ts` (split from React hooks so it
   imports zero runtime deps), `src/lib/pricing.ts`. Run: `npm test` / `npx vitest run`.
 - Scoring tests encode ground-truth values from the original NAIGC calculators — they
   lock in port correctness.
@@ -394,6 +394,10 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
 - **New DB collection plumbing:** add to `types.ts` (`DB.<x>`), `rowTo<X>` +
   `push<X>`/`delete<X>` in `supabase.ts`, and the `loadAll` Promise.all + map +
   conditional spread. `from('<new_table>')` typechecks even if absent from `database.types`.
+  **Read it via `fetchAllRows` like every other table** — a bare `.select()` silently
+  truncates at PostgREST's 1000-row cap (fixed repo-wide 2026-07-24). If the table has
+  no `id` column, register its sort key in `COMPOSITE_SORT_KEYS` (`src/lib/pagination.ts`)
+  — pagination without a deterministic ORDER BY duplicates and skips rows.
 - **Toasts:** `useToast()(msg, { variant?: 'info'|'error', persist? })` — use
   `{ variant: 'error' }` for failures (persist until closed).
 - **PDFs are client-side (jsPDF), on demand** (waiver proof, receipts, cart invoice) —
