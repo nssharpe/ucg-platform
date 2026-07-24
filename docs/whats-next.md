@@ -22,17 +22,38 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
    (account activation, live keys, $1 smoke + refund).
 4. **Legal (longest lead time — start early):** engage counsel on waiver wording,
    privacy policy, ToS, minors/COPPA. 🤖 drafts the documents (item 2.4 below).
-5. **Security-review option + timing** — options brief at
+5. **Add a failure alert to the daily DB backup.** The "UCG DB Backup" scheduled
+   task fails *silently* — proven 2026-07-24, when Supabase made the direct DB
+   host IPv6-only and every run after 2026-07-23 01:00 died on `ENOTFOUND` with
+   no notification. The script is fixed (IPv4 pooler fallback, re-verified live),
+   but a backup job that can fail unnoticed is the one job that must not — and
+   these dumps are the stated stand-in until Supabase Pro/PITR (item 2 above).
+6. **Security-review option + timing** — options brief at
    [research/2026-07-17-security-review-options.md](research/2026-07-17-security-review-options.md);
    👤 Nate picks an option + timing (gates live keys).
 
 ## 2. Launch blockers (🤖 buildable now)
 
-0. **Security hardening Phase 3** ([plan](plans/2026-07-02-security-hardening.md)):
-   M1 coupon reservation at session-create, M2 tighter `cart_member_clubpush`
-   WITH CHECK, M4 route the `people` self-insert-by-email branch through
-   `link_or_create_person`, plus the LOW items (scoped reads, `error_logs`
-   insert rate-limit, token entropy check).
+0. **Security hardening Phase 3** ([plan](plans/2026-07-02-security-hardening.md)) —
+   🟡 **PARTIAL, 2026-07-24.** ✅ M2 (`cart_member_clubpush` now membership-only),
+   ✅ M4 (`people` self-insert-by-email branch dropped, + the companion `auth.ts`
+   fix it needed), ✅ **invoice write lockdown** (not originally in the plan — any
+   member could forge a paid invoice via PostgREST; writes on `invoices`/
+   `invoice_items` are now admin-only). Applied **staging only** and live-probed
+   7/7 as a non-admin; 👤 **prod `supabase db push` is Nate's.**
+   ❌ Still open: **M1** coupon reservation at session-create (must not reserve on
+   the `mode: 'preview'` path — see [money-story spec](specs/2026-07-04-money-story-ux.md)),
+   and the LOW items (scoped `club_managers`/`app_settings` reads, `error_logs`
+   insert rate-limit; token entropy was checked and is sound, a 256-bit bump is
+   optional polish).
+5. 🐛 **`loadAll` silently truncates at 1000 rows** — `fetchAllRows` pages past
+   PostgREST's cap for `people` only; **`scores` and `registrations` use a bare
+   `.select()`**, so past 1000 rows they return the first 1000 with NO error. A
+   single nationals produces ~4–8k score rows, so this breaks at the first
+   nationals, with partial Results pages and Finance totals computed off a
+   truncated set. Phase 0 of the
+   [data-layer scale spec](specs/2026-07-24-data-layer-scale.md) — small,
+   self-contained, ship before the rest of 6.3.
 1. **Rate limiting / CAPTCHA** on sign-up and the public email-sending functions
    (`request-guardian-waiver`, `notify-club-cart`, `request-manager-access`) —
    these can spam from the verified naigc.org domain today. **DEFERRED to
@@ -48,18 +69,17 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
 
 ## 3. Quality passes (pre- or just post-launch)
 
-- **UI/UX review fixes** ([task briefs](plans/2026-07-04-uiux-review-fixes.md), from the
+1. **UI/UX review fixes** ([task briefs](plans/2026-07-04-uiux-review-fixes.md), from the
   2026-07-04 live review — **none started**). Highest-value first: O1 "money story"
-  reconciliation (cart vs. checkout vs. Purchase-History amounts + unpaid-invoice path
-  + invoice numbering), coral-CTA contrast (AA fail), Profile save-bar overlap,
+  reconciliation (cart vs. checkout vs. Purchase-History amounts + unpaid-invoice path + invoice numbering), coral-CTA contrast (AA fail), Profile save-bar overlap,
   payment-status badges on My Registrations.
-- **Accessibility audit** to WCAG 2.1 AA (axe + manual keyboard/focus/ARIA pass) +
+2. **Accessibility audit** to WCAG 2.1 AA (axe + manual keyboard/focus/ARIA pass) +
   loading/empty/error-state consistency across pages.
-- **New-club-request email** to `newclubinquiries@naigc.org` (transport exists, not wired).
-- **PWA production update path** — verify deploys reach users promptly; add a "new
+3. **New-club-request email** to `newclubinquiries@naigc.org` (transport exists, not wired).
+4. **PWA production update path** — verify deploys reach users promptly; add a "new
   version available, reload" prompt if not.
-- **`npm audit` + Dependabot** in CI.
-- **Fix the `record-waiver-signature` stale-hold wart** — it can re-assert a
+5. **`npm audit` + Dependabot** in CI.
+6. **Fix the `record-waiver-signature` stale-hold wart** — it can re-assert a
   club-payment hold if the club paid before the guardian signed (documented in
   CLAUDE.md; small, known fix).
 

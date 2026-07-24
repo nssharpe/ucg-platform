@@ -149,6 +149,34 @@ the webhook path, plus a forced-failure test of the RPC rollback if practical.
 ---
 
 ## Phase 3 — deferred hardening (schedule later)
+
+> **STATUS — PARTIAL, 2026-07-24.** **M2, M4, and a NEW invoice write lockdown are
+> DONE** (migrations `20260724211801`–`211803`, applied **staging only**; prod push is
+> Nate's). Verified live on staging as the seeded NON-admin athlete, 7/7: forging a paid
+> invoice, pushing a `meet-entry` line into a club cart, and inserting a junk `people`
+> row are all rejected 42501, while self profile save, invoice/line-item reads, and the
+> legitimate membership club-push all still succeed.
+>
+> The invoice lockdown was **not in this plan** — it surfaced while checking whether an
+> "unpaid invoice" can legitimately exist. `20260623000070_self_pay_invoice_rls.sql` had
+> left `invoice_self_insert` behind after the client-side "Pay now" flow was removed, so
+> any member could forge a paid invoice row via raw PostgREST, and
+> `invoice_items_owner_write` was `for all` (silently granting DELETE). The
+> controller-review pass also dropped the pre-existing `invoice_admin` `for all` policy,
+> whose `manages_club` branch was the identical hole scoped to club managers. Writes on
+> both tables are now admin-only; every SELECT policy is untouched.
+>
+> M4 required a companion CLIENT fix: `src/lib/auth.ts`'s coach-upgrade mirror didn't
+> pass `{selfAuthUserId}`, so its whole-row upsert was silently depending on the very
+> email branch being dropped (the CLAUDE.md "RLS upsert trap"). Without it, first-time
+> coach sign-in would have started failing RLS.
+>
+> **STILL OPEN: M1** (coupon reservation at session-create) **and the LOW items.** Note
+> for whoever picks up M1: it must stay compatible with the `mode: 'preview'` price
+> endpoint specced in `docs/specs/2026-07-04-money-story-ux.md` — **a preview must never
+> reserve a coupon.** Token entropy (a LOW item) was checked 2026-07-24 and is sound —
+> the no-login token generators use `crypto.randomUUID()` (122-bit CSPRNG); bumping them
+> to 256-bit hex is free and still worth doing.
 - **M1** coupon reservation at session-create (reserve on pending payment, release on
   `expired`/`failed` webhook events).
 - **M2** tighten `cart_member_clubpush` WITH CHECK (member-owned refs, membership kinds
