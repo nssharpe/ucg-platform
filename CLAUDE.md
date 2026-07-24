@@ -112,13 +112,28 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   (`20260722220449_guard_events_ucg_hosted`, `20260722221027_events_listing_only`)
   plus `20260723153216_fix_event_host_rpcs_null_host_club` (host RPCs mistook
   a NULL host_club_id for a missing event — broke the roster/summary fetch on
-  host-club-less UCG events) are applied to STAGING only — prod `supabase db
-  push` is on Nate (in-session CLI pushes to prod stay classifier-blocked,
+  host-club-less UCG events) plus the 2026-07-24 Phase-3 trio
+  (`20260724211801_invoice_write_lockdown`, `20260724211802_tighten_cart_member_clubpush`,
+  `20260724211803_people_insert_drop_email_branch`) are applied to STAGING only — prod
+  `supabase db push` is on Nate (in-session CLI pushes to prod stay classifier-blocked,
   reconfirmed 2026-07-22; function deploys were ALSO blocked this session —
   `request-refund` needs a redeploy to prod+staging, on Nate). Security hardening:
-  Phase 1+2 applied; Phase 3 TODO (`docs/plans/2026-07-02-security-hardening.md`).
+  Phase 1+2 applied; Phase 3 PARTIAL — M2/M4 + the invoice write lockdown done
+  2026-07-24, **M1 (coupon reservation) + the LOW items still TODO**
+  (`docs/plans/2026-07-02-security-hardening.md`).
+- ⚠ **`db.<ref>.supabase.co` is IPv6-ONLY since ~2026-07-23** — every direct-connection
+  command (`db push --db-url`, `backup-db.mjs`) fails `ENOTFOUND` without IPv6 egress.
+  Use the Supavisor **session** pooler: user `postgres.<ref>`, host
+  `aws-1-us-west-2.pooler.supabase.com`, port **5432** (not 6543; not `aws-0-`).
+  This silently killed the daily backup for a day before it was caught — full incident
+  + the fixed fallback in `supabase/README.md` "Data backups".
 - New migrations: `supabase migration new <name>` (timestamp filename format is required).
   Apply via `supabase db push` — network is sandbox-blocked, run with sandbox disabled.
+- **Parallel-session collision (2026-07-24):** a background task chip spawned from a
+  subagent ran as its OWN session in `.claude/worktrees/`, wrote a competing migration
+  for the same finding, and pushed it to staging. Before any `db push`, run
+  `supabase migration list` and reconcile — a remote version with no local file means
+  another session touched the DB.
 - **Staging project `xogpiksqtkayxwmczlbx`** (`ucg-staging`, since 2026-07-04): the CLI
   stays linked to PROD — target staging explicitly via `--project-ref`/`--db-url`
   (creds under `STAGING_*` in `.env.local`; full runbook in `supabase/README.md`).

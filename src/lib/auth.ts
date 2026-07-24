@@ -105,7 +105,14 @@ async function onAuthenticated(user: Session['user']) {
         });
         // Skip the remote mirror if the local mutation was refused (offline
         // read-only gate) — pushing remote-only would diverge from local.
-        if (applied) pushPerson(updated); // mirror to Supabase
+        // selfAuthUserId: this is the caller's OWN row (just linked/created by
+        // linkOrCreatePerson above) — stamp it so the whole-row upsert's INSERT
+        // RLS check passes via `auth_user_id = auth.uid()` (personToRow omits
+        // auth_user_id when opts are absent, and the security-hardening-Phase-3
+        // migration 20260724211803 removed the broader email-match insert
+        // branch this call used to fall back on — see that migration's comment
+        // for the enumeration). Mirrors the pattern in Profile.tsx's self-save.
+        if (applied) pushPerson(updated, { selfAuthUserId: user.id }); // mirror to Supabase
       }
     } else {
       localStorage.removeItem('ucg-signup-kind');
