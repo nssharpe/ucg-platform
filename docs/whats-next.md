@@ -46,7 +46,11 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
    and the LOW items (scoped `club_managers`/`app_settings` reads, `error_logs`
    insert rate-limit; token entropy was checked and is sound, a 256-bit bump is
    optional polish).
-5. 🐛 **`loadAll` silently truncates at 1000 rows** — `fetchAllRows` pages past
+5. ✅ **FIXED 2026-07-24 — `loadAll` silently truncated at 1000 rows.** Every table
+   read now paginates AND sorts deterministically (an unordered `.range()` can
+   duplicate/skip rows — a second latent bug found on the way). Proven on staging:
+   the old fetch returned exactly 1000 of 1,748 `scores`; the new one returns all
+   1,748 with no dupes. Original report, kept for context: `fetchAllRows` paged past
    PostgREST's cap for `people` only; **`scores` and `registrations` use a bare
    `.select()`**, so past 1000 rows they return the first 1000 with NO error. A
    single nationals produces ~4–8k score rows, so this breaks at the first

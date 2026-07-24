@@ -153,9 +153,20 @@ keep their current semantics.
 
 Each phase is independently shippable and independently valuable.
 
-**Phase 0 — Stop the silent truncation.** Route every `loadAll` query through the
-paginating fetch. Pure bug fix, no architectural commitment, no UI change. Ship first
-and separately.
+**Phase 0 — Stop the silent truncation. ✅ DONE 2026-07-24.** All ~34 `loadAll` table
+reads now route through `fetchAllRows`, which additionally applies a deterministic
+`ORDER BY` before every `.range()` call — without one, paginated reads can silently
+duplicate and skip rows across page boundaries, a second latent bug the original
+`people`-only pagination already carried. Sort keys live in the new pure
+`src/lib/pagination.ts` (`sortKeysForTable`, unit-tested): `id` by default, with the
+four composite/alternate-key tables registered explicitly (`club_managers`,
+`person_alt_clubs`, `app_settings`, `coupons` — independently confirmed as exactly the
+set that fails a `select('id')` probe). `registrations` keeps its explicit column list
+so it doesn't request the SELECT-revoked `camp_survey`.
+
+*Proof (staging):* `scores` 248 rows → inserted 1,500 → the OLD bare `select()`
+returned **exactly 1000**, reproducing the bug; the new paginated fetch returned all
+**1,748 rows with 1,748 unique ids** (no duplicates, no gaps); probe rows cleaned up.
 
 **Phase 1 — Instrumentation + the scale-seed harness.**
 - `scripts/seed-scale.mjs`: generate a target-volume dataset (default ~2-year
