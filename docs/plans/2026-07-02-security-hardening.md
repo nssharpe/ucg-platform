@@ -148,7 +148,16 @@ the webhook path, plus a forced-failure test of the RPC rollback if practical.
 
 ---
 
-## Phase 3 — deferred hardening (schedule later)
+## Phase 3 — deferred hardening ✅ COMPLETE 2026-07-26 (staging + prod)
+
+> M1 coupon reservation, M2 `cart_member_clubpush`, M4 `people` self-insert, the
+> invoice write lockdown (found mid-phase, not in the original plan), and all three
+> LOW items are applied to BOTH environments and verified live. Notable corrections
+> made during the phase: the `invoice_admin` FOR-ALL policy was the same hole scoped
+> to managers and had to go too; and a restrictive RLS SELECT *predicate* filters
+> rows rather than raising, so no client-side error tolerance was needed for the
+> `club_managers` lockdown (adding it would have cost a fail-fast signal).
+
 
 > **STATUS — PARTIAL, 2026-07-24.** **M2, M4, and a NEW invoice write lockdown are
 > DONE** (migrations `20260724211801`–`211803`, applied **staging only**; prod push is
