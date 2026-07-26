@@ -166,18 +166,22 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   // brand-new incomplete profile) without ever going through `enterEdit`, so
   // this initializer must cover the same branches or the dirty check would
   // never activate for those entry paths.
-  const [editSnapshot, setEditSnapshot] = useState<Athlete | null>(() => {
-    if (!person) return null;
-    if (returnToMembership) return { ...person };
-    const errs = validateProfile(person);
-    return errs.length > 0 ? { ...person } : null;
-  });
   const [editMode, setEditMode] = useState<boolean>(() => {
     if (!person) return false;
     if (returnToMembership) return true;
     const errs = validateProfile(person);
     return errs.length > 0;
   });
+  // Declared AFTER editMode so it can just read that decision instead of
+  // re-deriving it: editMode can start true without ever going through
+  // `enterEdit` (returnToMembership, or a brand-new incomplete profile), and
+  // those paths still need a snapshot or the dirty check never activates.
+  // Duplicating the auto-edit condition here would mean a future change to
+  // editMode's initializer silently breaks dirty-tracking, with nothing to
+  // catch it — deriving from editMode makes that impossible by construction.
+  const [editSnapshot, setEditSnapshot] = useState<Athlete | null>(
+    () => (editMode && person ? { ...person } : null),
+  );
   // When arriving from membership, track which fields were empty on arrival so we can highlight them
   const [highlightMissing] = useState<boolean>(() => returnToMembership);
   const [clubReqOpen, setClubReqOpen] = useState(false);
