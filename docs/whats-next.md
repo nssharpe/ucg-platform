@@ -57,9 +57,14 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
    reservation stops blocking. Prod smoke after deploy: cart preview still reprices
    ($1 → $45) and created 0 reservations. `create-checkout-session` +
    `stripe-webhook` redeployed to both projects, `verify_jwt` trio re-verified.
-   ❌ Still open after that: the LOW items (scoped `club_managers`/`app_settings`
-   reads, `error_logs` insert rate-limit; token entropy was checked and is sound,
-   a 256-bit bump is optional polish).
+   🔶 **LOW items drafted 2026-07-26** on branch `sec/p3-low-items` (not yet
+   applied/deployed): `club_managers`/`app_settings` SELECT scoped to
+   `authenticated` (+ a `loadAll()` tolerance fix so an anon 403 on
+   `club_managers` doesn't take down every public page); `error_logs` INSERT
+   rate-limited to 20/rolling-minute per caller (signed-out reporting still
+   works); the three no-login token generators bumped from 122-bit to 256-bit
+   via a new `_shared/token.ts` helper. Controller owns the `supabase db push`
+   + 3 edge-function redeploys.
 5. ✅ **FIXED 2026-07-24 — `loadAll` silently truncated at 1000 rows.** Every table
    read now paginates AND sorts deterministically (an unordered `.range()` can
    duplicate/skip rows — a second latent bug found on the way). Proven on staging:

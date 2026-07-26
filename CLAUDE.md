@@ -115,9 +115,12 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   `supabase db push` against prod (2026-07-24)** — do it directly, don't hand it back.
   (Function deploys were classifier-blocked 2026-07-22 — `request-refund` may still
   need a redeploy to prod+staging.) Security hardening:
-  Phase 1+2 applied; Phase 3 PARTIAL — M2/M4 + the invoice write lockdown done
-  2026-07-24, **M1 (coupon reservation) + the LOW items still TODO**
-  (`docs/plans/2026-07-02-security-hardening.md`).
+  Phase 1+2 applied; Phase 3 M2/M4/invoice-write-lockdown (2026-07-24) + M1 coupon
+  reservation (2026-07-26) all shipped to staging+prod. **LOW items drafted 2026-07-26
+  on branch `sec/p3-low-items`, NOT YET applied/deployed** (club_managers/app_settings
+  → authenticated-only + loadAll tolerance fix, error_logs rate-limit trigger, 256-bit
+  token bump for the 3 no-login token generators) — controller still owns the
+  `supabase db push` + 3 edge-function redeploys (`docs/plans/2026-07-02-security-hardening.md`).
 - ⚠ **`db.<ref>.supabase.co` is IPv6-ONLY since ~2026-07-23** — every direct-connection
   command (`db push --db-url`, `backup-db.mjs`) fails `ENOTFOUND` without IPv6 egress.
   Use the Supavisor **session** pooler: user `postgres.<ref>`, host
