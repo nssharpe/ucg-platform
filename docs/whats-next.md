@@ -82,8 +82,12 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
   of the money-path diff): `create-checkout-session mode:'preview'`, Cart.tsx
   Estimated/price-agreement notice, Purchase-History + Cart receipts filtered to
   `paid_at != null`. Invoice-numbering (spec §3) was explicitly deferred to the
-  pre-launch data sweep, not part of this branch. Still open: payment-status badges on
-  My Registrations, S5/S6 and the H-task polish batch.
+  pre-launch data sweep, not part of this branch. **S5** (live price estimate in
+  RegistrationEditor) and **S6** (payment-status badges on My Registrations) are also
+  implemented, on branch `ui/s5-s6-reg-money-display` (2026-07-25, unmerged/undeployed,
+  same fable-review gate) — see the plan doc for the estimate's `changeFeeApplies`
+  correction and a pre-existing (untouched) 375px table-overflow finding. Still open:
+  merging/pushing all three money branches (after review) and the H-task polish batch.
 2. **Accessibility audit** to WCAG 2.1 AA (axe + manual keyboard/focus/ARIA pass) +
   loading/empty/error-state consistency across pages.
 3. **New-club-request email** to `newclubinquiries@naigc.org` (transport exists, not wired).

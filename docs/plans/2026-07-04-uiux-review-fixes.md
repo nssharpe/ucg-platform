@@ -247,7 +247,37 @@ diffing helpers. npm run build, npx eslint <touched>, npx vitest run.
 CONTROLLER: fable review of the diff before merge (task O2).
 ```
 
-### S5 — ⚠️ Live price estimate in the registration editor
+### S5 — ⚠️ Live price estimate in the registration editor — IMPLEMENTED 2026-07-25
+(branch `ui/s5-s6-reg-money-display`, unmerged/undeployed — pending controller
+fable review before merge/push, task O2)
+
+> New pure selector `src/lib/reg-estimate.ts` (`registrationEstimate` +
+> `registrationEstimateLabel`) orchestrates `newRegistrationEntryTotal`/
+> `registrationChangeFee` — no fee math in the component. Host-club-free takes
+> priority over every other case (matches pricing.ts's own guard, since host
+> fees are $0 for entry AND change). Camps pass `newDisciplineCount: 1` (flat
+> fee, never per-discipline). **Correction found during live verification:**
+> the brief's "edit where changeIsEligible → show the change fee" is
+> incomplete — `saveRegs` only actually charges the change fee when the
+> event's `changeFee.startsAt` window has ALSO opened (`changeFeeApplies`,
+> already a prop on `RegistrationEditorProps`). The estimate now ANDs
+> `eligible && changeFeeApplies` before pricing a change, or it would show a
+> dollar amount the real save wouldn't charge — confirmed live against
+> "Scoring Test Meet" (window not yet open → correctly "No charge for this
+> change") vs. exercising the raw-eligible path pre-fix (incorrectly showed
+> $15). The Save button's own "Add change to cart" label is untouched
+> (pre-existing behavior, out of scope) — it can now legitimately disagree
+> with a "No charge" estimate, which is the accurate side to be wrong on.
+> Live-verified: new-registration ($0 with nothing selected → $60 once a
+> level+All-Around is picked, matching the club cart's line exactly),
+> edit-existing chargeable ($15) and non-chargeable ("No charge"). Host-club
+> and $0-secondary-discipline cases covered by 9 unit tests
+> (`tests/lib/reg-estimate.test.ts`) only — no seeded event has dev-club as
+> host. Contrast: estimate line `--ink` on `--surface` white measures
+> **14.05:1**; the "Estimated — …" footnote `--ink-soft` measures **5.42:1**
+> at 12px — both clear AA. No responsive regression (S5/S6 additions render
+> at 375/768/1280 with zero added overflow — see S6 note below for a
+> pre-existing, unrelated table overflow found at 375px).
 
 ```
 Add a running cost estimate to src/components/RegistrationEditor.tsx.
@@ -280,7 +310,38 @@ estimate-label selector) in tests/. npm run build, npx eslint <touched>,
 npx vitest run. CONTROLLER: fable review of the diff before merge (task O2).
 ```
 
-### S6 — Payment status surfaced on My Registrations
+### S6 — Payment status surfaced on My Registrations — IMPLEMENTED 2026-07-25
+(branch `ui/s5-s6-reg-money-display`, unmerged/undeployed — pending controller
+fable review before merge/push, task O2)
+
+> New pure selector `src/lib/registration-status.ts`
+> (`registrationGroupPaymentStatus`/`regGroupPaymentStatusInfo`) derives
+> strictly off each row's `paid`/`updatedPending` — no `refRegIds` heuristic.
+> **Correction from the brief:** `--amber-600`/`--amber-100` are retired
+> (2026-07-19 rebrand) — used the existing AA-verified `.badge.ok` (paid) /
+> `.badge.warn` (pending/change-pending) classes instead, matching the
+> REG OPEN/DEV TEST pill pattern as instructed. A card can hold several
+> registration rows (one per discipline); status is computed over the
+> still-active (non-refunded) rows, falling back to the full set only if
+> every row is refunded-but-kept, so a kept-but-refunded discipline can't
+> drag an otherwise-paid card into a misleading state. The expanded-details
+> line now reads the same status label instead of raw `event.status`; the
+> date next to it is untouched raw ISO per H2's scope. Live-verified both
+> badge states (`Pending purchase — in your cart`, `Change pending purchase`)
+> and the status line, with computed colors read via `getComputedStyle`:
+> `rgb(30,43,56)` text on `rgb(246,195,40)` (gold) background, independently
+> recomputed at **8.76:1** (matches CLAUDE's documented 8.8:1). Could not
+> live-produce a "Paid" badge without completing a real Stripe payment or a
+> host-club-hosted seeded event — covered instead by 12 unit tests
+> (`tests/lib/registration-status.test.ts`) including the host-club
+> `paid:true` case and mixed-row priority ordering. **Found, not fixed (out
+> of scope):** at 375px, a pre-existing `<table class="tbl">` layout in this
+> same expanded-details section overflows the viewport when a row's status
+> cell renders "Refund requested" (150px pill in a narrow column) —
+> reproduced on "Scoring Test Meet" (which has 3 refund-requested rows),
+> absent on a card with no refund-requested rows, and absent at 768px+;
+> confirmed via `scrollWidth`/`clientWidth` before and after this diff — the
+> table code itself is untouched by S5/S6.
 
 ```
 Surface paid/pending state on src/pages/MyRegistrations.tsx cards.
