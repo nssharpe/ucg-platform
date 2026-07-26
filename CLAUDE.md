@@ -214,7 +214,7 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
 ## Tests
 - Vitest, **node environment by default** (`vitest.config.ts`, no app plugins). Tests
   in `tests/**/*.test.{ts,tsx}` cover the **pure** logic: scoring engines
-  (`src/scoring/*`), `src/lib/pagination.ts`, `src/lib/capabilities-core.ts` (split from React hooks so it
+  (`src/scoring/*`), `src/lib/pagination.ts`, `src/lib/profile-core.ts`, `src/lib/capabilities-core.ts` (split from React hooks so it
   imports zero runtime deps), `src/lib/pricing.ts`. Run: `npm test` / `npx vitest run`.
 - Scoring tests encode ground-truth values from the original NAIGC calculators — they
   lock in port correctness.
