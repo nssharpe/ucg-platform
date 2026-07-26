@@ -2212,7 +2212,7 @@ export async function loadAll(): Promise<DB | null> {
       fetchAllRows<Row<'seasons'>>('seasons'),
       fetchAllRows<Row<'levels'>>('levels'),
       fetchAllRows<Row<'clubs'>>('clubs'),
-      fetchAllRows<Row<'club_managers'>>('club_managers'), // authenticated-only RLS; tolerated for anon (see errors[] comment below)
+      fetchAllRows<Row<'club_managers'>>('club_managers'),
       fetchAllRows<Row<'people'>>('people'),
       fetchAllRows<Row<'person_alt_clubs'>>('person_alt_clubs'),
       fetchAllRows<Row<'memberships'>>('memberships'),
@@ -2258,15 +2258,8 @@ export async function loadAll(): Promise<DB | null> {
     ]);
 
     // club_requests may not exist on a pre-0005 DB — tolerate its error, fail on the rest.
-    // club_managers is ALSO tolerated (like app_settings below): its SELECT policy is
-    // `authenticated`-only (sec hardening Phase 3 LOW item 1) so an anonymous visitor's
-    // read 403s by design — that must not take down the rest of loadAll() for every
-    // signed-out page load. managersByClub build below already treats a missing/errored
-    // clubManagersR as no rows (empty managerIds), which is correct for anon (no public
-    // surface renders club managers) and unaffected for authenticated callers, who still
-    // get real data.
     const errors = [
-      seasonsR, levelsR, clubsR, peopleR, altClubsR, membershipsR,
+      seasonsR, levelsR, clubsR, clubManagersR, peopleR, altClubsR, membershipsR,
       eventsR, sessionsR, squadsR, registrationsR, scoresR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
     ].map((r) => r.error).filter(Boolean);
     if (errors.length) { console.error('[supabase] loadAll failed:', errors); return null; }

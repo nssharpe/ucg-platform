@@ -21,14 +21,26 @@
 -- Both tables are consumed client-side ONLY through the single loadAll()
 -- Promise.all in src/lib/supabase.ts, which runs unconditionally on app boot
 -- (store.ts: `if (isSupabaseConfigured) void syncFromSupabase()`) for EVERY
--- visitor, signed in or not — so this migration ships together with a
--- companion client change (same PR) that moves `club_managers` from
--- loadAll's hard-fail table list into the same "tolerated if absent" pattern
--- app_settings already uses. Without that change, restricting club_managers
--- would make loadAll() throw for every anonymous visitor and silently
--- degrade EVERY public page (Events, EventDetail, Results, …) back to stale
--- local/seed data. app_settings was already in the tolerated list, so it
--- needed no client change.
+-- visitor, signed in or not.
+--
+-- NO companion client change is needed, and the first draft of this migration
+-- was wrong about that. A restrictive RLS SELECT *predicate* (what's below)
+-- FILTERS ROWS — it does not raise. An anonymous caller reading either table
+-- gets `200 []`, not a 403, so loadAll()'s hard-fail `errors` list never sees
+-- an error and the boot is unaffected. (A grant-level `revoke select ... from
+-- anon` WOULD 403 — that is the distinction; this migration deliberately uses
+-- a policy predicate, not a grant revoke.) Verified empirically against
+-- staging AND prod as a real anonymous client, 2026-07-26: `club_managers` →
+-- error=none rows=0, and the full hard-fail set → zero errors on both.
+--
+-- The draft's companion change (moving `clubManagersR` into loadAll's
+-- "tolerated if absent" set) was therefore reverted: it wasn't needed, and it
+-- would have COST a fail-fast signal — a genuine club_managers read failure
+-- (outage, future grant regression) would then be silently swallowed for
+-- signed-in users too, leaving every club with empty managerIds and manager
+-- permissions appearing to vanish with no error surfaced anywhere.
+-- app_settings was already tolerated for its own unrelated reason (it may not
+-- exist on a pre-0007 DB), which is what made the pattern look applicable.
 --
 -- Edge Functions are unaffected: every function that reads club_managers
 -- (notify-club-cart, manage-waitlist, invite-account, create-waiver-link,
