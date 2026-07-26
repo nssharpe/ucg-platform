@@ -478,7 +478,7 @@ function CartScope({
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {groups.membership.length > 0 && (
-          <CartCard title="Memberships" items={groups.membership} preview={preview} returnTo={membershipsReturnTo} returnLabel="Checkout Memberships"
+          <CartCard title="Memberships" items={groups.membership} preview={preview} returnTo={membershipsReturnTo} returnLabel="Check out Memberships"
             onCheckout={() => setCheckout({ items: groups.membership, title: 'Memberships' })}
             onRemove={removeItem}
             onPrintInvoice={() => downloadCartInvoice(groups.membership, name, 'Memberships')}
@@ -594,7 +594,7 @@ function ReceiptsSection({ clubId, forName }: { clubId: string | null; forName: 
               <p style={{ margin: '8px 0 10px', fontSize: 14, color: 'var(--ink-soft)' }}>
                 {inv.items.filter((i) => i.kind !== 'discount').map((i) => i.label).join('; ')}
               </p>
-              <button className="btn small ghost" onClick={() => setDetail(inv)}>Click for details →</button>
+              <button className="btn small ghost" onClick={() => setDetail(inv)}>View details →</button>
             </div>
           ))}
         </div>

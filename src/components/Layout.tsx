@@ -9,7 +9,7 @@ import { offeredMembershipTypes } from '../lib/pricing';
 import { useSession } from '../lib/auth';
 import { TopbarMembership } from './TopbarMembership';
 import { ReportProblemDialog } from './ReportProblemDialog';
-import { useNavHistory, useGoBack, labelFor } from '../lib/navHistory';
+import { useNavHistory, useGoBack, resolveLabel } from '../lib/navHistory';
 import { currentSeason } from '../lib/season-lifecycle';
 
 /** "vSHA · YYYY-MM-DD" build stamp shown at the bottom of the sidebar. */
@@ -108,7 +108,7 @@ export function Layout({ children }: { children: ReactNode }) {
     };
   }, [navOpen]);
   const session = useSession();
-  useNavHistory(); // record each page visit into the module-level stack
+  useNavHistory(db); // record each page visit into the module-level stack
   const goBack = useGoBack(); // null when no prior history
 
   const me = caps.person;
@@ -217,7 +217,7 @@ export function Layout({ children }: { children: ReactNode }) {
               ← Back
             </button>
           ) : null}
-          <span className="crumb">{labelFor(loc.pathname)}</span>
+          <span className="crumb">{resolveLabel(loc.pathname, db)}</span>
           <div className="topbar-spacer" />
           {me && season && (
             <TopbarMembership

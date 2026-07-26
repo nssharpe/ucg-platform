@@ -9,6 +9,7 @@
 
 import { useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import type { DB } from './types';
 
 export interface HistoryEntry {
   pathname: string;
@@ -38,6 +39,7 @@ export function labelFor(pathname: string): string {
   if (/^\/meets\//.test(pathname)) return 'Event'; // legacy path (redirects to /events/)
   if (/^\/members\//.test(pathname)) return 'Member';
   if (/^\/clubs\//.test(pathname)) return 'Club';
+  if (/^\/results\/[^/]+$/.test(pathname)) return 'Results'; // overridden by resolveLabel below when the event is known
   // Generic fallback: capitalise path segments
   return pathname
     .replace(/^\//, '')
@@ -47,19 +49,44 @@ export function labelFor(pathname: string): string {
 }
 
 /**
+ * Like `labelFor`, but resolves a real entity title for detail routes where
+ * one is available, instead of the generic fallback (which otherwise shows
+ * the raw slug, e.g. "Results / Test-meet"). Mirrors the slug-lookup pattern
+ * every event detail page already uses (`db.events.find(e => e.slug ===
+ * slug)`) — currently just `/results/:slug` → the event's display name.
+ * Falls back to `labelFor` for every other route.
+ */
+export function resolveLabel(pathname: string, db: DB): string {
+  const resultsMatch = /^\/results\/([^/]+)$/.exec(pathname);
+  if (resultsMatch) {
+    const event = db.events.find((e) => e.slug === resultsMatch[1]);
+    if (event) return event.name;
+  }
+  return labelFor(pathname);
+}
+
+/**
  * Call once inside Layout (or any component that mounts on every page).
  * Records each distinct navigation into the stack, deduplicating consecutive
- * visits to the same pathname.
+ * visits to the same pathname. Takes `db` so `resolveLabel` can look up a
+ * real entity title for detail routes — deliberately excluded from the deps
+ * array (matches the precedent in Results.tsx's realtime-subscription
+ * effect): only the pathname change should trigger a new stack push, and the
+ * `db` closed over here is whatever the calling Layout render currently has,
+ * which is fresh at the moment of navigation. Re-running on every store
+ * mutation would be wasteful and is guarded against anyway (a same-pathname
+ * push is a no-op).
  */
-export function useNavHistory(): void {
+export function useNavHistory(db: DB): void {
   const loc = useLocation();
   useEffect(() => {
     const current = loc.pathname;
     // Avoid duplicate consecutive entries (e.g. search-param changes)
     const top = stack[stack.length - 1];
     if (!top || top.pathname !== current) {
-      stack.push({ pathname: current, label: labelFor(current) });
+      stack.push({ pathname: current, label: resolveLabel(current, db) });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loc.pathname]);
 }
 

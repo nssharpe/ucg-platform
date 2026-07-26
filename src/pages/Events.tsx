@@ -6,7 +6,8 @@ import { useRolesLoaded } from '../lib/auth';
 import { seasonForDate, clubHasActiveMembershipForEvent, paidRegistrationClub } from '../lib/capabilities-core';
 import { currentSeason } from '../lib/season-lifecycle';
 import { eventIsInPhase } from '../lib/events-core';
-import { normalizeExternalUrl } from '../lib/url';
+import { normalizeExternalUrl, appBaseUrl, copyToClipboard } from '../lib/url';
+import { tzAbbrev } from '../lib/timezone';
 import { Badge, Field, Modal, Tabs } from '../components/ui';
 import { useToast, useFmtDate } from '../components/ui-hooks';
 import { EventWizard } from '../components/EventWizard';
@@ -217,19 +218,6 @@ export function Events() {
 }
 
 // ---------------------------------------------------------------------------
-// Timezone abbreviation helper
-// ---------------------------------------------------------------------------
-function tzAbbrev(timezone: string): string {
-  try {
-    const parts = new Intl.DateTimeFormat('en-US', { timeZone: timezone, timeZoneName: 'short' })
-      .formatToParts(new Date());
-    return parts.find((p) => p.type === 'timeZoneName')?.value ?? timezone;
-  } catch {
-    return timezone;
-  }
-}
-
-// ---------------------------------------------------------------------------
 // EventDetail
 // ---------------------------------------------------------------------------
 export function EventDetail() {
@@ -287,6 +275,14 @@ export function EventDetail() {
     : [];
   const anyStandaloneAddonOpen = anyAddonWindowOpen(event, new Date(), { includeBanner: false });
 
+  // H3: absolute link to this event, built from the app base so it survives
+  // the GitHub Pages subpath (and any future host) — never hand-concatenate
+  // location.origin + '#/...'.
+  const copyEventLink = async () => {
+    const ok = await copyToClipboard(`${appBaseUrl()}/#/events/${event.slug}`);
+    if (ok) toast('Link copied');
+  };
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: 12, flexWrap: 'wrap' }}>
@@ -307,6 +303,7 @@ export function EventDetail() {
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <EventStatusBadge event={event} />
+          <button className="btn small ghost" onClick={copyEventLink}>Copy link</button>
           {(canManage || caps.isSanctioning) && (
             <Link className="btn small ghost" to={`/events/${event.slug}/host`}>Host dashboard →</Link>
           )}
