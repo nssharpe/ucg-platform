@@ -29,8 +29,9 @@ import { useToast } from './ui-hooks';
 import { DisciplineIcon } from './DisciplineIcon';
 import { APPARATUS } from '../lib/types';
 import type { Athlete, Discipline, Level, Event, EventSession, Registration, Season, WaitlistGroup } from '../lib/types';
-import { changeIsEligible, regChangeHasDiff } from '../lib/pricing';
+import { changeIsEligible, regChangeHasDiff, lateFeeAnchor } from '../lib/pricing';
 import type { RegChangeState, RegDisciplineEntry } from '../lib/pricing';
+import { registrationEstimate, registrationEstimateLabel } from '../lib/reg-estimate';
 import { checkCapacity, hasCapacityConfig } from '../lib/capacity';
 import type { CapacityViolation } from '../lib/capacity';
 import { membershipTypeOf } from '../lib/capabilities-core';
@@ -718,6 +719,69 @@ export function RegistrationEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drafts, existing, clubId, originalClubId, athlete.id, isEditingExisting]);
 
+  // Live price estimate (S5, UI/UX review 2026-07-04) — derived ONLY from the
+  // existing pure pricing helpers via `registrationEstimate` (never
+  // duplicated here). `newDisciplineCount` only matters for the brand-new-
+  // registration branch (ignored by `registrationEstimate` when editing); a
+  // camp registration is always a single flat-fee row regardless of its
+  // equipment-list "disciplines", never per-discipline.
+  //
+  // `eligible && changeFeeApplies`: `saveLabel` below intentionally shows
+  // "Add change to cart" off `eligible` alone (pre-existing behavior, not
+  // S5's to change) — but the actual fee the parent charges on save is
+  // additionally gated on `changeFeeApplies` (the event's change-fee window
+  // having opened; see saveRegs in MyRegistrations.tsx/Club.tsx). Folding
+  // that gate in here (routing only, no fee math) keeps the estimate
+  // truthful: before the window opens, an eligible edit is still free.
+  // Disciplines being ADDED right now: enabled, apparatus chosen, and with no
+  // existing non-refunded row — the editor-side analogue of `newOnlyRegs` in
+  // Club.tsx's saveRegs. Counting every enabled discipline instead would
+  // re-charge disciplines the athlete already holds.
+  const newDisciplineCount = isCamp
+    ? (existing.some((r) => !r.refunded) ? 0 : 1)
+    : (event.disciplines as Discipline[]).filter((d) => (
+      drafts[d]?.enabled
+      && drafts[d].apparatus.length > 0
+      && !existing.some((r) => r.discipline === d && !r.refunded)
+    )).length;
+  // Already-held disciplines, so an added one prices at the SECOND-discipline
+  // rate (matches Club.tsx's `priorDisciplineCount`).
+  const priorDisciplineCount = existing.filter((r) => !r.refunded && r.apparatus.length > 0).length;
+  // Late-registration surcharge: the save path feeds `lateFeeAnchor` into
+  // `newRegistrationEntryTotal`, so the estimate must too or it quotes low
+  // inside a late window. Newly-added rows have no `createdAt` yet (they don't
+  // exist), which `lateFeeAnchor` treats as "now" — exactly how the save path
+  // sees them. `nowIso()` is a plain helper, not called textually inside the
+  // useMemo, so react-hooks/purity's impure-call check doesn't fire (same
+  // approach as `computeCapacityViolations` below).
+  const nowIso = () => new Date(nowMs()).toISOString();
+  const lateAnchor = (() => {
+    if (!event.lateReg) return null;
+    const outside = existing
+      .filter((r) => !r.refunded && r.apparatus.length > 0)
+      .map((r) => ({ id: r.id, createdAt: r.createdAt }));
+    const line = Array.from({ length: newDisciplineCount }, (_, i) => ({ id: `pending-${i}` }));
+    return lateFeeAnchor(line, outside, nowIso());
+  })();
+  const estimate = useMemo(
+    () => registrationEstimate({
+      event,
+      competingClubId: clubId,
+      isEditingExisting,
+      // RAW `eligible` — `registrationEstimate` needs it and `changeFeeApplies`
+      // separately to reproduce the save path's precedence (a discipline added
+      // while the change-fee window is CLOSED is billed as an entry fee, not
+      // free; see that module's header).
+      eligible,
+      changeFeeApplies,
+      newDisciplineCount,
+      priorDisciplineCount,
+      ...(lateAnchor ? { late: { earliestCreatedAtISO: lateAnchor } } : {}),
+    }),
+    [event, clubId, isEditingExisting, eligible, changeFeeApplies, newDisciplineCount, priorDisciplineCount, lateAnchor],
+  );
+  const estimateLabel = registrationEstimateLabel(estimate);
+
   // By-session events (event-mgmt v2 P4) require an explicit session pick for
   // every enabled discipline with apparatus chosen before Save is allowed.
   const sessionsMissing = event.registrationMode === 'by-session'
@@ -870,7 +934,17 @@ export function RegistrationEditor({
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 10, marginTop: 18, alignItems: 'center' }}>
+      {/* Live price estimate (S5). Contrast: --ink (#1e2b38) on --surface
+          (#fcfcfc) is well over AA (~15:1) — matches the app's default body
+          text color, used here at 600 weight since it's money info. */}
+      <p style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ink)', marginTop: 16, marginBottom: 0 }}>
+        {estimateLabel}
+      </p>
+      <p style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 2, marginBottom: 0 }}>
+        Estimated — the exact total is confirmed at checkout.
+      </p>
+
+      <div style={{ display: 'flex', gap: 10, marginTop: 12, alignItems: 'center' }}>
         <button
           className="btn primary"
           disabled={saveDisabled}
