@@ -397,6 +397,14 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   failures 'permanent' (no retry; boot-wired toast + drain-then-`syncFromSupabase()`
   rollback in `supabase.ts`); non-React code toasts via `pushToast` (`lib/toast-bus.ts`),
   the imperative escape hatch into the same ToastProvider.
+- **Data-layer scale (6.3):** `node --env-file=.env.local scripts/seed-scale.mjs`
+  seeds a 2-year-projection dataset into **STAGING ONLY** (hard-guarded against the
+  prod ref; every row id prefixed `scale-`; `--clean` removes exactly those and is
+  verified to restore staging). Measured 2026-07-26 at 50k regs / 52k scores:
+  **21.1 s cold boot, 28.95 MB localStorage** — and the quota error did NOT fire
+  (Chromium accepted it), so **don't treat a localStorage quota error as the alarm**.
+  Boot time is the real signal. Phases 2-3 (scoped-slice layer for `scores`/
+  `registrations`) are the fix: `docs/specs/2026-07-24-data-layer-scale.md`.
 - **New DB collection plumbing:** add to `types.ts` (`DB.<x>`), `rowTo<X>` +
   `push<X>`/`delete<X>` in `supabase.ts`, and the `loadAll` Promise.all + map +
   conditional spread. `from('<new_table>')` typechecks even if absent from `database.types`.
