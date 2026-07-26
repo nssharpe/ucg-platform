@@ -73,32 +73,30 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
 
 ## 3. Quality passes (pre- or just post-launch)
 
-1. **UI/UX review fixes** ([task briefs](plans/2026-07-04-uiux-review-fixes.md), from the
-  2026-07-04 live review). **S1** (primary-CTA contrast) and **S2/S3** (Profile sticky
-  save bar — opaque surface, AA-contrast bar text, real dirty-tracking so "Unsaved
-  changes" no longer shows on a clean edit) are done. **O1 "money story" reconciliation**
-  ([spec](specs/2026-07-04-money-story-ux.md)) is implemented on branch
-  `money/s4-cart-price-agreement` (2026-07-25, unmerged/undeployed pending fable review
-  of the money-path diff): `create-checkout-session mode:'preview'`, Cart.tsx
-  Estimated/price-agreement notice, Purchase-History + Cart receipts filtered to
-  `paid_at != null`. Invoice-numbering (spec §3) was explicitly deferred to the
-  pre-launch data sweep, not part of this branch. **S5** (live price estimate in
-  RegistrationEditor) and **S6** (payment-status badges on My Registrations) are also
-  implemented, on branch `ui/s5-s6-reg-money-display` (2026-07-25, unmerged/undeployed,
-  same fable-review gate) — see the plan doc for the estimate's `changeFeeApplies`
-  correction and a pre-existing 375px table-overflow finding (since resolved, see
-  next sentence). **H1–H4** (Results empty states, date/timezone formatting,
-  Copy-link buttons, and the 7-item microcopy sweep) are also implemented, on
-  branch `ui/h1-h4-display-polish` (2026-07-26, unmerged/undeployed) — this also
-  fixed the S5/S6 branch's out-of-scope 375px table-overflow finding on
-  MyRegistrations. **H5–H7** (collapse redundant cart CTAs, a NotFound route for
-  unmatched hash paths, accessible Details/Hide toggle buttons) are also
-  implemented, on branch `ui/h5-h7-cart-route-a11y` (2026-07-26, unmerged/
-  undeployed) — see the plan doc for the live-verified redirect list and the
-  pre-existing (unrelated, found-not-fixed) 375px overflow on the admin
-  Communicate page's compose editor card. Still open: merging/pushing all five
-  branches (after review — H5–H7 don't touch money so should be a lighter gate
-  than S4/S5/S6's fable review).
+1. ✅ **UI/UX review fixes — COMPLETE 2026-07-26** ([task briefs](plans/2026-07-04-uiux-review-fixes.md),
+  from the 2026-07-04 live review). All 14 tasks (O1, S1–S6, H1–H7) shipped to `main` and
+  deployed; per-task detail and evidence live in the plan doc, not here. Headlines:
+  **S1** primary-CTA/active-nav contrast (white-on-coral 2.94:1 → navy-on-coral 4.78:1,
+  plus a new `--coral-400` hover step since dark text needs the hover to LIGHTEN);
+  **S2/S3** Profile save bar (AA bar text + real dirty-tracking); **O1→S4** the money
+  story — `create-checkout-session` gained a side-effect-free `mode:'preview'` so the
+  cart shows the server's own prices and cart/checkout can no longer disagree;
+  **S5/S6** live fee estimate + payment-status badges; **H1–H7** empty states,
+  date/timezone formatting, Copy-link buttons, a 7-item microcopy sweep, cart CTA
+  collapse, a NotFound route, and keyboard-accessible Details/Hide toggles.
+
+  Residuals deliberately left open:
+   - **Invoice numbering** (O1 spec §3) — two formats coexist; deferred to the
+     pre-launch data sweep per Nate, since all current rows are test data. The
+     generators derive the sequence from a row COUNT, which is not concurrency-safe;
+     revisit when real invoices exist.
+   - **Pre-existing 375px overflow on the admin Communicate compose-editor card** —
+     found during H5–H7, proven pre-existing via `git stash`, out of scope there.
+   - **Keyboard verification of the H7 toggles was click+DOM-based**, not real key
+     events: the Browser pane could not deliver OS-level keystrokes this session.
+     They are real `<button>`s with default `tabIndex`, so Enter/Space is spec-
+     guaranteed, but a manual tab-through is worth doing once.
+
 2. **Accessibility audit** to WCAG 2.1 AA (axe + manual keyboard/focus/ARIA pass) +
   loading/empty/error-state consistency across pages.
 3. **New-club-request email** to `newclubinquiries@naigc.org` (transport exists, not wired).
