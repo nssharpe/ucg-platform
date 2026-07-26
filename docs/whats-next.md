@@ -41,11 +41,16 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
    member could forge a paid invoice via PostgREST; writes on `invoices`/
    `invoice_items` are now admin-only). **Applied to staging AND prod 2026-07-24**,
    live-probed 7/7 as a non-admin against both.
-   ❌ Still open: **M1** coupon reservation at session-create (must not reserve on
-   the `mode: 'preview'` path — see [money-story spec](specs/2026-07-04-money-story-ux.md)),
-   and the LOW items (scoped `club_managers`/`app_settings` reads, `error_logs`
-   insert rate-limit; token entropy was checked and is sound, a 256-bit bump is
-   optional polish).
+   🟡 **M1 (coupon reservation at session-create) DRAFTED 2026-07-26, not yet
+   applied** — branch `sec/m1-coupon-reservation`, migration `20260726130005`;
+   correctly does not reserve on the `mode: 'preview'` path (see
+   [money-story spec](specs/2026-07-04-money-story-ux.md)). 🤖 build/eslint/vitest
+   green; needs the controller's `supabase db push` (staging then prod) + the
+   staging concurrency proof before it actually closes the gap and this can be
+   marked done.
+   ❌ Still open after that: the LOW items (scoped `club_managers`/`app_settings`
+   reads, `error_logs` insert rate-limit; token entropy was checked and is sound,
+   a 256-bit bump is optional polish).
 5. ✅ **FIXED 2026-07-24 — `loadAll` silently truncated at 1000 rows.** Every table
    read now paginates AND sorts deterministically (an unordered `.range()` can
    duplicate/skip rows — a second latent bug found on the way). Proven on staging:
