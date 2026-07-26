@@ -153,6 +153,47 @@ roughly 80 B/row, so ~500 KB at 6k people) hydrated globally, and full person ro
 fetched on demand where a page actually needs the rest of the profile. This keeps every
 existing name lookup synchronous, which is what makes the split cheap.
 
+### The slice-layer CONTRACT (settled 2026-07-26 — Phases 2 and 3 both implement this)
+
+Derived from enumerating every real consumer of `db.scores` (13 references / 10 files).
+The access patterns are NOT uniform, so a single `useScope(table, key)` would be a poor
+fit. Four shapes are needed, and `registrations` maps onto the same four:
+
+1. **By event** — the dominant pattern (`scoring.ts`, `Results.tsx`, `Events.tsx`,
+   `Judge.tsx`, `nationals-adapter.ts`). API: `useEventScores(eventId)` /
+   `useEventRegistrations(eventId)` → `{ rows, status }`.
+2. **Mine** — `Home.tsx` and `person-data.ts` filter scores by the signed-in person's
+   registration ids. This is Tier 2: keep it hydrated at boot, scoped to the caller, and
+   **synchronous**. That is what keeps My Registrations / Cart / Purchase History
+   simple, and it is the main reason Phase 3 is survivable at all.
+3. **Single record** — `ScoreDetail.tsx` looks up one score by composite id. Needs a
+   direct fetch-by-id, not a whole slice.
+4. **Everything** — only `pushAll` (admin Demo Tools, `RequireAdmin`). Keep an explicit
+   "fetch all" used *only* there; it must never be on a normal render path.
+
+**`status` is mandatory and non-optional in the return type.** The single biggest hazard
+in this refactor is a page that filters an unloaded slice, gets `[]`, and confidently
+renders an empty state — "no scores posted yet" when the truth is "not loaded yet".
+Returning `{ rows, status }` rather than a bare array makes forgetting it a type error
+instead of a silent wrong answer. Every consumer must distinguish `loading` from
+`ready && empty`.
+
+**Other rules:**
+- Slices are **memory-only** — never written to `localStorage`. This is what removes the
+  28.95 MB snapshot measured above.
+- Every slice fetch paginates via the shared `fetchAllRows` (Phase 0) so no scoped query
+  can reintroduce the 1000-row truncation.
+- Writes keep their current shape: `mutate()` + `push*` through the write queue. The
+  optimistic local update applies to whichever slice holds the row. The in-place
+  `mutate()` trap applies to slices too — read slice rows directly each render, never
+  `useMemo` on a nested path.
+- `scores` already has a per-event realtime channel (`scores:${eventId}`) keyed exactly
+  like the slice — it becomes the slice's invalidation signal rather than a special case.
+- Non-React consumers (`scoring.ts`, `nationals.ts`, `nationals-adapter.ts`,
+  `person-data.ts`) must take rows as PARAMETERS rather than reaching into `db.*`
+  themselves. That keeps them pure and testable, and it is the change that makes the
+  React-side slice boundary honest.
+
 ### The slice layer
 
 Add a scoped-slice cache alongside the existing store:
