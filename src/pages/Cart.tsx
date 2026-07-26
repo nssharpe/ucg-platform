@@ -10,11 +10,41 @@ import { downloadCartInvoice, downloadReceipt, invoiceTotal } from '../lib/recei
 import { CartCheckout } from '../components/CartCheckout';
 import { CapacityConflictDialog } from '../components/CapacityConflictDialog';
 import { hasCapacityConfig } from '../lib/capacity';
-import { missingNationalsSurveyEvents, type SessionRequestGateReg } from '../lib/pricing';
-import type { CheckoutCapacityError } from '../lib/supabase';
+import { missingNationalsSurveyEvents, diffCartLinePrices, type SessionRequestGateReg } from '../lib/pricing';
+import { previewCartTotal, type CheckoutCapacityError, type CartPreviewLine } from '../lib/supabase';
 import type { CartItem, Club, DB, Invoice } from '../lib/types';
 
 const sum = (items: CartItem[]) => items.reduce((s, i) => s + i.amount, 0);
+
+/** S4 (money-story UX): the cart's own server-price preview
+ *  (`create-checkout-session { mode: 'preview' }`), fetched once per
+ *  scope (personal cart, or one managed club's cart) for its FULL item
+ *  set. `'loading'` covers both "not fetched yet" and "refetching after
+ *  the cart's contents changed" — the stored amounts stay on screen,
+ *  labelled "Estimated", the whole time. */
+type CartPreviewState =
+  | { status: 'loading' }
+  | { status: 'loaded'; lines: CartPreviewLine[]; total: number; serviceFee: number }
+  | { status: 'failed' };
+
+/** This item's server-priced dollar amount, or `null` if the preview hasn't
+ *  landed (yet, or ever) — the caller falls back to the stored `item.amount`. */
+function previewAmountFor(itemId: string, preview: CartPreviewState): number | null {
+  if (preview.status !== 'loaded') return null;
+  const line = preview.lines.find((l) => l.itemId === itemId);
+  return line ? line.amountCents / 100 : null;
+}
+
+/** The amount to DISPLAY for one cart item: the server preview's price once
+ *  loaded, else the stored (possibly-stale) `cart_items.amount` — "the UI
+ *  never sums client amounts as authoritative" once a server price exists. */
+function pricedAmount(item: CartItem, preview: CartPreviewState): number {
+  return previewAmountFor(item.id, preview) ?? item.amount;
+}
+
+function pricedSum(items: CartItem[], preview: CartPreviewState): number {
+  return items.reduce((s, i) => s + pricedAmount(i, preview), 0);
+}
 
 /** Group a cart's items the same way everywhere: a "Memberships" bucket, a
  *  bucket per event (matched by name appearing in the label, carrying the
@@ -121,8 +151,8 @@ function HoldCountdown({ expiresAtMs }: { expiresAtMs: number }) {
   );
 }
 
-function CartCard({ title, items, returnTo, returnLabel, onCheckout, onRemove, onPrintInvoice, holdExpiresAtMs, surveyGate, surveyReturnTo }: {
-  title: string; items: CartItem[]; returnTo: string; returnLabel: string; onCheckout: () => void;
+function CartCard({ title, items, preview, returnTo, returnLabel, onCheckout, onRemove, onPrintInvoice, holdExpiresAtMs, surveyGate, surveyReturnTo }: {
+  title: string; items: CartItem[]; preview: CartPreviewState; returnTo: string; returnLabel: string; onCheckout: () => void;
   onRemove: (item: CartItem) => void; onPrintInvoice: () => void;
   /** event-mgmt v2 P4 T6: earliest live cart-add hold among this card's
    *  registrations, epoch ms — only set for capacity-configured events. */
@@ -137,6 +167,7 @@ function CartCard({ title, items, returnTo, returnLabel, onCheckout, onRemove, o
   surveyReturnTo?: string;
 }) {
   const surveyBlocked = !!surveyGate && surveyGate.length > 0;
+  const estimated = preview.status !== 'loaded';
   return (
     <div className="card card-pad">
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
@@ -155,7 +186,7 @@ function CartCard({ title, items, returnTo, returnLabel, onCheckout, onRemove, o
           <li key={i.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
             <span>{i.label}</span>
             <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <strong>{fmtMoney(i.amount)}</strong>
+              <strong>{fmtMoney(pricedAmount(i, preview))}</strong>
               <button
                 type="button"
                 className="btn ghost small"
@@ -171,7 +202,10 @@ function CartCard({ title, items, returnTo, returnLabel, onCheckout, onRemove, o
         ))}
       </ul>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <strong style={{ marginRight: 'auto' }}>Subtotal: {fmtMoney(sum(items))}</strong>
+        <strong style={{ marginRight: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span>Subtotal: {fmtMoney(pricedSum(items, preview))}</span>
+          {estimated && <Badge tone="info">Estimated</Badge>}
+        </strong>
         <button className="btn ghost small" onClick={onPrintInvoice} disabled={items.length === 0}>
           Print Invoice
         </button>
@@ -210,8 +244,56 @@ function CartScope({
   const navigate = useNavigate();
   const [checkout, setCheckout] = useState<{ items: CartItem[]; title: string } | null>(null);
   const [capacityConflict, setCapacityConflict] = useState<CheckoutCapacityError | null>(null);
+  const [preview, setPreview] = useState<CartPreviewState>({ status: 'loading' });
 
   const groups = useMemo(() => groupCartItems(cart, db), [cart, db]);
+
+  // S4 (money-story UX): fetch a server price preview for this scope's ENTIRE
+  // cart (`create-checkout-session { mode: 'preview' }`) whenever its
+  // contents change, so the cart can replace the stale, client-written
+  // `cart_items.amount` with the same price the server would actually
+  // charge. Keyed on a stable, order-independent id list rather than the
+  // `cart` array reference (mutate() mutates db.carts in place — the M6 trap
+  // — so a reference-keyed effect could miss a real change or refire on a
+  // no-op resync). Never blocks or empties the cart: a failed/loading
+  // preview just means the stored amounts stay on screen (see
+  // `pricedAmount`/`CartPreviewState`). Deliberately does NOT reset state to
+  // `'loading'` synchronously at the top of the effect (an ESLint-flagged
+  // cascading-render trap, CLAUDE.md "no synchronous setState in a useEffect
+  // body") — a stale-but-loaded preview just stays on screen, unlabelled,
+  // until the refetch resolves, which reads better than flickering back to
+  // "Estimated" on every cart edit anyway.
+  const cartIdsKey = cart.map((i) => i.id).slice().sort().join(',');
+  useEffect(() => {
+    if (cart.length === 0) return;
+    let cancelled = false;
+    void previewCartTotal({ cartItemIds: cart.map((i) => i.id) })
+      .then((r) => {
+        if (cancelled) return;
+        if (r.ok && r.lines && r.total != null && r.serviceFee != null) {
+          setPreview({ status: 'loaded', lines: r.lines, total: r.total, serviceFee: r.serviceFee });
+        } else {
+          setPreview({ status: 'failed' });
+        }
+      })
+      .catch(() => { if (!cancelled) setPreview({ status: 'failed' }); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cartIdsKey]);
+
+  // "We updated these prices to today's rates" (spec §1): which lines'
+  // server price differs from what's currently displayed, once the preview
+  // has actually landed (never computed against a failed/loading preview —
+  // there's nothing authoritative to diff against yet).
+  const diffLines = preview.status === 'loaded'
+    ? diffCartLinePrices(cart.map((i) => ({ id: i.id, label: i.label, amount: i.amount })), preview.lines)
+    : [];
+  // The server's total (subtotal − discount + service fee, in dollars) once
+  // loaded — this is what "Check out everything" would actually charge, so
+  // it's what the cart's own "Total" bars show. Falls back to the stored,
+  // fee-less client sum (labelled "Estimated") until then.
+  const scopeTotal = preview.status === 'loaded' ? preview.total / 100 : sum(cart);
+  const totalEstimated = preview.status !== 'loaded';
 
   // event-mgmt v2 Phase 5 A3: where this scope answers a nationals
   // session-planning survey — the club's registrations page for a club cart,
@@ -357,9 +439,32 @@ function CartScope({
   return (
     <div>
       {conflictDialog}
+      {/* S4: the price-agreement notice/fallback sits ABOVE the totals bar —
+          "above the totals" per spec §1 — so it's the first thing explaining
+          why a number moved, before the number itself. */}
+      {diffLines.length > 0 && (
+        <div className="card card-pad" style={{ marginBottom: 14, background: 'var(--ice-100)', border: '1px solid var(--ice-300)' }}>
+          <strong style={{ display: 'block', marginBottom: 6, color: 'var(--navy-800)', fontSize: 14 }}>
+            We updated these prices to today&rsquo;s rates
+          </strong>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13.5, color: 'var(--navy-700)' }}>
+            {diffLines.map((d) => (
+              <li key={d.itemId}>{d.label}: {fmtMoney(d.oldDollars)} → {fmtMoney(d.newDollars)}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {preview.status === 'failed' && (
+        <p style={{ margin: '0 0 14px', fontSize: 13, color: 'var(--ink-soft)' }}>
+          Showing estimated prices — final total is confirmed at checkout.
+        </p>
+      )}
       {/* Checkout-All at the TOP, duplicated at the bottom below the cards. */}
       <div className="card card-pad" style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <strong style={{ fontSize: 16, marginRight: 'auto' }}>Total: {fmtMoney(sum(cart))}</strong>
+        <strong style={{ fontSize: 16, marginRight: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span>Total: {fmtMoney(scopeTotal)}</span>
+          {totalEstimated && <Badge tone="info">Estimated</Badge>}
+        </strong>
         {printAllButton}
         {checkoutAllButton}
       </div>
@@ -373,7 +478,7 @@ function CartScope({
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {groups.membership.length > 0 && (
-          <CartCard title="Memberships" items={groups.membership} returnTo={membershipsReturnTo} returnLabel="Checkout Memberships"
+          <CartCard title="Memberships" items={groups.membership} preview={preview} returnTo={membershipsReturnTo} returnLabel="Checkout Memberships"
             onCheckout={() => setCheckout({ items: groups.membership, title: 'Memberships' })}
             onRemove={removeItem}
             onPrintInvoice={() => downloadCartInvoice(groups.membership, name, 'Memberships')}
@@ -385,7 +490,7 @@ function CartScope({
           const configured = !!event && hasCapacityConfig(event, event.sessions);
           const holdMs = configured ? earliestHoldMs(g.items, db) : null;
           return (
-            <CartCard key={g.eventId} title={g.eventName} items={g.items}
+            <CartCard key={g.eventId} title={g.eventName} items={g.items} preview={preview}
               returnTo={registrationsReturnTo(g.slug)} returnLabel="Return to registration"
               onCheckout={() => setCheckout({ items: g.items, title: g.eventName })}
               onRemove={removeItem}
@@ -396,7 +501,7 @@ function CartScope({
           );
         })}
         {groups.other.length > 0 && (
-          <CartCard title="Other" items={groups.other} returnTo={otherReturnTo} returnLabel="Browse"
+          <CartCard title="Other" items={groups.other} preview={preview} returnTo={otherReturnTo} returnLabel="Browse"
             onCheckout={() => setCheckout({ items: groups.other, title: 'Other' })}
             onRemove={removeItem}
             onPrintInvoice={() => downloadCartInvoice(groups.other, name, 'Other')}
@@ -406,7 +511,10 @@ function CartScope({
       </div>
 
       <div className="card card-pad" style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <strong style={{ fontSize: 16, marginRight: 'auto' }}>Total: {fmtMoney(sum(cart))}</strong>
+        <strong style={{ fontSize: 16, marginRight: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span>Total: {fmtMoney(scopeTotal)}</span>
+          {totalEstimated && <Badge tone="info">Estimated</Badge>}
+        </strong>
         {printAllButton}
         {checkoutAllButton}
       </div>
@@ -425,9 +533,11 @@ function ReceiptsSection({ clubId, forName }: { clubId: string | null; forName: 
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
 
+  // S4 (money-story UX §2): same "receipts only" treatment as PurchaseHistory
+  // — an unpaid invoice is not a supported member/manager-facing state.
   const allInvoices = useMemo(() =>
     db.invoices
-      .filter((i) => i.clubId === clubId)
+      .filter((i) => i.clubId === clubId && i.paidAt != null)
       .slice()
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     [db.invoices, clubId],
@@ -478,7 +588,7 @@ function ReceiptsSection({ clubId, forName }: { clubId: string | null; forName: 
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
                 <strong>{inv.number}</strong>
                 <span style={{ color: 'var(--ink-soft)', fontSize: 13 }}>{fmtDate(inv.createdAt.slice(0, 10))}</span>
-                {inv.paidAt ? <Badge tone="ok">Paid</Badge> : <Badge tone="warn">Unpaid</Badge>}
+                <Badge tone="ok">Paid</Badge>
                 <strong style={{ marginLeft: 'auto' }}>{fmtMoney(invoiceTotal(inv))}</strong>
               </div>
               <p style={{ margin: '8px 0 10px', fontSize: 14, color: 'var(--ink-soft)' }}>
@@ -493,7 +603,7 @@ function ReceiptsSection({ clubId, forName }: { clubId: string | null; forName: 
       {detail && (
         <Modal title={`Receipt ${detail.number}`} onClose={() => setDetail(null)}>
           <div style={{ fontSize: 13.5, color: 'var(--ink-soft)', marginBottom: 12 }}>
-            {fmtDate(detail.createdAt.slice(0, 10))} · {detail.paidAt ? 'Paid' : 'Unpaid'} · Billed to {forName}
+            {fmtDate(detail.createdAt.slice(0, 10))} · Paid · Billed to {forName}
           </div>
           {(() => {
             const lineItems = detail.items.filter((i) => i.kind !== 'discount');

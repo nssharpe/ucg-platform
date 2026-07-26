@@ -23,6 +23,15 @@
 // `fulfillPayment` core (`_shared/fulfill.ts`, the same core `stripe-webhook`
 // uses) and returns `{ free: true, paymentId }` instead of a client secret.
 // No service fee is charged on a $0 order.
+//
+// PREVIEW MODE (money-story UX S4, 2026-07-25): `{ mode: 'preview' }` runs
+// this exact same auth + H4 ownership + capacity/survey validation + pricing
+// recompute, then returns the priced lines/subtotal/fee/total WITHOUT any
+// side effect — no payments insert, no lines_snapshot write, no cart_items
+// mutation, no Stripe call, no coupon redemption. The cart page (`Cart.tsx`)
+// uses this to show the server's real price instead of the stale
+// client-written `cart_items.amount`, so the cart and the checkout summary
+// can never disagree. See "PREVIEW BRANCH POINT" below.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
   addonLastPurchaseAt,
@@ -123,13 +132,20 @@ Deno.serve(async (req) => {
   const personId = person.id as string;
 
   // --- Validate payload ---
-  let body: { cartItemIds?: unknown; couponCode?: unknown };
+  let body: { cartItemIds?: unknown; couponCode?: unknown; mode?: unknown };
   try { body = await req.json(); } catch { return json({ ok: false, error: 'Invalid JSON body.' }, 400); }
   const cartItemIds = Array.isArray(body.cartItemIds)
     ? body.cartItemIds.filter((x): x is string => typeof x === 'string')
     : [];
   if (cartItemIds.length === 0) return json({ ok: false, error: 'No cart items to pay.' }, 400);
   const couponCodeInput = typeof body.couponCode === 'string' ? body.couponCode.trim().toUpperCase() : '';
+  // S4 (money-story UX): `mode: 'preview'` runs the exact same auth,
+  // ownership (H4), and pricing logic below and returns BEFORE any write —
+  // no payments insert, no cart_items mutation, no Stripe call, no coupon
+  // redemption/reservation. See the single preview-return branch point
+  // (search "PREVIEW BRANCH POINT" below) and the one individually-guarded
+  // write that precedes it (the capacity hold-refresh).
+  const isPreview = body.mode === 'preview';
 
   // --- Load the requested cart items (service role; we authorize ownership below) ---
   const { data: itemRows, error: itemErr } = await db
@@ -444,11 +460,17 @@ Deno.serve(async (req) => {
         // start refreshes the hold"). Client-writable `hold_expires_at` is
         // clamped server-side to this same 30-min ceiling by a DB trigger
         // (migration emv2_p4_hold_clamp) — this write and that clamp agree.
-        const { error: holdErr } = await db
-          .from('registrations')
-          .update({ hold_expires_at: holdExpiresAtIso })
-          .in('id', incomingForEvent.map((r) => r.id));
-        if (holdErr) return json({ ok: false, error: holdErr.message }, 500);
+        // S4: this is the ONE write that happens before the preview-return
+        // branch point (it's part of validation setup, not the pricing
+        // computation) — individually guarded rather than restructured,
+        // since previewing a price must never extend a capacity hold.
+        if (!isPreview) {
+          const { error: holdErr } = await db
+            .from('registrations')
+            .update({ hold_expires_at: holdExpiresAtIso })
+            .in('id', incomingForEvent.map((r) => r.id));
+          if (holdErr) return json({ ok: false, error: holdErr.message }, 500);
+        }
 
         const violations = checkCapacity(capEvent, sessions, allEventRegs, incomingForEvent, groupsById, nowMs);
         if (violations.length) {
@@ -891,6 +913,48 @@ Deno.serve(async (req) => {
   // pays out $115 for an $85 line). `amount_cents` (and invoice_items.amount)
   // deliberately keeps the list price for receipts/invoices.
   const paidCentsByItem = new Map<string, number>(lines.map((l) => [l.itemId, l.cents]));
+
+  // ============================================================================
+  // === PREVIEW BRANCH POINT (S4, money-story UX spec §1) =====================
+  // === Everything above this line is auth, ownership (H4), capacity/survey
+  // === validation, and pure pricing computation — no side effect except the
+  // === one individually-guarded hold-refresh write above (skipped when
+  // === `isPreview`). Everything BELOW this line writes: the free-order path
+  // === deletes cart_items + inserts payments + fulfills; the paid path
+  // === creates a Stripe session + inserts payments. `mode:'preview'` MUST
+  // === return here, before any of that, so it is structurally impossible for
+  // === a preview request to write anything.
+  // ===
+  // === FUTURE M1 (coupon reservation): when that lands, the reservation call
+  // === belongs strictly AFTER this branch point, on the non-preview path
+  // === only — a preview must never reserve a coupon use just because someone
+  // === loaded the cart page. Do not move coupon validation above this
+  // === comment to add reservation; hook it in below instead.
+  // ============================================================================
+  if (isPreview) {
+    // No service fee on what would be a $0 order (mirrors the free-order
+    // path below, which never calls processingFee on a $0 subtotal).
+    const previewFeeCents = subtotalCents > 0 ? processingFee(subtotalCents) : 0;
+    // One entry per ORIGINAL cart item (incl. $0 host-club/covered lines),
+    // priced at what the payer would actually be charged post-discount —
+    // exactly `paidCentsByItem`'s convention, same as `lines_snapshot.paid_cents`
+    // would freeze on a real checkout. This is only what clicking "Check out"
+    // would already reveal — no new information disclosure.
+    const previewLines = items.map((i) => ({
+      itemId: i.id,
+      label: i.label,
+      amountCents: paidCentsByItem.get(i.id) ?? serverCentsByItem.get(i.id) ?? 0,
+    }));
+    return json({
+      ok: true,
+      preview: true,
+      lines: previewLines,
+      amountSubtotal: preDiscountSubtotalCents,
+      discountAmount: discountCents,
+      serviceFee: previewFeeCents,
+      total: subtotalCents + previewFeeCents,
+    });
+  }
 
   // --- Freeze the validated, server-priced line set onto the payment row -----
   // Fulfillment reads FROM THIS SNAPSHOT, not from live `cart_items` (which

@@ -931,6 +931,50 @@ export function processingFee(subtotalCents: number): number {
   return Math.ceil(subtotalCents * 0.03) + 30;
 }
 
+/** One line of the "We updated these prices to today's rates" notice shown on
+ *  the Cart page (S4, money-story UX spec §1): a cart item whose server
+ *  preview price differs from the stale, client-written amount the cart was
+ *  displaying. Dollars, ready for `fmtMoney`. */
+export interface CartPriceDiffLine {
+  itemId: string;
+  label: string;
+  oldDollars: number;
+  newDollars: number;
+}
+
+/** Pure diff between the cart's currently-DISPLAYED (stale) line amounts and
+ *  `create-checkout-session { mode: 'preview' }`'s server-priced lines (S4).
+ *  No DB/React access, fully unit-testable — this is the heart of the
+ *  cart/checkout price-agreement feature.
+ *
+ *  Compares in CENTS (rounding each displayed dollar amount) to avoid float
+ *  noise from repeated dollar arithmetic; returns DOLLARS for direct display.
+ *  A server line with no matching displayed item (or a displayed item the
+ *  server didn't price) is silently skipped — that's a cart/response
+ *  membership mismatch for the caller to handle separately, not a price
+ *  change to report. Result order follows `serverLines`. */
+export function diffCartLinePrices(
+  displayedItems: { id: string; label: string; amount: number }[],
+  serverLines: { itemId: string; label: string; amountCents: number }[],
+): CartPriceDiffLine[] {
+  const displayedById = new Map(displayedItems.map((i) => [i.id, i]));
+  const diffs: CartPriceDiffLine[] = [];
+  for (const line of serverLines) {
+    const displayed = displayedById.get(line.itemId);
+    if (!displayed) continue;
+    const oldCents = Math.round(displayed.amount * 100);
+    if (oldCents !== line.amountCents) {
+      diffs.push({
+        itemId: line.itemId,
+        label: line.label,
+        oldDollars: displayed.amount,
+        newDollars: line.amountCents / 100,
+      });
+    }
+  }
+  return diffs;
+}
+
 /** Generate a random uppercase promo code (default 8 chars, no ambiguous chars). */
 export function randomPromoCode(len = 8): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I,O,0,1

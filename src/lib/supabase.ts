@@ -15,6 +15,7 @@ import { pushToast } from './toast-bus';
 import type { Database } from './database.types';
 import type { CapacityViolation } from './capacity';
 import { PAGE_SIZE, sortKeysForTable, hasMorePages } from './pagination';
+import { reportError } from './report-error';
 
 /** A table's Row type — the shape Supabase returns, used to type the DB→app
  *  row mappers so a schema change (renamed/dropped column) fails the build. */
@@ -1594,6 +1595,62 @@ export async function createCheckoutSession(args: {
   return data as {
     ok: boolean; clientSecret?: string; sessionId?: string; paymentId?: string; free?: boolean;
     amountSubtotal?: number; discountAmount?: number; serviceFee?: number;
+  };
+}
+
+/** One server-priced line from a `mode:'preview'` call, keyed to a cart item. */
+export interface CartPreviewLine {
+  itemId: string;
+  label: string;
+  amountCents: number;
+}
+
+/** Price a set of cart items exactly the way checkout would, WITHOUT starting
+ *  a checkout (S4, money-story UX): `create-checkout-session { mode:
+ *  'preview' }` runs the same auth/ownership/validation and pricing recompute
+ *  and returns before any write — no payments row, no Stripe call, no coupon
+ *  redemption. Used by the Cart page to replace the stale, client-written
+ *  `cart_items.amount` with the server's real price so the cart and the
+ *  checkout summary can never disagree (`diffCartLinePrices` in `pricing.ts`
+ *  does the comparison). On ANY failure (network, validation rejection, capacity
+ *  conflict, etc.) the caller should fall back to the stored "Estimated"
+ *  amounts — a failed preview must never block or empty the cart. */
+export async function previewCartTotal(args: {
+  cartItemIds: string[];
+  couponCode?: string;
+}): Promise<{
+  ok: boolean; lines?: CartPreviewLine[];
+  amountSubtotal?: number; discountAmount?: number; serviceFee?: number; total?: number;
+  error?: string;
+}> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('create-checkout-session', {
+    body: { ...args, mode: 'preview' },
+  });
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  const res = data as {
+    ok?: boolean; preview?: boolean; lines?: CartPreviewLine[];
+    amountSubtotal?: number; discountAmount?: number; serviceFee?: number; total?: number;
+  };
+  // VERSION-SKEW GUARD. A deployed function that predates preview mode ignores
+  // the unknown `mode` field and runs a REAL checkout — inserting a payments
+  // row and creating a Stripe session — then answers `{ok:true}` with no
+  // `lines`. Treating that as a preview would be wrong, so require the explicit
+  // `preview:true` marker. This cannot undo the write that already happened
+  // server-side (only deploy ordering prevents that: ALWAYS deploy this
+  // function before shipping a client that calls preview), but it stops the
+  // skew from being silent — during S4 development exactly this produced 7
+  // stray pending payments before anyone noticed.
+  if (res?.ok && res.preview !== true) {
+    reportError(new Error(
+      'previewCartTotal: create-checkout-session answered without preview:true — the deployed '
+      + 'function predates preview mode and may have started a real checkout session.',
+    ), 'previewCartTotal');
+    return { ok: false, error: 'Price preview is unavailable right now.' };
+  }
+  return res as {
+    ok: boolean; lines?: CartPreviewLine[];
+    amountSubtotal?: number; discountAmount?: number; serviceFee?: number; total?: number;
   };
 }
 
