@@ -133,6 +133,10 @@ export async function syncFromSupabase() {
   db = remote;
   snapshotVersion++;
   const payloadBytes = persist();
+  // Cheap, always-on visibility (console only — no network call) so the
+  // numbers are inspectable in devtools on every hydration, not just the
+  // rare one that crosses a threshold below.
+  console.debug(`[store] hydration ${hydrationMs.toFixed(0)}ms, payload ${payloadBytes.toLocaleString()} chars`);
   maybeReportBootMetrics(payloadBytes, hydrationMs);
   listeners.forEach((l) => l());
 }

@@ -40,6 +40,47 @@ Counts via a read-only `head:true` probe as the seeded admin:
 So the payload is small *today*, and none of the three documented triggers has fired.
 That is the only good news here.
 
+## MEASURED AT SCALE (2026-07-26, Phase 1) — the assumption was wrong
+
+Seeded staging with the harness (`scripts/seed-scale.mjs`) and measured a real cold
+boot in Chromium against it. **The result inverts this spec's premise.**
+
+| | Prod today | Seeded staging |
+|---|---|---|
+| `registrations` | 35 | **50,130** (full 2-yr projection) |
+| `scores` | 3 | **52,248** (~30% of the 2-yr projection) |
+| localStorage snapshot | trivial | **28.95 MB** |
+| Cold boot → persisted snapshot | — | **21.1 seconds** |
+| localStorage quota error | — | **did NOT fire** |
+
+Two corrections to what this document previously assumed:
+
+1. **The ~5 MB localStorage cap is NOT the tripwire.** Chromium accepted a **28.95 MB**
+   snapshot without raising. The "first localStorage quota error in `error_logs`"
+   trigger therefore **cannot be relied on to warn us** — in Chrome it may never fire at
+   all. (Safari's stricter limit likely still would, so the instrumentation stays worth
+   having; it just isn't the alarm we thought.)
+2. **Boot time is the real cliff, and it is already catastrophic.** 21.1 seconds from
+   cold load to hydrated snapshot — on a *desktop* over broadband, with a warm dev
+   server. The documented trigger is 3 s on mid-tier mobile; we are ~7× past it on
+   hardware far better than the target. A phone on cell data would be multiples worse.
+
+And this measurement is **conservative in three ways**: `scores` was only at ~30% of the
+2-year projection; `people` contributed just 1 row (RLS scoped it for the signed-in dev
+user) rather than the ~6k a real admin session would pull; and invoices/payments/
+memberships never seeded before the run was interrupted.
+
+**Consequence for sequencing.** Phases 2-3 (moving `scores` and `registrations` onto the
+slice layer) were framed here as "act when a trigger fires". A trigger has fired — the
+boot-time one — and the quota trigger we were counting on turns out to be unreliable.
+This is not next-year work. It is the thing that makes the app unusable at the first
+nationals-sized dataset, and it should be scheduled ahead of further polish.
+
+*Reproduce:* `node --env-file=.env.local scripts/seed-scale.mjs` (staging-only, hard-
+guarded against the prod ref), measure, then `--clean` — verified to restore staging
+exactly (scores 248, registrations 130, people 84, events 4, clubs 9; zero `scale-`
+rows left).
+
 ## The urgent finding: silent truncation, already latent
 
 `fetchAllRows` ([`supabase.ts:74`](../../src/lib/supabase.ts)) exists to page past
