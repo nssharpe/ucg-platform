@@ -141,9 +141,16 @@ Suggested from a post-emv2 read of the platform; some have shipped, others are p
   links) reduce Julia-as-support and make fall-season onboarding of hosts cheaper.
 2. **Privacy-friendly analytics + Web Vitals** (Plausible/PostHog) once real users
   arrive; optional Sentry for stack traces with releases.
-3. **Data-layer scale path** — no action yet; act on the documented triggers (boot
-  payload > ~2MB, admin boot > 3s mid-tier mobile, first localStorage quota error):
-  per-page queries for `scores`/`registrations` first.
+3. 🔴 **Data-layer scale path — Phase 0 + Phase 1 DONE, Phases 2-5 OPEN and now
+  URGENT** ([spec](specs/2026-07-24-data-layer-scale.md)). Phase 0 fixed the silent
+  1000-row truncation (shipped). Phase 1 (2026-07-26) built the staging-only
+  `scripts/seed-scale.mjs` harness + boot instrumentation, then MEASURED: at 50k
+  registrations / 52k scores the app takes **21.1 s to cold-boot** and writes a
+  **28.95 MB** localStorage snapshot — and the localStorage quota error we were
+  relying on as the alarm **never fired** (Chromium accepted it). The trigger-based
+  posture is spent: a trigger has fired. Phases 2-3 (move `scores`, then
+  `registrations`, onto the scoped-slice layer) are the actual fix and should be
+  scheduled ahead of further polish.
 
 ## Architecture watch-list
 

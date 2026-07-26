@@ -3,9 +3,10 @@
 import { useSyncExternalStore } from 'react';
 import type { DB } from './types';
 import { buildSeed } from './seed';
-import { isSupabaseConfigured, loadAll } from './supabase';
+import { isSupabaseConfigured, loadAll, logClientError } from './supabase';
 import { isBrowserOnline } from './write-queue';
 import { pushToast } from './toast-bus';
+import { isQuotaExceededError, shouldReportBootMetrics } from './boot-metrics';
 
 const LS_KEY = 'ucg-db-v1';
 // Bumped to 6 for the Meet→Event + apparatus rename: the persisted DB shape
@@ -32,10 +33,53 @@ function load(): DB {
   return buildSeed();
 }
 
-function persist() {
+/** Persists `db` to localStorage. Returns the serialized payload's size
+ *  (UTF-16 code units — a cheap, already-computed proxy for bytes; the JSON
+ *  this store holds is overwhelmingly ASCII, so re-encoding to count real
+ *  UTF-8 bytes would just be a second full pass over a multi-MB string for
+ *  no material accuracy gain) so callers can pair it with a hydration
+ *  duration for boot instrumentation — see `maybeReportBootMetrics` below. */
+function persist(): number {
+  const json = JSON.stringify({ __v: SEED_VERSION, db });
+  const payloadBytes = json.length;
   try {
-    localStorage.setItem(LS_KEY, JSON.stringify({ __v: SEED_VERSION, db }));
-  } catch { /* storage full or unavailable — demo continues in memory */ }
+    localStorage.setItem(LS_KEY, json);
+  } catch (err) {
+    // Distinguish a genuine storage-quota exception from every other reason
+    // setItem can throw (storage disabled, private-browsing denial, etc.) so
+    // only the documented trigger (docs/specs/2026-07-24-data-layer-scale.md)
+    // lands in error_logs as a named, greppable condition. Fire-and-forget —
+    // logClientError never throws — and keep swallowing everything else:
+    // persistence failing must never break the app.
+    if (isQuotaExceededError(err)) {
+      void logClientError({
+        message: `localStorage quota exceeded persisting the DB snapshot (${payloadBytes.toLocaleString()} chars)`,
+        context: 'store:persist-quota-exceeded',
+        detail: { payloadBytes },
+      });
+    }
+    /* storage full or unavailable — demo continues in memory */
+  }
+  return payloadBytes;
+}
+
+// Reported at most once per session (module-level flag — resets on reload).
+let bootMetricsReported = false;
+
+/** Cheap, fire-and-forget: reports boot payload size + hydration duration to
+ *  error_logs only when one of the two documented triggers
+ *  (docs/specs/2026-07-24-data-layer-scale.md) has actually fired, and only
+ *  once per session — this is what lets the triggers surface on their own
+ *  instead of waiting on a user bug report. No-op (two comparisons) on every
+ *  normal boot. */
+function maybeReportBootMetrics(payloadBytes: number, hydrationMs: number) {
+  if (bootMetricsReported || !shouldReportBootMetrics(payloadBytes, hydrationMs)) return;
+  bootMetricsReported = true;
+  void logClientError({
+    message: `Boot payload ${payloadBytes.toLocaleString()} chars, hydration ${hydrationMs.toFixed(0)}ms`,
+    context: 'store:boot-metrics-threshold',
+    detail: { payloadBytes, hydrationMs },
+  });
 }
 
 export function getDB(): DB {
@@ -79,14 +123,21 @@ export function resetDemo() {
 /** Replace the in-memory snapshot with a fresh load from Supabase, if configured. */
 export async function syncFromSupabase() {
   if (!isSupabaseConfigured) return;
+  const hydrationStart = performance.now();
   const remote = await loadAll();
+  const hydrationMs = performance.now() - hydrationStart;
   if (!remote) return;
   // A completely empty remote means the backend hasn't been seeded yet —
   // keep the local snapshot so it can be pushed (Admin → Demo tools).
   if (!remote.seasons.length && !remote.clubs.length && !remote.people.length && !remote.events.length) return;
   db = remote;
   snapshotVersion++;
-  persist();
+  const payloadBytes = persist();
+  // Cheap, always-on visibility (console only — no network call) so the
+  // numbers are inspectable in devtools on every hydration, not just the
+  // rare one that crosses a threshold below.
+  console.debug(`[store] hydration ${hydrationMs.toFixed(0)}ms, payload ${payloadBytes.toLocaleString()} chars`);
+  maybeReportBootMetrics(payloadBytes, hydrationMs);
   listeners.forEach((l) => l());
 }
 
