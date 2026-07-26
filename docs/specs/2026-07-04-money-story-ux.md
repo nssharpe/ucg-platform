@@ -4,6 +4,10 @@
 [`../plans/2026-07-04-uiux-review-fixes.md`](../plans/2026-07-04-uiux-review-fixes.md).
 Hands S4 its exact behavior. No code was written as part of this task.
 
+**S4 implemented 2026-07-25** on branch `money/s4-cart-price-agreement` (unmerged,
+undeployed — pending the controller's fable review of the money-path diff per standing
+process). See `docs/whats-next.md` §3 item 1 for current status.
+
 ## The problem this closes
 
 The 2026-07-04 live review found three money surfaces that disagreed with each other

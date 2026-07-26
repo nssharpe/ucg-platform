@@ -210,7 +210,9 @@ as a pure function, add a vitest test. npm run build, npx eslint <touched>,
 npx vitest run.
 ```
 
-### S4 — ⚠️ Cart total vs server-priced checkout total mismatch
+### S4 — ⚠️ Cart total vs server-priced checkout total mismatch — IMPLEMENTED 2026-07-25
+(branch `money/s4-cart-price-agreement`, unmerged/undeployed — pending O2's fable
+review before merge/push/deploy)
 
 Blocked on O1's decision (run O1 first, or make the controller decide inline).
 
