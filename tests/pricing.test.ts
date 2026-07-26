@@ -26,6 +26,7 @@ import {
   refundAmountCents,
   capRefundCents,
   shrinkOrDropCartLines,
+  diffCartLinePrices,
 } from '../src/lib/pricing';
 import type { AddonPricingEvent, AddonDraftEvent, ClubAddonDraftEvent, PartnerReg, RegFeeEvent, SynchroReg } from '../src/lib/pricing';
 import type { CampSurveyQuestion, CartItem, Coupon, Membership, Season } from '../src/lib/types';
@@ -729,5 +730,70 @@ describe('shrinkOrDropCartLines (emv2 P4 T6 — waitlist checkout-conflict resol
     const cart = [item({ id: 'ci1', kind: 'membership', refRegIds: undefined })];
     const next = shrinkOrDropCartLines(cart, new Set(['r1']));
     expect(next).toEqual(cart);
+  });
+});
+
+describe('diffCartLinePrices (S4, money-story UX §1 — cart vs. server-preview price agreement)', () => {
+  it('returns nothing when every displayed amount matches the server line', () => {
+    const displayed = [{ id: 'ci1', label: 'Entry', amount: 45 }, { id: 'ci2', label: 'Shirt', amount: 20 }];
+    const server = [{ itemId: 'ci1', label: 'Entry', amountCents: 4500 }, { itemId: 'ci2', label: 'Shirt', amountCents: 2000 }];
+    expect(diffCartLinePrices(displayed, server)).toEqual([]);
+  });
+
+  it('flags a host-club $0 line: displayed a real fee, server prices it free', () => {
+    const displayed = [{ id: 'ci1', label: 'Home Meet Entry', amount: 45 }];
+    const server = [{ itemId: 'ci1', label: 'Home Meet Entry', amountCents: 0 }];
+    expect(diffCartLinePrices(displayed, server)).toEqual([
+      { itemId: 'ci1', label: 'Home Meet Entry', oldDollars: 45, newDollars: 0 },
+    ]);
+  });
+
+  it('flags a coupon reducing a line below the displayed (pre-coupon) amount', () => {
+    const displayed = [{ id: 'ci1', label: 'Nationals Entry', amount: 135 }];
+    const server = [{ itemId: 'ci1', label: 'Nationals Entry', amountCents: 8500 }]; // $50 off
+    expect(diffCartLinePrices(displayed, server)).toEqual([
+      { itemId: 'ci1', label: 'Nationals Entry', oldDollars: 135, newDollars: 85 },
+    ]);
+  });
+
+  it('flags an entry-vs-change derivation mismatch (client tagged cheap change, server prices full entry)', () => {
+    // C4: the client's ref_line_type tag is display-only — the server derives
+    // entry-vs-change from the referenced regs' DB state, which can disagree
+    // with what the cart displayed when the line was added.
+    const displayed = [{ id: 'ci1', label: 'Add WAG', amount: 15 }]; // client thought "change fee"
+    const server = [{ itemId: 'ci1', label: 'Add WAG', amountCents: 6500 }]; // server: full entry
+    expect(diffCartLinePrices(displayed, server)).toEqual([
+      { itemId: 'ci1', label: 'Add WAG', oldDollars: 15, newDollars: 65 },
+    ]);
+  });
+
+  it('flags a plain stale price (season/event fee changed since add-to-cart)', () => {
+    const displayed = [{ id: 'ci1', label: '2025–26 Athlete Membership', amount: 30 }];
+    const server = [{ itemId: 'ci1', label: '2025–26 Athlete Membership', amountCents: 3500 }];
+    expect(diffCartLinePrices(displayed, server)).toEqual([
+      { itemId: 'ci1', label: '2025–26 Athlete Membership', oldDollars: 30, newDollars: 35 },
+    ]);
+  });
+
+  it('ignores a server line with no matching displayed item', () => {
+    const displayed = [{ id: 'ci1', label: 'Entry', amount: 45 }];
+    const server = [
+      { itemId: 'ci1', label: 'Entry', amountCents: 4500 },
+      { itemId: 'ci-ghost', label: 'Ghost', amountCents: 100 },
+    ];
+    expect(diffCartLinePrices(displayed, server)).toEqual([]);
+  });
+
+  it('ignores a displayed item with no matching server line', () => {
+    const displayed = [{ id: 'ci1', label: 'Entry', amount: 45 }, { id: 'ci2', label: 'Untouched', amount: 10 }];
+    const server = [{ itemId: 'ci1', label: 'Entry', amountCents: 4500 }];
+    expect(diffCartLinePrices(displayed, server)).toEqual([]);
+  });
+
+  it('is not fooled by float noise in the displayed dollar amount', () => {
+    // 0.1 + 0.2 style float drift on a dollar amount must not spuriously diff.
+    const displayed = [{ id: 'ci1', label: 'Fee', amount: 29.99 }];
+    const server = [{ itemId: 'ci1', label: 'Fee', amountCents: 2999 }];
+    expect(diffCartLinePrices(displayed, server)).toEqual([]);
   });
 });

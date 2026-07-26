@@ -1597,6 +1597,42 @@ export async function createCheckoutSession(args: {
   };
 }
 
+/** One server-priced line from a `mode:'preview'` call, keyed to a cart item. */
+export interface CartPreviewLine {
+  itemId: string;
+  label: string;
+  amountCents: number;
+}
+
+/** Price a set of cart items exactly the way checkout would, WITHOUT starting
+ *  a checkout (S4, money-story UX): `create-checkout-session { mode:
+ *  'preview' }` runs the same auth/ownership/validation and pricing recompute
+ *  and returns before any write — no payments row, no Stripe call, no coupon
+ *  redemption. Used by the Cart page to replace the stale, client-written
+ *  `cart_items.amount` with the server's real price so the cart and the
+ *  checkout summary can never disagree (`diffCartLinePrices` in `pricing.ts`
+ *  does the comparison). On ANY failure (network, validation rejection, capacity
+ *  conflict, etc.) the caller should fall back to the stored "Estimated"
+ *  amounts — a failed preview must never block or empty the cart. */
+export async function previewCartTotal(args: {
+  cartItemIds: string[];
+  couponCode?: string;
+}): Promise<{
+  ok: boolean; lines?: CartPreviewLine[];
+  amountSubtotal?: number; discountAmount?: number; serviceFee?: number; total?: number;
+  error?: string;
+}> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('create-checkout-session', {
+    body: { ...args, mode: 'preview' },
+  });
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  return data as {
+    ok: boolean; lines?: CartPreviewLine[];
+    amountSubtotal?: number; discountAmount?: number; serviceFee?: number; total?: number;
+  };
+}
+
 /** Poll a payment row's fulfillment status (Phase S3). The signed-in person can
  *  self-read their own payments rows (RLS: person_id = my_person_id()); the
  *  embedded-checkout FE polls this after `onComplete` until `status='paid'`
