@@ -210,12 +210,18 @@ possibly state-privacy) obligations once real payments flow.
 
 ## Architecture watch-list (not gaps yet — written down so they don't surprise us)
 
-- **Data-layer scaling cliff.** `loadAll()` hydrates the entire DB (~50 tables)
-  into memory + localStorage on boot; every page reads `db.*`. Fine today; will
-  degrade as registrations/scores grow (payload size, phone boot time,
-  localStorage ~5MB cap). *Triggers to act:* boot payload > ~2MB, admin boot >
-  3s on mid-tier mobile, or the first localStorage quota error in `error_logs`.
-  *Path:* per-page queries for the heavy tables (scores, registrations) first.
+- **Data-layer scaling cliff — NO LONGER HYPOTHETICAL (measured 2026-07-26).**
+  `loadAll()` hydrates the entire DB into memory + localStorage on boot; every
+  page reads `db.*`. Measured against a scale-seeded staging (50k registrations,
+  52k scores — only ~30% of the projected 2-year `scores` volume): **21.1 s cold
+  boot** and a **28.95 MB** localStorage snapshot, on desktop broadband. That is
+  ~7x past the 3 s trigger, on hardware far better than the target.
+  Also corrected: **the ~5 MB localStorage cap is not a reliable tripwire** —
+  Chromium accepted 28.95 MB without raising, so the "first quota error" signal
+  may never fire in Chrome. *Path:* per-page queries for the heavy tables
+  (scores, registrations) — Phases 2-3 of
+  [`specs/2026-07-24-data-layer-scale.md`](specs/2026-07-24-data-layer-scale.md),
+  which now carries the full before/after numbers.
 - **Multi-user staleness.** Realtime covers only `scores`; all other concurrent
   edits (two managers on one club, admin + manager) are invisible until a manual
   `syncFromSupabase()`/reload. Expect "my change disappeared" reports once clubs
