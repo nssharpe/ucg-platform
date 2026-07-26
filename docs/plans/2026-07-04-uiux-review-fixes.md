@@ -81,7 +81,20 @@ rendering misleading totals. Log the review as its own row in
 
 ## Sonnet 5 (default implementer)
 
-### S1 — Fix the primary coral contrast token (systemic AA failure)
+### S1 — Fix the primary coral contrast token (systemic AA failure) ✅ DONE 2026-07-25
+
+> Shipped: `.btn.primary`, `.btn.primary:hover`, `.nav-link.active`, `.btn:disabled`,
+> `.btn.primary.small`, plus three instances the original brief missed (`::selection`,
+> `.sp-chip.excluded`, `.rank-chip.r1` — all white-on-coral-500 at 2.94:1).
+> Chose navy-800 text on coral-500 (**4.78:1**), matching the pairing the 2026-07-19
+> rebrand had already validated on `.badge.err`. Hover had to LIGHTEN, not darken —
+> with dark text every darker ramp step fails (coral-600 3.84:1, coral-700 2.41:1) —
+> so a new `--coral-400` (#f57b5f, **5.41:1**) is the primary-button hover.
+> Disabled is now a flat `--line` surface with `--ink` text (**9.81:1**) at opacity 1;
+> the brief's suggested `--ink-soft` was only 3.80:1 and would have failed.
+> Verified live at 375/768/1265 by DOM sweep of every coral-backed element
+> (screenshot capture was wedged, as in the 2026-07-20 session).
+> The green-badge sub-item was already closed by the rebrand.
 
 Measured: white `#fcfcfc` text on `--coral-500: #f46949` = **2.94:1** at 12.5–14px.
 This token is every primary CTA (Register, Check out, Save, View membership, Open
