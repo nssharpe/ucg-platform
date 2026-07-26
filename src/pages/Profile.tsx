@@ -7,6 +7,7 @@ import { useToast } from '../components/ui-hooks';
 import { SHIRT_SIZES, DIETARY_OPTIONS, STATE_REGIONS, DISCIPLINES } from '../lib/types';
 import type { Athlete, ClubRequest, Gender, MembershipType, Region } from '../lib/types';
 import { membershipTypeOf } from '../lib/capabilities-core';
+import { isProfileDirty } from '../lib/profile-core';
 import { currentSeason } from '../lib/season-lifecycle';
 import { GENERAL_WAIVER_TYPE } from '../lib/types';
 import { pushClubRequest, pushMembership, pushPerson, deleteRegistration, sendEmail, createWaiverLink, fetchPublishedWaiver, requestManagerAccess, adminDeletePerson } from '../lib/supabase';
@@ -157,6 +158,20 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   const seasonParam = searchParams.get('season');
 
   const [draft, setDraft] = useState<Athlete | null>(null);
+  // Snapshot of the draft as `enterEdit` initialized it — the dirty check
+  // compares live edits against THIS, never against the raw loaded `person`
+  // row, so normalization (empty-string vs undefined, coerced numbers, etc.)
+  // never reads as a false "unsaved changes". Mirrors editMode's own lazy
+  // initializer below: editMode can start `true` (returnToMembership, or a
+  // brand-new incomplete profile) without ever going through `enterEdit`, so
+  // this initializer must cover the same branches or the dirty check would
+  // never activate for those entry paths.
+  const [editSnapshot, setEditSnapshot] = useState<Athlete | null>(() => {
+    if (!person) return null;
+    if (returnToMembership) return { ...person };
+    const errs = validateProfile(person);
+    return errs.length > 0 ? { ...person } : null;
+  });
   const [editMode, setEditMode] = useState<boolean>(() => {
     if (!person) return false;
     if (returnToMembership) return true;
@@ -186,6 +201,10 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   // `current` is null only when `person` is missing (the not-found path).
   const current = draft ?? person ?? null;
   const validationErrors = useMemo(() => (current ? validateProfile(current, independent) : []), [current, independent]);
+  const dirty = useMemo(
+    () => (draft && editSnapshot ? isProfileDirty(editSnapshot, draft) : false),
+    [draft, editSnapshot]
+  );
 
   // When arriving from membership, highlight still-empty required fields in red.
   // The club-choice guard (feedback 1c) also self-surfaces outside that flow:
@@ -253,11 +272,14 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
     && !ageError;
 
   const enterEdit = () => {
-    setDraft({ ...person });
+    const snapshot = { ...person };
+    setDraft(snapshot);
+    setEditSnapshot(snapshot);
     setEditMode(true);
   };
   const discardEdit = () => {
     setDraft(null);
+    setEditSnapshot(null);
     setEditMode(false);
   };
 
@@ -275,6 +297,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
     });
     if (!applied) return; // offline read-only gate — no false success toast
     setDraft(null);
+    setEditSnapshot(null);
     setEditMode(false);
     toast('Profile saved.');
     if (returnToMembership) {
@@ -598,9 +621,11 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', position: 'sticky', bottom: 16, zIndex: 10, background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 12, padding: '10px 14px', boxShadow: 'var(--shadow-lg)', marginInline: 24 }}>
             <button className="btn primary" disabled={!canSave} onClick={save}>Save changes</button>
             <button className="btn ghost" onClick={discardEdit}>Discard</button>
-            <span style={{ alignSelf: 'center', fontSize: 13, color: 'var(--coral-600)', fontWeight: 600 }}>Unsaved changes</span>
+            {dirty && (
+              <span style={{ alignSelf: 'center', fontSize: 13, color: 'var(--coral-700)', fontWeight: 600 }}>Unsaved changes</span>
+            )}
             {validationErrors.length > 0 && (
-              <span style={{ fontSize: 12, color: 'var(--coral-600)' }}>
+              <span style={{ fontSize: 12, color: 'var(--coral-700)' }}>
                 Required: {validationErrors.map((e) => e.label).join(', ')}
               </span>
             )}
