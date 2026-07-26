@@ -651,7 +651,15 @@ export function Communicate() {
                         {c.sentCount != null && ` · ${c.sentCount} sent${c.failedCount ? `, ${c.failedCount} failed` : ''}`}
                       </span>
                       <Badge tone={ok ? 'ok' : 'err'}>{ok ? 'Sent' : 'Issues'}</Badge>
-                      <span style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--teal-900)' }}>{open ? 'Hide' : 'Details'}</span>
+                      <button
+                        type="button"
+                        className="linklike-button"
+                        aria-expanded={open}
+                        style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--teal-900)' }}
+                        onClick={(e) => { e.stopPropagation(); setExpandedLogId(open ? null : c.id); }}
+                      >
+                        {open ? 'Hide' : 'Details'}
+                      </button>
                     </div>
                     {open && (
                       <div style={{ marginTop: 8, fontSize: 13 }}>

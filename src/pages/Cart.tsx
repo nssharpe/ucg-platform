@@ -10,7 +10,7 @@ import { downloadCartInvoice, downloadReceipt, invoiceTotal } from '../lib/recei
 import { CartCheckout } from '../components/CartCheckout';
 import { CapacityConflictDialog } from '../components/CapacityConflictDialog';
 import { hasCapacityConfig } from '../lib/capacity';
-import { missingNationalsSurveyEvents, diffCartLinePrices, type SessionRequestGateReg } from '../lib/pricing';
+import { missingNationalsSurveyEvents, diffCartLinePrices, cartSectionCount, type SessionRequestGateReg } from '../lib/pricing';
 import { previewCartTotal, type CheckoutCapacityError, type CartPreviewLine } from '../lib/supabase';
 import type { CartItem, Club, DB, Invoice } from '../lib/types';
 
@@ -247,6 +247,12 @@ function CartScope({
   const [preview, setPreview] = useState<CartPreviewState>({ status: 'loading' });
 
   const groups = useMemo(() => groupCartItems(cart, db), [cart, db]);
+  // H5: only show the "checkout everything" bar when it aggregates 2+
+  // sections — with a single CartCard, that card's own subtotal +
+  // checkout button IS the checkout-everything action, so a second,
+  // identical bar (let alone one duplicated top AND bottom) is pure
+  // redundancy, not a second choice.
+  const showEverythingBar = cartSectionCount(groups) >= 2;
 
   // S4 (money-story UX): fetch a server price preview for this scope's ENTIRE
   // cart (`create-checkout-session { mode: 'preview' }`) whenever its
@@ -371,7 +377,8 @@ function CartScope({
   if (checkout) {
     return (
       <div style={{ maxWidth: 620 }}>
-        <p className="page-sub">Billed to {name}.</p>
+        {/* H5: the page-level subtitle (CartInner / ManagedClubSection) already
+            states "Billed to {name}." above this — don't repeat it here. */}
         <div style={{ marginBottom: 14 }}>
           <button className="btn ghost small" onClick={() => setCheckout(null)}>← Back to cart</button>
         </div>
@@ -459,21 +466,27 @@ function CartScope({
           Showing estimated prices — final total is confirmed at checkout.
         </p>
       )}
-      {/* Checkout-All at the TOP, duplicated at the bottom below the cards. */}
-      <div className="card card-pad" style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <strong style={{ fontSize: 16, marginRight: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span>Total: {fmtMoney(scopeTotal)}</span>
-          {totalEstimated && <Badge tone="info">Estimated</Badge>}
-        </strong>
-        {printAllButton}
-        {checkoutAllButton}
-      </div>
-      {everythingSurveyBlocked && (
-        <p style={{ margin: '-6px 0 14px', fontSize: 13, color: 'var(--coral-600)' }}>
-          "Check out everything" is blocked: answer the nationals session-planning survey for{' '}
-          {everythingSurveyGate.map((g) => g.eventName).join(', ')} — <Link to={surveyReturnTo}>answer it here</Link>.
-          Individual sections not affected by that event can still be checked out separately.
-        </p>
+      {/* H5: "checkout everything" only means something distinct from a single
+          section's own checkout button once there are 2+ sections — and when
+          it does render, it renders ONCE, at the top (no bottom duplicate). */}
+      {showEverythingBar && (
+        <>
+          <div className="card card-pad" style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <strong style={{ fontSize: 16, marginRight: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span>Total: {fmtMoney(scopeTotal)}</span>
+              {totalEstimated && <Badge tone="info">Estimated</Badge>}
+            </strong>
+            {printAllButton}
+            {checkoutAllButton}
+          </div>
+          {everythingSurveyBlocked && (
+            <p style={{ margin: '-6px 0 14px', fontSize: 13, color: 'var(--coral-600)' }}>
+              "Check out everything" is blocked: answer the nationals session-planning survey for{' '}
+              {everythingSurveyGate.map((g) => g.eventName).join(', ')} — <Link to={surveyReturnTo}>answer it here</Link>.
+              Individual sections not affected by that event can still be checked out separately.
+            </p>
+          )}
+        </>
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -508,15 +521,6 @@ function CartScope({
             surveyGate={surveyGateForItems(groups.other, db)}
             surveyReturnTo={surveyReturnTo} />
         )}
-      </div>
-
-      <div className="card card-pad" style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <strong style={{ fontSize: 16, marginRight: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span>Total: {fmtMoney(scopeTotal)}</span>
-          {totalEstimated && <Badge tone="info">Estimated</Badge>}
-        </strong>
-        {printAllButton}
-        {checkoutAllButton}
       </div>
     </div>
   );
