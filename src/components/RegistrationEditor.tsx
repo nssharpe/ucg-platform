@@ -29,7 +29,7 @@ import { useToast } from './ui-hooks';
 import { DisciplineIcon } from './DisciplineIcon';
 import { APPARATUS } from '../lib/types';
 import type { Athlete, Discipline, Level, Event, EventSession, Registration, Season, WaitlistGroup } from '../lib/types';
-import { changeIsEligible, regChangeHasDiff } from '../lib/pricing';
+import { changeIsEligible, regChangeHasDiff, lateFeeAnchor } from '../lib/pricing';
 import type { RegChangeState, RegDisciplineEntry } from '../lib/pricing';
 import { registrationEstimate, registrationEstimateLabel } from '../lib/reg-estimate';
 import { checkCapacity, hasCapacityConfig } from '../lib/capacity';
@@ -733,18 +733,52 @@ export function RegistrationEditor({
   // having opened; see saveRegs in MyRegistrations.tsx/Club.tsx). Folding
   // that gate in here (routing only, no fee math) keeps the estimate
   // truthful: before the window opens, an eligible edit is still free.
+  // Disciplines being ADDED right now: enabled, apparatus chosen, and with no
+  // existing non-refunded row — the editor-side analogue of `newOnlyRegs` in
+  // Club.tsx's saveRegs. Counting every enabled discipline instead would
+  // re-charge disciplines the athlete already holds.
   const newDisciplineCount = isCamp
-    ? 1
-    : (event.disciplines as Discipline[]).filter((d) => drafts[d]?.enabled && drafts[d].apparatus.length > 0).length;
+    ? (existing.some((r) => !r.refunded) ? 0 : 1)
+    : (event.disciplines as Discipline[]).filter((d) => (
+      drafts[d]?.enabled
+      && drafts[d].apparatus.length > 0
+      && !existing.some((r) => r.discipline === d && !r.refunded)
+    )).length;
+  // Already-held disciplines, so an added one prices at the SECOND-discipline
+  // rate (matches Club.tsx's `priorDisciplineCount`).
+  const priorDisciplineCount = existing.filter((r) => !r.refunded && r.apparatus.length > 0).length;
+  // Late-registration surcharge: the save path feeds `lateFeeAnchor` into
+  // `newRegistrationEntryTotal`, so the estimate must too or it quotes low
+  // inside a late window. Newly-added rows have no `createdAt` yet (they don't
+  // exist), which `lateFeeAnchor` treats as "now" — exactly how the save path
+  // sees them. `nowIso()` is a plain helper, not called textually inside the
+  // useMemo, so react-hooks/purity's impure-call check doesn't fire (same
+  // approach as `computeCapacityViolations` below).
+  const nowIso = () => new Date(nowMs()).toISOString();
+  const lateAnchor = (() => {
+    if (!event.lateReg) return null;
+    const outside = existing
+      .filter((r) => !r.refunded && r.apparatus.length > 0)
+      .map((r) => ({ id: r.id, createdAt: r.createdAt }));
+    const line = Array.from({ length: newDisciplineCount }, (_, i) => ({ id: `pending-${i}` }));
+    return lateFeeAnchor(line, outside, nowIso());
+  })();
   const estimate = useMemo(
     () => registrationEstimate({
       event,
       competingClubId: clubId,
       isEditingExisting,
-      eligible: eligible && changeFeeApplies,
+      // RAW `eligible` — `registrationEstimate` needs it and `changeFeeApplies`
+      // separately to reproduce the save path's precedence (a discipline added
+      // while the change-fee window is CLOSED is billed as an entry fee, not
+      // free; see that module's header).
+      eligible,
+      changeFeeApplies,
       newDisciplineCount,
+      priorDisciplineCount,
+      ...(lateAnchor ? { late: { earliestCreatedAtISO: lateAnchor } } : {}),
     }),
-    [event, clubId, isEditingExisting, eligible, changeFeeApplies, newDisciplineCount],
+    [event, clubId, isEditingExisting, eligible, changeFeeApplies, newDisciplineCount, priorDisciplineCount, lateAnchor],
   );
   const estimateLabel = registrationEstimateLabel(estimate);
 

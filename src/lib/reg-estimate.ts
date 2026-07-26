@@ -7,6 +7,21 @@
 // Every number here is an ESTIMATE — the server (create-checkout-session,
 // `mode: 'preview'`) always reprices authoritatively at checkout. Every
 // label produced by `registrationEstimateLabel` says so explicitly.
+//
+// ── The branch order below MIRRORS the real charge path in Club.tsx's
+// `saveRegs` (~lines 1319-1352) and MyRegistrations.tsx's equivalent. Keep
+// them in lockstep; if the save path's precedence changes, change it here too.
+// The save path computes:
+//     changeFee  = changeFeeApplies && eligible ? registrationChangeFee(...) : 0
+//     entryTotal = newRegistrationEntryTotal(... over newly-added regs ...)
+// and then charges:
+//     if (changeFee > 0)                           -> change-fee line
+//     else if (!changeFeeApplies && entryTotal > 0) -> ENTRY-fee line
+// The second branch is easy to miss and was missed in S5's first draft:
+// **adding a discipline to an existing registration while the change-fee
+// window is CLOSED is charged as an entry fee, not free.** Reporting "no
+// charge" there understates the bill, which is the failure direction that
+// actually harms trust.
 import { newRegistrationEntryTotal, registrationChangeFee, type RegFeeEvent } from './pricing';
 import { fmtMoney } from './scoring';
 
@@ -23,16 +38,28 @@ export interface RegEstimateInput {
   /** True when editing an already-existing (non-refunded) registration;
    *  false for a brand-new registration. */
   isEditingExisting: boolean;
-  /** `changeIsEligible(before, after)` result, already computed by the
-   *  caller from its own before/after `RegChangeState` — only consulted when
-   *  `isEditingExisting` is true. */
+  /** Raw `changeIsEligible(before, after)` from the caller. Pass it RAW —
+   *  do NOT pre-AND it with `changeFeeApplies`; this selector needs the two
+   *  separately to reproduce the save path's precedence (see header). */
   eligible: boolean;
-  /** How many disciplines/rows are newly enabled with apparatus selected —
-   *  only consulted for a brand-new registration (`!isEditingExisting`).
-   *  Camps are a single flat-fee row regardless of the equipment list, so
-   *  callers must pass 1 for a camp new-registration, never a discipline
-   *  count. */
+  /** Has the event's change-fee window opened (`now >= event.changeFee.startsAt`)?
+   *  The save path gates the change fee on this, AND uses it to decide whether
+   *  a newly-added discipline is billed as an entry fee instead. */
+  changeFeeApplies: boolean;
+  /** Disciplines being added RIGHT NOW — enabled, with apparatus selected, and
+   *  having no existing non-refunded row. The analogue of `newOnlyRegs` in
+   *  Club.tsx. For a brand-new camp registration this is 1 (camps are a single
+   *  flat-fee row regardless of the equipment list), never a discipline count. */
   newDisciplineCount: number;
+  /** Disciplines the athlete is ALREADY registered for at this event (existing
+   *  non-refunded rows with apparatus) — so an added discipline prices at the
+   *  SECOND-discipline rate rather than the base entry fee. 0 for a brand-new
+   *  registration. */
+  priorDisciplineCount: number;
+  /** Late-registration anchor, when one applies — `lateFeeAnchor(...)`'s
+   *  result, same input the save path feeds `newRegistrationEntryTotal`.
+   *  Omitted ⇒ no surcharge, matching that helper's own default. */
+  late?: { earliestCreatedAtISO: string };
 }
 
 /**
@@ -47,7 +74,10 @@ export function registrationEstimate({
   competingClubId,
   isEditingExisting,
   eligible,
+  changeFeeApplies,
   newDisciplineCount,
+  priorDisciplineCount,
+  late,
 }: RegEstimateInput): RegEstimate {
   // Same guard `registrationEntryFee`/`registrationChangeFee`/
   // `newRegistrationEntryTotal` each apply internally — never treat an empty
@@ -56,19 +86,34 @@ export function registrationEstimate({
   const isHostClub = !!event.hostClubId && competingClubId === event.hostClubId;
   if (isHostClub) return { kind: 'host-free' };
 
+  const entryTotal = () => newRegistrationEntryTotal(event, {
+    competingClubId,
+    priorDisciplineCount,
+    newDisciplineCount,
+    late,
+  });
+
+  // Brand-new registration: always the entry-fee path.
   if (!isEditingExisting) {
-    const amountDollars = newRegistrationEntryTotal(event, {
-      competingClubId,
-      priorDisciplineCount: 0,
-      newDisciplineCount,
-    });
-    return { kind: 'new-entry', amountDollars };
+    return newDisciplineCount > 0
+      ? { kind: 'new-entry', amountDollars: entryTotal() }
+      : { kind: 'no-charge' };
   }
 
-  if (!eligible) return { kind: 'no-charge' };
+  // --- Editing an existing registration: mirror the save path's precedence ---
+  const changeFeeAmount = eligible && changeFeeApplies
+    ? registrationChangeFee(event, { competingClubId })
+    : 0;
+  if (changeFeeAmount > 0) return { kind: 'change-fee', amountDollars: changeFeeAmount };
 
-  const amountDollars = registrationChangeFee(event, { competingClubId });
-  return { kind: 'change-fee', amountDollars };
+  // Change-fee window not open (or the event has no change fee configured) but
+  // disciplines are being added ⇒ the save path bills those as a NEW ENTRY.
+  if (!changeFeeApplies && newDisciplineCount > 0) {
+    const amountDollars = entryTotal();
+    if (amountDollars > 0) return { kind: 'new-entry', amountDollars };
+  }
+
+  return { kind: 'no-charge' };
 }
 
 /** Human-readable, explicitly-"estimated" label for a `RegEstimate` — the one

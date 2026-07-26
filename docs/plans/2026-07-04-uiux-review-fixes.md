@@ -247,7 +247,19 @@ diffing helpers. npm run build, npx eslint <touched>, npx vitest run.
 CONTROLLER: fable review of the diff before merge (task O2).
 ```
 
-### S5 — ⚠️ Live price estimate in the registration editor — IMPLEMENTED 2026-07-25
+### S5 — ⚠️ Live price estimate in the registration editor
+
+> **Controller review fix (2026-07-26).** The first draft correctly found that the
+> estimate must respect the change-fee WINDOW (`changeFeeApplies`), not just
+> `changeIsEligible` — but folding the two together made it report "No charge for this
+> change" in the case `Club.tsx:1350` actually bills as an **entry fee**: adding a
+> discipline to an existing registration while the change-fee window is CLOSED.
+> `registrationEstimate` now takes `eligible` and `changeFeeApplies` separately and
+> mirrors the save path's precedence literally (`changeFee > 0` wins, else
+> `!changeFeeApplies && entryTotal > 0`), plus `priorDisciplineCount` so an added
+> discipline prices at the second-discipline rate, plus the late-registration
+> surcharge the estimate had been omitting. Keep `src/lib/reg-estimate.ts` in lockstep
+> with `saveRegs` — its header says so. — IMPLEMENTED 2026-07-25
 (branch `ui/s5-s6-reg-money-display`, unmerged/undeployed — pending controller
 fable review before merge/push, task O2)
 
