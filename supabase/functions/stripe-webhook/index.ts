@@ -76,10 +76,19 @@ Deno.serve(async (req) => {
       case 'checkout.session.expired':
       case 'checkout.session.async_payment_failed': {
         const session = event.data.object as import('npm:stripe@17.7.0').Stripe.Checkout.Session;
-        await db.from('payments')
+        const { data: failedRows } = await db.from('payments')
           .update({ status: 'failed', stripe_event_id: event.id })
           .eq('stripe_session_id', session.id)
-          .is('fulfilled_at', null);
+          .is('fulfilled_at', null)
+          .select('id');
+        // M1: a session that expires or fails to pay never redeemed its
+        // coupon — release the reservation so the slot doesn't sit held for
+        // up to its full 60-minute lifetime. Idempotent no-op if there was
+        // no coupon (or it was already released/redeemed).
+        for (const row of failedRows ?? []) {
+          await db.rpc('release_coupon_reservation', { p_payment_id: (row as { id: string }).id })
+            .then(() => {}, () => {});
+        }
         return json({ ok: true, handled: 'failed' });
       }
       default:

@@ -32,6 +32,19 @@
 // uses this to show the server's real price instead of the stale
 // client-written `cart_items.amount`, so the cart and the checkout summary
 // can never disagree. See "PREVIEW BRANCH POINT" below.
+//
+// COUPON RESERVATION (security hardening Phase 3, M1, 2026-07-26): validating
+// a coupon's `used_count < max_uses` here isn't enough on its own — N
+// concurrent checkouts for the same code would all pass that check and all
+// collect the discount, since nothing was ever claimed until fulfillment.
+// After the PREVIEW BRANCH POINT (never on the preview path), an applied
+// coupon is atomically RESERVED via `reserve_coupon` for this request's
+// `paymentId` BEFORE anything is created in Stripe or the DB; a losing
+// reservation returns a clean 409 with nothing created. The reservation
+// self-heals via a 60-minute `expires_at` (`coupon_reservations` table,
+// migration 20260726130005) rather than requiring an explicit release on
+// every failure path — `redeem_coupon` converts a winning reservation into
+// the permanent `used_count` bump at fulfillment time.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
   addonLastPurchaseAt,
@@ -925,11 +938,10 @@ Deno.serve(async (req) => {
   // === return here, before any of that, so it is structurally impossible for
   // === a preview request to write anything.
   // ===
-  // === FUTURE M1 (coupon reservation): when that lands, the reservation call
-  // === belongs strictly AFTER this branch point, on the non-preview path
-  // === only — a preview must never reserve a coupon use just because someone
-  // === loaded the cart page. Do not move coupon validation above this
-  // === comment to add reservation; hook it in below instead.
+  // === M1 (coupon reservation, applied): the reservation call sits strictly
+  // === AFTER this branch point, on the non-preview path only — a preview
+  // === must never reserve a coupon use just because someone loaded the cart
+  // === page (see the `isPreview` early-return immediately below).
   // ============================================================================
   if (isPreview) {
     // No service fee on what would be a $0 order (mirrors the free-order
@@ -982,6 +994,45 @@ Deno.serve(async (req) => {
     addon_assignee: i.addon_assignee,
   }));
 
+  // --- M1: reserve the coupon use (if any) BEFORE creating anything, in
+  //     Stripe or the DB. `paymentId` is generated here (rather than left to
+  //     the payments insert's default) so it exists to key the reservation
+  //     on before either the Stripe session or the payments row is created —
+  //     both the free-order path and the paid path below reuse this same id.
+  //     `reserve_coupon` re-validates the coupon (window, person restriction,
+  //     capacity = used_count + live reservations) and atomically claims a
+  //     slot for `paymentId`, locking the coupon row for the duration so two
+  //     concurrent checkouts for a single-use code can't both win. A losing
+  //     caller gets a clean 409 here — before any Stripe session or payments
+  //     row exists — rather than silently keeping a discount it can't have.
+  //     Never reached on the preview path (returned above).
+  const paymentId = crypto.randomUUID();
+  const RESERVATION_MINUTES = 60;
+  let reservedCoupon = false;
+  if (appliedCouponCode) {
+    const reserveExpiresAtIso = new Date(Date.now() + RESERVATION_MINUTES * 60_000).toISOString();
+    const { data: reserved, error: reserveErr } = await db.rpc('reserve_coupon', {
+      p_code: appliedCouponCode,
+      p_payment_id: paymentId,
+      p_person_id: personId,
+      p_expires_at: reserveExpiresAtIso,
+    });
+    if (reserveErr) return json({ ok: false, error: reserveErr.message }, 500);
+    if (!reserved) {
+      return json({ ok: false, error:
+        `The coupon code "${appliedCouponCode}" is no longer available (it may have just reached its usage limit) — remove it and try checking out again.` }, 409);
+    }
+    reservedCoupon = true;
+  }
+  // Best-effort release helper for any failure between here and a successful
+  // payments-row insert (either path) — a reservation left in place beyond
+  // that point self-heals via `expires_at` regardless, so this is a UX nicety
+  // (immediate retry works) rather than a correctness requirement.
+  const releaseReservedCoupon = async () => {
+    if (!reservedCoupon) return;
+    await db.rpc('release_coupon_reservation', { p_payment_id: paymentId }).then(() => {}, () => {});
+  };
+
   // === FREE-ORDER PATH (2026-07-10): a coupon reduced the total to exactly
   // === $0 — e.g. a scholarship code covering 100% of a Nationals entry. This
   // === is a real, supported order fulfilled WITHOUT Stripe: no service fee
@@ -1013,8 +1064,9 @@ Deno.serve(async (req) => {
       .delete()
       .in('id', items.map((i) => i.id))
       .select('id');
-    if (delErr) return json({ ok: false, error: delErr.message }, 500);
+    if (delErr) { await releaseReservedCoupon(); return json({ ok: false, error: delErr.message }, 500); }
     if (!deletedItems || deletedItems.length !== items.length) {
+      await releaseReservedCoupon();
       return json({ ok: false, error:
         'This order was already processed (likely by a duplicate request) — check your Purchase History.' }, 409);
     }
@@ -1022,6 +1074,7 @@ Deno.serve(async (req) => {
     const { data: freePayment, error: freePayErr } = await db
       .from('payments')
       .insert({
+        id: paymentId,
         stripe_session_id: null,
         person_id: personId,
         status: 'pending',
@@ -1036,7 +1089,7 @@ Deno.serve(async (req) => {
       })
       .select('id, person_id, status, amount_subtotal, service_fee, currency, cart_item_ids, lines_snapshot, invoice_id, stripe_event_id, fulfilled_at, coupon_code')
       .single();
-    if (freePayErr) return json({ ok: false, error: freePayErr.message }, 500);
+    if (freePayErr) { await releaseReservedCoupon(); return json({ ok: false, error: freePayErr.message }, 500); }
 
     // --- Fulfill, with an inline retry -------------------------------------
     // The Stripe path recovers from a mid-fulfillment throw via Stripe's
@@ -1098,6 +1151,7 @@ Deno.serve(async (req) => {
   // --- Create the Embedded Checkout Session ---
   let stripe;
   try { stripe = getStripe(); } catch (e) {
+    await releaseReservedCoupon();
     return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 500);
   }
 
@@ -1109,8 +1163,16 @@ Deno.serve(async (req) => {
       redirect_on_completion: 'never',
       line_items: stripeLineItems,
       metadata: { person_id: personId, club_id: clubId ?? '', kind: 'cart' },
+      // M1: when a coupon is applied, cap the session's own lifetime at the
+      // same 60 minutes as the reservation so the two agree — a session that
+      // outlived its reservation could complete after the hold expired and
+      // the slot was handed to someone else. No coupon ⇒ leave Stripe's
+      // default session lifetime alone; don't shorten checkout for everyone
+      // to solve a coupon-only problem. (Stripe's own minimum is 30 min.)
+      ...(reservedCoupon ? { expires_at: Math.floor(Date.now() / 1000) + RESERVATION_MINUTES * 60 } : {}),
     });
   } catch (e) {
+    await releaseReservedCoupon();
     return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 502);
   }
 
@@ -1120,6 +1182,7 @@ Deno.serve(async (req) => {
   const { data: payment, error: payErr } = await db
     .from('payments')
     .insert({
+      id: paymentId,
       stripe_session_id: session.id,
       person_id: personId,
       status: 'pending',
@@ -1134,7 +1197,17 @@ Deno.serve(async (req) => {
     })
     .select('id')
     .single();
-  if (payErr) return json({ ok: false, error: payErr.message }, 500);
+  if (payErr) {
+    // The Stripe session already exists at this point — it can't be deleted
+    // (Stripe has no "cancel" for a not-yet-completed embedded session short
+    // of letting it expire), so this leaves an orphan session. That's a
+    // pre-existing risk this task doesn't change (same as before M1 — the
+    // insert could already fail after session creation); the reservation
+    // must still be released so a genuinely available coupon isn't held
+    // hostage by a payments-insert failure.
+    await releaseReservedCoupon();
+    return json({ ok: false, error: payErr.message }, 500);
+  }
 
   return json({
     ok: true,

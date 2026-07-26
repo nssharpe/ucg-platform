@@ -304,9 +304,13 @@ export async function fulfillPayment(db: DB, payment: PaymentRow, opts: FulfillO
 
   // --- Winner-only, once-only side effects -----------------------------------
   // Coupon redemption bumps used_count, so it must run exactly once — pass the
-  // payer so a person-restricted code (Phase 1's redeem_coupon check) validates.
+  // payer so a person-restricted code (Phase 1's redeem_coupon check)
+  // validates, and pass this payment's id (M1) so redemption also deletes its
+  // reservation row in the same call — the reservation and the used_count
+  // bump must never both be live, or a concurrent reserve_coupon capacity
+  // check double-counts this use.
   if (payment.coupon_code) {
-    await db.rpc('redeem_coupon', { p_code: payment.coupon_code, p_person_id: personId });
+    await db.rpc('redeem_coupon', { p_code: payment.coupon_code, p_person_id: personId, p_payment_id: payment.id });
   }
   // Email the REAL payer a receipt (best-effort; never fails fulfillment).
   try {
