@@ -10,6 +10,7 @@
 // Auth: a signed-in admin, OR a manager of the person's main club.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { requireAalForEnrolledCaller } from '../_shared/aal-guard.ts';
+import { randomToken } from '../_shared/token.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -73,7 +74,7 @@ Deno.serve(async (req) => {
 
   // --- Mint a pending signing token (guardian_email is NOT NULL; default to the
   // member's own address — the link works regardless of which is recorded) ---
-  const signToken = crypto.randomUUID().replace(/-/g, '');
+  const signToken = randomToken();
   const { error: insErr } = await db.from('waiver_sign_requests').insert({
     token: signToken,
     person_id: personId,

@@ -8,6 +8,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendOne } from '../_shared/resend.ts';
 import { renderEmail } from '../_shared/email-layout.ts';
+import { randomToken } from '../_shared/token.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -71,7 +72,7 @@ Deno.serve(async (req) => {
   if (!person) return json({ ok: false, error: 'Not your record.' }, 403);
 
   // --- Create pending signing token ---
-  const signToken = crypto.randomUUID().replace(/-/g, '');
+  const signToken = randomToken();
   const { error: insErr } = await db.from('waiver_sign_requests').insert({
     token: signToken,
     person_id: body.personId,

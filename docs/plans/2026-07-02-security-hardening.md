@@ -148,7 +148,16 @@ the webhook path, plus a forced-failure test of the RPC rollback if practical.
 
 ---
 
-## Phase 3 — deferred hardening (schedule later)
+## Phase 3 — deferred hardening ✅ COMPLETE 2026-07-26 (staging + prod)
+
+> M1 coupon reservation, M2 `cart_member_clubpush`, M4 `people` self-insert, the
+> invoice write lockdown (found mid-phase, not in the original plan), and all three
+> LOW items are applied to BOTH environments and verified live. Notable corrections
+> made during the phase: the `invoice_admin` FOR-ALL policy was the same hole scoped
+> to managers and had to go too; and a restrictive RLS SELECT *predicate* filters
+> rows rather than raising, so no client-side error tolerance was needed for the
+> `club_managers` lockdown (adding it would have cost a fail-fast signal).
+
 
 > **STATUS — PARTIAL, 2026-07-24.** **M2, M4, and a NEW invoice write lockdown are
 > DONE** (migrations `20260724211801`–`211803`, applied **staging only**; prod push is
@@ -171,25 +180,52 @@ the webhook path, plus a forced-failure test of the RPC rollback if practical.
 > email branch being dropped (the CLAUDE.md "RLS upsert trap"). Without it, first-time
 > coach sign-in would have started failing RLS.
 >
-> **M1 DRAFTED 2026-07-26, NOT YET APPLIED** — migration `20260726130005`
+> **M1 shipped 2026-07-26** (merged to `main`, applied to staging + prod,
+> concurrency-proven) — migration `20260726130005`
 > (`coupon_reservations` table + `reserve_coupon`/`release_coupon_reservation` RPCs +
 > `redeem_coupon`'s new `p_payment_id` arg) on branch `sec/m1-coupon-reservation`.
 > `create-checkout-session` reserves strictly after the `mode: 'preview'` branch point
 > (a preview never reserves) and before creating anything in Stripe; `stripe-webhook`
 > releases on `expired`/`async_payment_failed`. Build/eslint/vitest all green; the
-> concurrency proof against staging is still owed (needs the migration applied first —
-> the controller runs `supabase db push`, staging then prod, then the proof script in
-> the implementer's scratchpad can actually run). **Still open after that: the LOW
-> items.** Token entropy (a LOW item) was checked 2026-07-24 and is sound — the
-> no-login token generators use `crypto.randomUUID()` (122-bit CSPRNG); bumping them to
-> 256-bit hex is free and still worth doing.
+> concurrency proof passed against staging.
+>
+> **LOW items drafted 2026-07-26 on branch `sec/p3-low-items`, NOT YET
+> APPLIED/DEPLOYED** — migrations `20260726132211_club_managers_app_settings_
+> authenticated_only.sql` and `20260726132301_error_logs_rate_limit.sql`; controller
+> still owns `supabase db push` (staging then prod) + redeploying the three token-gen
+> edge functions.
+> - `club_managers`/`app_settings` SELECT scoped from `using (true)` to
+>   `authenticated`-only. `manages_club()` is `security definer` (reads
+>   `club_managers` bypassing RLS) so it's unaffected; every write already goes
+>   through `replace_club_managers` or an admin-gated policy. Enumerated first: both
+>   tables are read ONLY via `loadAll()` (`src/lib/supabase.ts`), which runs on every
+>   app boot regardless of auth state. `app_settings` was already in loadAll's
+>   "tolerated if absent" set (its one key, `region_overrides`, is admin-page-only);
+>   `club_managers` was NOT — moved into the same tolerated set in the same commit so
+>   an anon visitor's now-403'd read doesn't abort the whole `loadAll()` and silently
+>   degrade every public page to stale local data. Every Edge Function reading either
+>   table uses the service-role client (RLS-exempt).
+> - `error_logs` INSERT stays anon-writable (a signed-out crash report is wanted) but
+>   is now rate-limited: a `BEFORE INSERT` trigger caps non-privileged callers at
+>   20 rows/rolling-minute, keyed on `auth.uid()` when signed in or a best-effort
+>   `x-forwarded-for` proxy for anon (shared fallback bucket if neither is available).
+>   Admin/service-role writers bypass it.
+> - Token entropy (checked 2026-07-24, already sound at 122-bit CSPRNG) bumped anyway:
+>   `request-manager-access`/`create-waiver-link`/`request-guardian-waiver` now use a
+>   shared `supabase/functions/_shared/token.ts` helper emitting 256-bit hex via
+>   `crypto.getRandomValues()`. Generation only — existing tokens and lookup/validation
+>   unchanged. None of the three is in the `--no-verify-jwt` trio.
+>
+> `npm run build` / `npx eslint <touched files>` / `npx vitest run` (1069 tests) all
+> green on the branch.
 - ~~**M1** coupon reservation at session-create (reserve on pending payment, release on
-  `expired`/`failed` webhook events).~~ Drafted 2026-07-26, see status note above.
+  `expired`/`failed` webhook events).~~ Shipped 2026-07-26, see status note above.
 - **M2** tighten `cart_member_clubpush` WITH CHECK (member-owned refs, membership kinds
   only) — defense-in-depth once 2a lands.
 - **M4** `people` self-insert-by-email branch → route through `link_or_create_person`.
-- **LOW:** scope `club_managers`/`app_settings` reads; rate-limit `error_logs` inserts;
-  confirm token generation entropy in `request-manager-access`/waiver-link functions.
+- ~~**LOW:** scope `club_managers`/`app_settings` reads; rate-limit `error_logs`
+  inserts; confirm token generation entropy in `request-manager-access`/waiver-link
+  functions.~~ Drafted 2026-07-26, see status note above.
 
 ## Suggested execution
 Phase 1 = one implementer session (migrations are small; the two triggers need the

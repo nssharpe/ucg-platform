@@ -34,8 +34,8 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
 
 ## 2. Launch blockers (🤖 buildable now)
 
-0. **Security hardening Phase 3** ([plan](plans/2026-07-02-security-hardening.md)) —
-   🟡 **PARTIAL, 2026-07-24.** ✅ M2 (`cart_member_clubpush` now membership-only),
+0. ✅ **Security hardening Phase 3 — COMPLETE 2026-07-26** ([plan](plans/2026-07-02-security-hardening.md)).
+   Every item applied to staging AND prod and verified live. ✅ M2 (`cart_member_clubpush` now membership-only),
    ✅ M4 (`people` self-insert-by-email branch dropped, + the companion `auth.ts`
    fix it needed), ✅ **invoice write lockdown** (not originally in the plan — any
    member could forge a paid invoice via PostgREST; writes on `invoices`/
@@ -57,33 +57,10 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
    reservation stops blocking. Prod smoke after deploy: cart preview still reprices
    ($1 → $45) and created 0 reservations. `create-checkout-session` +
    `stripe-webhook` redeployed to both projects, `verify_jwt` trio re-verified.
-   ❌ Still open after that: the LOW items (scoped `club_managers`/`app_settings`
-   reads, `error_logs` insert rate-limit; token entropy was checked and is sound,
-   a 256-bit bump is optional polish).
-5. ✅ **FIXED 2026-07-24 — `loadAll` silently truncated at 1000 rows.** Every table
-   read now paginates AND sorts deterministically (an unordered `.range()` can
-   duplicate/skip rows — a second latent bug found on the way). Proven on staging:
-   the old fetch returned exactly 1000 of 1,748 `scores`; the new one returns all
-   1,748 with no dupes. Original report, kept for context: `fetchAllRows` paged past
-   PostgREST's cap for `people` only; **`scores` and `registrations` use a bare
-   `.select()`**, so past 1000 rows they return the first 1000 with NO error. A
-   single nationals produces ~4–8k score rows, so this breaks at the first
-   nationals, with partial Results pages and Finance totals computed off a
-   truncated set. Phase 0 of the
-   [data-layer scale spec](specs/2026-07-24-data-layer-scale.md) — small,
-   self-contained, ship before the rest of 6.3.
-1. **Rate limiting / CAPTCHA** on sign-up and the public email-sending functions
-   (`request-guardian-waiver`, `notify-club-cart`, `request-manager-access`) —
-   these can spam from the verified naigc.org domain today. **DEFERRED to
-   just-before-launch (Nate, 2026-07-18):** CAPTCHA interferes with dev/E2E
-   testing paths; keep it on the go-live checklist rather than building now.
-2. **Privacy policy + ToS drafts** for counsel review, plus sign-up consent capture.
-3. **Playwright E2E CI gate** — the `e2e` job shipped non-blocking 2026-07-18;
-   flip to a blocking gate in the deploy workflow once it's proven stable on CI.
-4. **Hosting move** ([hosting-and-launch.md](hosting-and-launch.md)): Cloudflare Pages
-   + custom domain (`registration.unitedgymnastics.org`) + `BrowserRouter` (retires the
-   HashRouter auth-callback workarounds) + security headers (CSP/HSTS/…). 🤖 code;
-   👤 accounts + DNS.
+   ✅ **LOW items shipped 2026-07-26** (staging + prod): `club_managers`/`app_settings`
+   SELECT scoped to `authenticated`; `error_logs` rate-limited to 20 inserts/minute per
+   caller (verified live: 20 accepted, rest rejected, on both envs); 256-bit tokens in
+   the 3 no-login token generators (redeployed both envs). **Phase 3 is complete.**
 
 ## 3. Quality passes (pre- or just post-launch)
 
