@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate, Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { WriteStatus } from './components/WriteStatus';
@@ -66,6 +66,22 @@ function MeetManageRedirect() {
 function MeetNationalsRedirect() {
   const { slug } = useParams();
   return <Navigate to={`/events/${slug}/nationals`} replace />;
+}
+
+/** H6 (2026-07-04 UI/UX review): unmatched hash routes (a typo like
+ *  `#/profile` — the real route is `#/me` — or a stale/old link) used to
+ *  silently render Home via the `*` catch-all below, giving no indication
+ *  the URL didn't match anything. This is ONLY reached by the `*` route,
+ *  which React Router ranks below every explicit path — it never intercepts
+ *  the `/meets*`, `/club/:clubId/cart`, or `/set-password` routes above. */
+function NotFound() {
+  return (
+    <div className="card card-pad" style={{ maxWidth: 480 }}>
+      <h1 className="page-title display" style={{ fontSize: 22 }}>Page not found</h1>
+      <p className="page-sub">That link doesn&rsquo;t exist — it may be old or mistyped.</p>
+      <Link className="btn primary" to="/">Go to Home →</Link>
+    </div>
+  );
 }
 const Clubs = lazy(() => loaders.Clubs().then((m) => ({ default: m.Clubs })));
 const SanctionRequestForm = lazy(() => loaders.Sanction().then((m) => ({ default: m.SanctionRequestForm })));
@@ -325,7 +341,7 @@ export default function App() {
               <Route path="/waiver/sign/:token" element={<WaiverSign />} />
               <Route path="/manager-access/:token" element={<ManagerAccessReview />} />
               <Route path="/set-password" element={<SetPassword />} />
-              <Route path="*" element={<Home />} />
+              <Route path="*" element={<NotFound />} />
             </Routes>
           </Suspense>
           </RouteErrorBoundary>

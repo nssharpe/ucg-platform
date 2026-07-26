@@ -514,7 +514,15 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                     {isOpen && tab === 'upcoming' && !regClosed && !canStillEdit && (
                       <span style={{ fontSize: 12, color: 'var(--ink-soft)' }}>Edit deadline passed</span>
                     )}
-                    <span style={{ color: 'var(--teal-900)', fontSize: 13 }}>{isOpen ? 'Hide' : 'Details'}</span>
+                    <button
+                      type="button"
+                      className="linklike-button"
+                      aria-expanded={isOpen}
+                      style={{ color: 'var(--teal-900)', fontSize: 13 }}
+                      onClick={(e) => { e.stopPropagation(); setExpanded(isOpen ? null : event.id); }}
+                    >
+                      {isOpen ? 'Hide' : 'Details'}
+                    </button>
                   </span>
                 </div>
 

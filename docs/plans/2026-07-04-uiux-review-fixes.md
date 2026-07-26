@@ -567,7 +567,30 @@ Checklist: [ ] screenshot each of the 7 fixes; [ ] grep confirms no remaining
 clientWidth; [ ] npm run build; [ ] npx eslint <touched>; [ ] npx vitest run.
 ```
 
-### H5 — Cart: collapse the redundant CTAs when only one section exists
+### H5 — Cart: collapse the redundant CTAs when only one section exists — IMPLEMENTED 2026-07-26
+(branch `ui/h5-h7-cart-route-a11y`, unmerged/undeployed)
+
+> New pure `cartSectionCount(groups)` in `src/lib/pricing.ts` (unit tested,
+> `tests/lib/cart-section-count.test.ts`) counts the CartCard groups a scope
+> would render (Memberships 0/1 + one per distinct event + Other 0/1);
+> `CartScope` only renders the "Total / Print Invoice / Check out everything"
+> bar when that count is 2+, and renders it once, at the top (the bottom
+> duplicate block was deleted, not just hidden). The checkout view's
+> duplicated "Billed to X." line (page subtitle already states it) was
+> removed from `CartScope`'s checkout branch. Live-verified with the dev
+> club-manager persona: registered Dev Athlete into "Miscellaneous Open 2026"
+> for a one-section club cart (exactly one Print Invoice + one Check out
+> button, no Total bar — confirmed via DOM button counts, not just visual);
+> added a FlipFest 2026 t-shirt add-on for a two-section cart (single top
+> "Total: $80" bar + 3 Print Invoice buttons + 1 "Check out everything"
+> button, confirmed via `main.querySelectorAll` counts); removed the t-shirt
+> via ✕ and confirmed the cart correctly collapsed back to the one-section,
+> no-bar state; confirmed the checkout view's "Billed to Dev Test." now
+> appears exactly once. Test data cleaned up (registration + add-on removed)
+> after verification. Confirmed the 536px/375px overflow noticed while
+> testing at 375px belongs to the ADMIN Communicate page's compose editor
+> card (pre-existing, reproduced identically with this branch's changes
+> stashed) — unrelated to this task, not touched here.
 
 ```
 src/pages/Cart.tsx: with a single cart section the page shows SIX actions for one
@@ -590,7 +613,25 @@ temporarily seed one) shows the single top everything-bar plus per-section butto
 [ ] npm run build; [ ] npx eslint src/pages/Cart.tsx; [ ] npx vitest run.
 ```
 
-### H6 — Not-found route instead of silent Home fallback
+### H6 — Not-found route instead of silent Home fallback — IMPLEMENTED 2026-07-26
+(branch `ui/h5-h7-cart-route-a11y`, unmerged/undeployed)
+
+> New module-scope `NotFound` component in `src/App.tsx`, wired to the `*`
+> catch-all (was `<Home />`). React Router ranks explicit paths above `*`
+> regardless of declaration order, so every named redirect keeps matching
+> first — verified live for all of them (hash shown is the actual observed
+> post-redirect value): `#/meets` → `#/events`, `#/meets/test-meet` →
+> `#/events/test-meet` (event page rendered, slug preserved),
+> `#/meets/test-meet/manage` → `#/events/test-meet/manage`, `#/club/dev-club`
+> → `#/club/dev-club/roster`, `#/club/dev-club/cart` → `#/cart`. `#/` still
+> renders Home. `#/profile` and `#/garbage` both render NotFound ("Page not
+> found" / "That link doesn't exist — it may be old or mistyped." / "Go to
+> Home →"), hash left as-is (no forced redirect on the not-found page
+> itself). `?setpw=1` handling (`SetPasswordRedirect`) is mounted directly
+> under `<HashRouter>`, outside `<Routes>` entirely — it navigates
+> imperatively via `useNavigate` and never touches the `*` route, so it's
+> structurally unaffected by this change (code-inspected, not exercised).
+> No overflow at 375/768/1280 on the NotFound page.
 
 ```
 Unknown hash routes (e.g. #/profile — the real route is #/me) silently render the
@@ -613,7 +654,32 @@ Checklist: [ ] #/profile and #/garbage show NotFound; [ ] #/meets and a
 [ ] npx eslint <touched>; [ ] npx vitest run.
 ```
 
-### H7 — "Details"/"Hide" toggles are plain spans (keyboard/SR inaccessible)
+### H7 — "Details"/"Hide" toggles are plain spans (keyboard/SR inaccessible) — IMPLEMENTED 2026-07-26
+(branch `ui/h5-h7-cart-route-a11y`, unmerged/undeployed)
+
+> Both instances (`MyRegistrations.tsx`, `admin/Communicate.tsx`) converted
+> to `<button type="button" className="linklike-button" aria-expanded={...}>`
+> with the SAME inline `color`/`fontSize` the `<span>` carried (new
+> `.linklike-button` CSS class in `src/index.css` just strips button
+> chrome — `background:none; border:0; padding:0; font:inherit`). Both
+> toggles live inside a clickable row `<div>`; the button's own `onClick`
+> calls `e.stopPropagation()` before toggling so the row's own handler
+> doesn't ALSO fire and cancel the toggle back out. Grepped for the same
+> `'Hide' : 'Details'`/`'Details' : 'Hide'` pattern repo-wide — only these
+> two hits (all other Hide/Show toggles in the codebase were already real
+> buttons). Live-verified via DOM reads (screenshot capture is wedged this
+> session): both render as real `<button>` with `tabIndex 0`,
+> `aria-expanded="false"` initially; computed `color`/`fontSize`/background
+> match the original span's inline values exactly (`rgb(24, 75, 86)`,
+> 13px/12.5px, transparent background); clicking the button toggles
+> `aria-expanded` and the label (`Details`↔`Hide`) with no double-toggle;
+> clicking elsewhere in the row also toggles independently. Direct OS-level
+> key-press delivery to the Browser pane didn't reach the page this session
+> (a `keydown` listener saw zero events from the `computer` tool's `key`
+> action — the same "wedged" Browser pane noted for screenshots) so Enter/
+> Space activation is backed by the HTML spec guarantee for real
+> `<button>` elements with default `tabIndex`, not a literal physical
+> keypress capture.
 
 ```
 The expand/collapse toggles on registration cards are styled <span>s inside a

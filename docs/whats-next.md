@@ -91,8 +91,14 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
   Copy-link buttons, and the 7-item microcopy sweep) are also implemented, on
   branch `ui/h1-h4-display-polish` (2026-07-26, unmerged/undeployed) — this also
   fixed the S5/S6 branch's out-of-scope 375px table-overflow finding on
-  MyRegistrations. H5–H7 remain unstarted. Still open: merging/pushing all four
-  branches (after review) and H5–H7.
+  MyRegistrations. **H5–H7** (collapse redundant cart CTAs, a NotFound route for
+  unmatched hash paths, accessible Details/Hide toggle buttons) are also
+  implemented, on branch `ui/h5-h7-cart-route-a11y` (2026-07-26, unmerged/
+  undeployed) — see the plan doc for the live-verified redirect list and the
+  pre-existing (unrelated, found-not-fixed) 375px overflow on the admin
+  Communicate page's compose editor card. Still open: merging/pushing all five
+  branches (after review — H5–H7 don't touch money so should be a lighter gate
+  than S4/S5/S6's fable review).
 2. **Accessibility audit** to WCAG 2.1 AA (axe + manual keyboard/focus/ARIA pass) +
   loading/empty/error-state consistency across pages.
 3. **New-club-request email** to `newclubinquiries@naigc.org` (transport exists, not wired).

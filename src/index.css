@@ -408,6 +408,21 @@ option { color: var(--ink); background: #fff; }
    this uses --ink (navy-800) on --line = 9.81:1 instead — S1 2026-07-25. */
 .btn:disabled { background: var(--line); color: var(--ink); opacity: 1; cursor: not-allowed; transform: none; box-shadow: none; }
 
+/* H7 (2026-07-04 UI/UX review): a real, keyboard/SR-reachable <button> styled
+   to look exactly like the plain-text "Details"/"Hide" toggles it replaces —
+   no background/border/padding, inherits color+font from the caller's own
+   inline style (which still sets the specific color/size, e.g. --teal-900 at
+   13px) so the visual is byte-for-byte the same as the <span> it replaces. */
+.linklike-button {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  cursor: pointer;
+  text-align: inherit;
+}
+
 .badge {
   display: inline-flex;
   align-items: center;

@@ -975,6 +975,17 @@ export function diffCartLinePrices(
   return diffs;
 }
 
+/** UI/UX review H5 (2026-07-04 doc, fixed 2026-07-26): how many CartCard
+ *  groups `Cart.tsx`'s `groupCartItems` would render for one scope (the
+ *  personal cart, or one managed club's cart) — Memberships (0 or 1) + one
+ *  per distinct event + Other (0 or 1). `CartScope` uses this to decide
+ *  whether its "Total / Print Invoice / Check out everything" bar adds real
+ *  information (2+ groups) or is pure redundancy with the sole CartCard's
+ *  own subtotal + checkout button (1 group). */
+export function cartSectionCount(groups: { membership: unknown[]; events: unknown[]; other: unknown[] }): number {
+  return (groups.membership.length > 0 ? 1 : 0) + groups.events.length + (groups.other.length > 0 ? 1 : 0);
+}
+
 /** Generate a random uppercase promo code (default 8 chars, no ambiguous chars). */
 export function randomPromoCode(len = 8): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I,O,0,1
