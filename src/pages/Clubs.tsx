@@ -113,6 +113,12 @@ export function Clubs() {
         </div>
       ) : (
         <div className="card" style={{ overflow: 'hidden' }}>
+          {/* H4.7: the Region badge (white-space: nowrap) clips at the card's
+              right edge around 800px viewport width — wrap the table in its
+              own horizontal scroller (same technique as the Events table's
+              `.events-table-wrap`) so the table can scroll WITHIN the card
+              instead of clipping content or overflowing the page. */}
+          <div style={{ overflowX: 'auto' }}>
           <table className="tbl">
             <thead>
               <tr>
@@ -183,6 +189,7 @@ export function Clubs() {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>

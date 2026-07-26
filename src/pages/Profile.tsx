@@ -657,7 +657,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
               {isAthlete && person.gender !== 'Male' && person.gender !== 'Female' && DISCIPLINES.map((d) => (
                 <ViewRow key={d} label={`${d} placement`} value={person.placement?.[d] ?? 'women+'} />
               ))}
-              {!coachOnly && <ViewRow label="Grad year" value={person.gradYear === 1900 ? 'N/A' : String(person.gradYear)} />}
+              {!coachOnly && <ViewRow label="Grad year" value={person.gradYear === 1900 ? 'N/A' : (person.gradYear ? String(person.gradYear) : '')} />}
               {!coachOnly && <ViewRow label="Student status" value={person.studentStatus} />}
               <ViewRow label="T-shirt size" value={person.shirt} />
               <ViewRow label={stateLabel} value={person.outsideUs ? 'Outside US' : `${person.state}${STATE_REGIONS[person.state] ? ` (${STATE_REGIONS[person.state]})` : ''}`} />

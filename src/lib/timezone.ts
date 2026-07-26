@@ -144,3 +144,19 @@ export function timezoneForState(state?: string | null, country?: string | null)
   if (STATE_TIMEZONES[key]) return STATE_TIMEZONES[key];
   return DEFAULT_ZONE;
 }
+
+/** Short abbreviation ("EDT", "PST", …) for an IANA timezone, as of right
+ *  now. Lifted out of src/pages/Events.tsx (2026-07-26, H2) so any page that
+ *  needs to LABEL a date already shown in the event's own local wall-clock
+ *  time (never to convert it — `regOpens`/`regCloses`/etc. are stored as
+ *  naive local-time strings, not UTC instants) can reuse the same helper
+ *  instead of redefining it. */
+export function tzAbbrev(timezone: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: timezone, timeZoneName: 'short' })
+      .formatToParts(new Date());
+    return parts.find((p) => p.type === 'timeZoneName')?.value ?? timezone;
+  } catch {
+    return timezone;
+  }
+}

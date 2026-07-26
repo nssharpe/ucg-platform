@@ -35,9 +35,16 @@ function summarize(inv: Invoice, db: DB, personId: string): string {
   if (hasMembership) parts.push('Memberships');
   if (eventNames.length) parts.push(`Registrations for ${eventNames.join(', ')}`);
   if (parts.length === 0) {
-    // Fallback: list distinct item kinds.
+    // Fallback chain (H4.4): distinct item kinds, then the line labels
+    // themselves, then a dated placeholder — never a bare "Purchase" with no
+    // information. Uses only data already loaded on `inv`/`items` (no new
+    // queries).
     const kinds = [...new Set(items.map((i) => i.kind))];
-    return kinds.join(', ') || 'Purchase';
+    if (kinds.length) return kinds.join(', ');
+    const labels = [...new Set(items.map((i) => i.label).filter(Boolean))];
+    if (labels.length) return labels.join(', ');
+    const dateLabel = new Date(inv.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return `Purchase on ${dateLabel}`;
   }
   return parts.join(' & ');
 }
@@ -111,7 +118,7 @@ function PurchaseHistoryInner({ personId, name }: { personId: string; name: stri
                 <strong style={{ marginLeft: 'auto' }}>{fmtMoney(invoiceTotal(inv))}</strong>
               </div>
               <p style={{ margin: '8px 0 10px', fontSize: 14 }}>{summarize(inv, db, personId)}</p>
-              <button className="btn small ghost" onClick={() => setDetail(inv)}>Click for details →</button>
+              <button className="btn small ghost" onClick={() => setDetail(inv)}>View details →</button>
             </div>
           ))}
         </div>

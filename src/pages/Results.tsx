@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useDB } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { Tabs, Badge } from '../components/ui';
-import { useFmtDate } from '../components/ui-hooks';
+import { useFmtDate, useToast } from '../components/ui-hooks';
 import { EventStatusBadge } from './Home';
 import { sessionResults, fmtScore } from '../lib/scoring';
 import { scoreDetailPath } from '../lib/calculators';
@@ -12,6 +12,16 @@ import type { Registration, Score, DB } from '../lib/types';
 import type { AthleteResult } from '../lib/scoring';
 import { isSupabaseConfigured, subscribeEventScores, applyScorePatch } from '../lib/supabase';
 import { eventIsInPhase } from '../lib/events-core';
+import { appBaseUrl, copyToClipboard } from '../lib/url';
+
+// H1: the two standard empty-state messages for the results tables, matching
+// the muted style used elsewhere (e.g. Club.tsx's "Active members not yet
+// registered…").
+const NO_MATCH_MSG = 'No athletes match your search.';
+const NO_SCORES_MSG = 'No scores posted yet — results appear here live as judges enter them.';
+function ResultsEmpty({ hasFilter }: { hasFilter: boolean }) {
+  return <p style={{ color: 'var(--ink-soft)', fontSize: 14 }}>{hasFilter ? NO_MATCH_MSG : NO_SCORES_MSG}</p>;
+}
 
 export function ResultsIndex() {
   const db = useDB();
@@ -50,6 +60,7 @@ export function EventResults() {
   const { slug } = useParams();
   const db = useDB();
   const caps = useCapabilities();
+  const toast = useToast();
   const event = db.events.find((m) => m.slug === slug);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [view, setView] = useState<'aa' | 'events' | 'team'>('aa');
@@ -134,8 +145,20 @@ export function EventResults() {
     return a ? `${a.firstName} ${a.lastName}` : athleteId;
   };
 
+  // H3: absolute link to this results page. The session isn't part of the
+  // route/query (`sessionId` is local component state only), so there's
+  // nothing session-specific to fold in — copy the page URL as-is.
+  const handleCopyLink = async () => {
+    const ok = await copyToClipboard(`${appBaseUrl()}/#/results/${event.slug}`);
+    if (ok) toast('Link copied');
+  };
+
   // Categories present in this session (drives badge column + filter).
   const categories = [...new Set([...byLevel.values()].flat().map((r) => r.reg.category).filter(Boolean))] as string[];
+
+  // H1: whether an active search/category/level filter could be responsible
+  // for an empty result set (message copy differs from the "no data at all" case).
+  const hasActiveFilter = !!search || !!catFilter || !!levelFilter;
 
   const canOpenScore = (athleteId: string) =>
     caps.isAdmin || caps.isEventHost(event?.id ?? '') || caps.personId === athleteId;
@@ -177,12 +200,14 @@ export function EventResults() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: 10, flexWrap: 'wrap' }}>
         <div>
           <h1 className="page-title display">{event.name}</h1>
-          <p className="page-sub">
-            {eventIsInPhase(event, 'in-progress') && <><span className="pulse" /><strong>Live</strong> — updates as judges post. </>}
-            Unique URL per event & session: <code>#/results/{event.slug}</code>
-          </p>
+          {eventIsInPhase(event, 'in-progress') && (
+            <p className="page-sub"><span className="pulse" /><strong>Live</strong> — updates as judges post.</p>
+          )}
         </div>
-        <EventStatusBadge event={event} />
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <EventStatusBadge event={event} />
+          <button className="btn small ghost" onClick={handleCopyLink}>Copy link</button>
+        </div>
       </div>
 
       <div className="grid cols-2" style={{ marginBottom: 14 }}>
@@ -216,11 +241,14 @@ export function EventResults() {
             </span>
           </div>
 
-          {levelEntries.map(([levelId, rows]) => {
-            const shown = sortRows(rows.filter(matchesFilters));
-            if (shown.length === 0) return null;
-            const isCollapsed = collapsed.has(levelId);
-            return (
+          {(() => {
+            const groupsWithShown = levelEntries.map(([levelId, rows]) => [levelId, sortRows(rows.filter(matchesFilters))] as const);
+            const totalShown = groupsWithShown.reduce((n, [, shown]) => n + shown.length, 0);
+            if (totalShown === 0) return <ResultsEmpty hasFilter={hasActiveFilter} />;
+            return groupsWithShown.map(([levelId, shown]) => {
+              if (shown.length === 0) return null;
+              const isCollapsed = collapsed.has(levelId);
+              return (
               <div key={levelId} style={{ marginBottom: 18 }}>
                 <button
                   className="res-group-header display"
@@ -262,8 +290,9 @@ export function EventResults() {
                   </div>
                 )}
               </div>
-            );
-          })}
+              );
+            });
+          })()}
         </>
       )}
 
@@ -281,7 +310,9 @@ export function EventResults() {
                       <td className="num score">{scoreLink(row.score, canOpenScore(row.reg.athleteId))}</td>
                     </tr>
                   ))}
-                  {er.rows.length === 0 && <tr><td style={{ color: 'var(--ink-soft)' }}>No scores yet.</td></tr>}
+                  {er.rows.length === 0 && (
+                    <tr><td style={{ color: 'var(--ink-soft)', fontSize: 13 }}>{hasActiveFilter ? NO_MATCH_MSG : NO_SCORES_MSG}</td></tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -290,28 +321,34 @@ export function EventResults() {
       )}
 
       {view === 'team' && (
-        <div className="card" style={{ overflowX: 'auto' }}>
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th style={{ width: 40 }}>#</th><th>Club</th>
-                {events.map((ev) => <th key={ev.code} className="num">{ev.code}</th>)}
-                <th className="num">Team total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {teamScores.map((t, i) => (
-                <tr key={t.clubId}>
-                  <td><span className={`rank-chip r${i + 1}`}>{i + 1}</span></td>
-                  <td><strong>{db.clubs.find((c) => c.id === t.clubId)?.name}</strong></td>
-                  {events.map((ev) => <td key={ev.code} className="num score">{fmtScore(t.perApparatus[ev.code])}</td>)}
-                  <td className="num score" style={{ fontSize: 15 }}>{fmtScore(t.total)}</td>
+        teamScores.length === 0 ? (
+          <div className="card card-pad">
+            <ResultsEmpty hasFilter={hasActiveFilter} />
+          </div>
+        ) : (
+          <div className="card" style={{ overflowX: 'auto' }}>
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th style={{ width: 40 }}>#</th><th>Club</th>
+                  {events.map((ev) => <th key={ev.code} className="num">{ev.code}</th>)}
+                  <th className="num">Team total</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-          <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', padding: '0 12px 12px' }}>Team score = top 3 scores per club per event, summed across events.</p>
-        </div>
+              </thead>
+              <tbody>
+                {teamScores.map((t, i) => (
+                  <tr key={t.clubId}>
+                    <td><span className={`rank-chip r${i + 1}`}>{i + 1}</span></td>
+                    <td><strong>{db.clubs.find((c) => c.id === t.clubId)?.name}</strong></td>
+                    {events.map((ev) => <td key={ev.code} className="num score">{fmtScore(t.perApparatus[ev.code])}</td>)}
+                    <td className="num score" style={{ fontSize: 15 }}>{fmtScore(t.total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', padding: '0 12px 12px' }}>Team score = top 3 scores per club per event, summed across events.</p>
+          </div>
+        )
       )}
     </div>
   );

@@ -452,7 +452,7 @@ function MembershipInner({ me }: { me: Athlete }) {
                     <Badge tone="ok">✓ {typeLabel(m.type)} Active</Badge>
                     <p style={{ margin: '4px 0 0' }}>
                       Your {season.name} {m.type} membership is active.
-                      Waiver signed by {m.waiverSignedBy} on {m.waiverSignedAt?.slice(0, 10)}.
+                      Waiver signed{m.waiverSignedBy ? <> by {m.waiverSignedBy}</> : null} on {m.waiverSignedAt?.slice(0, 10)}.
                       {m.activatedByAdmin && <span style={{ color: 'var(--ink-soft)', fontSize: 13 }}> (Admin override)</span>}
                     </p>
                   </>

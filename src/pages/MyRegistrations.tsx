@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { Badge, Combo, Field, Modal, Tabs } from '../components/ui';
-import { useToast } from '../components/ui-hooks';
+import { useToast, useFmtDate } from '../components/ui-hooks';
+import { tzAbbrev } from '../lib/timezone';
 import { pushRegistration, pushCampSurvey, pushCart, syncSynchroPartnerLevelRemote, cancelWaitlistGroup, deleteRegistration, fetchCampSurveys } from '../lib/supabase';
 import { RegistrationEditor } from '../components/RegistrationEditor';
 import {
@@ -43,6 +44,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   const db = useDB();
   const caps = useCapabilities();
   const toast = useToast();
+  const fmtDate = useFmtDate();
   const navigate = useNavigate();
   const [tab, setTab] = useState<'upcoming' | 'past'>('upcoming');
   const [q, setQ] = useState('');
@@ -54,6 +56,27 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   const nameOf = (id: string) => {
     const p = db.people.find((x) => x.id === id);
     return p ? `${p.firstName} ${p.lastName}` : 'partner';
+  };
+
+  // H2 item 1: `event.regCloses` is a naive local wall-clock string
+  // ("2026-06-24T23:59", no zone suffix) in the EVENT's own timezone, not
+  // UTC — reused from the exact same two existing helpers Events.tsx already
+  // composes for its "Opens X · closes Y (tz)" line: `fmtDate` for the date
+  // portion (never converts; formats the digits as given) and `tzAbbrev` to
+  // LABEL which zone those digits are in (never to convert them). The time
+  // portion uses the same ad hoc `toLocaleTimeString` pattern already used
+  // elsewhere in this codebase (e.g. ErrorLog.tsx) for a short clock time —
+  // safe here for the same no-conversion reason as fmtDate: `new
+  // Date(regCloses)` parses a zone-less string as local time, and formatting
+  // without a `timeZone` option reproduces the same digits regardless of the
+  // browser's zone.
+  const fmtRegCloses = (event: Event) => {
+    if (!event.regCloses) return '—';
+    const datePart = fmtDate(event.regCloses.slice(0, 10));
+    const timePart = event.regCloses.length > 10
+      ? new Date(event.regCloses).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+      : '';
+    return `${datePart}${timePart ? `, ${timePart}` : ''} (${tzAbbrev(event.timezone)})`;
   };
 
   // Group this athlete's (non-refunded) registrations by event. NOT memoized
@@ -518,9 +541,14 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                   return (
                   <div style={{ marginTop: 12, borderTop: '1px solid var(--line)', paddingTop: 12 }}>
                     <div style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 8 }}>
-                      {paymentStatus.label} · Registration closes {event.regCloses}
+                      {paymentStatus.label} · Registration closes {fmtRegCloses(event)}
                     </div>
-                    <table className="tbl" style={{ marginBottom: 12 }}>
+                    {/* Wrapped in its own horizontal scroller (same technique as
+                        Clubs.tsx's H4.7 fix / Events.tsx's `.events-table-wrap`):
+                        at 375px a "Refund requested" badge + button in the last
+                        column pushes this table wider than the viewport. */}
+                    <div style={{ overflowX: 'auto', marginBottom: 12 }}>
+                    <table className="tbl">
                       <tbody>
                         {regs.map((r) => {
                           const base = r.apparatus.join(', ');
@@ -572,6 +600,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                         })}
                       </tbody>
                     </table>
+                    </div>
 
                     {/* Nationals session-planning survey (event-mgmt v2 Phase
                         5, A2) — independent-athlete variant: only when this
@@ -621,7 +650,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                         </p>
                       ) : (
                         <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: 0 }}>
-                          Use <strong>Edit</strong> above to change your disciplines, levels, events{affiliatedClubs.length > 1 ? ', or which club you compete for' : ''}.
+                          Use <strong>Edit</strong> above to change your disciplines, levels, and apparatus{affiliatedClubs.length > 1 ? ', or which club you compete for' : ''}.
                         </p>
                       )
                     )}
