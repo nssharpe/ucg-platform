@@ -676,8 +676,9 @@ function JudgeAccessCard({ event, toast }: { event: Event; toast: (msg: string, 
   const [busy, setBusy] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
 
-  const appUrl = window.location.origin + import.meta.env.BASE_URL.replace(/\/$/, '');
-  const link = active ? `${appUrl}/#/judge/access/${active.token}` : '';
+  // `appBaseUrl()` (src/lib/url.ts) was extracted FROM this expression for the
+  // H3 copy-link buttons — use it here too rather than keeping a second copy.
+  const link = active ? `${appBaseUrl()}/#/judge/access/${active.token}` : '';
 
   useEffect(() => {
     // No synchronous setState here (CLAUDE.md ESLint trap) — when there's no
