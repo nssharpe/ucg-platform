@@ -66,6 +66,17 @@ Secondary:
     token bug (`var(--amber-700)`, never defined) discovered while retiring the
     amber family — fixed to `var(--warn)` (the kept freestanding-warning-text
     token, row 7 below) rather than left dangling.
+- **Applied 2026-07-25 (S1 contrast pass) — primary CTAs + active nav.** `.btn.primary`
+  and `.nav-link.active` were white on `--coral-500` (2.94:1, AA fail everywhere they
+  appear); both now use `--navy-800` text (4.78:1), i.e. the same approved red-orange +
+  navy small-text pairing already used by `.badge.err`. Because those CTAs now carry DARK
+  text, the hover step had to LIGHTEN — every darker ramp step fails against navy
+  (`--coral-600` 3.84:1, `--coral-700` 2.41:1) — so a **new token `--coral-400`
+  (`#f57b5f`, Red Orange lightened 12% toward white, 5.41:1 with navy-800)** exists
+  solely as the primary-button hover fill. Same pass fixed `::selection`,
+  `.sp-chip.excluded` and `.rank-chip.r1` (all white-on-coral-500), and moved
+  `.btn:disabled` off `opacity: 0.45` to a flat `--line` fill with `--ink` text (9.81:1).
+
 - **Kept as a documented functional deviation:** `--warn` (`#B45309`) as
   freestanding warning TEXT with no fill (inline sentences on white cards) — no
   brand color passes AA as text-on-white at that role (Golden Yellow is ~1.6:1),
