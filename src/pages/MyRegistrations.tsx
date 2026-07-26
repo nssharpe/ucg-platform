@@ -20,6 +20,7 @@ import { SessionRequestSurveyCard } from '../components/SessionRequestSurvey';
 import { NationalsDashboard } from '../components/NationalsDashboard';
 import { EventCheckinCard } from '../components/EventCheckinCard';
 import { currentSeason } from '../lib/season-lifecycle';
+import { regGroupPaymentStatusInfo } from '../lib/registration-status';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -460,6 +461,14 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
             // deadline" for the self-service flow (an admin still bypasses via
             // caps.isEventHost).
             const canStillEdit = canStillEditRegistration(event, caps.isEventHost(event.id));
+            // Payment status (S6) reflects the still-active rows — a
+            // refunded-but-kept row (spec §H) no longer owes anything and
+            // shouldn't drag an otherwise-paid card into a misleading state.
+            // Falls back to the full group if every row happens to be
+            // refunded-but-kept. Derived strictly from paid/updatedPending
+            // (registration-status.ts) — never a refRegIds heuristic.
+            const activeRegs = regs.filter((r) => !r.refunded);
+            const paymentStatus = regGroupPaymentStatusInfo(activeRegs.length > 0 ? activeRegs : regs);
             return (
               <div key={event.id} className="card card-pad">
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, cursor: 'pointer', flexWrap: 'wrap' }}
@@ -469,6 +478,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                     {event.startDate}{event.endDate !== event.startDate ? `–${event.endDate}` : ''} · {event.city}, {event.state}
                   </span>
                   {club && <Badge tone="navy">{club.shortName || club.name}</Badge>}
+                  <Badge tone={paymentStatus.tone}>{paymentStatus.label}</Badge>
                   <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 10, alignItems: 'center' }}>
                     {isOpen && tab === 'upcoming' && !regClosed && canStillEdit && (
                       <button
@@ -508,7 +518,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                   return (
                   <div style={{ marginTop: 12, borderTop: '1px solid var(--line)', paddingTop: 12 }}>
                     <div style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 8 }}>
-                      Status: {event.status} · Registration closes {event.regCloses}
+                      {paymentStatus.label} · Registration closes {event.regCloses}
                     </div>
                     <table className="tbl" style={{ marginBottom: 12 }}>
                       <tbody>
