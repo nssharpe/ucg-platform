@@ -48,6 +48,10 @@
   --ice-200: #dbebee; /* Light Blue (brand primary) */
   --ice-300: #c3dadf;
   --coral-500: #f4694a; /* Red Orange (brand secondary) — --navy-800 text OK for badge fills (2026-07-19) */
+  --coral-400: #f57b5f; /* Red Orange LIGHTENED 12% toward white — primary-button hover only (S1
+                           2026-07-25). Primary CTAs carry --navy-800 text, so the hover step has to
+                           get LIGHTER, not darker: every darker ramp step fails AA against navy
+                           (coral-600 3.84:1, coral-700 2.41:1). navy-800 on this = 5.41:1. */
   --coral-600: #e2553b;
   --coral-700: #b23a1f; /* AA-compliant text (~4.9:1) on --coral-100 */
   --coral-100: #fde4dd;
@@ -105,7 +109,8 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 /* Ensure native select/option text is always readable regardless of OS colour scheme */
 option { color: var(--ink); background: #fff; }
 
-::selection { background: var(--coral-500); color: var(--white); }
+/* navy-800 on coral-500 = 4.78:1; white was 2.94:1 (fail) — S1 sweep 2026-07-25 */
+::selection { background: var(--coral-500); color: var(--navy-800); }
 
 .display {
   font-family: var(--font-display);
@@ -171,7 +176,8 @@ option { color: var(--ink); background: #fff; }
 .nav-link:hover { background: rgba(219, 235, 237, 0.08); }
 .nav-link.active {
   background: var(--coral-500);
-  color: var(--white);
+  /* navy-800 on coral-500 = 4.78:1 (AA pass); white was 2.94:1 (fail) — S1 2026-07-25 */
+  color: var(--navy-800);
   font-weight: 600;
 }
 
@@ -383,13 +389,24 @@ option { color: var(--ink); background: #fff; }
 }
 .btn:hover { transform: translateY(-1px); box-shadow: var(--shadow); }
 .btn:active { transform: translateY(0); }
-.btn.primary { background: var(--coral-500); }
-.btn.primary:hover { background: var(--coral-600); }
+/* navy-800 on coral-500 = 4.78:1 (AA pass); white was 2.94:1 (fail) — S1 2026-07-25.
+   Hover LIGHTENS rather than darkens: primary CTAs now carry dark (navy) text, so
+   every darker step in the ramp fails AA against it (coral-600 3.84:1, coral-700
+   2.41:1) while a lighter one improves it. --coral-400 = 5.41:1. */
+.btn.primary { background: var(--coral-500); color: var(--navy-800); }
+.btn.primary:hover { background: var(--coral-400); }
 .btn.ghost { background: transparent; color: var(--ink); border: 1.5px solid var(--line); }
 .btn.ghost:hover { border-color: var(--navy-600); }
 .btn.small { padding: 5px 12px; font-size: 12.5px; }
+/* Primary CTAs at "small" size still need a legible 14px floor (the plain small
+   ghost/danger buttons that populate dense admin tables are left at 12.5px —
+   out of scope and higher risk of layout breakage; see S1 report). */
+.btn.primary.small { font-size: 14px; }
 .btn.danger { background: transparent; border: 1.5px solid var(--coral-500); color: var(--coral-600); }
-.btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; box-shadow: none; }
+/* Flat gray disabled surface at opacity 1 (was coral/navy at opacity 0.45, which
+   read as "nearly enabled"). ink-soft on --line is only 3.80:1 (fails 4.5:1), so
+   this uses --ink (navy-800) on --line = 9.81:1 instead — S1 2026-07-25. */
+.btn:disabled { background: var(--line); color: var(--ink); opacity: 1; cursor: not-allowed; transform: none; box-shadow: none; }
 
 .badge {
   display: inline-flex;
@@ -764,7 +781,7 @@ option { color: var(--ink); background: #fff; }
 .sp-chip:active { transform: scale(0.96); }
 .sp-chip.on, .sp-chip.sel { background: var(--navy-800); border-color: var(--navy-800); color: var(--white); }
 .sp-chip.contrib { background: var(--teal-900); border-color: var(--teal-900); color: var(--white); }
-.sp-chip.excluded { background: var(--coral-500); border-color: var(--coral-500); color: var(--white); text-decoration: line-through; }
+.sp-chip.excluded { background: var(--coral-500); border-color: var(--coral-500); color: var(--navy-800); text-decoration: line-through; } /* was white/coral-500 2.94:1 — S1 sweep */
 
 .sp-check { margin-bottom: 4px; }
 .sp-check span { font-size: 14px; }
@@ -808,7 +825,7 @@ option { color: var(--ink); background: #fff; }
   background: var(--ice-200);
   color: var(--navy-700);
 }
-.rank-chip.r1 { background: var(--coral-500); color: var(--white); }
+.rank-chip.r1 { background: var(--coral-500); color: var(--navy-800); } /* was white/coral-500 2.94:1 — S1 sweep */
 .rank-chip.r2 { background: var(--navy-800); color: var(--white); }
 .rank-chip.r3 { background: var(--ice-300); color: var(--navy-800); }
 
