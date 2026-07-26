@@ -354,6 +354,8 @@ fable review before merge/push, task O2)
 > absent on a card with no refund-requested rows, and absent at 768px+;
 > confirmed via `scrollWidth`/`clientWidth` before and after this diff — the
 > table code itself is untouched by S5/S6.
+> **RESOLVED 2026-07-26** on branch `ui/h1-h4-display-polish` (H4, same fix
+> as H4.7's Clubs.tsx table) — see that section.
 
 ```
 Surface paid/pending state on src/pages/MyRegistrations.tsx cards.
@@ -386,7 +388,21 @@ but it renders money state).
 
 ## Haiku 4.5 (mechanical, explicit checklists)
 
-### H1 — Live Results empty state
+### H1 — Live Results empty state — IMPLEMENTED 2026-07-26
+(branch `ui/h1-h4-display-polish`, unmerged/undeployed)
+
+> All three tabs (All-Around, By apparatus, Team) render one of the two
+> specified messages when empty; AA computes a total-shown count across all
+> level groups first (rather than each group independently returning
+> `null`), so an all-filtered-out AA tab shows the message once instead of
+> rendering nothing. "By apparatus" keeps its existing per-apparatus-card
+> empty row but now uses the same two messages/styling instead of a bare
+> "No scores yet." Live-verified all three tabs both unfiltered (UCG
+> Nationals 2027, no scores yet) and with an active search filter (Julia's
+> First Sanction Request, garbage search term) — exact copy confirmed in
+> both states. `--ink-soft` on the white/off-white card background
+> independently recomputed at **5.43:1** (exceeds the 4.5:1 body-text
+> floor) — same token already used by Club.tsx's empty state.
 
 ```
 src/pages/Results.tsx (session results view, route #/results/<slug>): when a
@@ -407,7 +423,29 @@ background ≥ 4.5:1 (resolve the actual token values); [ ] npm run build;
 [ ] npx eslint src/pages/Results.tsx; [ ] npx vitest run.
 ```
 
-### H2 — Human-readable dates, timezones, and status words
+### H2 — Human-readable dates, timezones, and status words — IMPLEMENTED 2026-07-26
+(branch `ui/h1-h4-display-polish`, unmerged/undeployed)
+
+> Item 2 (raw `(America/New_York)` on the Events detail header) was already
+> fixed by `0e18ee4` before this pass. Item 1: `MyRegistrations.tsx`'s
+> "Registration closes" line now shows date + time + zone abbreviation
+> (e.g. "Jul 11, 2026, 9:46 AM (EDT)"), built from the SAME two existing
+> helpers instead of a new one — `useFmtDate` for the date portion and
+> `tzAbbrev` (lifted out of `Events.tsx` into `src/lib/timezone.ts` so it's
+> shared, not copy-pasted) for the zone label; the time portion reuses the
+> ad hoc `toLocaleTimeString` pattern already used elsewhere (e.g.
+> `ErrorLog.tsx`). No conversion happens anywhere in this chain —
+> `regOpens`/`regCloses` are naive local wall-clock strings in the event's
+> own zone, and `tzAbbrev` only labels which zone that is. Live-verified:
+> "Registration closes Jul 11, 2026, 9:46 AM (EDT)" on a real seeded reg.
+> Item 3 sweep (`grep -rn "America/New_York\|toISOString\|timezone"
+> src/pages src/components`) found a handful of admin-only/DOB instances
+> beyond item 1/2 — `FinalsLineupEditor.tsx` (nationals engine, explicitly
+> out of scope), `admin/league/Promos.tsx` and `Sanction.tsx` (admin-only
+> raw dates in dropdown/detail rows), `Membership.tsx`/`Profile.tsx` (raw
+> DOB, no time-of-day ambiguity), and `EventWizard.tsx`'s intentional
+> "Pacific Time (America/Los_Angeles)" explainer copy — left unchanged as
+> minor/out-of-scope; flagged for a PM call rather than silently fixed.
 
 ```
 Three raw-internals leaks, all display-only formatting:
@@ -434,7 +472,23 @@ user-visible on Events/MyRegistrations; [ ] npm run build; [ ] npx eslint <touch
 [ ] npx vitest run (do not break scoring tests).
 ```
 
-### H3 — Replace raw route text with a Copy-link button
+### H3 — Replace raw route text with a Copy-link button — IMPLEMENTED 2026-07-26
+(branch `ui/h1-h4-display-polish`, unmerged/undeployed)
+
+> The raw `#/events/<slug>` text on Events.tsx was already gone (removed
+> incidentally by `0e18ee4`) but no Copy-link button existed anywhere yet —
+> added one to both `Events.tsx` (EventDetail) and `Results.tsx`
+> (EventResults), and removed the remaining raw `#/results/{slug}` text
+> from Results.tsx. New `appBaseUrl()`/`copyToClipboard()` in
+> `src/lib/url.ts` (mirroring the app-base pattern already used by
+> `JudgeAccessCard`'s QR link) build the absolute URL and copy with a
+> `prompt()` fallback. On Results, `sessionId` is local component state
+> only (not part of the route/query), so per the brief the copied link is
+> the page URL as-is — nothing session-specific to fold in. Live-verified
+> both buttons via an instrumented `navigator.clipboard.writeText`/
+> `window.prompt` override: `http://localhost:5173/ucg-platform/#/results/
+> julia-s-first-sanction-request` and `.../#/events/test-meet` — both
+> correctly include the GitHub Pages `/ucg-platform/` subpath.
 
 ```
 Two pages print internal hash routes as text meant to be "the shareable link":
@@ -456,7 +510,29 @@ page; [ ] toast appears; [ ] no raw "#/…" text remains on either page;
 [ ] npm run build; [ ] npx eslint <touched>; [ ] npx vitest run.
 ```
 
-### H4 — Microcopy and formatting sweep (7 small fixes)
+### H4 — Microcopy and formatting sweep (7 small fixes) — IMPLEMENTED 2026-07-26
+(branch `ui/h1-h4-display-polish`, unmerged/undeployed)
+
+> All 7 done. #5 (breadcrumb): `navHistory.ts` gained `resolveLabel(pathname,
+> db)` — resolves `/results/:slug` to the event's real `name` (looked up the
+> same way every event detail page already does, `db.events.find(e =>
+> e.slug === slug)`) instead of the raw-slug generic fallback;
+> `labelFor` itself stays pure/path-only, `Layout.tsx` now threads `db`
+> through. Live-verified: the breadcrumb on Julia's First Sanction Request's
+> results page now reads "Julia's First Sanction Request" instead of
+> "Results / Julia-s-first-sanction-request". #4 (PurchaseHistory fallback)
+> live-verified on a real $0 seeded invoice: shows "Purchase on Jun 26,
+> 2026" instead of bare "Purchase". #7 (Clubs.tsx): wrapped the table in its
+> own `overflowX:'auto'` scroller (same technique as `.events-table-wrap`)
+> — live-verified at 800px the Region badge is no longer clipped (wrapper
+> scrolls internally, `wrapScrollWidth` 1093 > `wrapClientWidth` 755) while
+> `document.documentElement.scrollWidth` stays equal to `clientWidth` at
+> 375/768/800/1280 (no page-level overflow introduced). **Also fixed the
+> same-family issue S6 found and left out of scope**: MyRegistrations.tsx's
+> expanded registration-details table (raw-`<table class="tbl">`, no
+> wrapper) overflowed at 375px on a row with a longer status badge
+> (e.g. "Refund requested") — wrapped it the same way; confirmed via
+> `scrollWidth`/`clientWidth` on a real seeded reg at 375/768/800/1280.
 
 ```
 All display-only string fixes; change nothing about behavior or data.

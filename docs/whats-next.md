@@ -86,8 +86,13 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
   RegistrationEditor) and **S6** (payment-status badges on My Registrations) are also
   implemented, on branch `ui/s5-s6-reg-money-display` (2026-07-25, unmerged/undeployed,
   same fable-review gate) — see the plan doc for the estimate's `changeFeeApplies`
-  correction and a pre-existing (untouched) 375px table-overflow finding. Still open:
-  merging/pushing all three money branches (after review) and the H-task polish batch.
+  correction and a pre-existing 375px table-overflow finding (since resolved, see
+  next sentence). **H1–H4** (Results empty states, date/timezone formatting,
+  Copy-link buttons, and the 7-item microcopy sweep) are also implemented, on
+  branch `ui/h1-h4-display-polish` (2026-07-26, unmerged/undeployed) — this also
+  fixed the S5/S6 branch's out-of-scope 375px table-overflow finding on
+  MyRegistrations. H5–H7 remain unstarted. Still open: merging/pushing all four
+  branches (after review) and H5–H7.
 2. **Accessibility audit** to WCAG 2.1 AA (axe + manual keyboard/focus/ARIA pass) +
   loading/empty/error-state consistency across pages.
 3. **New-club-request email** to `newclubinquiries@naigc.org` (transport exists, not wired).
