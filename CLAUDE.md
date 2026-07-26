@@ -428,6 +428,15 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   null` and calls the fulfillment core directly (inline retry-once + `error_logs` on
   failure, so a failure never strands the order pending forever); FE `CartCheckout.tsx`
   polls a `'free'` stage instead of mounting Stripe Embedded.
+- **Coupon reservation (M1, 2026-07-26):** an applied coupon is CLAIMED at
+  session-create via `reserve_coupon` (row-locks the coupon with `SELECT ... FOR
+  UPDATE`; capacity = `used_count` + live `coupon_reservations`), released on
+  `checkout.session.expired`/`async_payment_failed`, and converted to a redemption by
+  `redeem_coupon(code, person, payment_id)`. Reservations are TIME-BOUNDED (60 min) and
+  self-heal — never "fix" a stuck hold by decrementing `used_count`, which burns a use
+  permanently when a release doesn't run. `coupon_reservations` is server-only (RLS on,
+  zero policies); all three RPCs are service_role-only. Reserving happens strictly BELOW
+  the preview branch point — a preview must never consume a coupon use.
 - **`mode: 'preview'` on `create-checkout-session` (S4, 2026-07-25):** same auth + H4
   ownership + capacity/survey validation + pricing recompute, returning the priced
   lines/subtotal/fee/total and then RETURNING BEFORE ANY WRITE — no `payments` insert,
