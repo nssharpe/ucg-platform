@@ -15,6 +15,7 @@ import { pushToast } from './toast-bus';
 import type { Database } from './database.types';
 import type { CapacityViolation } from './capacity';
 import { PAGE_SIZE, sortKeysForTable, hasMorePages } from './pagination';
+import { reportError } from './report-error';
 
 /** A table's Row type — the shape Supabase returns, used to type the DB→app
  *  row mappers so a schema change (renamed/dropped column) fails the build. */
@@ -1627,7 +1628,27 @@ export async function previewCartTotal(args: {
     body: { ...args, mode: 'preview' },
   });
   if (error) return { ok: false, error: await edgeErrorMessage(error) };
-  return data as {
+  const res = data as {
+    ok?: boolean; preview?: boolean; lines?: CartPreviewLine[];
+    amountSubtotal?: number; discountAmount?: number; serviceFee?: number; total?: number;
+  };
+  // VERSION-SKEW GUARD. A deployed function that predates preview mode ignores
+  // the unknown `mode` field and runs a REAL checkout — inserting a payments
+  // row and creating a Stripe session — then answers `{ok:true}` with no
+  // `lines`. Treating that as a preview would be wrong, so require the explicit
+  // `preview:true` marker. This cannot undo the write that already happened
+  // server-side (only deploy ordering prevents that: ALWAYS deploy this
+  // function before shipping a client that calls preview), but it stops the
+  // skew from being silent — during S4 development exactly this produced 7
+  // stray pending payments before anyone noticed.
+  if (res?.ok && res.preview !== true) {
+    reportError(new Error(
+      'previewCartTotal: create-checkout-session answered without preview:true — the deployed '
+      + 'function predates preview mode and may have started a real checkout session.',
+    ), 'previewCartTotal');
+    return { ok: false, error: 'Price preview is unavailable right now.' };
+  }
+  return res as {
     ok: boolean; lines?: CartPreviewLine[];
     amountSubtotal?: number; discountAmount?: number; serviceFee?: number; total?: number;
   };
