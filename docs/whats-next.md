@@ -41,11 +41,25 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
    member could forge a paid invoice via PostgREST; writes on `invoices`/
    `invoice_items` are now admin-only). **Applied to staging AND prod 2026-07-24**,
    live-probed 7/7 as a non-admin against both.
-   ❌ Still open: **M1** coupon reservation at session-create (must not reserve on
-   the `mode: 'preview'` path — see [money-story spec](specs/2026-07-04-money-story-ux.md)),
-   and the LOW items (scoped `club_managers`/`app_settings` reads, `error_logs`
-   insert rate-limit; token entropy was checked and is sound, a 256-bit bump is
-   optional polish).
+   ✅ **M1 (coupon reservation at session-create) — APPLIED staging + prod
+   2026-07-26**, migration `20260726130005`. Concurrent checkout sessions could
+   each collect the same single-use discount, because the code was only validated
+   at session-create and `used_count` was only bumped at fulfillment. Now a
+   time-bounded row in `coupon_reservations` is claimed inside `reserve_coupon`,
+   which takes `SELECT ... FOR UPDATE` on the coupon row (the lock IS the fix) and
+   counts `used_count + live reservations`. Deliberately NOT a decrement-on-failure
+   scheme: a release that never runs would burn a use permanently, whereas an
+   expired reservation simply stops counting. Released on
+   `checkout.session.expired`/`async_payment_failed`, converted to a redemption by
+   `redeem_coupon`, and — critically — never claimed on the `mode: 'preview'` path.
+   **Proven on staging:** 10 concurrent `reserve_coupon` calls against a
+   `max_uses: 1` coupon → exactly 1 winner; release frees the slot; an expired
+   reservation stops blocking. Prod smoke after deploy: cart preview still reprices
+   ($1 → $45) and created 0 reservations. `create-checkout-session` +
+   `stripe-webhook` redeployed to both projects, `verify_jwt` trio re-verified.
+   ❌ Still open after that: the LOW items (scoped `club_managers`/`app_settings`
+   reads, `error_logs` insert rate-limit; token entropy was checked and is sound,
+   a 256-bit bump is optional polish).
 5. ✅ **FIXED 2026-07-24 — `loadAll` silently truncated at 1000 rows.** Every table
    read now paginates AND sorts deterministically (an unordered `.range()` can
    duplicate/skip rows — a second latent bug found on the way). Proven on staging:

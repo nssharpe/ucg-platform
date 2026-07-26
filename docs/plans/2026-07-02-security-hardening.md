@@ -171,14 +171,20 @@ the webhook path, plus a forced-failure test of the RPC rollback if practical.
 > email branch being dropped (the CLAUDE.md "RLS upsert trap"). Without it, first-time
 > coach sign-in would have started failing RLS.
 >
-> **STILL OPEN: M1** (coupon reservation at session-create) **and the LOW items.** Note
-> for whoever picks up M1: it must stay compatible with the `mode: 'preview'` price
-> endpoint specced in `docs/specs/2026-07-04-money-story-ux.md` — **a preview must never
-> reserve a coupon.** Token entropy (a LOW item) was checked 2026-07-24 and is sound —
-> the no-login token generators use `crypto.randomUUID()` (122-bit CSPRNG); bumping them
-> to 256-bit hex is free and still worth doing.
-- **M1** coupon reservation at session-create (reserve on pending payment, release on
-  `expired`/`failed` webhook events).
+> **M1 DRAFTED 2026-07-26, NOT YET APPLIED** — migration `20260726130005`
+> (`coupon_reservations` table + `reserve_coupon`/`release_coupon_reservation` RPCs +
+> `redeem_coupon`'s new `p_payment_id` arg) on branch `sec/m1-coupon-reservation`.
+> `create-checkout-session` reserves strictly after the `mode: 'preview'` branch point
+> (a preview never reserves) and before creating anything in Stripe; `stripe-webhook`
+> releases on `expired`/`async_payment_failed`. Build/eslint/vitest all green; the
+> concurrency proof against staging is still owed (needs the migration applied first —
+> the controller runs `supabase db push`, staging then prod, then the proof script in
+> the implementer's scratchpad can actually run). **Still open after that: the LOW
+> items.** Token entropy (a LOW item) was checked 2026-07-24 and is sound — the
+> no-login token generators use `crypto.randomUUID()` (122-bit CSPRNG); bumping them to
+> 256-bit hex is free and still worth doing.
+- ~~**M1** coupon reservation at session-create (reserve on pending payment, release on
+  `expired`/`failed` webhook events).~~ Drafted 2026-07-26, see status note above.
 - **M2** tighten `cart_member_clubpush` WITH CHECK (member-owned refs, membership kinds
   only) — defense-in-depth once 2a lands.
 - **M4** `people` self-insert-by-email branch → route through `link_or_create_person`.
