@@ -427,6 +427,18 @@ All money flows through **Stripe Embedded Checkout** via two Edge Functions shar
   null` and calls the fulfillment core directly (inline retry-once + `error_logs` on
   failure, so a failure never strands the order pending forever); FE `CartCheckout.tsx`
   polls a `'free'` stage instead of mounting Stripe Embedded.
+- **`mode: 'preview'` on `create-checkout-session` (S4, 2026-07-25):** same auth + H4
+  ownership + capacity/survey validation + pricing recompute, returning the priced
+  lines/subtotal/fee/total and then RETURNING BEFORE ANY WRITE — no `payments` insert,
+  no `lines_snapshot`, no Stripe call, no coupon redemption. Search **`PREVIEW BRANCH
+  POINT`** in the function: everything below it writes, so new write logic goes BELOW
+  it (M1's coupon reservation especially — a preview must never reserve a coupon use).
+  The one write above it (the capacity hold-refresh) is individually `if (!isPreview)`
+  guarded. `Cart.tsx` uses it so cart and checkout can't show different prices; the
+  client requires a `preview: true` marker in the response, because a deployed function
+  predating preview mode ignores `mode` and runs a REAL checkout (this produced 7 stray
+  pending payments during development). **ALWAYS deploy this function before shipping a
+  client that calls preview.**
 - `stripe-webhook` (deploy `--no-verify-jwt`; signature via `constructEventAsync`,
   fail-closed): fulfills **from `payments.lines_snapshot`** (falls back to live
   `cart_items` only for pre-2026-07-02 pending payments with no snapshot). Because
