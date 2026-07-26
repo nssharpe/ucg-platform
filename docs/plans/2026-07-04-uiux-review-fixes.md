@@ -137,6 +137,20 @@ npm run build, npx eslint <touched>, npx vitest run. Responsive sweep per CLAUDE
 
 ### S2 — Profile sticky save bar: opaque surface + reserved space
 
+> Shipped in two passes. Layout half (2026-07-20, commits `74ebf8e`/`ba15c4a`): opaque
+> `--surface` background, `--line` border, `--shadow-lg`, rounded corners, inset from
+> the card edges, required-fields message moved inside the bar with `flexWrap`.
+> Contrast half (2026-07-25): the bar's "Unsaved changes"/"Required: …" text was
+> `--coral-600` (`#e2553b`) on `--surface` (`#fcfcfc`) = **3.66:1, fails AA** for
+> 13px/600-weight text — switched to `--coral-700` (`#b23a1f`) = **5.82:1**, verified
+> live via `getComputedStyle` → `rgb(178, 58, 31)` on `rgb(252, 252, 252)`.
+> Reserved space: confirmed via live geometry read (no reserved padding added) — at
+> 375px, scrolled to true max scroll, the last field (Dietary notes) sits ~57px above
+> the bar's top edge even with the 2-row "Unsaved changes" state; the bar never covers
+> a trailing field because it's the last element in flow, not `position: fixed`. Mobile
+> nav drawer (`.sidebar`/`.nav-overlay`, z-index 60/50) confirmed to stack above the
+> bar (z-index 10) both in CSS and live with the drawer open.
+
 ```
 Fix the Profile page's floating Save/Discard bar (src/pages/Profile.tsx, styles in
 src/index.css or inline).
@@ -161,6 +175,18 @@ the form at 375px and 1280px. npm run build, npx eslint <touched>, npx vitest ru
 ```
 
 ### S3 — Profile edit mode is dirty on load ("Unsaved changes" with no edits)
+
+> Shipped 2026-07-25. Root cause was simpler than the brief guessed: there was no
+> dirty check at all — the "Unsaved changes" span rendered unconditionally whenever
+> `editMode` was true. Added `isProfileDirty` (`src/lib/profile-core.ts`, pure deep-equal,
+> unit tested in `tests/lib/profile-core.test.ts`) and a draft snapshot taken at edit-mode
+> entry — both the explicit `enterEdit()` path and the auto-edit-mode lazy initializer
+> (`returnToMembership` / incomplete new profile) needed their own snapshot, since the
+> latter never calls `enterEdit`. Discard clears both draft and snapshot. Verified live:
+> reproduced the bug pre-fix (dev athlete, edit mode → "Unsaved changes" with zero edits),
+> confirmed gone post-fix, confirmed it reappears on a real edit and clears on Discard
+> (value reverted), confirmed Save still writes cleanly (no `people` write-queue errors),
+> and repeated the entry-mode + dirty checks for both the athlete and manager dev users.
 
 ```
 Debug and fix: entering Profile edit mode (src/pages/Profile.tsx, form logic

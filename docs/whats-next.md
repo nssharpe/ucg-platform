@@ -74,9 +74,12 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
 ## 3. Quality passes (pre- or just post-launch)
 
 1. **UI/UX review fixes** ([task briefs](plans/2026-07-04-uiux-review-fixes.md), from the
-  2026-07-04 live review — **none started**). Highest-value first: O1 "money story"
-  reconciliation (cart vs. checkout vs. Purchase-History amounts + unpaid-invoice path + invoice numbering), coral-CTA contrast (AA fail), Profile save-bar overlap,
-  payment-status badges on My Registrations.
+  2026-07-04 live review). **S1** (primary-CTA contrast) and **S2/S3** (Profile sticky
+  save bar — opaque surface, AA-contrast bar text, real dirty-tracking so "Unsaved
+  changes" no longer shows on a clean edit) are done. Still open, highest-value first:
+  O1 "money story" reconciliation (cart vs. checkout vs. Purchase-History amounts +
+  unpaid-invoice path + invoice numbering), payment-status badges on My Registrations,
+  S4–S6 and the H-task polish batch.
 2. **Accessibility audit** to WCAG 2.1 AA (axe + manual keyboard/focus/ARIA pass) +
   loading/empty/error-state consistency across pages.
 3. **New-club-request email** to `newclubinquiries@naigc.org` (transport exists, not wired).
