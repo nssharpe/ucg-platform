@@ -9,6 +9,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendBatch, type EmailMessage } from '../_shared/resend.ts';
 import { renderEmail } from '../_shared/email-layout.ts';
+import { randomToken } from '../_shared/token.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -62,7 +63,7 @@ Deno.serve(async (req) => {
   if (existingReq) {
     reviewToken = existingReq.token;
   } else {
-    reviewToken = crypto.randomUUID().replace(/-/g, '');
+    reviewToken = randomToken();
     const { error: insErr } = await db.from('manager_access_requests').insert({
       token: reviewToken, requester_person_id: caller.id, club_id: clubId, status: 'pending',
     });
