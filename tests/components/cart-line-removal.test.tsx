@@ -16,7 +16,11 @@ function CartHarness({ ownerKey }: { ownerKey: string }) {
           <button
             aria-label={`Remove ${i.label} from cart`}
             onClick={() => {
-              const { action, keptRegIds } = removeCartItemWithSync(ownerKey, false, i);
+              // Phase 3 (data-layer-scale): removeCartItemWithSync now takes
+              // the caller's registration set explicitly (CONTRACT shape #2
+              // "mine" in real usage) — this harness runs in demo mode, where
+              // db.registrations is the complete, always-fresh set.
+              const { action, keptRegIds } = removeCartItemWithSync(ownerKey, false, i, db.registrations);
               const el = document.getElementById('toast')!;
               el.textContent = action === 'blocked-offline' ? '' : CART_REMOVAL_MESSAGE[action] + (keptRegIds.length ? ' kept' : '');
             }}

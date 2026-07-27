@@ -12,7 +12,8 @@ import { CapacityConflictDialog } from '../components/CapacityConflictDialog';
 import { hasCapacityConfig } from '../lib/capacity';
 import { missingNationalsSurveyEvents, diffCartLinePrices, cartSectionCount, type SessionRequestGateReg } from '../lib/pricing';
 import { previewCartTotal, type CheckoutCapacityError, type CartPreviewLine } from '../lib/supabase';
-import type { CartItem, Club, DB, Invoice } from '../lib/types';
+import { useMyRegistrations, useClubRegistrations } from '../lib/registrations-slice';
+import type { CartItem, Club, DB, Invoice, Registration } from '../lib/types';
 
 const sum = (items: CartItem[]) => items.reduce((s, i) => s + i.amount, 0);
 
@@ -73,16 +74,22 @@ function groupCartItems(cart: CartItem[], db: DB) {
  *  `items`' referenced (incoming) registrations still have an unanswered
  *  required session-planning survey — the client-side advisory mirror of the
  *  server's checkout gate (`missingNationalsSurveyEvents` in `pricing.ts`).
- *  Reads `db.*` directly rather than being memoized (M6 in-place-mutation
- *  trap — `mutate()` never reassigns `db.registrations`/`db.sessionRequests`
- *  on an update, so a memo keyed on those paths would go stale). Cheap
- *  enough to recompute on every render. */
-function surveyGateForItems(items: CartItem[], db: DB): { eventId: string; eventName: string }[] {
+ *
+ *  Phase 3 (data-layer-scale): `regs` is the CALLER's cross-event
+ *  registration set — `useMyRegistrations()` for the personal cart,
+ *  `useClubRegistrations(clubId).rows` for a managed-club section (CONTRACT
+ *  shapes #2/#5) — since a cart line's refRegIds may point at ANY event.
+ *  `db.registrations` can no longer serve this once Stage 4 lands. Not
+ *  memoized (M6 in-place-mutation trap — mutate() never reassigns
+ *  db.sessionRequests on an update, so a memo keyed on it would go stale, and
+ *  `regs` itself is already a fresh array reference on every slice update).
+ *  Cheap enough to recompute on every render. */
+function surveyGateForItems(items: CartItem[], regs: Registration[], db: DB): { eventId: string; eventName: string }[] {
   if (items.length === 0) return [];
   const incomingRegs: SessionRequestGateReg[] = [];
   for (const item of items) {
     for (const regId of item.refRegIds ?? []) {
-      const reg = db.registrations.find((r) => r.id === regId);
+      const reg = regs.find((r) => r.id === regId);
       if (!reg) continue;
       incomingRegs.push({
         athleteId: reg.athleteId, clubId: reg.clubId, eventId: reg.eventId,
@@ -101,12 +108,13 @@ function surveyGateForItems(items: CartItem[], db: DB): { eventId: string; event
 /** Earliest live (not-yet-expired-in-the-past... this returns it regardless of
  *  expiry — the caller decides "live" vs "expired") `holdExpiresAt` among the
  *  registrations a group of cart lines reference, epoch ms, or `null` if none
- *  hold a spot at all (uncapped event, or nothing hold-stamped yet). */
-function earliestHoldMs(items: CartItem[], db: DB): number | null {
+ *  hold a spot at all (uncapped event, or nothing hold-stamped yet). `regs` —
+ *  see `surveyGateForItems`'s doc comment (Phase 3). */
+function earliestHoldMs(items: CartItem[], regs: Registration[]): number | null {
   let earliest: number | null = null;
   for (const item of items) {
     for (const regId of item.refRegIds ?? []) {
-      const reg = db.registrations.find((r) => r.id === regId);
+      const reg = regs.find((r) => r.id === regId);
       if (!reg?.holdExpiresAt) continue;
       const t = new Date(reg.holdExpiresAt).getTime();
       if (Number.isNaN(t)) continue;
@@ -246,6 +254,18 @@ function CartScope({
   const [capacityConflict, setCapacityConflict] = useState<CheckoutCapacityError | null>(null);
   const [preview, setPreview] = useState<CartPreviewState>({ status: 'loading' });
 
+  // Phase 3 (data-layer-scale): this scope's cross-event registration set —
+  // shape #2 ("mine", synchronous) for the personal cart, shape #5 (by-club,
+  // cross-event) for a managed-club section. Both hooks are always called
+  // (Rules of Hooks — CartScope is shared by both cases via `isClub`); the
+  // unused one is a harmless no-op subscription (useClubRegistrations(null)
+  // is explicitly null-tolerant, mirroring useEventRegistrations).
+  const myRegs = useMyRegistrations();
+  const clubRegsResult = useClubRegistrations(isClub ? ownerKey : null);
+  const regs = isClub ? clubRegsResult.rows : myRegs;
+  // "mine" is Tier 2/synchronous — never loading. A club scope can be.
+  const regsReady = isClub ? clubRegsResult.status === 'ready' : true;
+
   const groups = useMemo(() => groupCartItems(cart, db), [cart, db]);
   // H5: only show the "checkout everything" bar when it aggregates 2+
   // sections — with a single CartCard, that card's own subtotal +
@@ -346,6 +366,14 @@ function CartScope({
   // that's already gone. Full session-expiry/cancellation is out of scope
   // (Phase-3 territory per the plan) — this only adds an explicit confirm.
   const removeItem = (item: CartItem) => {
+    // Phase 3 completeness guard: removeCartItemWithSync's never-resurrect
+    // check needs the COMPLETE registration set for this scope — a partial
+    // (still-loading) `regs` could make a legitimate revert silently no-op
+    // instead of restoring the registration's prior state.
+    if (!regsReady) {
+      toast('Still loading — try again in a moment.', { variant: 'error' });
+      return;
+    }
     const inFlight = (db.payments ?? []).some(
       (p) => p.status === 'pending' && p.cartItemIds.includes(item.id),
     );
@@ -355,7 +383,7 @@ function CartScope({
     )) {
       return;
     }
-    const { action, keptRegIds } = removeCartItemWithSync(ownerKey, isClub, item);
+    const { action, keptRegIds } = removeCartItemWithSync(ownerKey, isClub, item, regs);
     // Offline read-only gate: nothing was removed; mutate() already toasted.
     if (action === 'blocked-offline') return;
     const message = CART_REMOVAL_MESSAGE[action];
@@ -422,7 +450,7 @@ function CartScope({
   // bucket's OWN incoming regs — matches the server's per-line scoping
   // exactly (a bucket that doesn't reference a nationals event's regs is
   // never blocked by another bucket's missing survey).
-  const everythingSurveyGate = surveyGateForItems(cart, db);
+  const everythingSurveyGate = surveyGateForItems(cart, regs, db);
   const everythingSurveyBlocked = everythingSurveyGate.length > 0;
 
   const checkoutAllButton = (
@@ -495,13 +523,13 @@ function CartScope({
             onCheckout={() => setCheckout({ items: groups.membership, title: 'Memberships' })}
             onRemove={removeItem}
             onPrintInvoice={() => downloadCartInvoice(groups.membership, name, 'Memberships')}
-            surveyGate={surveyGateForItems(groups.membership, db)}
+            surveyGate={surveyGateForItems(groups.membership, regs, db)}
             surveyReturnTo={surveyReturnTo} />
         )}
         {groups.events.map((g) => {
           const event = db.events.find((e) => e.id === g.eventId);
           const configured = !!event && hasCapacityConfig(event, event.sessions);
-          const holdMs = configured ? earliestHoldMs(g.items, db) : null;
+          const holdMs = configured ? earliestHoldMs(g.items, regs) : null;
           return (
             <CartCard key={g.eventId} title={g.eventName} items={g.items} preview={preview}
               returnTo={registrationsReturnTo(g.slug)} returnLabel="Return to registration"
@@ -509,7 +537,7 @@ function CartScope({
               onRemove={removeItem}
               onPrintInvoice={() => downloadCartInvoice(g.items, name, g.eventName)}
               holdExpiresAtMs={holdMs}
-              surveyGate={surveyGateForItems(g.items, db)}
+              surveyGate={surveyGateForItems(g.items, regs, db)}
               surveyReturnTo={surveyReturnTo} />
           );
         })}
@@ -518,7 +546,7 @@ function CartScope({
             onCheckout={() => setCheckout({ items: groups.other, title: 'Other' })}
             onRemove={removeItem}
             onPrintInvoice={() => downloadCartInvoice(groups.other, name, 'Other')}
-            surveyGate={surveyGateForItems(groups.other, db)}
+            surveyGate={surveyGateForItems(groups.other, regs, db)}
             surveyReturnTo={surveyReturnTo} />
         )}
       </div>
@@ -669,10 +697,16 @@ function ManagedClubSection({ club }: { club: Club }) {
   // re-fires on mount/`club.id` change or a full resync — judged safe for the
   // same reason (idempotent, no-op when clean, and the staleness it targets
   // is a cross-manager/cross-tab condition that surfaces via resync anyway).
+  //
+  // Phase 3: needs this club's cross-event registrations (CONTRACT shape #5)
+  // — a club cart can hold pending lines for multiple events. Gated on
+  // 'ready' (mirrors Club.tsx's EventRegGrid copy of this effect).
+  const clubRegsAllEvents = useClubRegistrations(club.id);
   useEffect(() => {
-    cleanupCrossClubCart(db, club.id, toast);
+    if (clubRegsAllEvents.status !== 'ready') return;
+    cleanupCrossClubCart(db, clubRegsAllEvents.rows, club.id, toast);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [db, club.id]);
+  }, [db, club.id, clubRegsAllEvents.status]);
 
   return (
     <section style={{ marginTop: 32 }}>

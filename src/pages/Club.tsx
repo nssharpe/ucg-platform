@@ -26,7 +26,7 @@ import {
   syncSynchroPartnerLevelRemote, cancelWaitlistGroup,
 } from '../lib/supabase';
 import { cleanupCrossClubCart } from '../lib/cart-sync';
-import { useEventRegistrations, applyLocalRegistrationUpsert, applyLocalRegistrationRemove, mergeUpsertedRegs } from '../lib/registrations-slice';
+import { useEventRegistrations, useClubRegistrations, applyLocalRegistrationUpsert, applyLocalRegistrationRemove, mergeUpsertedRegs } from '../lib/registrations-slice';
 import type { ClubMembership } from '../lib/types';
 import { ClubForm } from '../components/ClubForm';
 import { RegistrationEditor } from '../components/RegistrationEditor';
@@ -1048,10 +1048,18 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   // anyway, and the function is idempotent + no-op when clean, so a missed
   // immediate re-run just means the toast surfaces on the next mount/resync
   // instead of instantly — not a money-correctness gap like H5/H6/H7 above.
+  //
+  // Phase 3: cleanupCrossClubCart needs this CLUB's cross-event registrations
+  // (CONTRACT shape #5) — the club cart can hold pending lines for events
+  // other than the one currently selected above (eventRegs, by-event, isn't
+  // enough here). Gated on 'ready' so a loading slice can't cause a stale
+  // line to be missed this pass (idempotent — it'll be caught next time).
+  const clubRegsAllEvents = useClubRegistrations(clubId);
   useEffect(() => {
-    cleanupCrossClubCart(db, clubId, toast);
+    if (clubRegsAllEvents.status !== 'ready') return;
+    cleanupCrossClubCart(db, clubRegsAllEvents.rows, clubId, toast);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [db, clubId]);
+  }, [db, clubId, clubRegsAllEvents.status]);
 
   if (!event) return <p>No events accepting registration.</p>;
   // MUST gate before computing hasActiveReg/registered/etc below (CONTRACT

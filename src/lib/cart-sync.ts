@@ -25,7 +25,8 @@ import { mutate } from './store';
 import { deleteMembership, deleteRegistration, pushCart, pushRegistration } from './supabase';
 import { classifyCartRemoval, resolveRegRemoval } from './pricing';
 import { paidRegistrationClub } from './capabilities-core';
-import type { CartItem, DB } from './types';
+import { applyLocalRegistrationRemove, applyLocalRegistrationUpsert } from './registrations-slice';
+import type { CartItem, DB, Registration } from './types';
 
 export type CartRemovalResult = {
   /** What actually happened to the underlying registration(s)/membership, for
@@ -55,8 +56,17 @@ export const CART_REMOVAL_MESSAGE: Record<Exclude<CartRemovalResult['action'], '
  * referenced per `classifyCartRemoval`. Always removes the cart_items row
  * itself. Returns which sync action was taken (+ any reg ids kept because
  * another line still needs them) so the caller can show an accurate toast.
+ *
+ * `regs` (Phase 3, data-layer-scale): every registration potentially
+ * referenced by this cart scope's lines — the CONTRACT's shape #5/#2
+ * (`useClubRegistrations(clubId)` for a club cart, `useMyRegistrations()`
+ * for a personal cart; both cross-event, since a cart line's refRegIds can
+ * point at any event). Used for the "does this id still genuinely exist"
+ * never-resurrect check below (`existingRegIds`) and to resolve full rows
+ * for the local-cache fan-out — d.registrations can no longer be trusted
+ * for either once Stage 4 removes it from loadAll.
  */
-export function removeCartItemWithSync(ownerKey: string, isClub: boolean, item: CartItem): CartRemovalResult {
+export function removeCartItemWithSync(ownerKey: string, isClub: boolean, item: CartItem, regs: Registration[]): CartRemovalResult {
   const action = classifyCartRemoval(item);
   let keptRegIds: string[] = [];
 
@@ -67,24 +77,29 @@ export function removeCartItemWithSync(ownerKey: string, isClub: boolean, item: 
     if (action === 'delete-registration' || action === 'revert-registration') {
       // "Same cart scope" = every OTHER line still in this owner's cart.
       const otherRefRegIds = new Set(next.flatMap((i) => i.refRegIds ?? []));
-      const existingRegIds = new Set(d.registrations.map((r) => r.id));
+      const existingRegIds = new Set(regs.map((r) => r.id));
       const { toDelete, toRevert, kept } = resolveRegRemoval(item, { otherRefRegIds, existingRegIds });
       keptRegIds = kept;
 
       if (toDelete.length) {
         const ids = new Set(toDelete);
         d.registrations = d.registrations.filter((r) => !ids.has(r.id));
-        for (const id of ids) deleteRegistration(id);
+        for (const id of ids) {
+          deleteRegistration(id);
+          const full = regs.find((r) => r.id === id);
+          if (full) applyLocalRegistrationRemove(full);
+        }
       }
       for (const prior of toRevert) {
         // H5 "never resurrect": resolveRegRemoval already filtered out ids
-        // no longer present in d.registrations, so this is always an
-        // in-place update of a still-live row, never a re-insert.
+        // no longer present in `regs`, so this is always an in-place update
+        // of a still-live row, never a re-insert.
         const idx = d.registrations.findIndex((r) => r.id === prior.id);
         if (idx >= 0) {
           d.registrations[idx] = prior;
-          pushRegistration(prior);
         }
+        pushRegistration(prior);
+        applyLocalRegistrationUpsert(prior);
       }
     } else if (action === 'clear-membership-hold') {
       // H6: this line was created by Membership.complete('club'), which INSERTED
@@ -130,10 +145,11 @@ export function removeCartItemWithSync(ownerKey: string, isClub: boolean, item: 
 
 /** Resolve the eventId a club-cart meet-entry line is for: prefer the linked
  *  registration(s) (`refRegIds`), else fall back to the "<event name> entry —"
- *  label parse. */
-function cartItemEventId(db: DB, item: CartItem): string | null {
+ *  label parse. `regs` — see `removeCartItemWithSync`'s doc comment (Phase
+ *  3): the caller's by-club (or "mine") cross-event registration set. */
+function cartItemEventId(db: DB, regs: Registration[], item: CartItem): string | null {
   if (item.refRegIds && item.refRegIds.length > 0) {
-    const reg = db.registrations.find((r) => item.refRegIds!.includes(r.id));
+    const reg = regs.find((r) => item.refRegIds!.includes(r.id));
     if (reg) return reg.eventId;
   }
   const m = item.label.match(/^(.+?) entry —/);
@@ -144,13 +160,13 @@ function cartItemEventId(db: DB, item: CartItem): string | null {
 /** The club-cart meet-entry lines for `clubId` whose athlete has SINCE become
  *  PAID-registered under a DIFFERENT club for that event (pending line is moot).
  *  Excludes THIS club so a legitimate same-club pending line is never flagged. */
-function staleCrossClubCartItems(db: DB, clubId: string): CartItem[] {
+function staleCrossClubCartItems(db: DB, regs: Registration[], clubId: string): CartItem[] {
   const cart = db.carts[clubId] ?? [];
   return cart.filter((i) => {
     if (i.kind !== 'meet-entry' || !i.refUserId) return false;
-    const eventId = cartItemEventId(db, i);
+    const eventId = cartItemEventId(db, regs, i);
     if (!eventId) return false;
-    return paidRegistrationClub(db.registrations, {
+    return paidRegistrationClub(regs, {
       athleteId: i.refUserId, eventId, excludeClubId: clubId,
     }) !== null;
   });
@@ -162,6 +178,14 @@ function staleCrossClubCartItems(db: DB, clubId: string): CartItem[] {
  *  Used by both the club registrations view and the unified /cart page's
  *  managed-club sections.
  *
+ *  `regs` (Phase 3): this club's cross-event registrations
+ *  (`useClubRegistrations(clubId).rows`, CONTRACT shape #5) — a club's cart
+ *  can hold pending lines for MULTIPLE events, so an event-scoped slice
+ *  can't serve this; only gate this effect on `status === 'ready'` in the
+ *  caller (an empty/loading `regs` here would just silently find nothing
+ *  stale, not misfire — but running it against a genuinely partial set
+ *  could miss a stale line, so callers should wait for 'ready').
+ *
  *  M8 fix (2026-07-02): each stale line is routed through
  *  `removeCartItemWithSync` instead of a bare cart-array filter, so THIS
  *  club's now-moot pending registration(s) get deleted (or reverted, for a
@@ -169,22 +193,23 @@ function staleCrossClubCartItems(db: DB, clubId: string): CartItem[] {
  *  sync behavior a manual ✕ removal gets. Still a single toast per athlete. */
 export function cleanupCrossClubCart(
   db: DB,
+  regs: Registration[],
   clubId: string,
   toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void,
 ): void {
-  const removable = staleCrossClubCartItems(db, clubId);
+  const removable = staleCrossClubCartItems(db, regs, clubId);
   if (removable.length === 0) return;
   for (const i of removable) {
     const athlete = db.people.find((p) => p.id === i.refUserId);
     const name = athlete ? `${athlete.firstName} ${athlete.lastName}` : 'An athlete';
-    const eventId = cartItemEventId(db, i);
+    const eventId = cartItemEventId(db, regs, i);
     const otherClubId = eventId && i.refUserId
-      ? paidRegistrationClub(db.registrations, { athleteId: i.refUserId, eventId, excludeClubId: clubId })
+      ? paidRegistrationClub(regs, { athleteId: i.refUserId, eventId, excludeClubId: clubId })
       : null;
     const otherShort = otherClubId
       ? db.clubs.find((c) => c.id === otherClubId)?.shortName ?? 'another club'
       : 'another club';
-    const { action } = removeCartItemWithSync(clubId, true, i);
+    const { action } = removeCartItemWithSync(clubId, true, i, regs);
     // Offline read-only gate: nothing was removed (and every further item
     // would hit the same gate) — stop without toasting a removal.
     if (action === 'blocked-offline') return;
