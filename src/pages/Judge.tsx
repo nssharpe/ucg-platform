@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { useDB, mutate } from '../lib/store';
-import { pushScore, judgeUnlock, judgeSubmitScore } from '../lib/supabase';
+import { useDB } from '../lib/store';
+import { judgeUnlock, judgeSubmitScore } from '../lib/supabase';
+import { useEventScores, writeScore, applyLocalScoreUpdate } from '../lib/scores-slice';
 import { Badge, Field } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 import { APPARATUS } from '../lib/types';
@@ -44,6 +45,7 @@ export function Judge() {
     || liveEvents[0]?.id || db.events[0]?.id || '',
   );
   const eventRec = db.events.find((m) => m.id === eventId);
+  const { rows: eventScores, status: scoresStatus } = useEventScores(eventRec?.id);
   const [sessionId, setSessionId] = useState(eventRec?.sessions[0]?.id ?? '');
   const session = eventRec?.sessions.find((s) => s.id === sessionId) ?? eventRec?.sessions[0];
   const apparatusDefs = session ? APPARATUS[session.discipline] : [];
@@ -94,7 +96,7 @@ export function Judge() {
     });
   }, [db, eventRec, session, apparatus]);
 
-  const scoreFor = (regId: string) => db.scores.find((s) => s.id === `${eventRec?.id}|${regId}|${apparatus}`);
+  const scoreFor = (regId: string) => eventScores.find((s) => s.id === `${eventRec?.id}|${regId}|${apparatus}`);
 
   const [activeReg, setActiveReg] = useState<string | null>(null);
   const [sv, setSv] = useState('');
@@ -230,12 +232,8 @@ export function Judge() {
     };
 
     if (privileged) {
-      const applied = mutate((d) => {
-        d.scores = d.scores.filter((s) => s.id !== id);
-        const score = { ...base, enteredBy: 'judge-you', enteredAt: new Date().toISOString() };
-        d.scores.push(score);
-        pushScore(score);
-      });
+      const score = { ...base, enteredBy: 'judge-you', enteredAt: new Date().toISOString() };
+      const applied = writeScore(score);
       if (!applied) return; // offline read-only gate — no false "Score posted"
     } else {
       // Codeless judge: an anonymous/unprivileged device can't write `scores`
@@ -254,10 +252,7 @@ export function Judge() {
       });
       setPosting(false);
       if (!res.ok) { toast(res.error ?? 'Could not post the score.', { variant: 'error' }); return; }
-      mutate((d) => {
-        d.scores = d.scores.filter((s) => s.id !== id);
-        d.scores.push({ ...base, enteredBy: 'judge-code', enteredAt: new Date().toISOString() });
-      });
+      applyLocalScoreUpdate({ ...base, enteredBy: 'judge-code', enteredAt: new Date().toISOString() });
     }
     setFlash({ name: athleteName, score: finalScore });
     close();
@@ -481,26 +476,32 @@ export function Judge() {
           <table className="tbl">
             <thead><tr><th>Athlete</th><th>Club</th><th>Level</th><th className="num">Score</th><th /></tr></thead>
             <tbody>
-              {regs.map((r) => {
-                const a = db.people.find((p) => p.id === r.athleteId)!;
-                const sc = scoreFor(r.id);
-                return (
-                  <tr key={r.id}>
-                    <td><strong>{a.firstName} {a.lastName}</strong></td>
-                    <td>{db.clubs.find((c) => c.id === r.clubId)?.shortName}</td>
-                    <td style={{ fontSize: 13 }}>{db.levels.find((l) => l.id === r.levelId)?.name}</td>
-                    <td className="num score">
-                      {sc ? <Link to={scoreDetailPath(sc.id)} data-tip="Score details">{fmtScore(sc.final)}</Link> : <Badge tone="info">awaiting</Badge>}
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <button className="btn small" onClick={() => openScoring(r)}>
-                        {sc ? 'Edit' : 'Score'}
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-              {regs.length === 0 && <tr><td colSpan={5} style={{ color: 'var(--ink-soft)' }}>No athletes registered on this event in this session.</td></tr>}
+              {scoresStatus === 'loading' ? (
+                <tr><td colSpan={5} style={{ color: 'var(--ink-soft)' }}>Loading scores…</td></tr>
+              ) : (
+                <>
+                  {regs.map((r) => {
+                    const a = db.people.find((p) => p.id === r.athleteId)!;
+                    const sc = scoreFor(r.id);
+                    return (
+                      <tr key={r.id}>
+                        <td><strong>{a.firstName} {a.lastName}</strong></td>
+                        <td>{db.clubs.find((c) => c.id === r.clubId)?.shortName}</td>
+                        <td style={{ fontSize: 13 }}>{db.levels.find((l) => l.id === r.levelId)?.name}</td>
+                        <td className="num score">
+                          {sc ? <Link to={scoreDetailPath(sc.id)} data-tip="Score details">{fmtScore(sc.final)}</Link> : <Badge tone="info">awaiting</Badge>}
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          <button className="btn small" onClick={() => openScoring(r)}>
+                            {sc ? 'Edit' : 'Score'}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {regs.length === 0 && <tr><td colSpan={5} style={{ color: 'var(--ink-soft)' }}>No athletes registered on this event in this session.</td></tr>}
+                </>
+              )}
             </tbody>
           </table>
         </div>

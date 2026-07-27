@@ -10,6 +10,7 @@ import { useCapabilities } from './lib/capabilities';
 import { isSupabaseConfigured } from './lib/supabase';
 import { useSession, useAuthLoading, hasLikelySession, hasAuthCallbackInUrl, useRolesLoaded, useAal } from './lib/auth';
 import { needsMfaStepUp } from './lib/mfa-core';
+import { MyScoresBoot } from './lib/scores-slice';
 import { Gate } from './pages/Gate';
 import { Home } from './pages/Home';
 import { MfaChallenge } from './pages/MfaChallenge';
@@ -286,6 +287,7 @@ export default function App() {
 
   return (
     <ToastProvider>
+      <MyScoresBoot />
       <HashRouter>
         <SetPasswordRedirect />
         <Layout>

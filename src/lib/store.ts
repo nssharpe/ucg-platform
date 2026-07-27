@@ -15,8 +15,13 @@ const LS_KEY = 'ucg-db-v1';
 // discarded and reseeded rather than loaded into the new code (which would read
 // undefined `db.events` and crash). Bumped to 7 for the follow-up
 // registration.eventLevels→apparatusLevels rename (same reasoning: discard the
-// stale shape so the new field isn't read as undefined from cache).
-const SEED_VERSION = 7;
+// stale shape so the new field isn't read as undefined from cache). Bumped to
+// 8 for Phase 2 (2026-07-26 data-layer-scale): scores no longer ride along in
+// a Supabase-backed snapshot (src/lib/scores-slice.ts owns that read path
+// now) — a stale v7 snapshot could carry a multi-MB `db.scores` array from
+// before this change, so it must be discarded and reseeded/re-synced rather
+// than loaded, which is exactly what removes the payload this phase targets.
+const SEED_VERSION = 8;
 
 let db: DB = load();
 const listeners = new Set<() => void>();

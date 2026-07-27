@@ -20,6 +20,7 @@ import { downloadWaiverProof, formatSignedAt } from '../lib/waiver-proof';
 import { isMinorAt } from '../lib/waivers-core';
 import { eventIsInPhase } from '../lib/events-core';
 import { collectPersonData } from '../lib/person-data';
+import { fetchScoresForRegIds } from '../lib/scores-slice';
 import { downloadPersonDataJson, downloadPersonDataPdf } from '../lib/person-export';
 import type { AdminDeletePersonManifest } from '../lib/supabase';
 
@@ -191,6 +192,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   const [revokeTarget, setRevokeTarget] = useState<{ seasonId: string; type: MembershipType } | null>(null);
   // F5: admin data export / delete-and-anonymize
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [exportingData, setExportingData] = useState(false);
   // "Independent Athlete" = no club (mainClubId null). Tracked locally so the
   // user can tick it before/instead of picking a club from the dropdown.
   // For an INCOMPLETE new athlete profile (studentStatus unset + no club) we
@@ -353,14 +355,29 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
           <strong style={{ fontSize: 13.5 }}>Data privacy</strong>
           <button
             className="btn small ghost"
-            onClick={() => {
-              const data = collectPersonData(db, pid);
-              downloadPersonDataJson(data);
-              downloadPersonDataPdf(data);
-              toast('Data export downloaded (JSON + PDF).');
+            disabled={exportingData}
+            onClick={async () => {
+              setExportingData(true);
+              try {
+                // scores are no longer globally hydrated (Phase 2, docs/specs/
+                // 2026-07-24-data-layer-scale.md) — fetch scoped to THIS
+                // person's registrations (adminView can target someone other
+                // than the signed-in caller, so this can't reuse the "mine" cache).
+                const regIds = db.registrations.filter((r) => r.athleteId === pid).map((r) => r.id);
+                const scores = await fetchScoresForRegIds(regIds);
+                const data = collectPersonData(db, pid, scores);
+                downloadPersonDataJson(data);
+                downloadPersonDataPdf(data);
+                toast('Data export downloaded (JSON + PDF).');
+              } catch (err) {
+                console.error('[Profile] data export failed:', err);
+                toast('Could not export data — try again.', { variant: 'error' });
+              } finally {
+                setExportingData(false);
+              }
             }}
           >
-            Export data
+            {exportingData ? 'Exporting…' : 'Export data'}
           </button>
           <button
             className="btn small ghost"

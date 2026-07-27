@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useDB } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
@@ -8,9 +8,9 @@ import { EventStatusBadge } from './Home';
 import { sessionResults, fmtScore } from '../lib/scoring';
 import { scoreDetailPath } from '../lib/calculators';
 import { APPARATUS } from '../lib/types';
-import type { Registration, Score, DB } from '../lib/types';
+import type { Registration, Score } from '../lib/types';
 import type { AthleteResult } from '../lib/scoring';
-import { isSupabaseConfigured, subscribeEventScores, applyScorePatch } from '../lib/supabase';
+import { useEventScores } from '../lib/scores-slice';
 import { eventIsInPhase } from '../lib/events-core';
 import { appBaseUrl, copyToClipboard } from '../lib/url';
 
@@ -72,44 +72,15 @@ export function EventResults() {
 
   const session = event?.sessions.find((s) => s.id === sessionId) ?? event?.sessions[0];
 
-  // Realtime score overlay: a patch map (id → Score | null) accumulated from
-  // `subscribeEventScores` postgres_changes events, overlaid on the store's
-  // scores at render time so store refreshes stay reconciled.
-  const [livePatches, setLivePatches] = useState<ReadonlyMap<string, Score | null>>(new Map());
-  // Reset the overlay when the event changes. Done during render (the documented
-  // "adjusting state on prop change" pattern) rather than in the effect below, so
-  // it doesn't trigger a cascading render every time the subscription re-runs.
-  const patchedEventId = useRef(event?.id);
-  if (patchedEventId.current !== event?.id) {
-    patchedEventId.current = event?.id;
-    setLivePatches(new Map());
-  }
-  useEffect(() => {
-    if (!isSupabaseConfigured || !event) return;
-    const unsubscribe = subscribeEventScores(event.id, (payload) => {
-      setLivePatches((prev) => applyScorePatch(prev, payload));
-    });
-    return unsubscribe;
-    // Deliberately keyed on event?.id, not the whole `event` object: `event`
-    // is a fresh reference on every store mutation, which would tear down and
-    // re-subscribe the realtime channel far more often than the subscription
-    // target (the event id) actually changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [event?.id]);
-
-  const effectiveDb: DB = useMemo(() => {
-    if (livePatches.size === 0 || !event) return db;
-    const scores = db.scores
-      .filter((s) => livePatches.get(s.id) !== null) // drop realtime-deleted rows
-      .map((s) => livePatches.get(s.id) ?? s);
-    const known = new Set(db.scores.map((s) => s.id));
-    for (const [id, s] of livePatches) if (s && !known.has(id)) scores.push(s);
-    return { ...db, scores };
-  }, [db, livePatches, event]);
+  // Scores slice (Phase 2, docs/specs/2026-07-24-data-layer-scale.md) — the
+  // per-event realtime channel that used to feed this page's own patch-map
+  // overlay is now wired as the slice's own invalidation signal
+  // (scores-slice.ts), so this is just a normal by-event read.
+  const { rows: eventScores, status: scoresStatus } = useEventScores(event?.id);
 
   const computed = useMemo(
-    () => (event && session ? sessionResults(effectiveDb, event, session.id) : null),
-    [effectiveDb, event, session],
+    () => (event && session ? sessionResults(db, event, session.id, eventScores) : null),
+    [db, event, session, eventScores],
   );
 
   // Tie-aware places (1,2,2,4) per (level, category) group — the viewer's
@@ -221,6 +192,10 @@ export function EventResults() {
         />
       </div>
 
+      {scoresStatus === 'loading' ? (
+        <p style={{ color: 'var(--ink-soft)', fontSize: 14 }}>Loading scores…</p>
+      ) : (
+      <>
       {view === 'aa' && (
         <>
           <div className="res-filters">
@@ -349,6 +324,8 @@ export function EventResults() {
             <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', padding: '0 12px 12px' }}>Team score = top 3 scores per club per event, summed across events.</p>
           </div>
         )
+      )}
+      </>
       )}
     </div>
   );
