@@ -57,6 +57,26 @@ import { createEventScopedSlice, type SliceStatus } from './slice-cache';
  *  deletion (its eventId/clubId/athleteId), not just the bare id. */
 export type RegKeyFields = Pick<Registration, 'id' | 'eventId' | 'clubId' | 'athleteId'>;
 
+/** Pure: `base` with every row in `upserted` replacing its same-id row (or
+ *  appended if new). Order is NOT preserved for replaced rows (mirrors
+ *  slice-cache.ts's applyLocalUpsert exactly) — callers here only need
+ *  correct membership/values, never array order. Used by money-critical
+ *  mutate() blocks (Club.tsx's saveRegs/swapAthlete and counterparts) that
+ *  need to re-derive a "what does this event's registration set look like
+ *  AFTER the write I'm about to make" view WITHIN THE SAME synchronous call,
+ *  before React re-renders and the by-event slice hook would otherwise
+ *  reflect it. Those call sites used to get this for free by reading
+ *  `d.registrations` (mutated in place moments earlier in the same
+ *  callback) — that stops working once registrations are no longer
+ *  globally hydrated (Phase 3 Stage 4), so this replaces it: pass the
+ *  pre-write by-event slice snapshot as `base` and the rows about to be
+ *  written as `upserted`. */
+export function mergeUpsertedRegs(base: Registration[], upserted: Registration[]): Registration[] {
+  if (upserted.length === 0) return base;
+  const ids = new Set(upserted.map((r) => r.id));
+  return [...base.filter((r) => !ids.has(r.id)), ...upserted];
+}
+
 // ---------------------------------------------------------------------------
 // 1. By event
 // ---------------------------------------------------------------------------

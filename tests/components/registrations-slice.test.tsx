@@ -19,6 +19,7 @@ import { mutate, resetDemo } from '../../src/lib/store';
 import {
   useEventRegistrations, useClubRegistrations, useMyRegistrations,
   fetchEventRegistrationsOnce, fetchRegistrationsForPerson, fetchRegistrationById,
+  mergeUpsertedRegs,
 } from '../../src/lib/registrations-slice';
 import type { Registration } from '../../src/lib/types';
 
@@ -111,5 +112,32 @@ describe('registrations-slice demo-mode fallback (isSupabaseConfigured: false)',
     mutate((d) => { d.registrations.push(reg({ id: 'r1' })); });
     expect((await fetchRegistrationById('r1'))?.id).toBe('r1');
     expect(await fetchRegistrationById('missing')).toBeNull();
+  });
+});
+
+describe('mergeUpsertedRegs (pure)', () => {
+  it('replaces a same-id row (by value) and leaves others untouched', () => {
+    const base = [reg({ id: 'r1', levelId: 'L4' }), reg({ id: 'r2', levelId: 'L5' })];
+    const next = mergeUpsertedRegs(base, [reg({ id: 'r1', levelId: 'L6' })]);
+    expect(next.find((r) => r.id === 'r1')?.levelId).toBe('L6');
+    expect(next.find((r) => r.id === 'r2')?.levelId).toBe('L5');
+    expect(next).toHaveLength(2);
+  });
+
+  it('appends a row with a new id', () => {
+    const base = [reg({ id: 'r1' })];
+    const next = mergeUpsertedRegs(base, [reg({ id: 'r2' })]);
+    expect(next.map((r) => r.id)).toEqual(['r1', 'r2']);
+  });
+
+  it('an empty upserted list returns base unchanged (same reference)', () => {
+    const base = [reg({ id: 'r1' })];
+    expect(mergeUpsertedRegs(base, [])).toBe(base);
+  });
+
+  it('multiple upserts covering both replace-and-append apply together', () => {
+    const base = [reg({ id: 'r1', paid: false }), reg({ id: 'r2', paid: false })];
+    const next = mergeUpsertedRegs(base, [reg({ id: 'r2', paid: true }), reg({ id: 'r3', paid: true })]);
+    expect(next.map((r) => [r.id, r.paid]).sort()).toEqual([['r1', false], ['r2', true], ['r3', true]].sort());
   });
 });
