@@ -26,7 +26,7 @@ import {
 } from '../lib/supabase';
 import type { HostAddonRow, HostRosterRow, SanctioningTeamMember, WaitlistQueueRow } from '../lib/supabase';
 import { fetchEventScoresOnce } from '../lib/scores-slice';
-import { useEventRegistrations, fetchEventRegistrationsOnce } from '../lib/registrations-slice';
+import { useEventRegistrations, useMyRegistrations, fetchEventRegistrationsOnce, applyLocalRegistrationUpsert, applyLocalRegistrationRemove, mergeUpsertedRegs } from '../lib/registrations-slice';
 import { summarizeRoster, levelNameResolver } from '../lib/host-page';
 import { buildRegistrationWorkbookSheets } from '../lib/host-export';
 import { downloadWorkbook } from '../lib/xlsx-download';
@@ -234,9 +234,15 @@ export function EventDetail() {
   const [selfRegOpen, setSelfRegOpen] = useState(false);
   const [addonsOpen, setAddonsOpen] = useState(false);
 
+  // Phase 3 (data-layer-scale): called unconditionally (Rules of Hooks)
+  // before the `!event` early return below, since event?.id is
+  // undefined-safe and hooks must run in the same order every render.
+  const { rows: eventRegs, status: regsStatus } = useEventRegistrations(event?.id);
+  const myRegsAll = useMyRegistrations();
+
   if (!event) return <p>Event not found.</p>;
   const host = db.clubs.find((c) => c.id === event.hostClubId);
-  const regs = db.registrations.filter((r) => r.eventId === event.id && !r.refunded);
+  const regs = eventRegs.filter((r) => r.eventId === event.id && !r.refunded);
   const canManage = caps.isEventHost(event.id);
   // Editing event DETAIL (dates/fees/disciplines/etc. via EventWizard) is
   // admin/sanctioning-only — exactly the events-table RLS grant
@@ -272,8 +278,10 @@ export function EventDetail() {
   // PAST regCloses via `lastPurchaseAt`. Banner isn't offered here (registration-
   // popup only, per spec) so it's excluded from the window check.
   const myAthlete = caps.personId ? db.people.find((p) => p.id === caps.personId) : undefined;
+  // Phase 3: "mine" (Tier 2, synchronous) — this is the signed-in caller's
+  // own registration set, per the COMPLETENESS rule (not a by-event slice).
   const myRegs = myAthlete
-    ? db.registrations.filter((r) => r.eventId === event.id && r.athleteId === myAthlete.id && !r.refunded)
+    ? myRegsAll.filter((r) => r.eventId === event.id && r.athleteId === myAthlete.id && !r.refunded)
     : [];
   const anyStandaloneAddonOpen = anyAddonWindowOpen(event, new Date(), { includeBanner: false });
 
@@ -433,8 +441,14 @@ export function EventDetail() {
         </div>
         <div className="card card-pad">
           <h3 className="card-title">Participants</h3>
-          <div className="stat-big stat-accent">{regs.length}</div>
-          <div className="stat-label">registrations · {[...new Set(regs.map((r) => r.athleteId))].length} athletes · {[...new Set(regs.map((r) => r.clubId))].length} clubs</div>
+          {regsStatus === 'loading' ? (
+            <div className="stat-label">Loading…</div>
+          ) : (
+            <>
+              <div className="stat-big stat-accent">{regs.length}</div>
+              <div className="stat-label">registrations · {[...new Set(regs.map((r) => r.athleteId))].length} athletes · {[...new Set(regs.map((r) => r.clubId))].length} clubs</div>
+            </>
+          )}
         </div>
         {(() => {
           const isCamp = event.eventType === 'camp';
@@ -2149,6 +2163,18 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
   const navigate = useNavigate();
   const fmtDate = useFmtDate();
 
+  // Phase 3 (data-layer-scale): `athlete` here is ALWAYS the signed-in caller
+  // (EventDetail only ever opens this modal as `db.people.find(p => p.id ===
+  // caps.personId)`), so myRegs (Tier 2, synchronous, always complete) is the
+  // right source for this athlete's OWN registration history — per the
+  // COMPLETENESS rule, priorDisciplineCount/existingRegs/existingForAthlete
+  // callers must use "mine", not a by-event slice. Synchro-partner sync needs
+  // a DIFFERENT athlete's row though, so it separately uses eventRegs
+  // (by-event, all athletes) — which also feeds allEventRegs (capacity,
+  // event-wide across every club, never "mine"-scoped).
+  const myRegs = useMyRegistrations();
+  const { rows: eventRegs, status: regsStatus } = useEventRegistrations(event.id);
+
   // Clubs the athlete is affiliated with (main + alt)
   const myClubs = [
     ...(athlete.mainClubId ? [db.clubs.find((c) => c.id === athlete.mainClubId)] : []),
@@ -2158,7 +2184,7 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
   // Cross-club lock (3d): if the athlete already has a PAID, non-refunded reg for
   // this event under one of their clubs, they're locked to it — they can't compete
   // for a DIFFERENT club. (excludeClubId omitted ⇒ returns ANY paid-reg club.)
-  const lockedClubId = paidRegistrationClub(db.registrations, {
+  const lockedClubId = paidRegistrationClub(myRegs, {
     athleteId: athlete.id, eventId: event.id,
   });
   const lockedClubShort = lockedClubId
@@ -2175,7 +2201,7 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
   const [pendingAddonItems, setPendingAddonItems] = useState<CartItem[]>([]);
 
   const season = currentSeason(db)!;
-  const existingRegs = db.registrations.filter(
+  const existingRegs = myRegs.filter(
     (r) => r.eventId === event.id && r.athleteId === athlete.id && !r.refunded,
   );
 
@@ -2256,10 +2282,14 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
       for (const r of regs) r.campSurvey = storedSurvey;
     }
     let hostFree = false;
+    // Phase 3: read from the pre-write "mine" snapshot (first read of
+    // registration state in this call, so no staleness relative to
+    // d.registrations, which is perpetually empty in Supabase-configured mode
+    // once Stage 4 lands).
+    const existingForAthlete = myRegs.filter(
+      (r) => r.eventId === event.id && r.athleteId === athlete.id && !r.refunded,
+    );
     const applied = mutate((d) => {
-      const existingForAthlete = d.registrations.filter(
-        (r) => r.eventId === event.id && r.athleteId === athlete.id && !r.refunded,
-      );
       const newDiscSet = new Set(regs.map((r) => r.discipline));
       const alreadyHadRegs = existingForAthlete.length > 0;
       const competingClubId = selectedClubId;
@@ -2306,6 +2336,7 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
         if (!newDiscSet.has(old.discipline)) {
           d.registrations = d.registrations.filter((r) => r.id !== old.id);
           deleteRegistration(old.id);
+          applyLocalRegistrationRemove(old);
         }
       }
 
@@ -2334,6 +2365,7 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
         if (idx >= 0) d.registrations[idx] = reg;
         else d.registrations.push(reg);
         pushRegistration(reg);
+        applyLocalRegistrationUpsert(reg);
         // camp_survey travels through its own targeted-update write (see
         // pushCampSurvey's doc comment) — never via the row upsert above.
         if (reg.campSurvey) pushCampSurvey(reg.id, reg.campSurvey);
@@ -2347,7 +2379,12 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
       // PARTNER's own registration row (a different athlete, often a
       // different club) — the RPC re-derives + authorizes it server-side
       // from the caller's OWN just-saved registration.
-      const eventRegsForSync = d.registrations.filter((r) => r.eventId === event.id && !r.refunded);
+      //
+      // Phase 3: the partner is a DIFFERENT athlete, so this needs the
+      // by-event slice (eventRegs), not "mine" — merged with this call's own
+      // writes (regs, just upserted above) via mergeUpsertedRegs so a partner
+      // pairing involving a row this SAME save just touched is still found.
+      const eventRegsForSync = mergeUpsertedRegs(eventRegs, regs).filter((r) => r.eventId === event.id && !r.refunded);
       for (const reg of regs) {
         const partnerUpdate = syncSynchroPartnerLevel(eventRegsForSync, reg);
         const mySyLevel = reg.apparatusLevels?.SY;
@@ -2355,6 +2392,7 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
           const idx = d.registrations.findIndex((r) => r.id === partnerUpdate.id);
           if (idx >= 0) d.registrations[idx] = partnerUpdate;
           syncSynchroPartnerLevelRemote(reg.id, mySyLevel);
+          applyLocalRegistrationUpsert(partnerUpdate);
         }
       }
 
@@ -2479,7 +2517,8 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
         </Field>
       )}
 
-      {step === 'reg' && (
+      {step === 'reg' && regsStatus === 'loading' && <p>Loading…</p>}
+      {step === 'reg' && regsStatus !== 'loading' && (
         <RegistrationEditor
           event={event}
           athlete={athlete}
@@ -2491,12 +2530,12 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
           onSave={handleRegSave}
           onCancel={onClose}
           changeFeeApplies={changeFeeApplies}
-          incomingPartnerId={findIncomingSynchroPartner(db.registrations, event.id, athlete.id)?.athleteId ?? null}
+          incomingPartnerId={findIncomingSynchroPartner(eventRegs, event.id, athlete.id)?.athleteId ?? null}
           incomingPartnerSyLevel={(() => {
-            const r = findIncomingSynchroPartner(db.registrations, event.id, athlete.id);
+            const r = findIncomingSynchroPartner(eventRegs, event.id, athlete.id);
             return r ? (r.apparatusLevels?.SY ?? r.levelId) : null;
           })()}
-          allEventRegs={db.registrations.filter((r) => r.eventId === event.id && !r.refunded)}
+          allEventRegs={eventRegs.filter((r) => !r.refunded)}
           waitlistGroups={db.waitlistGroups?.filter((g) => g.eventId === event.id) ?? []}
         />
       )}

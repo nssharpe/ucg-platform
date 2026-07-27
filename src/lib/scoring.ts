@@ -1,4 +1,4 @@
-import type { DB, Discipline, Event, Registration, Score } from './types';
+import type { Discipline, Event, Registration, Score } from './types';
 import { APPARATUS } from './types';
 
 export interface AthleteResult {
@@ -13,19 +13,20 @@ export interface ApparatusRanking {
   rows: { reg: Registration; score: Score; rank: number }[];
 }
 
-/** Pure. `scores` is a caller-supplied parameter (Phase 2, docs/specs/2026-07-24-
- *  data-layer-scale.md) rather than read off `db.scores` — scores are no
- *  longer globally hydrated, so this keeps the function pure/testable and
- *  makes the slice boundary honest. Callers pass the event's scores (e.g.
- *  from `useEventScores(event.id)`). */
-export function sessionResults(db: DB, event: Event, sessionId: string, scores: Score[]): {
+/** Pure. `scores` and `allEventRegs` are caller-supplied parameters (Phase 2/3,
+ *  docs/specs/2026-07-24-data-layer-scale.md) rather than read off
+ *  `db.scores`/`db.registrations` — neither is globally hydrated any more, so
+ *  this keeps the function pure/testable and makes the slice boundary
+ *  honest. Callers pass the event's scores/registrations (e.g. from
+ *  `useEventScores(event.id)`/`useEventRegistrations(event.id)`). */
+export function sessionResults(event: Event, sessionId: string, scores: Score[], allEventRegs: Registration[]): {
   byLevel: Map<string, AthleteResult[]>;
   apparatusRankings: ApparatusRanking[];
   teamScores: { clubId: string; total: number; perApparatus: Record<string, number> }[];
   discipline: Discipline;
 } {
   const session = event.sessions.find((s) => s.id === sessionId)!;
-  const regs = db.registrations.filter((r) => r.eventId === event.id && r.sessionId === sessionId && !r.refunded);
+  const regs = allEventRegs.filter((r) => r.eventId === event.id && r.sessionId === sessionId && !r.refunded);
   const scopedScores = scores.filter((s) => s.eventId === event.id && s.sessionId === sessionId);
   const scoreMap = new Map<string, Score>();
   for (const s of scopedScores) scoreMap.set(`${s.regId}|${s.apparatus}`, s);
