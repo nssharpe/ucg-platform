@@ -141,26 +141,42 @@ Suggested from a post-emv2 read of the platform; some have shipped, others are p
   links) reduce Julia-as-support and make fall-season onboarding of hosts cheaper.
 2. **Privacy-friendly analytics + Web Vitals** (Plausible/PostHog) once real users
   arrive; optional Sentry for stack traces with releases.
-3. 🔴 **Data-layer scale path — Phase 0 + Phase 1 DONE, Phase 2 DRAFTED (not yet
-  merged/deployed), Phases 3-5 OPEN and urgent**
+3. 🟡 **Data-layer scale path — Phase 0-3 DONE (Phase 3 drafted, not yet merged),
+  Phases 4-5 OPEN**
   ([spec](specs/2026-07-24-data-layer-scale.md)). Phase 0 fixed the silent
   1000-row truncation (shipped). Phase 1 (2026-07-26) built the staging-only
   `scripts/seed-scale.mjs` harness + boot instrumentation, then MEASURED: at 50k
   registrations / 52k scores the app takes **21.1 s to cold-boot** and writes a
   **28.95 MB** localStorage snapshot — and the localStorage quota error we were
   relying on as the alarm **never fired** (Chromium accepted it). Phase 2
-  (2026-07-26, branch `perf/6-3-phase2-scores-slice`, NOT YET merged) moves
-  `scores` off global hydration onto a new scoped-slice layer
-  (`src/lib/slice-cache.ts` + `src/lib/scores-slice.ts`) — measured directly
-  against scale-seeded staging, the full `scores` fetch this removes from boot
-  cost **14.46 s / ~21.7 MB**; the replacement per-event fetch (nationals-scale,
-  ~2,400 rows) costs **~0.78 s / ~695 KB** and is paid only when that event's
-  page is opened. A full live before/after boot comparison was blocked by an
-  unrelated, pre-existing staging permission gap on `registrations` (confirmed
-  untouched by the Phase 2 diff — flagged for Nate, see the spec). Phase 3 (the
-  same slice layer, applied to `registrations`) is the next actual fix and
-  should be scheduled ahead of further polish; controller still owns
-  reviewing + merging Phase 2 and running Phase 3.
+  (merged 2026-07-26) moved `scores` off global hydration onto a new
+  scoped-slice layer (`src/lib/slice-cache.ts` + `src/lib/scores-slice.ts`) —
+  measured directly against scale-seeded staging, the full `scores` fetch this
+  removes from boot cost **14.46 s / ~21.7 MB**; the replacement per-event
+  fetch (nationals-scale, ~2,400 rows) costs **~0.78 s / ~695 KB** and is paid
+  only when that event's page is opened. Phase 3 (2026-07-27, branch
+  `perf/6-3-phase3-registrations-slice`, NOT YET merged) did the same for
+  `registrations` (`src/lib/registrations-slice.ts`, reusing Phase 2's
+  slice-cache.ts as-is, implementing all six CONTRACT shapes) across all ~61
+  consumers (Club.tsx's roster classification was the highest-risk read —
+  see the spec's COMPLETENESS section), then removed `registrations` from
+  `loadAll` entirely. Measured directly: the full `registrations` fetch this
+  removes cost **22.9 s / ~24.7 MB** at 50k rows; the replacement per-event
+  fetch (the largest scale-seeded event, 674 rows) costs **~0.4 s / ~200 KB**.
+  A full live before/after `loadAll()` boot comparison was blocked again, this
+  time by a genuinely NEW, pre-existing finding surfaced by scale-seeding:
+  `memberships`/`invoices`/`invoice_items` queries time out ("canceling
+  statement due to statement timeout") under the ANON/AUTHENTICATED role once
+  those tables hold 10k+ rows — confirmed NOT an RLS-grant gap (a
+  service-role client queries them fine), so this reads like an expensive RLS
+  policy (a per-row subquery/join) that was never exercised at scale before.
+  Untouched by the Phase 3 diff (Phase 3 doesn't read either table) — a real,
+  separate finding worth a follow-up investigation before a real nationals
+  approaches 10k+ memberships/invoices, but out of scope for Phase 3 itself.
+  Phase 4 (slim the `people` directory projection) and Phase 5 (restrict
+  localStorage persistence to Tier 1+2) are the next actual fixes; controller
+  still owns reviewing + merging Phase 3 and running Phases 4-5, plus
+  investigating the new memberships/invoices RLS-timeout finding.
 
 ## Architecture watch-list
 
