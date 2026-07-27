@@ -26,6 +26,7 @@ import {
 } from '../lib/supabase';
 import type { HostAddonRow, HostRosterRow, SanctioningTeamMember, WaitlistQueueRow } from '../lib/supabase';
 import { fetchEventScoresOnce } from '../lib/scores-slice';
+import { useEventRegistrations, fetchEventRegistrationsOnce } from '../lib/registrations-slice';
 import { summarizeRoster, levelNameResolver } from '../lib/host-page';
 import { buildRegistrationWorkbookSheets } from '../lib/host-export';
 import { downloadWorkbook } from '../lib/xlsx-download';
@@ -451,7 +452,18 @@ export function EventDetail() {
               <Link key="score" to={`/judge?event=${event.id}`}>→ Score entry</Link>
             ),
             canManage && (
-              <a key="export-regs" href="#" onClick={(e) => { e.preventDefault(); exportCsv(db, event); }}>→ Export registrations (CSV)</a>
+              <a
+                key="export-regs" href="#"
+                onClick={(e) => {
+                  e.preventDefault();
+                  exportCsv(db, event).catch((err: unknown) => {
+                    console.error('[Events] exportCsv failed:', err);
+                    toast('Could not export registrations — try again.', { variant: 'error' });
+                  });
+                }}
+              >
+                → Export registrations (CSV)
+              </a>
             ),
             canManage && !isCamp && (
               <a
@@ -1083,9 +1095,22 @@ function NationalsSummaryCard({ event }: { event: Event }) {
     return () => { cancelled = true; };
   }, [event.id]);
 
-  const regs = db.registrations.filter((r) => r.eventId === event.id && !r.refunded);
+  // Phase 3 (data-layer-scale): reads the by-event slice instead of
+  // db.registrations. status gates the empty state below — a loading slice
+  // must never render "No registrations yet." (CONTRACT completeness rule).
+  const { rows: eventRegs, status: regsStatus } = useEventRegistrations(event.id);
+  const regs = eventRegs.filter((r) => r.eventId === event.id && !r.refunded);
   const active = regs.filter((r) => !r.waitlisted);
   const waitlisted = regs.filter((r) => r.waitlisted).length;
+
+  if (regsStatus === 'loading') {
+    return (
+      <div className="card card-pad" style={{ marginBottom: 18 }}>
+        <h3 className="card-title">Event summary</h3>
+        <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)' }}>Loading…</p>
+      </div>
+    );
+  }
 
   if (active.length === 0) {
     return (
@@ -2572,13 +2597,18 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
 // exportCsv helpers (unchanged from original)
 // ---------------------------------------------------------------------------
 
-function exportCsv(db: ReturnType<typeof useDB>, event: Event) {
+// Phase 3 (data-layer-scale): async now — registrations are no longer
+// globally hydrated, so this is a one-off scoped fetch (fetchEventRegistrationsOnce)
+// rather than a `db.registrations` filter (mirrors exportScoresCsv below,
+// which made the same change for scores in Phase 2).
+async function exportCsv(db: ReturnType<typeof useDB>, event: Event) {
   // Spec: "just export all the things and let the user trim". Includes
   // refunded-but-kept regs (`keepListed`, event-mgmt v2 Phase 3 spec §H —
   // "name still appears in event materials" for a post-edit-deadline refund);
   // a pre-deadline refund deletes its row outright and is naturally absent.
+  const eventRegs = await fetchEventRegistrationsOnce(event.id);
   const rows = [['Athlete', 'Club', 'Discipline', 'Level', 'Session', 'Events', 'Shirt', 'Dietary', 'Email', 'Phone', 'Emergency contact', 'Student', 'Region']];
-  for (const r of db.registrations.filter((x) => x.eventId === event.id && (!x.refunded || x.keepListed))) {
+  for (const r of eventRegs.filter((x) => x.eventId === event.id && (!x.refunded || x.keepListed))) {
     const a = db.people.find((p) => p.id === r.athleteId)!;
     const club = db.clubs.find((c) => c.id === r.clubId)!;
     rows.push([
@@ -2598,10 +2628,10 @@ function exportCsv(db: ReturnType<typeof useDB>, event: Event) {
  *  2026-07-24-data-layer-scale.md): scores are no longer globally hydrated, so
  *  this is a one-off scoped fetch rather than a `db.scores` filter. */
 async function exportScoresCsv(db: ReturnType<typeof useDB>, event: Event) {
-  const scores = await fetchEventScoresOnce(event.id);
+  const [scores, eventRegs] = await Promise.all([fetchEventScoresOnce(event.id), fetchEventRegistrationsOnce(event.id)]);
   const rows = [['Athlete', 'Club', 'Session', 'Event', 'Level', 'D/SV', 'Deductions', 'E-score', 'Final', 'Source', 'Calculator', 'Entered by', 'Entered at', 'Adjusted at', 'Adjust note', 'Calculator state (JSON)']];
   for (const s of scores) {
-    const reg = db.registrations.find((r) => r.id === s.regId);
+    const reg = eventRegs.find((r) => r.id === s.regId);
     const a = reg && db.people.find((p) => p.id === reg.athleteId);
     const club = reg && db.clubs.find((c) => c.id === reg.clubId);
     const session = event.sessions.find((x) => x.id === s.sessionId);
@@ -2661,7 +2691,14 @@ export function EventManage() {
 function SquadBuilder({ event, session }: { event: Event; session: EventSession }) {
   const db = useDB();
   const toast = useToast();
-  const regs = db.registrations.filter((r) => r.eventId === event.id && r.sessionId === session.id && !r.refunded);
+  // Phase 3 (data-layer-scale): reads the by-event slice instead of
+  // db.registrations. pushEventSessions needs the FULL by-event set (it
+  // derives squad_id placements for every session, not just this one) — see
+  // the eventRegs usages below, which replace `d.registrations` inside the
+  // mutate() blocks for exactly that reason (d.registrations is no longer
+  // populated once Stage 4 removes registrations from loadAll).
+  const { rows: eventRegs, status: regsStatus } = useEventRegistrations(event.id);
+  const regs = eventRegs.filter((r) => r.sessionId === session.id && !r.refunded);
   const events = APPARATUS[session.discipline];
   const placed = new Set(session.squads.flatMap((q) => q.athleteRegIds));
   const holding = regs.filter((r) => !placed.has(r.id));
@@ -2679,14 +2716,13 @@ function SquadBuilder({ event, session }: { event: Event; session: EventSession 
     const applied = mutate((d) => {
       const m = d.events.find((x) => x.id === event.id)!;
       const s = m.sessions.find((x) => x.id === session.id)!;
-      const sregs = d.registrations.filter((r) => r.eventId === event.id && r.sessionId === session.id && !r.refunded);
       s.squads = Array.from({ length: n }, (_, i) => ({
         id: `${s.id}-q${i + 1}`, name: `Squad ${String.fromCharCode(65 + i)}`,
         startEvent: Math.floor((i * events.length) / n) % events.length,
         athleteRegIds: [],
       }));
-      sregs.forEach((r, i) => s.squads[i % n].athleteRegIds.push(r.id));
-      pushEventSessions(m, d.registrations);
+      regs.forEach((r, i) => s.squads[i % n].athleteRegIds.push(r.id));
+      pushEventSessions(m, eventRegs);
     });
     if (!applied) return; // offline read-only gate — no false success toast
     toast(`Split ${regs.length} athletes into ${n} squads. Adjust then Save.`);
@@ -2697,7 +2733,7 @@ function SquadBuilder({ event, session }: { event: Event; session: EventSession 
       const m = d.events.find((x) => x.id === event.id)!;
       for (const s of m.sessions) {
         if (s.id === session.id || s.discipline !== session.discipline) continue;
-        const sregs = d.registrations.filter((r) => r.eventId === event.id && r.sessionId === s.id && !r.refunded);
+        const sregs = eventRegs.filter((r) => r.sessionId === s.id && !r.refunded);
         const n = Math.max(1, session.squads.filter((q) => !q.holding).length);
         s.squads = Array.from({ length: n }, (_, i) => ({
           id: `${s.id}-q${i + 1}`, name: `Squad ${String.fromCharCode(65 + i)}`,
@@ -2706,7 +2742,7 @@ function SquadBuilder({ event, session }: { event: Event; session: EventSession 
         }));
         sregs.forEach((r, i) => s.squads[i % n].athleteRegIds.push(r.id));
       }
-      pushEventSessions(m, d.registrations);
+      pushEventSessions(m, eventRegs);
     });
     if (!applied) return; // offline read-only gate — no false success toast
     toast('Squad setup copied to other ' + session.discipline + ' sessions.');
@@ -2718,11 +2754,13 @@ function SquadBuilder({ event, session }: { event: Event; session: EventSession 
       const s = m.sessions.find((x) => x.id === session.id)!;
       for (const q of s.squads) q.athleteRegIds = q.athleteRegIds.filter((id) => id !== regId);
       if (toSquadId !== 'holding') s.squads.find((q) => q.id === toSquadId)!.athleteRegIds.push(regId);
-      pushEventSessions(m, d.registrations);
+      pushEventSessions(m, eventRegs);
     });
   };
 
   const defaults = session.discipline === 'MAG' ? [2, 3, 6] : session.discipline === 'WAG' ? [4, 8] : [2, 3];
+
+  if (regsStatus === 'loading') return <p style={{ fontSize: 13, color: 'var(--ink-soft)' }}>Loading registrations…</p>;
 
   return (
     <div>

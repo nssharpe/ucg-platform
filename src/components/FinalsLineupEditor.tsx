@@ -9,6 +9,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useDB, mutate } from '../lib/store';
+import { useEventRegistrations } from '../lib/registrations-slice';
 import { pushFinalsLineup } from '../lib/supabase';
 import { APPARATUS } from '../lib/types';
 import type { Event, FinalsLineup } from '../lib/types';
@@ -118,6 +119,13 @@ function ApparatusLineupCard({
   editable: boolean;
 }) {
   const db = useDB();
+  // Phase 3 (data-layer-scale): reads the by-event slice instead of
+  // db.registrations — nameOf only ever resolves ids already known to be
+  // "candidates" for this event (team.apparatusRegIds), so no extra loading
+  // guard is needed here (a not-yet-loaded slice just briefly shows
+  // "Unknown athlete", matching the existing fallback for a genuinely
+  // missing reg).
+  const { rows: eventRegs } = useEventRegistrations(event.id);
   const candidateRegIds = team.apparatusRegIds[apparatus] ?? [];
   const existing = (db.finalsLineups ?? []).find(
     (l) => l.eventId === event.id && l.clubId === team.clubId && l.levelId === team.levelId
@@ -135,7 +143,7 @@ function ApparatusLineupCard({
   );
 
   const nameOf = (regId: string): string => {
-    const reg = db.registrations.find((r) => r.id === regId);
+    const reg = eventRegs.find((r) => r.id === regId);
     const p = reg ? db.people.find((x) => x.id === reg.athleteId) : undefined;
     return p ? `${p.firstName} ${p.lastName}` : 'Unknown athlete';
   };

@@ -28,6 +28,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useDB } from '../lib/store';
+import { useEventRegistrations } from '../lib/registrations-slice';
 import { useCapabilities } from '../lib/capabilities';
 import { useRolesLoaded } from '../lib/auth';
 import { useToast } from '../components/ui-hooks';
@@ -394,17 +395,25 @@ function SmsSection({
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
 
+  // Phase 3 (data-layer-scale): reads the by-event slice instead of
+  // db.registrations directly — this also fixes a pre-existing bug
+  // independent of the slice migration: mutate() never reassigns
+  // db.registrations on an in-place update (CLAUDE.md's M6 trap), so this
+  // useMemo, keyed on the array reference, could go stale after an edit.
+  // eventRegs is a fresh array reference on every slice update, so it
+  // doesn't carry that trap.
+  const { rows: eventRegs, status: regsStatus } = useEventRegistrations(eventId);
   const matched = useMemo(() => {
     const filters = {
       sessionIds: sessionIds.size ? [...sessionIds] : undefined,
       levelIds: levelIds.size ? [...levelIds] : undefined,
       disciplines: disciplines.size ? [...disciplines] : undefined,
     };
-    return db.registrations.filter((r) => r.eventId === eventId && matchesEventCommFilters(
+    return eventRegs.filter((r) => r.eventId === eventId && matchesEventCommFilters(
       { session_id: r.sessionId || null, level_id: r.levelId || null, discipline: r.discipline, refunded: r.refunded ?? false },
       filters,
     ));
-  }, [db.registrations, eventId, sessionIds, levelIds, disciplines]);
+  }, [eventRegs, eventId, sessionIds, levelIds, disciplines]);
 
   const recipients = useMemo(() => {
     const personIds = new Set<string>();
@@ -450,12 +459,16 @@ function SmsSection({
         <textarea className="input" rows={4} maxLength={612} placeholder="UCG: schedule update — check the app for details." value={text} onChange={(e) => setText(e.target.value)} />
         <div style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 4 }}>{seg.length} chars · {seg.segments} segment{seg.segments !== 1 ? 's' : ''}</div>
       </Field>
-      <p style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>
-        {eligible.length} eligible recipient{eligible.length !== 1 ? 's' : ''}
-        {excluded.length ? ` (${excluded.length} skipped — no SMS consent)` : ''}
-        {withPhone.length < recipients.length ? `, ${recipients.length - withPhone.length} without a phone` : ''}.
-      </p>
-      <button className="btn primary" disabled={sending || eligible.length === 0} onClick={send}>
+      {regsStatus === 'loading' ? (
+        <p style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>Loading recipients…</p>
+      ) : (
+        <p style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>
+          {eligible.length} eligible recipient{eligible.length !== 1 ? 's' : ''}
+          {excluded.length ? ` (${excluded.length} skipped — no SMS consent)` : ''}
+          {withPhone.length < recipients.length ? `, ${recipients.length - withPhone.length} without a phone` : ''}.
+        </p>
+      )}
+      <button className="btn primary" disabled={sending || regsStatus !== 'ready' || eligible.length === 0} onClick={send}>
         {sending ? 'Sending…' : `Send text to ${eligible.length} →`}
       </button>
     </>
