@@ -21,6 +21,7 @@ import { isMinorAt } from '../lib/waivers-core';
 import { eventIsInPhase } from '../lib/events-core';
 import { collectPersonData } from '../lib/person-data';
 import { fetchScoresForRegIds } from '../lib/scores-slice';
+import { fetchRegistrationsForPerson, applyLocalRegistrationRemove } from '../lib/registrations-slice';
 import { downloadPersonDataJson, downloadPersonDataPdf } from '../lib/person-export';
 import type { AdminDeletePersonManifest } from '../lib/supabase';
 
@@ -359,13 +360,16 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
             onClick={async () => {
               setExportingData(true);
               try {
-                // scores are no longer globally hydrated (Phase 2, docs/specs/
-                // 2026-07-24-data-layer-scale.md) — fetch scoped to THIS
-                // person's registrations (adminView can target someone other
-                // than the signed-in caller, so this can't reuse the "mine" cache).
-                const regIds = db.registrations.filter((r) => r.athleteId === pid).map((r) => r.id);
+                // Neither scores nor registrations are globally hydrated any
+                // more (Phase 2/3, docs/specs/2026-07-24-data-layer-scale.md)
+                // — adminView can target someone OTHER than the signed-in
+                // caller, so this can't reuse the "mine" cache; a direct,
+                // uncached fetch (CONTRACT shape #6) is what guarantees
+                // completeness for an arbitrary person.
+                const registrations = await fetchRegistrationsForPerson(pid);
+                const regIds = registrations.map((r) => r.id);
                 const scores = await fetchScoresForRegIds(regIds);
-                const data = collectPersonData(db, pid, scores);
+                const data = collectPersonData(db, pid, scores, registrations);
                 downloadPersonDataJson(data);
                 downloadPersonDataPdf(data);
                 toast('Data export downloaded (JSON + PDF).');
@@ -1131,9 +1135,16 @@ function AdminMembershipControls({
     }
   };
 
-  const confirmRevoke = () => {
+  const confirmRevoke = async () => {
     if (!revokeTarget) return;
     const { seasonId, type } = revokeTarget;
+    // Phase 3 (data-layer-scale), CONTRACT shape #6: personId here is an
+    // ARBITRARY member being administered (not the signed-in admin), so this
+    // needs a direct, uncached fetch — completeness must come from the query,
+    // never a slice — before the destructive registration removal below. Only
+    // fetched for the athlete-membership branch, which is the only one that
+    // touches registrations.
+    const personRegs = type === 'athlete' ? await fetchRegistrationsForPerson(personId) : [];
     let removedCount = 0;
     const applied = mutate((d) => {
       const personInDraft = d.people.find((x) => x.id === personId)!;
@@ -1153,9 +1164,9 @@ function AdminMembershipControls({
             .filter((m) => m.status === 'draft' || eventIsInPhase(m, 'reg-open') || eventIsInPhase(m, 'reg-closed'))
             .map((m) => m.id),
         );
-        const toRemove = d.registrations.filter((r) => r.athleteId === personId && openEventIds.has(r.eventId));
+        const toRemove = personRegs.filter((r) => r.athleteId === personId && openEventIds.has(r.eventId));
         removedCount = toRemove.length;
-        toRemove.forEach((r) => deleteRegistration(r.id));
+        toRemove.forEach((r) => { deleteRegistration(r.id); applyLocalRegistrationRemove(r); });
         d.registrations = d.registrations.filter((r) => !(r.athleteId === personId && openEventIds.has(r.eventId)));
       }
     });

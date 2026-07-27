@@ -89,17 +89,23 @@ export interface PersonDataExport {
 
 /** Pure: gather every piece of data the app holds about `personId` from a
  *  DB-shaped object. No I/O — callers pass the live `db` (or, for the
- *  vitest suite, a small seeded fixture). `scores` is a caller-supplied
- *  parameter (Phase 2, docs/specs/2026-07-24-data-layer-scale.md) rather than
- *  read off `db.scores` — scores are no longer globally hydrated, and this
- *  export can target someone OTHER than the signed-in caller (admin export),
- *  so the caller fetches the right set via `fetchScoresForRegIds`
- *  (src/lib/scores-slice.ts) before calling in. */
-export function collectPersonData(db: DB, personId: string, scores: Score[]): PersonDataExport {
+ *  vitest suite, a small seeded fixture). `scores` and `registrations` are
+ *  caller-supplied parameters (Phase 2/3, docs/specs/2026-07-24-data-layer-
+ *  scale.md) rather than read off `db.scores`/`db.registrations` — neither is
+ *  globally hydrated any more, and this export can target someone OTHER than
+ *  the signed-in caller (admin export), so the caller fetches the right sets
+ *  via `fetchScoresForRegIds` (scores-slice.ts) and
+ *  `fetchRegistrationsForPerson` (registrations-slice.ts, CONTRACT shape #6 —
+ *  a direct uncached fetch, never a slice, since completeness must come from
+ *  the query for an arbitrary person) before calling in. */
+export function collectPersonData(db: DB, personId: string, scores: Score[], allRegistrations: Registration[]): PersonDataExport {
   const person = db.people.find((p) => p.id === personId) ?? null;
   const authUserId = person?.authUserId ?? null;
 
-  const registrations = db.registrations.filter((r) => r.athleteId === personId);
+  // Defensive filter: real callers (fetchRegistrationsForPerson) already
+  // scope this to `personId`, but filtering here too keeps the function
+  // self-contained/robust against a caller passing a broader set.
+  const registrations = allRegistrations.filter((r) => r.athleteId === personId);
   const regIds = new Set(registrations.map((r) => r.id));
   const scopedScores = scores.filter((s) => regIds.has(s.regId));
 
