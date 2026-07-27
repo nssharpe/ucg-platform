@@ -25,6 +25,7 @@ import {
   revokeEventAdmin, revokeJudgeAccessCode, syncSynchroPartnerLevelRemote, uploadInsuranceCertificate,
 } from '../lib/supabase';
 import type { HostAddonRow, HostRosterRow, SanctioningTeamMember, WaitlistQueueRow } from '../lib/supabase';
+import { fetchEventScoresOnce } from '../lib/scores-slice';
 import { summarizeRoster, levelNameResolver } from '../lib/host-page';
 import { buildRegistrationWorkbookSheets } from '../lib/host-export';
 import { downloadWorkbook } from '../lib/xlsx-download';
@@ -453,7 +454,18 @@ export function EventDetail() {
               <a key="export-regs" href="#" onClick={(e) => { e.preventDefault(); exportCsv(db, event); }}>→ Export registrations (CSV)</a>
             ),
             canManage && !isCamp && (
-              <a key="export-scores" href="#" onClick={(e) => { e.preventDefault(); exportScoresCsv(db, event); }}>→ Export scores incl. calculator detail (CSV)</a>
+              <a
+                key="export-scores" href="#"
+                onClick={(e) => {
+                  e.preventDefault();
+                  exportScoresCsv(db, event).catch((err: unknown) => {
+                    console.error('[Events] exportScoresCsv failed:', err);
+                    toast('Could not export scores — try again.', { variant: 'error' });
+                  });
+                }}
+              >
+                → Export scores incl. calculator detail (CSV)
+              </a>
             ),
           ].filter(Boolean);
           return quickLinks.length > 0 ? (
@@ -2582,10 +2594,13 @@ function exportCsv(db: ReturnType<typeof useDB>, event: Event) {
 }
 
 /** Scores export — includes the captured calculator state so verification has
- *  the full breakdown of how every score was built. */
-function exportScoresCsv(db: ReturnType<typeof useDB>, event: Event) {
+ *  the full breakdown of how every score was built. Async (Phase 2, docs/specs/
+ *  2026-07-24-data-layer-scale.md): scores are no longer globally hydrated, so
+ *  this is a one-off scoped fetch rather than a `db.scores` filter. */
+async function exportScoresCsv(db: ReturnType<typeof useDB>, event: Event) {
+  const scores = await fetchEventScoresOnce(event.id);
   const rows = [['Athlete', 'Club', 'Session', 'Event', 'Level', 'D/SV', 'Deductions', 'E-score', 'Final', 'Source', 'Calculator', 'Entered by', 'Entered at', 'Adjusted at', 'Adjust note', 'Calculator state (JSON)']];
-  for (const s of db.scores.filter((x) => x.eventId === event.id)) {
+  for (const s of scores) {
     const reg = db.registrations.find((r) => r.id === s.regId);
     const a = reg && db.people.find((p) => p.id === reg.athleteId);
     const club = reg && db.clubs.find((c) => c.id === reg.clubId);

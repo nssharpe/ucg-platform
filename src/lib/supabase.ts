@@ -97,6 +97,49 @@ async function fetchAllRows<T = unknown>(table: string, columns: string = '*'): 
   return { data: out, error: null };
 }
 
+/** Fetch every row from a table matching a single equality filter, paginating
+ *  exactly like `fetchAllRows` — used by the slice layer (Phase 2 scores,
+ *  reusable by Phase 3 registrations) for per-scope reads (e.g. "every score
+ *  for one event") so a big scope can't silently truncate at PostgREST's
+ *  1000-row cap either. */
+async function fetchScopedRows<T = unknown>(
+  table: string, columns: string, matchColumn: string, matchValue: string,
+): Promise<{ data: T[]; error: PostgrestError | null }> {
+  const sortKeys = sortKeysForTable(table);
+  const out: T[] = [];
+  let from = 0;
+  for (;;) {
+    let query = supabase!.from(table).select(columns).eq(matchColumn, matchValue).range(from, from + PAGE_SIZE - 1);
+    for (const key of sortKeys) query = query.order(key, { ascending: true });
+    const { data, error } = await query;
+    if (error) return { data: out, error };
+    out.push(...((data ?? []) as T[]));
+    if (!data || !hasMorePages(data.length)) break;
+    from += PAGE_SIZE;
+  }
+  return { data: out, error: null };
+}
+
+/** Same as `fetchScopedRows` but matches against a SET of values (`.in()`) —
+ *  used for "scores across these registration ids" (person-data export). */
+async function fetchScopedRowsIn<T = unknown>(
+  table: string, columns: string, matchColumn: string, matchValues: string[],
+): Promise<{ data: T[]; error: PostgrestError | null }> {
+  const sortKeys = sortKeysForTable(table);
+  const out: T[] = [];
+  let from = 0;
+  for (;;) {
+    let query = supabase!.from(table).select(columns).in(matchColumn, matchValues).range(from, from + PAGE_SIZE - 1);
+    for (const key of sortKeys) query = query.order(key, { ascending: true });
+    const { data, error } = await query;
+    if (error) return { data: out, error };
+    out.push(...((data ?? []) as T[]));
+    if (!data || !hasMorePages(data.length)) break;
+    from += PAGE_SIZE;
+  }
+  return { data: out, error: null };
+}
+
 // All write-through goes through the outbound queue (src/lib/write-queue.ts):
 // each op is retried with backoff, persisted so it survives a reload, and a
 // terminal failure is surfaced to the user (components/WriteStatus.tsx) instead
@@ -952,6 +995,50 @@ export function syncSynchroPartnerLevelRemote(myRegId: string, syLevel: string) 
 }
 
 export function pushScore(s: Score) { remoteUpsert('scores', [scoreToRow(s)]); }
+
+// ---------------------------------------------------------------------------
+// Scores slice-layer reads (Phase 2, docs/specs/2026-07-24-data-layer-scale.md)
+// `scores` is no longer part of loadAll's global hydration (see loadAll
+// below) — these scoped fetches back src/lib/scores-slice.ts instead. Each
+// paginates via fetchScopedRows/fetchScopedRowsIn so a big scope (a
+// nationals-sized event, or an admin export spanning many registrations)
+// can't silently truncate at PostgREST's 1000-row cap.
+// ---------------------------------------------------------------------------
+
+/** Every score row for one event — the slice layer's "by event" shape
+ *  (`useEventScores`). */
+export async function fetchEventScoresRemote(eventId: string): Promise<Score[]> {
+  if (!supabase) return [];
+  const { data, error } = await fetchScopedRows<Row<'scores'>>('scores', '*', 'event_id', eventId);
+  if (error) throw error;
+  return data.map(rowToScore);
+}
+
+/** One score by its composite id — the slice layer's "single record" shape
+ *  (ScoreDetail.tsx deep link). Deliberately NOT routed through the event
+ *  slice: a direct link to one score shouldn't have to pull a whole event's
+ *  worth of rows just to show it. */
+export async function fetchScoreByIdRemote(id: string): Promise<Score | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase.from('scores').select('*').eq('id', id).maybeSingle();
+  if (error) { console.error('[supabase] fetchScoreByIdRemote failed:', error); return null; }
+  return data ? rowToScore(data as Row<'scores'>) : null;
+}
+
+/** Every score for an arbitrary set of registration ids — backs both the
+ *  "mine" (Tier 2) cache and the admin person-data export, which may target
+ *  someone OTHER than the signed-in caller and so can't reuse the "mine"
+ *  cache. Chunks the `.in()` filter to keep request URLs bounded. */
+export async function fetchScoresForRegIdsRemote(regIds: string[]): Promise<Score[]> {
+  if (!supabase || regIds.length === 0) return [];
+  const out: Score[] = [];
+  for (const part of chunk(regIds, 200)) {
+    const { data, error } = await fetchScopedRowsIn<Row<'scores'>>('scores', '*', 'reg_id', part);
+    if (error) { console.error('[supabase] fetchScoresForRegIdsRemote failed:', error); continue; }
+    out.push(...data.map(rowToScore));
+  }
+  return out;
+}
 
 /** Replace an owner's (club or athlete) cart with the given items. Uses a
  *  delete-then-insert, so it's for the cart OWNER (club manager / the athlete). */
@@ -2203,7 +2290,7 @@ export async function loadAll(): Promise<DB | null> {
   try {
     const [
       seasonsR, levelsR, clubsR, clubManagersR, peopleR, altClubsR, membershipsR,
-      eventsR, sessionsR, squadsR, registrationsR, scoresR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
+      eventsR, sessionsR, squadsR, registrationsR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
       clubRequestsR, appSettingsR, accountInvitesR, sanctionRequestsR, sanctionVotesR,
       waiverDocsR, waiverSigsR, clubMembershipsR, paymentsR, eventAdminsR, refundRequestsR, waitlistGroupsR,
       sessionRequestsR, competitionOrdersR, finalsLineupsR, eventCheckinsR, accountingCodesR, hostPayoutsR,
@@ -2226,7 +2313,11 @@ export async function loadAll(): Promise<DB | null> {
       fetchAllRows<any>('event_sessions'), // eslint-disable-line @typescript-eslint/no-explicit-any
       fetchAllRows<Row<'squads'>>('squads'),
       fetchAllRows<RegistrationRowMaybeSurvey>('registrations', REGISTRATION_COLUMNS_NO_SURVEY),
-      fetchAllRows<Row<'scores'>>('scores'),
+      // scores: deliberately NOT fetched here (Phase 2, docs/specs/2026-07-24-
+      // data-layer-scale.md) — at nationals scale this table alone was ~52k
+      // rows / a multi-MB slab of the boot payload. Reads now go through the
+      // scoped slice layer (src/lib/scores-slice.ts): fetchEventScoresRemote /
+      // fetchScoreByIdRemote / fetchScoresForRegIdsRemote.
       fetchAllRows<Row<'coupons'>>('coupons'),
       fetchAllRows<Row<'cart_items'>>('cart_items'),
       fetchAllRows<Row<'invoices'>>('invoices'),
@@ -2260,7 +2351,7 @@ export async function loadAll(): Promise<DB | null> {
     // club_requests may not exist on a pre-0005 DB — tolerate its error, fail on the rest.
     const errors = [
       seasonsR, levelsR, clubsR, clubManagersR, peopleR, altClubsR, membershipsR,
-      eventsR, sessionsR, squadsR, registrationsR, scoresR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
+      eventsR, sessionsR, squadsR, registrationsR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
     ].map((r) => r.error).filter(Boolean);
     if (errors.length) { console.error('[supabase] loadAll failed:', errors); return null; }
 
@@ -2380,7 +2471,12 @@ export async function loadAll(): Promise<DB | null> {
     }));
 
     const registrations: Registration[] = (registrationsR.data ?? []).map(rowToRegistration);
-    const scores: Score[] = (scoresR.data ?? []).map(rowToScore);
+    // Always empty here (see the fetch-list comment above) — DB.scores stays
+    // in the type only because the localStorage-only prototype mode
+    // (buildSeed/loadNationals/pushAll) still uses it as its one true local
+    // store; a Supabase-backed session reads scores exclusively through the
+    // slice layer and never repopulates this field from loadAll.
+    const scores: Score[] = [];
 
     const itemsByInvoice = new Map<string, Invoice['items']>();
     for (const r of invoiceItemsR.data ?? []) {
@@ -2571,9 +2667,12 @@ export async function pushAll(db: DB, onProgress?: (label: string) => void): Pro
   onProgress?.('Done');
 }
 
-/** Realtime wiring for live results: subscribes to score changes for an event.
- *  `onChange` receives the raw postgres_changes payload — use
- *  `applyScorePatch` to accumulate it into a patch map. */
+/** Realtime wiring for live results: subscribes to score changes for an
+ *  event. `onChange` receives the raw postgres_changes payload — this is now
+ *  the scores slice's invalidation signal (src/lib/scores-slice.ts), keyed
+ *  exactly like the slice itself (Phase 2 CONTRACT: "the existing per-event
+ *  realtime channel becomes the slice's invalidation signal rather than a
+ *  special case"), rather than Results.tsx's own bespoke patch overlay. */
 export function subscribeEventScores(
   eventId: string,
   onChange: (payload: RealtimePostgresChangesPayload<Row<'scores'>>) => void,
@@ -2584,23 +2683,4 @@ export function subscribeEventScores(
     .on('postgres_changes', { event: '*', schema: 'public', table: 'scores', filter: `event_id=eq.${eventId}` }, onChange)
     .subscribe();
   return () => { supabase.removeChannel(channel); };
-}
-
-/** Accumulate a scores-table realtime change into a patch map
- *  (id → Score for insert/update, id → null for delete). Callers overlay the
- *  patches onto the store's scores at render time, so a store refresh
- *  (loadAll / local mutate) is reconciled automatically. */
-export function applyScorePatch(
-  patches: ReadonlyMap<string, Score | null>,
-  payload: RealtimePostgresChangesPayload<Row<'scores'>>,
-): Map<string, Score | null> {
-  const next = new Map(patches);
-  if (payload.eventType === 'DELETE') {
-    const oldId = (payload.old as Partial<Row<'scores'>> | null)?.id;
-    if (oldId != null) next.set(oldId, null);
-    return next;
-  }
-  const updated = rowToScore(payload.new as Row<'scores'>);
-  next.set(updated.id, updated);
-  return next;
 }

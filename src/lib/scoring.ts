@@ -13,7 +13,12 @@ export interface ApparatusRanking {
   rows: { reg: Registration; score: Score; rank: number }[];
 }
 
-export function sessionResults(db: DB, event: Event, sessionId: string): {
+/** Pure. `scores` is a caller-supplied parameter (Phase 2, docs/specs/2026-07-24-
+ *  data-layer-scale.md) rather than read off `db.scores` — scores are no
+ *  longer globally hydrated, so this keeps the function pure/testable and
+ *  makes the slice boundary honest. Callers pass the event's scores (e.g.
+ *  from `useEventScores(event.id)`). */
+export function sessionResults(db: DB, event: Event, sessionId: string, scores: Score[]): {
   byLevel: Map<string, AthleteResult[]>;
   apparatusRankings: ApparatusRanking[];
   teamScores: { clubId: string; total: number; perApparatus: Record<string, number> }[];
@@ -21,9 +26,9 @@ export function sessionResults(db: DB, event: Event, sessionId: string): {
 } {
   const session = event.sessions.find((s) => s.id === sessionId)!;
   const regs = db.registrations.filter((r) => r.eventId === event.id && r.sessionId === sessionId && !r.refunded);
-  const scores = db.scores.filter((s) => s.eventId === event.id && s.sessionId === sessionId);
+  const scopedScores = scores.filter((s) => s.eventId === event.id && s.sessionId === sessionId);
   const scoreMap = new Map<string, Score>();
-  for (const s of scores) scoreMap.set(`${s.regId}|${s.apparatus}`, s);
+  for (const s of scopedScores) scoreMap.set(`${s.regId}|${s.apparatus}`, s);
 
   const results: AthleteResult[] = regs.map((reg) => {
     const apparatus: Record<string, Score | undefined> = {};

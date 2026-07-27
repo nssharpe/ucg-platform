@@ -89,14 +89,19 @@ export interface PersonDataExport {
 
 /** Pure: gather every piece of data the app holds about `personId` from a
  *  DB-shaped object. No I/O — callers pass the live `db` (or, for the
- *  vitest suite, a small seeded fixture). */
-export function collectPersonData(db: DB, personId: string): PersonDataExport {
+ *  vitest suite, a small seeded fixture). `scores` is a caller-supplied
+ *  parameter (Phase 2, docs/specs/2026-07-24-data-layer-scale.md) rather than
+ *  read off `db.scores` — scores are no longer globally hydrated, and this
+ *  export can target someone OTHER than the signed-in caller (admin export),
+ *  so the caller fetches the right set via `fetchScoresForRegIds`
+ *  (src/lib/scores-slice.ts) before calling in. */
+export function collectPersonData(db: DB, personId: string, scores: Score[]): PersonDataExport {
   const person = db.people.find((p) => p.id === personId) ?? null;
   const authUserId = person?.authUserId ?? null;
 
   const registrations = db.registrations.filter((r) => r.athleteId === personId);
   const regIds = new Set(registrations.map((r) => r.id));
-  const scores = db.scores.filter((s) => regIds.has(s.regId));
+  const scopedScores = scores.filter((s) => regIds.has(s.regId));
 
   const invoicesBilled = db.invoices.filter((inv) => inv.athleteId === personId);
   const cartItems = db.carts[personId] ?? [];
@@ -124,7 +129,7 @@ export function collectPersonData(db: DB, personId: string): PersonDataExport {
     person,
     managedClubs,
     registrations,
-    scores,
+    scores: scopedScores,
     invoicesBilled,
     cartItems,
     clubRequests,

@@ -11,7 +11,8 @@ import {
   type ArtisticDisciplineResult,
 } from '../lib/nationals-adapter';
 import { fmtScore } from '../lib/scoring';
-import type { Event, NationalsConfig, PlacementCategory } from '../lib/types';
+import { useEventScores } from '../lib/scores-slice';
+import type { Event, NationalsConfig, PlacementCategory, Score } from '../lib/types';
 import type { AwardTable } from '../nationals';
 
 const TABS = ['Config', 'Qualification', 'Awards', 'Validation'] as const;
@@ -25,13 +26,15 @@ export function Nationals() {
   const caps = useCapabilities();
   const event = db.events.find((m) => m.slug === slug);
   const [tab, setTab] = useState<Tab>('Config');
+  const { rows: scores, status: scoresStatus } = useEventScores(event?.id);
 
-  const bundle = useMemo(() => (event ? computeNationals(db, event) : null), [db, event]);
-  const validation = useMemo(() => (event ? computeNationalsValidation(db, event) : []), [db, event]);
+  const bundle = useMemo(() => (event ? computeNationals(db, event, scores) : null), [db, event, scores]);
+  const validation = useMemo(() => (event ? computeNationalsValidation(db, event, scores) : []), [db, event, scores]);
 
   if (!event) return <div className="page"><p>Event not found.</p></div>;
   if (event.kind !== 'nationals') return <div className="page"><p>This isn’t a Nationals event.</p></div>;
   if (!caps.isEventHost(event.id)) return <div className="page"><p>You don’t have access to manage this event.</p></div>;
+  if (scoresStatus === 'loading') return <div className="page"><p>Loading scores…</p></div>;
 
   return (
     <div className="page">
@@ -50,14 +53,14 @@ export function Nationals() {
       </div>
 
       {tab === 'Config' && <NationalsConfigEditor event={event} />}
-      {tab === 'Qualification' && bundle && <QualificationView event={event} db={db} />}
+      {tab === 'Qualification' && bundle && <QualificationView event={event} db={db} scores={scores} />}
       {tab === 'Awards' && bundle && <AwardsView event={event} db={db} bundle={bundle} />}
       {tab === 'Validation' && <ValidationView issues={validation} />}
     </div>
   );
 }
 
-function QualificationView({ event, db }: { event: Event; db: ReturnType<typeof useDB> }) {
+function QualificationView({ event, db, scores }: { event: Event; db: ReturnType<typeof useDB>; scores: Score[] }) {
   const disciplines = (['WAG', 'MAG'] as const).filter((d) => event.disciplines.includes(d));
   const cfg = event.nationalsConfig!;
   return (
@@ -67,7 +70,7 @@ function QualificationView({ event, db }: { event: Event; db: ReturnType<typeof 
         were pulled in by the 50% cross-club rule (placed below the cutoff).
       </p>
       {disciplines.map((d) => {
-        const res = computeArtisticDiscipline(db, event, d);
+        const res = computeArtisticDiscipline(db, event, d, scores);
         return <DisciplineRoster key={d} discipline={d} res={res} cfg={cfg} db={db} />;
       })}
       {disciplines.length === 0 && <p>No WAG/MAG disciplines in this event.</p>}

@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useDB } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
+import { useMyScores } from '../lib/scores-slice';
 import { Stat, Badge } from '../components/ui';
 import { useFmtDate } from '../components/ui-hooks';
 import { fmtMoney } from '../lib/scoring';
@@ -362,6 +363,7 @@ function AthleteDashboard() {
   const db = useDB();
   const fmtDate = useFmtDate();
   const caps = useCapabilities();
+  const myScoresAll = useMyScores(); // hooks run unconditionally, before the early returns below
   const me = caps.person;
   const season = currentSeason(db);
   if (!me) return null;
@@ -464,7 +466,7 @@ function AthleteDashboard() {
           {[...new Set(myRegs.map((r) => r.eventId))].map((mid) => {
             const event = db.events.find((m) => m.id === mid)!;
             const regs = myRegs.filter((r) => r.eventId === mid);
-            const myScores = db.scores.filter((s) => regs.some((r) => r.id === s.regId));
+            const myScores = myScoresAll.filter((s) => regs.some((r) => r.id === s.regId));
             return (
               <div key={mid} style={{ padding: '8px 0', borderBottom: '1px solid var(--line)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

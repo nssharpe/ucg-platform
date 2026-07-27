@@ -260,9 +260,55 @@ returned **exactly 1000**, reproducing the bug; the new paginated fetch returned
   triggers able to fire on their own.
 - Then measure against the seeded staging set and record the numbers here.
 
-**Phase 2 — Move `scores` to slices.** Smallest blast radius: 13 references across 10
-files, and the heaviest table by projected volume. Also the one with realtime already
-scoped per event, so it validates the slice design end to end.
+**Phase 2 — Move `scores` to slices. ✅ DRAFTED 2026-07-26, branch
+`perf/6-3-phase2-scores-slice`, NOT YET merged/deployed.** Smallest blast radius: 13
+references across 10 files, and the heaviest table by projected volume. Also the one
+with realtime already scoped per event, so it validates the slice design end to end.
+
+*What shipped on the branch:* the generic slice-layer infrastructure
+(`src/lib/slice-cache.ts` — `createEventScopedSlice`, memory-only, status
+transitions, realtime patch helpers, reusable as-is by Phase 3) plus the scores
+instantiation (`src/lib/scores-slice.ts`) implementing all four CONTRACT shapes —
+`useEventScores` (by event), `useMyScores`/`<MyScoresBoot/>` (Tier 2 "mine",
+synchronous), `useScoreById` (single record), and `fetchScoresForRegIds` (admin
+export — deliberately NOT the "mine" cache, since an admin can export someone
+other than themselves). `loadAll` no longer fetches `scores`; `SEED_VERSION` bumped
+to 8. All 10 original consumers plus the transitively-affected `Nationals.tsx`
+were updated so `scoring.ts`/`nationals-adapter.ts`/`person-data.ts` take `scores`
+as a parameter instead of reading `db.scores`. `nationals.ts` (demo Nationals-2026
+import) and `supabase.ts`'s `pushAll` needed NO changes — both already operate on
+the local, admin-populated `db.scores` (the demo/prototype "everything" store),
+which is exactly the CONTRACT's shape #4 and was never on a normal render path.
+
+*Measured (2026-07-26, scale-seeded staging, 52,748 scores):* a full paginated
+fetch of the entire `scores` table — the load Phase 2 removes from every boot —
+took **14.46 s** and transferred **~21.7 MB** of JSON. The replacement, a single
+nationals-scale event's scores (2,442 rows) via the new per-event slice fetch,
+took **~0.78 s / ~695 KB**, and is only ever paid when that event's Results/Judge/
+Nationals page is actually opened. A full live end-to-end `loadAll()` boot comparison was not completed in the Phase 2
+session. The implementer reported it as blocked by staging's `registrations` table
+"missing its base `GRANT SELECT ... TO authenticated`" — **that diagnosis was wrong and
+there is no environment gap to fix.** Verified 2026-07-26 against BOTH staging and prod,
+as anon AND as an authenticated seeded user, using the app's real column list: reads
+succeed everywhere.
+
+What actually happened is the **column-revoke trap already documented in CLAUDE.md**:
+`registrations.camp_survey` has SELECT revoked, so a `select('*')` (rather than the
+app's explicit `REGISTRATION_COLUMNS_NO_SURVEY` list) fails — and PostgREST reports it
+with misleading TABLE-level wording:
+
+    select('*')                 -> 42501: permission denied for table registrations
+    select('id, camp_survey')   -> 42501: permission denied for table registrations
+    select(<app column list>)   -> ok
+
+Reproduced directly. The error names the table, not the column, which is exactly why it
+reads as a missing base grant. **No action for Nate.** When measuring, use the app's
+column list.
+
+Phase 2's component-level numbers above still stand on their own: removing the full
+`scores` fetch takes ~14.46 s out of the Phase 1 baseline of 21.1 s, leaving
+`registrations` as the dominant remaining cost — which is precisely what Phase 3
+addresses.
 
 **Phase 3 — Move `registrations` to slices.** The big one: 60 references across 20
 files. Tier 2 keeps "my registrations" synchronous, so the work concentrates in the

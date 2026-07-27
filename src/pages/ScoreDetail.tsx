@@ -1,10 +1,10 @@
 import { useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { useDB, mutate } from '../lib/store';
+import { useDB } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { Badge, Field } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
-import { pushScore } from '../lib/supabase';
+import { useScoreById, writeScore } from '../lib/scores-slice';
 import { APPARATUS } from '../lib/types';
 import type { Score } from '../lib/types';
 import { fmtScore } from '../lib/scoring';
@@ -22,14 +22,24 @@ import type { CalcPanelHandle } from '../components/CalcPanel';
  *  carry a legacy iframe DOM snapshot and re-open in the embedded calculator. */
 export function ScoreDetail() {
   const { scoreId } = useParams();
-  const db = useDB();
-  const score = db.scores.find((s) => s.id === decodeURIComponent(scoreId ?? ''));
-  if (!score) return <p>Score not found.</p>;
-  // Keyed so panel state resets when navigating between scores.
-  return <ScoreDetailInner key={score.id} score={score} />;
+  const id = decodeURIComponent(scoreId ?? '');
+  // Keyed by id: useScoreById's internal state should reset to "loading" when
+  // navigating to a DIFFERENT score without a full route remount (ScoreDetail
+  // itself doesn't remount on a param-only route change) — a `key` here
+  // forces exactly that remount, which is what actually resets it (rather
+  // than diffing a ref during render, which this repo's react-hooks/refs
+  // lint rule disallows).
+  return <ScoreDetailById key={id} id={id} />;
 }
 
-function ScoreDetailInner({ score }: { score: Score }) {
+function ScoreDetailById({ id }: { id: string }) {
+  const { score, status, applyOptimistic } = useScoreById(id);
+  if (status === 'loading') return <p>Loading…</p>;
+  if (!score) return <p>Score not found.</p>;
+  return <ScoreDetailInner score={score} applyOptimistic={applyOptimistic} />;
+}
+
+function ScoreDetailInner({ score, applyOptimistic }: { score: Score; applyOptimistic: (updated: Score) => void }) {
   const db = useDB();
   const caps = useCapabilities();
   const toast = useToast();
@@ -81,23 +91,20 @@ function ScoreDetailInner({ score }: { score: Score }) {
 
   const saveAdjustment = async () => {
     const legacyState = isLegacy ? await calcRef.current?.requestState() : null;
-    const applied = mutate((db2) => {
-      const s = db2.scores.find((x) => x.id === score.id)!;
-      if (calcCfg?.produces === 'full') {
-        s.sv = liveD; s.eScore = liveE;
-        s.deductions = liveE != null ? Math.round((10 - liveE) * 1000) / 1000 : s.deductions;
-      } else {
-        s.sv = liveD;
-      }
-      s.final = liveFinal;
-      if (isNative) s.calcState = { v: 2, kind: calcCfg!.kind, state: nativeSt };
-      else s.calcState = legacyState ?? s.calcState;
-      s.adjustNote = note || 'Adjusted after inquiry';
-      s.adjustedAt = new Date().toISOString();
-      s.enteredBy = 'admin-verification';
-      pushScore(s);
-    });
+    const updated: Score = {
+      ...score,
+      ...(calcCfg?.produces === 'full'
+        ? { sv: liveD, eScore: liveE, deductions: liveE != null ? Math.round((10 - liveE) * 1000) / 1000 : score.deductions }
+        : { sv: liveD }),
+      final: liveFinal,
+      calcState: isNative ? { v: 2, kind: calcCfg!.kind, state: nativeSt } : (legacyState ?? score.calcState),
+      adjustNote: note || 'Adjusted after inquiry',
+      adjustedAt: new Date().toISOString(),
+      enteredBy: 'admin-verification',
+    };
+    const applied = writeScore(updated);
     if (!applied) return; // offline read-only gate — no false success toast
+    applyOptimistic(updated); // reflect immediately on this page (writeScore's slice upsert only reaches OTHER consumers of the event slice)
     toast(`Score adjusted to ${fmtScore(liveFinal)} — change is live on results.`);
   };
 

@@ -157,9 +157,15 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   and Postgres requires SELECT privilege on columns referenced via EXCLUDED
   (`return=minimal` does NOT save you; the 20260717205348 header's write-path
   reasoning was wrong). `registrations.camp_survey` did this — every client
-  registration upsert failed 42501 for 6 days. Rule: a column with revoked
-  SELECT must NEVER appear in a `*ToRow` upsert mapping; write it via a
-  targeted column UPDATE (`pushCampSurvey` is the pattern). After ANY
+  registration upsert failed 42501 for 6 days. **The error wording LIES:** a
+  revoked COLUMN surfaces as `42501: permission denied for table <table>` —
+  naming the TABLE, not the column — so it reads like a missing base grant and
+  has been misdiagnosed as exactly that (2026-07-26, cost a false "Nate must
+  re-grant SELECT on staging" action item). Before concluding an environment is
+  broken, retry with the app's explicit column list: `select('*')` on
+  `registrations` fails while `REGISTRATION_COLUMNS_NO_SURVEY` succeeds. Rule: a
+  column with revoked SELECT must NEVER appear in a `*ToRow` upsert mapping;
+  write it via a targeted column UPDATE (`pushCampSurvey` is the pattern). After ANY
   column-privilege migration, live-probe the affected table's WRITE path as a
   non-admin, not just reads. never client-side delete-then-insert rows the caller's
   own permission derives from (e.g. `club_managers`) — the delete revokes the actor's
