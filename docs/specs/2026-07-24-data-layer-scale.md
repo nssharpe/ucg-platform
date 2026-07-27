@@ -171,6 +171,53 @@ fit. Four shapes are needed, and `registrations` maps onto the same four:
 4. **Everything** — only `pushAll` (admin Demo Tools, `RequireAdmin`). Keep an explicit
    "fetch all" used *only* there; it must never be on a normal render path.
 
+**Two MORE shapes, found by enumerating `registrations` (2026-07-26 recon).** The
+four above came from `scores`; `registrations` needs these as well:
+
+5. **By club, cross-event.** `Home.tsx:255` filters by `clubId` with no event scope —
+   it exists precisely to *discover* which events a club has touched, so no by-event
+   slice can serve it. `Cart.tsx`'s `surveyGateForItems`/`earliestHoldMs` do
+   `db.registrations.find(id)` on cart `refRegIds` that may point at ANY event, and the
+   same code runs for each managed-club section. Both need a per-owner cross-event set.
+6. **By arbitrary person, all events — NOT a slice.** `person-data.ts:97` (GDPR export)
+   and `AdminMembers.tsx:49/51/161` (duplicate-athlete merge) read one *arbitrary*
+   person's registrations across every event. **Serve these with a targeted direct
+   fetch, never from a cache**, so completeness is guaranteed by the query rather than
+   by hoping a slice is warm. `AdminMembers` is the sharpest case in the entire
+   refactor: its read feeds a `mutate()` that reassigns/hard-deletes those rows and then
+   deletes the person — an incomplete read silently ORPHANS registrations against a
+   deleted `athleteId`. That is data corruption, not a wrong count.
+
+**COMPLETENESS IS A CORRECTNESS CONSTRAINT, not just a UX one.** These computations are
+only correct with the full by-event set present, and must gate on `status === 'ready'`
+before running — never compute from a loading slice:
+
+- **`capacity.ts`** (`checkCapacity`/`splitFit`): caps are **event-wide across every
+  club**, so the caller must pass the full by-event slice, never a club-narrowed subset.
+  A partial slice *undercounts usage and admits over-capacity registrations*.
+- **The nationals engine** (`nationals-adapter.ts` -> decathlon/omnithon/awards/team
+  finals): rank and qualification math over the whole field. A partial slice yields
+  plausible but WRONG placements.
+- **`pricing.ts`'s `priorDisciplineCount`** inputs (Club.tsx, Events.tsx,
+  MyRegistrations.tsx): the athlete's own regs for that event must be complete or the
+  fee is wrong. Satisfied by the synchronous Tier-2 "mine" cache — **provided "mine"
+  stays fully hydrated and is not derived from a partial by-event slice.**
+- **`Club.tsx` roster classification** (`hasActiveReg`, L1093): a partial slice makes a
+  registered athlete look unregistered, inviting a manager to re-register and RE-CHARGE
+  them. No visible error — the worst kind.
+
+**Two live unguarded empty states must gain loading guards in Phase 3:**
+`Events.tsx:1078` (`NationalsSummaryCard` -> "No registrations yet.") and
+`EventCheckinCard.tsx:213` ("No registrations yet for this event."). Both read
+`db.registrations` synchronously today, so they are harmless now and become confident
+lies the moment the read goes async. The correct idiom already exists two components
+away in the same file — `RosterToolsCard` uses `rows: T[] | null` with an explicit
+loading branch before the empty branch. Copy it.
+
+**Also fix while in there:** `EventCommunicate.tsx:407` memoizes on `db.registrations`
+directly — the in-place `mutate()` trap that Club.tsx / MyRegistrations.tsx explicitly
+guard against with comments. It is wrong today, independent of this refactor.
+
 **`status` is mandatory and non-optional in the return type.** The single biggest hazard
 in this refactor is a page that filters an unloaded slice, gets `[]`, and confidently
 renders an empty state — "no scores posted yet" when the truth is "not loaded yet".

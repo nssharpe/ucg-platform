@@ -403,6 +403,13 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   failures 'permanent' (no retry; boot-wired toast + drain-then-`syncFromSupabase()`
   rollback in `supabase.ts`); non-React code toasts via `pushToast` (`lib/toast-bus.ts`),
   the imperative escape hatch into the same ToastProvider.
+- **Slice layer (Phase 2, 2026-07-26):** `scores` is NO LONGER globally hydrated.
+  `db.scores` exists only for unconfigured/demo mode. Read it via
+  `useEventScores(eventId)` / `useMyScores()` / `useScoreById()` (`src/lib/scores-slice.ts`,
+  built on generic `src/lib/slice-cache.ts`). Hooks return `{ rows, status }` and
+  **`status` is non-optional on purpose** — never render an empty state without checking
+  `status === 'loading'` first, or you turn "not loaded" into a confident "none exist".
+  Slices are memory-only (never localStorage). Pure modules take rows as PARAMETERS.
 - **Data-layer scale (6.3):** `node --env-file=.env.local scripts/seed-scale.mjs`
   seeds a 2-year-projection dataset into **STAGING ONLY** (hard-guarded against the
   prod ref; every row id prefixed `scale-`; `--clean` removes exactly those and is
