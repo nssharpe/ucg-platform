@@ -1040,6 +1040,63 @@ export async function fetchScoresForRegIdsRemote(regIds: string[]): Promise<Scor
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Registrations slice-layer reads (Phase 3, docs/specs/2026-07-24-data-layer-
+// scale.md). `registrations` is no longer part of loadAll's global hydration
+// (see loadAll below) — these scoped fetches back src/lib/registrations-slice.ts
+// instead. Each paginates via fetchScopedRows so a big scope (a nationals-
+// sized event, or a club's whole season) can't silently truncate at
+// PostgREST's 1000-row cap. All use REGISTRATION_COLUMNS_NO_SURVEY — never
+// select('*') — for the same column-revoke reason loadAll does (see that
+// const's doc comment): camp_survey has SELECT revoked from anon/authenticated.
+// ---------------------------------------------------------------------------
+
+/** Every registration row for one event — the slice layer's "by event" shape
+ *  (`useEventRegistrations`). Throws on error so the slice cache can surface
+ *  `status: 'error'` (mirrors fetchEventScoresRemote). */
+export async function fetchEventRegistrationsRemote(eventId: string): Promise<Registration[]> {
+  if (!supabase) return [];
+  const { data, error } = await fetchScopedRows<RegistrationRowMaybeSurvey>('registrations', REGISTRATION_COLUMNS_NO_SURVEY, 'event_id', eventId);
+  if (error) throw error;
+  return data.map(rowToRegistration);
+}
+
+/** Every registration row for one club, across every event — the slice
+ *  layer's "by club, cross-event" shape (`useClubRegistrations`). Backs
+ *  Home.tsx's "which events has this club touched" discovery and Cart.tsx's
+ *  managed-club sections (refRegIds may point at any event). Throws on error
+ *  so the slice cache can surface `status: 'error'`. */
+export async function fetchClubRegistrationsRemote(clubId: string): Promise<Registration[]> {
+  if (!supabase) return [];
+  const { data, error } = await fetchScopedRows<RegistrationRowMaybeSurvey>('registrations', REGISTRATION_COLUMNS_NO_SURVEY, 'club_id', clubId);
+  if (error) throw error;
+  return data.map(rowToRegistration);
+}
+
+/** One registration by id — the slice layer's "single record" shape
+ *  (deliberately NOT routed through either slice: a direct id lookup
+ *  shouldn't have to pull a whole event's or club's worth of rows). */
+export async function fetchRegistrationByIdRemote(id: string): Promise<Registration | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase.from('registrations').select(REGISTRATION_COLUMNS_NO_SURVEY).eq('id', id).maybeSingle();
+  if (error) { console.error('[supabase] fetchRegistrationByIdRemote failed:', error); return null; }
+  return data ? rowToRegistration(data as unknown as RegistrationRowMaybeSurvey) : null;
+}
+
+/** Every registration for one athlete, across every event — backs BOTH the
+ *  Tier-2 "mine" cache (signed-in caller) and the arbitrary-person direct
+ *  fetch (shape #6: AdminMembers.tsx duplicate-athlete merge, person-data.ts
+ *  GDPR export). The arbitrary-person callers deliberately do NOT go through
+ *  a cache — completeness must come from the query itself, since an
+ *  incomplete read there orphans registrations against a deleted athleteId
+ *  (see registrations-slice.ts's fetchRegistrationsForPerson doc comment). */
+export async function fetchRegistrationsForPersonRemote(personId: string): Promise<Registration[]> {
+  if (!supabase) return [];
+  const { data, error } = await fetchScopedRows<RegistrationRowMaybeSurvey>('registrations', REGISTRATION_COLUMNS_NO_SURVEY, 'athlete_id', personId);
+  if (error) { console.error('[supabase] fetchRegistrationsForPersonRemote failed:', error); return []; }
+  return data.map(rowToRegistration);
+}
+
 /** Replace an owner's (club or athlete) cart with the given items. Uses a
  *  delete-then-insert, so it's for the cart OWNER (club manager / the athlete). */
 export function pushCart(ownerKey: string, items: DB['carts'][string], isClub: boolean) {
