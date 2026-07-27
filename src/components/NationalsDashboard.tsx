@@ -1,5 +1,6 @@
 import { Fragment, type ReactNode } from 'react';
 import { useDB } from '../lib/store';
+import { useEventRegistrations } from '../lib/registrations-slice';
 import { APPARATUS } from '../lib/types';
 import type { DB, Event, Registration } from '../lib/types';
 import { eligibleTeams, isAllAround, TEAM_MIN_PER_APPARATUS } from '../lib/nationals-teams';
@@ -31,16 +32,27 @@ export type NationalsDashboardScope = { clubId: string } | { personId: string };
 export function NationalsDashboard({ eventId, scope }: { eventId: string; scope: NationalsDashboardScope }) {
   const db = useDB();
   const event = db.events.find((e) => e.id === eventId);
+  // Phase 3 (data-layer-scale): the by-event slice instead of db.registrations
+  // — called unconditionally (Rules of Hooks) before the `!event` early
+  // return below is reached, since hooks must run in the same order every
+  // render regardless of whether `event` resolves.
+  const { rows: eventRegs, status: regsStatus } = useEventRegistrations(eventId);
   if (!event || event.kind !== 'nationals') return null;
 
   return (
     <div className="card card-pad" style={{ marginBottom: 18 }}>
       <h3 className="card-title">Nationals summary</h3>
-      <EligibleTeamsSection event={event} scope={scope} />
-      <DecathlonSection event={event} scope={scope} />
-      <CoachListSection event={event} scope={scope} />
-      <BanquetGapSection event={event} scope={scope} />
-      <AssignedSessionsSection event={event} scope={scope} />
+      {regsStatus === 'loading' ? (
+        <p style={MUTED_NOTE_STYLE}>Loading…</p>
+      ) : (
+        <>
+          <EligibleTeamsSection event={event} scope={scope} regs={eventRegs} />
+          <DecathlonSection event={event} scope={scope} regs={eventRegs} />
+          <CoachListSection event={event} scope={scope} regs={eventRegs} />
+          <BanquetGapSection event={event} scope={scope} regs={eventRegs} />
+          <AssignedSessionsSection event={event} scope={scope} regs={eventRegs} />
+        </>
+      )}
     </div>
   );
 }
@@ -49,9 +61,12 @@ export function NationalsDashboard({ eventId, scope }: { eventId: string; scope:
 // Shared scope helpers
 // ---------------------------------------------------------------------------
 
-/** Non-refunded, non-waitlisted registrations for `eventId` within `scope`. */
-function scopedActiveRegs(db: DB, eventId: string, scope: NationalsDashboardScope): Registration[] {
-  return db.registrations.filter((r) => {
+/** Non-refunded, non-waitlisted registrations for `eventId` within `scope`.
+ *  `regs` (Phase 3): the caller's by-event slice — see NationalsDashboard's
+ *  single useEventRegistrations call, threaded down to every section below
+ *  rather than each section re-reading db.registrations. */
+function scopedActiveRegs(regs: Registration[], eventId: string, scope: NationalsDashboardScope): Registration[] {
+  return regs.filter((r) => {
     if (r.eventId !== eventId || r.refunded || r.waitlisted) return false;
     return 'clubId' in scope ? r.clubId === scope.clubId : r.athleteId === scope.personId;
   });
@@ -64,11 +79,11 @@ function scopedActiveRegs(db: DB, eventId: string, scope: NationalsDashboardScop
  *  since self-registration always picks one of the athlete's own main/alt
  *  clubs). Falls back to the athlete's `mainClubId`/first `altClubIds` entry,
  *  then null if the athlete truly has no club association on file. */
-function resolveScopeClubId(db: DB, event: Event, scope: NationalsDashboardScope): string | null {
+function resolveScopeClubId(db: DB, event: Event, scope: NationalsDashboardScope, regs: Registration[]): string | null {
   if ('clubId' in scope) return scope.clubId;
   const athlete = db.people.find((p) => p.id === scope.personId);
-  const regs = scopedActiveRegs(db, event.id, scope);
-  return regs[0]?.clubId ?? athlete?.mainClubId ?? athlete?.altClubIds?.[0] ?? null;
+  const scopedRegs = scopedActiveRegs(regs, event.id, scope);
+  return scopedRegs[0]?.clubId ?? athlete?.mainClubId ?? athlete?.altClubIds?.[0] ?? null;
 }
 
 function nameOf(db: DB, personId: string): string {
@@ -87,7 +102,7 @@ const MUTED_NOTE_STYLE = { fontSize: 13, color: 'var(--ink-soft)', margin: 0 };
 // 1. Eligible teams — spec §L.3 item 1
 // ---------------------------------------------------------------------------
 
-function EligibleTeamsSection({ event, scope }: { event: Event; scope: NationalsDashboardScope }) {
+function EligibleTeamsSection({ event, scope, regs: eventRegs }: { event: Event; scope: NationalsDashboardScope; regs: Registration[] }) {
   const db = useDB();
 
   if (!('clubId' in scope)) {
@@ -99,7 +114,7 @@ function EligibleTeamsSection({ event, scope }: { event: Event; scope: Nationals
     );
   }
 
-  const regs = scopedActiveRegs(db, event.id, scope);
+  const regs = scopedActiveRegs(eventRegs, event.id, scope);
   const peopleById = new Map(db.people.map((p) => [p.id, p]));
   const teams = eligibleTeams(regs, peopleById);
   const levelName = (levelId: string) => db.levels.find((l) => l.id === levelId)?.name ?? levelId;
@@ -166,9 +181,9 @@ function EligibleTeamsSection({ event, scope }: { event: Event; scope: Nationals
 //    pre-scores planning list — NOT scored results)
 // ---------------------------------------------------------------------------
 
-function DecathlonSection({ event, scope }: { event: Event; scope: NationalsDashboardScope }) {
+function DecathlonSection({ event, scope, regs: eventRegs }: { event: Event; scope: NationalsDashboardScope; regs: Registration[] }) {
   const db = useDB();
-  const regs = scopedActiveRegs(db, event.id, scope);
+  const regs = scopedActiveRegs(eventRegs, event.id, scope);
 
   const byAthlete = new Map<string, { wag?: boolean; mag?: boolean; tnt?: boolean }>();
   for (const r of regs) {
@@ -206,9 +221,9 @@ function DecathlonSection({ event, scope }: { event: Event; scope: NationalsDash
 // 3. Club coach list — spec §L.3 item 3
 // ---------------------------------------------------------------------------
 
-function CoachListSection({ event, scope }: { event: Event; scope: NationalsDashboardScope }) {
+function CoachListSection({ event, scope, regs }: { event: Event; scope: NationalsDashboardScope; regs: Registration[] }) {
   const db = useDB();
-  const clubId = resolveScopeClubId(db, event, scope);
+  const clubId = resolveScopeClubId(db, event, scope, regs);
   const club = clubId ? db.clubs.find((c) => c.id === clubId) : undefined;
   const coaches = clubId ? db.people.filter((p) => p.mainClubId === clubId && p.roles?.coach) : [];
 
@@ -251,13 +266,13 @@ function ticketedPersonIds(db: DB, eventId: string): Set<string> {
   return ids;
 }
 
-function BanquetGapSection({ event, scope }: { event: Event; scope: NationalsDashboardScope }) {
+function BanquetGapSection({ event, scope, regs: eventRegs }: { event: Event; scope: NationalsDashboardScope; regs: Registration[] }) {
   const db = useDB();
   if (!event.banquet) return null;
 
-  const regs = scopedActiveRegs(db, event.id, scope);
+  const regs = scopedActiveRegs(eventRegs, event.id, scope);
   const athleteIds = regs.map((r) => r.athleteId);
-  const clubId = resolveScopeClubId(db, event, scope);
+  const clubId = resolveScopeClubId(db, event, scope, eventRegs);
   const coachIds = clubId ? db.people.filter((p) => p.mainClubId === clubId && p.roles?.coach).map((p) => p.id) : [];
   const registrantIds = [...new Set([...athleteIds, ...coachIds])];
 
@@ -285,7 +300,7 @@ function BanquetGapSection({ event, scope }: { event: Event; scope: NationalsDas
 // 5. Assigned-sessions table — spec §L.3 item 5
 // ---------------------------------------------------------------------------
 
-function AssignedSessionsSection({ event, scope }: { event: Event; scope: NationalsDashboardScope }) {
+function AssignedSessionsSection({ event, scope, regs: eventRegs }: { event: Event; scope: NationalsDashboardScope; regs: Registration[] }) {
   const db = useDB();
 
   // There is no dedicated "session draft" flag in the data model (Event only
@@ -295,7 +310,7 @@ function AssignedSessionsSection({ event, scope }: { event: Event; scope: Nation
   // created. Flagging this interpretation per the task brief.
   if (event.status === 'draft' || event.sessions.length === 0) return null;
 
-  const regs = scopedActiveRegs(db, event.id, scope);
+  const regs = scopedActiveRegs(eventRegs, event.id, scope);
   const levelIds = [...new Set(regs.map((r) => r.levelId))];
   if (levelIds.length === 0) return null;
 

@@ -14,6 +14,7 @@ import { Modal } from './ui';
 import { groupRegsByWaitlistKey, isWaitlistable, regsAffectedByViolations, splitFit, type CapacityViolation } from '../lib/capacity';
 import { shrinkOrDropCartLines } from '../lib/pricing';
 import { pushCart, pushRegistration, pushWaitlistGroup } from '../lib/supabase';
+import { useEventRegistrations, applyLocalRegistrationUpsert } from '../lib/registrations-slice';
 import type { Registration, WaitlistGroup } from '../lib/types';
 
 // Tucked behind a plain helper (not a bare `Date.now()` inline in a hook/
@@ -73,17 +74,17 @@ function waitlistGroups(
       for (const reg of g.regs) {
         waitlistedIds.add(reg.id);
         const idx = d.registrations.findIndex((r) => r.id === reg.id);
-        if (idx >= 0) {
-          // NO `paid: false` here: callers only ever pass `isWaitlistable`
-          // regs (paid !== true already), and blindly clearing `paid` on
-          // anything else is exactly the paid-spot-release bug class the
-          // predicate exists to prevent — keep the write shape honest.
-          const next: Registration = {
-            ...d.registrations[idx], waitlisted: true, waitlistGroupId: wg.id, holdExpiresAt: null,
-          };
-          d.registrations[idx] = next;
-          pushRegistration(next);
-        }
+        // NO `paid: false` here: callers only ever pass `isWaitlistable`
+        // regs (paid !== true already), and blindly clearing `paid` on
+        // anything else is exactly the paid-spot-release bug class the
+        // predicate exists to prevent — keep the write shape honest.
+        const base = idx >= 0 ? d.registrations[idx] : reg;
+        const next: Registration = {
+          ...base, waitlisted: true, waitlistGroupId: wg.id, holdExpiresAt: null,
+        };
+        if (idx >= 0) d.registrations[idx] = next;
+        pushRegistration(next);
+        applyLocalRegistrationUpsert(next);
       }
     }
     d.waitlistGroups = [...existingGroups, ...newGroups];
@@ -101,6 +102,13 @@ export function CapacityConflictDialog({
   const db = useDB();
   const [splitPreview, setSplitPreview] = useState<{ fits: Registration[]; overflow: Registration[] } | null>(null);
 
+  // Phase 3 (data-layer-scale) / COMPLETENESS: caps are event-wide across
+  // EVERY club, so this MUST be the full by-event slice, never a
+  // club-narrowed subset — a partial read here undercounts usage and would
+  // admit an over-capacity registration. Also backs checkoutRegs below
+  // (a subset of the same event-wide set).
+  const { rows: eventRegs, status: regsStatus } = useEventRegistrations(eventId);
+
   const event = db.events.find((e) => e.id === eventId);
 
   // The checkout's own registrations at this event: every reg referenced by
@@ -108,8 +116,8 @@ export function CapacityConflictDialog({
   const checkoutRegs = useMemo(() => {
     const cart = db.carts[ownerKey] ?? [];
     const ids = new Set(cart.flatMap((i) => i.refRegIds ?? []));
-    return db.registrations.filter((r) => ids.has(r.id) && r.eventId === eventId);
-  }, [db.carts, db.registrations, ownerKey, eventId]);
+    return eventRegs.filter((r) => ids.has(r.id) && r.eventId === eventId);
+  }, [db.carts, eventRegs, ownerKey, eventId]);
 
   const affected = useMemo(() => regsAffectedByViolations(checkoutRegs, violations), [checkoutRegs, violations]);
 
@@ -122,6 +130,18 @@ export function CapacityConflictDialog({
   // real alternative (✕ the change line to revert to the prior paid state).
   const waitlistableAffected = useMemo(() => affected.filter(isWaitlistable), [affected]);
   const blockedAffected = useMemo(() => affected.filter((r) => !isWaitlistable(r)), [affected]);
+
+  // MUST gate before any resolution action is offered — every button below
+  // (waitlist/split) computes off eventRegs, and a partial read here would
+  // undercount capacity usage (COMPLETENESS rule). All hooks above are
+  // called unconditionally regardless of this branch (Rules of Hooks).
+  if (regsStatus === 'loading') {
+    return (
+      <Modal title={`Can't check out — ${eventName} is at capacity`} onClose={onClose}>
+        <p style={{ fontSize: 13.5, color: 'var(--ink-soft)' }}>Loading…</p>
+      </Modal>
+    );
+  }
 
   const nameOf = (athleteId: string) => {
     const p = db.people.find((x) => x.id === athleteId);
@@ -160,7 +180,7 @@ export function CapacityConflictDialog({
   const computeSplit = () => {
     if (!event) return;
     const groupsById = Object.fromEntries((db.waitlistGroups ?? []).map((g) => [g.id, g]));
-    const { fits, overflow } = splitFit(event, event.sessions, db.registrations, checkoutRegs, groupsById, nowMs());
+    const { fits, overflow } = splitFit(event, event.sessions, eventRegs, checkoutRegs, groupsById, nowMs());
     setSplitPreview({ fits, overflow });
   };
 
