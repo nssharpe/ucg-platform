@@ -285,18 +285,30 @@ fetch of the entire `scores` table — the load Phase 2 removes from every boot 
 took **14.46 s** and transferred **~21.7 MB** of JSON. The replacement, a single
 nationals-scale event's scores (2,442 rows) via the new per-event slice fetch,
 took **~0.78 s / ~695 KB**, and is only ever paid when that event's Results/Judge/
-Nationals page is actually opened. A full live end-to-end `loadAll()` boot
-comparison (old vs. new, same measurement as Phase 1's 21.1 s/28.95 MB) could NOT
-be completed: staging's `registrations` table is currently missing its base
-`GRANT SELECT ... TO authenticated` (confirmed via direct query — `permission
-denied for table registrations`, hint names the missing grant explicitly),
-independent of RLS, which fails `loadAll()` outright regardless of the Phase 2
-diff (confirmed by diffing — the `registrations` fetch line is byte-for-byte
-unchanged on this branch, and `scores` itself fetched fine in the same session).
-**Action for Nate/controller:** re-grant `SELECT` on `public.registrations` to
-`authenticated` on staging before the next full-boot measurement (Phase 3's, if
-nothing else) — this is a staging-only environment gap, not a code defect, but it
-blocks live verification of both this phase and the next.
+Nationals page is actually opened. A full live end-to-end `loadAll()` boot comparison was not completed in the Phase 2
+session. The implementer reported it as blocked by staging's `registrations` table
+"missing its base `GRANT SELECT ... TO authenticated`" — **that diagnosis was wrong and
+there is no environment gap to fix.** Verified 2026-07-26 against BOTH staging and prod,
+as anon AND as an authenticated seeded user, using the app's real column list: reads
+succeed everywhere.
+
+What actually happened is the **column-revoke trap already documented in CLAUDE.md**:
+`registrations.camp_survey` has SELECT revoked, so a `select('*')` (rather than the
+app's explicit `REGISTRATION_COLUMNS_NO_SURVEY` list) fails — and PostgREST reports it
+with misleading TABLE-level wording:
+
+    select('*')                 -> 42501: permission denied for table registrations
+    select('id, camp_survey')   -> 42501: permission denied for table registrations
+    select(<app column list>)   -> ok
+
+Reproduced directly. The error names the table, not the column, which is exactly why it
+reads as a missing base grant. **No action for Nate.** When measuring, use the app's
+column list.
+
+Phase 2's component-level numbers above still stand on their own: removing the full
+`scores` fetch takes ~14.46 s out of the Phase 1 baseline of 21.1 s, leaving
+`registrations` as the dominant remaining cost — which is precisely what Phase 3
+addresses.
 
 **Phase 3 — Move `registrations` to slices.** The big one: 60 references across 20
 files. Tier 2 keeps "my registrations" synchronous, so the work concentrates in the
