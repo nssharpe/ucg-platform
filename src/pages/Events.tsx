@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
@@ -2737,6 +2737,43 @@ function SquadBuilder({ event, session }: { event: Event; session: EventSession 
   // mutate() blocks for exactly that reason (d.registrations is no longer
   // populated once Stage 4 removes registrations from loadAll).
   const { rows: eventRegs, status: regsStatus } = useEventRegistrations(event.id);
+
+  // Bootstrap (Phase 3 Stage 4): session.squads[].athleteRegIds — the
+  // reverse index of "which registrations are in this squad" — used to be
+  // built by loadAll from registrations.squad_id. Now that registrations no
+  // longer globally hydrate, backfill it here from the by-event slice's own
+  // Registration.squadId field, ONCE per session per page load (never
+  // re-runs after a successful hydration, so it can't clobber an
+  // in-progress local drag/drop edit — those mutate athleteRegIds directly
+  // and must stay authoritative once the user starts editing). Skipping this
+  // would make every previously-built squad silently show empty on reopen —
+  // and "Auto-split evenly"/"Copy setup" would then overwrite the REAL
+  // squad_id values in the database with a fresh random split, destroying
+  // real competition-day assignments.
+  const hydratedSessionIds = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (regsStatus !== 'ready') return;
+    if (hydratedSessionIds.current.has(session.id)) return;
+    hydratedSessionIds.current.add(session.id);
+    const bySquad = new Map<string, string[]>();
+    for (const r of eventRegs) {
+      if (r.sessionId !== session.id || r.refunded || !r.squadId) continue;
+      const arr = bySquad.get(r.squadId) ?? [];
+      arr.push(r.id);
+      bySquad.set(r.squadId, arr);
+    }
+    if (bySquad.size === 0) return; // nothing to backfill
+    mutate((d) => {
+      const s = d.events.find((x) => x.id === event.id)?.sessions.find((x) => x.id === session.id);
+      if (!s) return;
+      for (const q of s.squads) {
+        const ids = bySquad.get(q.id);
+        if (ids && q.athleteRegIds.length === 0) q.athleteRegIds = ids;
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [regsStatus, session.id]);
+
   const regs = eventRegs.filter((r) => r.sessionId === session.id && !r.refunded);
   const events = APPARATUS[session.discipline];
   const placed = new Set(session.squads.flatMap((q) => q.athleteRegIds));

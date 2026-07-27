@@ -470,6 +470,10 @@ const rowToRegistration = (r: RegistrationRowMaybeSurvey): Registration => ({
   ...((r as { waitlisted?: boolean | null }).waitlisted ? { waitlisted: true } : {}),
   ...((r as { waitlist_group_id?: string | null }).waitlist_group_id ? { waitlistGroupId: (r as { waitlist_group_id?: string | null }).waitlist_group_id } : {}),
   ...((r as { hold_expires_at?: string | null }).hold_expires_at ? { holdExpiresAt: (r as { hold_expires_at?: string | null }).hold_expires_at } : {}),
+  // squad_id: read-only here for SquadBuilder's athleteRegIds bootstrap
+  // (Phase 3 Stage 4 — see Registration.squadId's doc comment). Writes still
+  // go through registrationToRow's separate squadId parameter, unchanged.
+  ...(r.squad_id ? { squadId: r.squad_id } : {}),
   // READ-ONLY: never included in registrationToRow's push mapping (see Registration.createdAt).
   ...(r.created_at ? { createdAt: r.created_at } : {}),
 });
@@ -2347,7 +2351,7 @@ export async function loadAll(): Promise<DB | null> {
   try {
     const [
       seasonsR, levelsR, clubsR, clubManagersR, peopleR, altClubsR, membershipsR,
-      eventsR, sessionsR, squadsR, registrationsR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
+      eventsR, sessionsR, squadsR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
       clubRequestsR, appSettingsR, accountInvitesR, sanctionRequestsR, sanctionVotesR,
       waiverDocsR, waiverSigsR, clubMembershipsR, paymentsR, eventAdminsR, refundRequestsR, waitlistGroupsR,
       sessionRequestsR, competitionOrdersR, finalsLineupsR, eventCheckinsR, accountingCodesR, hostPayoutsR,
@@ -2369,7 +2373,14 @@ export async function loadAll(): Promise<DB | null> {
       // is out of scope here (no shape changes).
       fetchAllRows<any>('event_sessions'), // eslint-disable-line @typescript-eslint/no-explicit-any
       fetchAllRows<Row<'squads'>>('squads'),
-      fetchAllRows<RegistrationRowMaybeSurvey>('registrations', REGISTRATION_COLUMNS_NO_SURVEY),
+      // registrations: deliberately NOT fetched here (Phase 3, docs/specs/
+      // 2026-07-24-data-layer-scale.md) — at nationals scale this was the
+      // dominant remaining boot-payload cost after Phase 2 moved scores off
+      // this same path. Reads now go through the scoped slice layer
+      // (src/lib/registrations-slice.ts): useEventRegistrations/
+      // useClubRegistrations/useMyRegistrations/useRegistrationById/
+      // fetchRegistrationsForPerson.
+      //
       // scores: deliberately NOT fetched here (Phase 2, docs/specs/2026-07-24-
       // data-layer-scale.md) — at nationals scale this table alone was ~52k
       // rows / a multi-MB slab of the boot payload. Reads now go through the
@@ -2408,7 +2419,7 @@ export async function loadAll(): Promise<DB | null> {
     // club_requests may not exist on a pre-0005 DB — tolerate its error, fail on the rest.
     const errors = [
       seasonsR, levelsR, clubsR, clubManagersR, peopleR, altClubsR, membershipsR,
-      eventsR, sessionsR, squadsR, registrationsR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
+      eventsR, sessionsR, squadsR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
     ].map((r) => r.error).filter(Boolean);
     if (errors.length) { console.error('[supabase] loadAll failed:', errors); return null; }
 
@@ -2456,12 +2467,12 @@ export async function loadAll(): Promise<DB | null> {
       arr.push({ id: r.id, name: r.name, startEvent: r.start_event, athleteRegIds: [], holding: r.holding });
       squadsBySession.set(r.session_id, arr);
     }
-    // Place registrations into squads via registrations.squad_id
-    const squadById = new Map<string, Event['sessions'][number]['squads'][number]>();
-    for (const arr of squadsBySession.values()) for (const q of arr) squadById.set(q.id, q);
-    for (const r of registrationsR.data ?? []) {
-      if (r.squad_id && squadById.has(r.squad_id)) squadById.get(r.squad_id)!.athleteRegIds.push(r.id);
-    }
+    // Squad athleteRegIds placements used to be built here from
+    // registrations.squad_id — Phase 3 (data-layer-scale) removed
+    // registrations from loadAll, so every squad starts empty and
+    // SquadBuilder (Events.tsx) bootstraps its own placements from the
+    // by-event slice's Registration.squadId field instead (see its
+    // hydratedSessionIds effect doc comment).
 
     const sessionsByEvent = new Map<string, Event['sessions']>();
     for (const r of (sessionsR.data ?? []).sort((a: Row<'event_sessions'>, b: Row<'event_sessions'>) => a.sort_order - b.sort_order)) {
@@ -2527,12 +2538,13 @@ export async function loadAll(): Promise<DB | null> {
         : {}),
     }));
 
-    const registrations: Registration[] = (registrationsR.data ?? []).map(rowToRegistration);
-    // Always empty here (see the fetch-list comment above) — DB.scores stays
-    // in the type only because the localStorage-only prototype mode
-    // (buildSeed/loadNationals/pushAll) still uses it as its one true local
-    // store; a Supabase-backed session reads scores exclusively through the
-    // slice layer and never repopulates this field from loadAll.
+    // Always empty here (see the fetch-list comments above) — DB.registrations/
+    // DB.scores stay in the type only because the localStorage-only prototype
+    // mode (buildSeed/loadNationals/pushAll) still uses them as its one true
+    // local store; a Supabase-backed session reads both exclusively through
+    // their respective slice layers and never repopulates these fields from
+    // loadAll.
+    const registrations: Registration[] = [];
     const scores: Score[] = [];
 
     const itemsByInvoice = new Map<string, Invoice['items']>();
