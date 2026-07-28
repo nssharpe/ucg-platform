@@ -141,7 +141,7 @@ Suggested from a post-emv2 read of the platform; some have shipped, others are p
   links) reduce Julia-as-support and make fall-season onboarding of hosts cheaper.
 2. **Privacy-friendly analytics + Web Vitals** (Plausible/PostHog) once real users
   arrive; optional Sentry for stack traces with releases.
-3. 🟡 **Data-layer scale path — Phase 0-3 DONE (Phase 3 drafted, not yet merged),
+3. 🟡 **Data-layer scale path — Phases 0-3 DONE and merged to `main`,
   Phases 4-5 OPEN**
   ([spec](specs/2026-07-24-data-layer-scale.md)). Phase 0 fixed the silent
   1000-row truncation (shipped). Phase 1 (2026-07-26) built the staging-only
@@ -155,7 +155,7 @@ Suggested from a post-emv2 read of the platform; some have shipped, others are p
   removes from boot cost **14.46 s / ~21.7 MB**; the replacement per-event
   fetch (nationals-scale, ~2,400 rows) costs **~0.78 s / ~695 KB** and is paid
   only when that event's page is opened. Phase 3 (2026-07-27, branch
-  `perf/6-3-phase3-registrations-slice`, NOT YET merged) did the same for
+  merged 2026-07-26) did the same for
   `registrations` (`src/lib/registrations-slice.ts`, reusing Phase 2's
   slice-cache.ts as-is, implementing all six CONTRACT shapes) across all ~61
   consumers (Club.tsx's roster classification was the highest-risk read —

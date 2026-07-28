@@ -403,8 +403,7 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   failures 'permanent' (no retry; boot-wired toast + drain-then-`syncFromSupabase()`
   rollback in `supabase.ts`); non-React code toasts via `pushToast` (`lib/toast-bus.ts`),
   the imperative escape hatch into the same ToastProvider.
-- **Slice layer (Phase 2 scores merged 2026-07-26; Phase 3 registrations drafted
-  2026-07-27, branch `perf/6-3-phase3-registrations-slice`, NOT YET merged):**
+- **Slice layer (Phases 2+3 both MERGED to `main` 2026-07-26):**
   neither `scores` nor `registrations` is globally hydrated any more.
   `db.scores`/`db.registrations` exist only for unconfigured/demo mode. Read scores
   via `useEventScores(eventId)` / `useMyScores()` / `useScoreById()`

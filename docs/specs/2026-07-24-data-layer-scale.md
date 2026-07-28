@@ -308,7 +308,7 @@ returned **exactly 1000**, reproducing the bug; the new paginated fetch returned
 - Then measure against the seeded staging set and record the numbers here.
 
 **Phase 2 — Move `scores` to slices. ✅ DRAFTED 2026-07-26, branch
-`perf/6-3-phase2-scores-slice`, NOT YET merged/deployed.** Smallest blast radius: 13
+merged to `main` 2026-07-26.** Smallest blast radius: 13
 references across 10 files, and the heaviest table by projected volume. Also the one
 with realtime already scoped per event, so it validates the slice design end to end.
 
@@ -358,7 +358,7 @@ Phase 2's component-level numbers above still stand on their own: removing the f
 addresses.
 
 **Phase 3 — Move `registrations` to slices. ✅ DRAFTED 2026-07-27, branch
-`perf/6-3-phase3-registrations-slice`, NOT YET merged/deployed.** The big one: ~61
+merged to `main` 2026-07-26.** The big one: ~61
 references across ~20 files, closed out in four staged, individually-verified
 commits per file/concern group (Stage 1 infra → Stage 2 easy reads → Stage 3
 money-critical writes → Stage 4 arbitrary-person fetches + loadAll removal).
