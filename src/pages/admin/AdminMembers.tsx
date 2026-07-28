@@ -5,14 +5,16 @@ import { Badge, Combo, Field, Modal } from '../../components/ui';
 import { useToast } from '../../components/ui-hooks';
 import { PersonForm } from '../../components/PersonForm';
 import { STATE_REGIONS } from '../../lib/types';
-import type { AccountInvite, Athlete, MembershipType, Registration } from '../../lib/types';
+import type { AccountInvite, Athlete, Membership, MembershipType, Registration } from '../../lib/types';
 import { randomPromoCode } from '../../lib/pricing';
-import { fetchAllRoles, pushAccountInvite, pushClubManager, pushMembership, pushRegistration, pushUserRole, deleteRegistration, sendEmail, pushPerson, deletePerson, adminResetMfa, fetchMembershipsForPersonRemote, type SendEmailResult } from '../../lib/supabase';
+import { fetchAllRoles, pushAccountInvite, pushClubManager, pushMembership, pushRegistration, pushUserRole, deleteRegistration, sendEmail, pushPerson, deletePerson, adminResetMfa, fetchMembershipsForPersonRemote, fetchPersonRemote, type SendEmailResult } from '../../lib/supabase';
 import { fetchRegistrationsForPerson, applyLocalRegistrationUpsert, applyLocalRegistrationRemove } from '../../lib/registrations-slice';
 import { escapeHtml } from '../../lib/sanitize-html';
 import { useCapabilities } from '../../lib/capabilities';
 import { membershipTypeOf } from '../../lib/capabilities-core';
 import { currentSeason } from '../../lib/season-lifecycle';
+import { useAdminPeople, invalidateAdminPeople } from '../../lib/people-admin-slice';
+import { useAdminMemberships, groupAdminMembershipsByPerson } from '../../lib/memberships-admin-slice';
 
 const membershipTypeLabel = (t: MembershipType) => (t === 'coach' ? 'Coach' : 'Athlete');
 function localEffectiveRoles(p: Athlete): { athlete: boolean; coach: boolean } {
@@ -46,17 +48,26 @@ function MergeAthletesModal({ onClose }: { onClose: () => void }) {
   // ESLint trap) when the selection changes or is cleared.
   const [dupRegCount, setDupRegCount] = useState<{ id: string; count: number } | null>(null);
 
+  // Phase 4 (data-layer-scale.md): db.people at boot no longer carries
+  // everyone — this picker needs the WHOLE league (an admin merging two
+  // arbitrary accounts could easily be picking across clubs neither of them
+  // manages), so it's league-wide admin data (shape #3), same as the
+  // memberships/registrations this modal already fetches fresh at merge
+  // time below. The cached league-wide list is fine for BROWSING/picking;
+  // doMerge re-fetches fresh person rows right before the destructive write
+  // (never trusts this cache for the write itself — see its own comment).
+  const { rows: adminPeopleRows } = useAdminPeople();
   const peopleOptions = useMemo(() =>
-    db.people.map((p) => ({
+    adminPeopleRows.map((p) => ({
       value: p.id,
       label: `${p.firstName} ${p.lastName}`,
       sub: p.email,
     })).sort((a, b) => a.label.localeCompare(b.label)),
-    [db.people]
+    [adminPeopleRows]
   );
 
-  const primary = primaryId ? db.people.find((p) => p.id === primaryId) ?? null : null;
-  const dup = dupId ? db.people.find((p) => p.id === dupId) ?? null : null;
+  const primary = primaryId ? adminPeopleRows.find((p) => p.id === primaryId) ?? null : null;
+  const dup = dupId ? adminPeopleRows.find((p) => p.id === dupId) ?? null : null;
 
   useEffect(() => {
     if (!dup) return;
@@ -65,6 +76,26 @@ function MergeAthletesModal({ onClose }: { onClose: () => void }) {
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dup?.id]);
+
+  // Preview-only memberships, same reasoning/shape as dupRegCount above:
+  // adminPeopleRows (league-wide, shape #3) deliberately leaves
+  // `.memberships` empty (every existing consumer of that shape already
+  // pairs it with a separate memberships fetch rather than trusting an
+  // embedded field), so the summary below needs its own fetch. NEVER reused
+  // for the actual merge — doMerge always re-fetches fresh right before the
+  // destructive write.
+  const [previewMemberships, setPreviewMemberships] = useState<{ primaryId: string; dupId: string; primary: Membership[]; dup: Membership[] } | null>(null);
+  useEffect(() => {
+    if (!primary || !dup) return;
+    let live = true;
+    Promise.all([fetchMembershipsForPersonRemote(primary.id), fetchMembershipsForPersonRemote(dup.id)])
+      .then(([primaryMs, dupMs]) => { if (live) setPreviewMemberships({ primaryId: primary.id, dupId: dup.id, primary: primaryMs, dup: dupMs }); });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [primary?.id, dup?.id]);
+  const previewNewSeasonCount = (primary && dup && previewMemberships?.primaryId === primary.id && previewMemberships?.dupId === dup.id)
+    ? previewMemberships.dup.filter((m) => !previewMemberships.primary.some((pm) => pm.seasonId === m.seasonId)).length
+    : null;
 
   const canConfirm = primary && dup && primary.id !== dup.id;
 
@@ -76,17 +107,27 @@ function MergeAthletesModal({ onClose }: { onClose: () => void }) {
     // memberships are Tier 2 boot-scoped to the caller's own + managed-club
     // rows (whats-next.md §7) — `primary`/`dup` are ARBITRARY people, so
     // `.memberships` off the (post-scoping) db.people objects can no longer
-    // be trusted here. Same reasoning as the registrations fetch just below:
-    // a fresh, targeted, UNCACHED fetch for BOTH people, run again right
-    // before the destructive merge (not reused from an earlier render) so
-    // completeness comes from the query, not from hoping a cache is warm.
-    const [dupRegs, primaryRegs, dupMemberships, primaryMemberships] = await Promise.all([
+    // be trusted here. Same reasoning as the registrations fetch just below —
+    // and, per Phase 4 (data-layer-scale.md), the SAME reasoning now also
+    // applies to the person rows themselves: `primary`/`dup` above come from
+    // the CACHED league-wide adminPeopleRows picker, which is fine for
+    // browsing but must never feed a destructive write. Fetch fresh person
+    // rows (freshPrimary/freshDup) right here, right before mutating, and use
+    // ONLY those from this point on — completeness/freshness comes from the
+    // query, never from hoping a cache is still warm.
+    const [dupRegs, primaryRegs, dupMemberships, primaryMemberships, freshDup, freshPrimary] = await Promise.all([
       fetchRegistrationsForPerson(dup.id),
       fetchRegistrationsForPerson(primary.id),
       fetchMembershipsForPersonRemote(dup.id),
       fetchMembershipsForPersonRemote(primary.id),
+      fetchPersonRemote(dup.id),
+      fetchPersonRemote(primary.id),
     ]);
     setMerging(false);
+    if (!freshDup || !freshPrimary) {
+      toast('Could not re-fetch one of these people (they may have just been deleted elsewhere) — merge cancelled.', { variant: 'error' });
+      return;
+    }
 
     // Compute what will change before mutating
     const primaryRegKeys = new Set(
@@ -106,7 +147,10 @@ function MergeAthletesModal({ onClose }: { onClose: () => void }) {
     const primaryMembershipSeasons = new Set(primaryMemberships.map((m) => m.seasonId));
     const membershipsToAdd = dupMemberships.filter((m) => !primaryMembershipSeasons.has(m.seasonId));
 
-    const altClubsToAdd = (dup.altClubIds ?? []).filter((id) => !(primary.altClubIds ?? []).includes(id));
+    // altClubIds/authUserId read off the FRESH fetch, not the picker-sourced
+    // primary/dup (Phase 4 — same "never trust the cache for a destructive
+    // write" rule as the memberships/registrations fetches above).
+    const altClubsToAdd = (freshDup.altClubIds ?? []).filter((id) => !(freshPrimary.altClubIds ?? []).includes(id));
 
     const applied = mutate((d) => {
       // 1. Repoint registrations: move clean ones to primary. Falls back to
@@ -118,7 +162,7 @@ function MergeAthletesModal({ onClose }: { onClose: () => void }) {
       for (const r of regsToMove) {
         const idx = d.registrations.findIndex((x) => x.id === r.id);
         const base = idx >= 0 ? d.registrations[idx] : r;
-        const next: Registration = { ...base, athleteId: primary.id };
+        const next: Registration = { ...base, athleteId: freshPrimary.id };
         if (idx >= 0) d.registrations[idx] = next;
         pushRegistration(next, next.sessionId);
         applyLocalRegistrationUpsert(next);
@@ -137,23 +181,30 @@ function MergeAthletesModal({ onClose }: { onClose: () => void }) {
       // 2-incomplete `dp.memberships` already in local state — primary may
       // not be the admin's own self/managed-club person) before appending
       // the delta, so local state matches the DB immediately rather than
-      // waiting on the next full sync.
-      const dp = d.people.find((x) => x.id === primary.id)!;
+      // waiting on the next full sync. Phase 4: `d.people` at boot may not
+      // contain primary/dup at all (both are arbitrary people, same as their
+      // memberships/registrations above) — `dp` falls back to the freshly-
+      // fetched row (a plain object, not one that lives in `d.people`) so
+      // this never throws/no-ops the way a bare `.find(...)!` would; the
+      // fallback branch's edits are still persisted via pushMembership/
+      // pushPerson below even though there's no local d.people row to patch.
+      const dpIdx = d.people.findIndex((x) => x.id === freshPrimary.id);
+      const dp = dpIdx >= 0 ? d.people[dpIdx] : { ...freshPrimary };
       dp.memberships = [...primaryMemberships];
       for (const m of membershipsToAdd) {
         dp.memberships.push(m);
-        pushMembership(primary.id, m);
+        pushMembership(freshPrimary.id, m);
       }
       // 4. Replace dup.id with primary.id in club managerIds
       for (const club of d.clubs) {
-        if (club.managerIds.includes(dup.id)) {
-          const alreadyHasPrimary = club.managerIds.includes(primary.id);
-          club.managerIds = club.managerIds.filter((id) => id !== dup.id);
+        if (club.managerIds.includes(freshDup.id)) {
+          const alreadyHasPrimary = club.managerIds.includes(freshPrimary.id);
+          club.managerIds = club.managerIds.filter((id) => id !== freshDup.id);
           if (!alreadyHasPrimary) {
-            club.managerIds.push(primary.id);
-            pushClubManager(club.id, primary.id, true);
+            club.managerIds.push(freshPrimary.id);
+            pushClubManager(club.id, freshPrimary.id, true);
           }
-          pushClubManager(club.id, dup.id, false);
+          pushClubManager(club.id, freshDup.id, false);
         }
       }
       // 5. Merge altClubIds
@@ -162,19 +213,25 @@ function MergeAthletesModal({ onClose }: { onClose: () => void }) {
         dp.altClubIds.push(clubId);
       }
       // 6. Carry over authUserId if primary lacks one
-      if (!dp.authUserId && dup.authUserId) {
-        dp.authUserId = dup.authUserId;
+      if (!dp.authUserId && freshDup.authUserId) {
+        dp.authUserId = freshDup.authUserId;
       }
       // 6b. Persist the primary's merged changes (authUserId + alt clubs).
       pushPerson(dp);
       // 7. Remove the duplicate locally AND remotely (cascades its child rows).
-      d.people = d.people.filter((p) => p.id !== dup.id);
-      deletePerson(dup.id);
+      d.people = d.people.filter((p) => p.id !== freshDup.id);
+      deletePerson(freshDup.id);
     });
     if (!applied) return; // offline read-only gate — no false merge report
 
+    // Phase 4: the league-wide picker cache (adminPeopleRows) doesn't see
+    // this merge's push*/deletePerson calls the way a local mutate() would
+    // patch a slice — refetch it so the members list/picker reflect the
+    // merge without needing a manual page reload.
+    invalidateAdminPeople();
+
     toast(
-      `Merged ${dup.firstName} ${dup.lastName} into ${primary.firstName} ${primary.lastName}. ` +
+      `Merged ${freshDup.firstName} ${freshDup.lastName} into ${freshPrimary.firstName} ${freshPrimary.lastName}. ` +
       `Moved ${regsToMove.length} reg(s), dropped ${regsToDrop.length} collision(s), ` +
       `added ${membershipsToAdd.length} membership(s). The duplicate account was deleted.`
     );
@@ -214,7 +271,7 @@ function MergeAthletesModal({ onClose }: { onClose: () => void }) {
             <li>Keep: <strong>{primary.firstName} {primary.lastName}</strong> ({primary.email})</li>
             <li>Remove: <strong>{dup.firstName} {dup.lastName}</strong> ({dup.email})</li>
             <li>Registrations from duplicate: {dup && dupRegCount?.id === dup.id ? `${dupRegCount.count} total (collisions with primary will be dropped)` : 'loading…'}</li>
-            <li>Memberships from duplicate: {dup.memberships.filter((m) => !primary.memberships.some((pm) => pm.seasonId === m.seasonId)).length} new season(s) will transfer</li>
+            <li>Memberships from duplicate: {previewNewSeasonCount === null ? 'loading…' : `${previewNewSeasonCount} new season(s) will transfer`}</li>
             <li>Club manager roles on: {db.clubs.filter((c) => c.managerIds.includes(dup.id)).map((c) => c.name).join(', ') || 'none'}</li>
             {!primary.authUserId && dup.authUserId && <li>Auth account will transfer from duplicate to primary</li>}
           </ul>
@@ -439,12 +496,28 @@ To activate it, sign up using <strong>this email address</strong> (${escapeHtml(
       : `Resend failed: ${res.error ?? 'unknown error'}.`);
   };
 
+  // Phase 4 (data-layer-scale.md): this is the whole-league members table —
+  // db.people at boot no longer carries everyone, so this is league-wide
+  // admin data (shape #3), same as the memberships needed to classify each
+  // row's status. Falls back to boot-scoped db.people/p.memberships while
+  // loading so the page doesn't flash empty (a rare cold-boot moment;
+  // self-corrects once the fetch resolves). `{rows.length} people` below
+  // MUST gate on `adminPeopleStatus === 'ready'` — a count computed from a
+  // still-loading league-wide fetch would silently undercount, not visibly
+  // read as "not loaded yet".
+  const { rows: adminPeopleRows, status: adminPeopleStatus } = useAdminPeople();
+  const { rows: adminMembershipRows, status: adminMembershipsStatus } = useAdminMemberships();
+  const adminMembershipsByPerson = useMemo(() => groupAdminMembershipsByPerson(adminMembershipRows), [adminMembershipRows]);
+  const peopleReady = adminPeopleStatus === 'ready';
+  const membershipsReady = adminMembershipsStatus === 'ready';
+
   // Precomputed here (inside the memo, not the JSX-mapping render callback
   // below) so the per-row `roles`/`typeRows` derivation (T2, typed-membership
   // residuals) stays alongside the rest of the row's derived view-model.
-  const rows = useMemo(() => db.people
+  const rows = useMemo(() => (peopleReady ? adminPeopleRows : db.people)
     .filter((p) => {
-      const seasonMemberships = p.memberships.filter((x) => x.seasonId === season.id);
+      const memberships = membershipsReady ? (adminMembershipsByPerson.get(p.id) ?? []) : p.memberships;
+      const seasonMemberships = memberships.filter((x) => x.seasonId === season.id);
       // Filter semantics (T2, typed-membership residuals): a person counts as
       // 'active' for this coarse dropdown if ANY type (athlete or coach) is
       // active for the season; 'pending' if any type is pending-club-payment
@@ -462,14 +535,15 @@ To activate it, sign up using <strong>this email address</strong> (${escapeHtml(
     .sort((a, b) => a.lastName.localeCompare(b.lastName))
     .map((p) => {
       const roles = localEffectiveRoles(p);
+      const memberships = membershipsReady ? (adminMembershipsByPerson.get(p.id) ?? []) : p.memberships;
       const typeRows = (['athlete', 'coach'] as MembershipType[])
         .filter((t) => roles[t])
         .map((type) => ({
           type,
-          m: p.memberships.find((x) => x.seasonId === season.id && membershipTypeOf(x) === type),
+          m: memberships.find((x) => x.seasonId === season.id && membershipTypeOf(x) === type),
         }));
       return { p, roles, typeRows };
-    }), [db, q, filter, season.id]);
+    }), [db, q, filter, season.id, adminPeopleRows, peopleReady, adminMembershipsByPerson, membershipsReady]);
 
   return (
     <div>
@@ -483,7 +557,7 @@ To activate it, sign up using <strong>this email address</strong> (${escapeHtml(
           <option value="pending">Pending club payment</option>
           <option value="none">No membership</option>
         </select>
-        <span style={{ alignSelf: 'center', fontSize: 13, color: 'var(--ink-soft)' }}>{rows.length} people</span>
+        <span style={{ alignSelf: 'center', fontSize: 13, color: 'var(--ink-soft)' }}>{peopleReady ? `${rows.length} people` : 'Loading…'}</span>
         <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
           {caps.isAdmin && (
             <button className="btn ghost" onClick={() => setShowMerge(true)}>Merge duplicates…</button>

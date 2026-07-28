@@ -49,6 +49,16 @@ export function ensureAdminPeople(): void {
   adminPeopleSlice.ensure(LEAGUE_KEY);
 }
 
+/** Silently refetch the league-wide people list — call after a write that
+ *  changes who exists/what a row looks like league-wide but that this
+ *  cache wouldn't otherwise see (e.g. AdminMembers' duplicate-athlete merge,
+ *  which deletes one person and edits another via direct push* calls rather
+ *  than a local mutate() this cache could patch itself from). No-op if the
+ *  league-wide slice was never loaded (nothing to refresh). */
+export function invalidateAdminPeople(): void {
+  adminPeopleSlice.invalidate(LEAGUE_KEY);
+}
+
 // ---------------------------------------------------------------------------
 // One club's roster (mainClubId OR alt-club affiliation — see
 // fetchPeopleForClubRemote's doc comment in supabase.ts)
