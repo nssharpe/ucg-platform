@@ -10,6 +10,8 @@ import { deriveEventPhase, eventIsInPhase, type EventPhaseInput } from '../lib/e
 import { offeredMembershipTypes } from '../lib/pricing';
 import { membershipTypeOf } from '../lib/capabilities-core';
 import { currentSeason } from '../lib/season-lifecycle';
+import { useAdminMemberships, groupAdminMembershipsByPerson } from '../lib/memberships-admin-slice';
+import { useMemo } from 'react';
 import logotypeAlt2 from '../assets/brand/logotype-alt2.svg';
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -131,11 +133,20 @@ function Hero() {
 function AdminAttentionList() {
   const db = useDB();
   const season = currentSeason(db);
+  // memberships are Tier 2 boot-scoped to the caller's own + managed-club
+  // rows (whats-next.md §7) — the admin dashboard needs league-wide status,
+  // so it fetches every membership on demand instead (CONTRACT shape #4).
+  // Hooks must run unconditionally before the early return just below.
+  const { rows: adminMembershipRows, status: membershipsStatus } = useAdminMemberships();
+  const membershipsByPerson = useMemo(() => groupAdminMembershipsByPerson(adminMembershipRows), [adminMembershipRows]);
   if (!season) return <p style={{ color: 'var(--ink-soft)' }}>No active season configured.</p>;
+  if (membershipsStatus !== 'ready') {
+    return <p style={{ color: 'var(--ink-soft)' }}>Loading…</p>;
+  }
 
   // Under-18 athletes whose current-season membership is awaiting a guardian waiver.
   const pendingWaivers = db.people.filter((p) =>
-    isUnder18(p.dob) && p.memberships.some((m) => m.seasonId === season.id && m.status === 'pending-waiver'),
+    isUnder18(p.dob) && (membershipsByPerson.get(p.id) ?? []).some((m) => m.seasonId === season.id && m.status === 'pending-waiver'),
   );
 
   // Clubs with pending cart items
@@ -149,7 +160,7 @@ function AdminAttentionList() {
 
   // Pending club payment memberships
   const pendingPayment = db.people.filter((p) =>
-    p.memberships.some((m) => m.seasonId === season.id && m.status === 'pending-club-payment')
+    (membershipsByPerson.get(p.id) ?? []).some((m) => m.seasonId === season.id && m.status === 'pending-club-payment')
   );
 
   const items: { msg: string; to: string }[] = [
@@ -191,6 +202,13 @@ function AdminAttentionList() {
 function AdminDashboard() {
   const db = useDB();
   const season = currentSeason(db);
+  // memberships are Tier 2 boot-scoped to the caller's own + managed-club
+  // rows (whats-next.md §7) — these stat tiles are league-wide, so this
+  // fetches every membership on demand instead (CONTRACT shape #4). Hooks
+  // run unconditionally before the early return below; AdminAttentionList
+  // shares the same underlying cache entry, so this costs no extra fetch.
+  const { rows: adminMembershipRows, status: membershipsStatus } = useAdminMemberships();
+  const membershipsByPerson = useMemo(() => groupAdminMembershipsByPerson(adminMembershipRows), [adminMembershipRows]);
   if (!season) {
     return (
       <div className="card card-pad">
@@ -200,20 +218,22 @@ function AdminDashboard() {
     );
   }
 
-  const activeMembers = db.people.filter((p) =>
-    p.memberships.some((m) => m.seasonId === season.id && m.status === 'active')
-  );
-  const clubsWithMembership = db.clubs.filter((c) =>
-    db.people.some((p) => p.mainClubId === c.id && p.memberships.some((m) => m.seasonId === season.id && m.status === 'active'))
-  );
+  const membershipsReady = membershipsStatus === 'ready';
+  const activeMembers = membershipsReady
+    ? db.people.filter((p) => (membershipsByPerson.get(p.id) ?? []).some((m) => m.seasonId === season.id && m.status === 'active'))
+    : [];
+  const clubsWithMembership = membershipsReady
+    ? db.clubs.filter((c) =>
+        db.people.some((p) => p.mainClubId === c.id && (membershipsByPerson.get(p.id) ?? []).some((m) => m.seasonId === season.id && m.status === 'active')))
+    : [];
   const eventsThisSeason = db.events.length;
 
   return (
     <>
       <div className="grid cols-4" style={{ marginBottom: 16 }}>
-        <Stat value={activeMembers.length} label={`Active members · ${season.name}`} accent />
+        <Stat value={membershipsReady ? activeMembers.length : '…'} label={`Active members · ${season.name}`} accent />
         <Stat value={db.clubs.length} label="Clubs" />
-        <Stat value={clubsWithMembership.length} label="Clubs with members" />
+        <Stat value={membershipsReady ? clubsWithMembership.length : '…'} label="Clubs with members" />
         <Stat value={eventsThisSeason} label="Events this season" />
       </div>
       <div className="grid cols-2">

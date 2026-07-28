@@ -1129,6 +1129,85 @@ export async function fetchRegistrationsForPersonRemote(personId: string): Promi
   return data.map(rowToRegistration);
 }
 
+// ---------------------------------------------------------------------------
+// Tier 2 on-demand escapes (whats-next.md §7 / data-layer-scale.md Tier 2):
+// memberships/invoices stay hydrated at boot but SCOPED (loadAll, above) to
+// the caller's own person + managed clubs. Everything below is for the two
+// kinds of read that scope deliberately excludes:
+//   - an ARBITRARY person's data (shape #6, same reasoning as
+//     fetchRegistrationsForPersonRemote — AdminMembers merge, Profile
+//     adminView, Club.tsx roster for a club the viewer doesn't manage,
+//     person-data.ts GDPR export). Never cached — completeness must come
+//     from the query.
+//   - LEAGUE-WIDE "everything" (shape #4 — Finance, RefundReview, AdminClubs,
+//     Communicate's recipient filter, Home's admin dashboard). Paginated,
+//     admin/finance_admin/refund_manager-only pages, fetched on demand when
+//     those pages mount — never on a normal boot/render path.
+// ---------------------------------------------------------------------------
+
+/** Every membership row for ONE arbitrary person, across every season. */
+export async function fetchMembershipsForPersonRemote(personId: string): Promise<Membership[]> {
+  if (!supabase) return [];
+  const { data, error } = await fetchScopedRows<Row<'memberships'>>('memberships', '*', 'person_id', personId);
+  if (error) { console.error('[supabase] fetchMembershipsForPersonRemote failed:', error); return []; }
+  return data.map(rowToMembership);
+}
+
+/** Every membership row for a SET of people (e.g. one club's roster),
+ *  grouped by person_id so a caller can re-attach to the right Athlete. */
+export async function fetchMembershipsForPersonIdsRemote(personIds: string[]): Promise<Map<string, Membership[]>> {
+  const out = new Map<string, Membership[]>();
+  if (!supabase || personIds.length === 0) return out;
+  for (const part of chunk(personIds, 200)) {
+    const { data, error } = await fetchScopedRowsIn<Row<'memberships'>>('memberships', '*', 'person_id', part);
+    if (error) { console.error('[supabase] fetchMembershipsForPersonIdsRemote failed:', error); continue; }
+    for (const r of data) {
+      const arr = out.get(r.person_id) ?? [];
+      arr.push(rowToMembership(r));
+      out.set(r.person_id, arr);
+    }
+  }
+  return out;
+}
+
+/** ALL memberships league-wide, grouped by person_id — admin-only, never on
+ *  a normal render path (see the block comment above). */
+export async function fetchAllMembershipsAdminRemote(): Promise<Map<string, Membership[]>> {
+  const out = new Map<string, Membership[]>();
+  if (!supabase) return out;
+  const { data, error } = await fetchAllRows<Row<'memberships'>>('memberships');
+  if (error) { console.error('[supabase] fetchAllMembershipsAdminRemote failed:', error); return out; }
+  for (const r of data) {
+    const arr = out.get(r.person_id) ?? [];
+    arr.push(rowToMembership(r));
+    out.set(r.person_id, arr);
+  }
+  return out;
+}
+
+/** One arbitrary person's invoices (+ nested items). */
+export async function fetchInvoicesForPersonRemote(personId: string): Promise<Invoice[]> {
+  if (!supabase) return [];
+  const { data: invoiceRows, error } = await fetchScopedRows<Row<'invoices'>>('invoices', '*', 'athlete_id', personId);
+  if (error) { console.error('[supabase] fetchInvoicesForPersonRemote failed:', error); return []; }
+  if (!invoiceRows.length) return [];
+  const ids = invoiceRows.map((r) => r.id);
+  const { data: itemRows, error: itemErr } = await fetchScopedRowsIn<Row<'invoice_items'>>('invoice_items', '*', 'invoice_id', ids);
+  if (itemErr) { console.error('[supabase] fetchInvoicesForPersonRemote (items) failed:', itemErr); return buildInvoicesFromRows(invoiceRows, []); }
+  return buildInvoicesFromRows(invoiceRows, itemRows);
+}
+
+/** ALL invoices (+ items) league-wide — admin-only, never on a normal render
+ *  path (see the block comment above). */
+export async function fetchAllInvoicesAdminRemote(): Promise<Invoice[]> {
+  if (!supabase) return [];
+  const { data: invoiceRows, error } = await fetchAllRows<Row<'invoices'>>('invoices');
+  if (error) { console.error('[supabase] fetchAllInvoicesAdminRemote failed:', error); return []; }
+  const { data: itemRows, error: itemErr } = await fetchAllRows<Row<'invoice_items'>>('invoice_items');
+  if (itemErr) { console.error('[supabase] fetchAllInvoicesAdminRemote (items) failed:', itemErr); return buildInvoicesFromRows(invoiceRows, []); }
+  return buildInvoicesFromRows(invoiceRows, itemRows);
+}
+
 /** Replace an owner's (club or athlete) cart with the given items. Uses a
  *  delete-then-insert, so it's for the cart OWNER (club manager / the athlete). */
 export function pushCart(ownerKey: string, items: DB['carts'][string], isClub: boolean) {

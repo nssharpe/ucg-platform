@@ -8,6 +8,7 @@ import { STATE_REGIONS } from '../../lib/types';
 import type { Club, ClubRequest, Region } from '../../lib/types';
 import { pushClub, pushClubManager, pushClubRequest } from '../../lib/supabase';
 import { currentSeason } from '../../lib/season-lifecycle';
+import { useAdminMemberships, groupAdminMembershipsByPerson } from '../../lib/memberships-admin-slice';
 
 // ---------- Clubs ----------
 export function AdminClubs() {
@@ -17,6 +18,15 @@ export function AdminClubs() {
   const [editing, setEditing] = useState<Club | 'new' | null>(null);
   const [q, setQ] = useState('');
   const pending = db.clubRequests.filter((r) => r.status === 'pending');
+
+  // memberships are Tier 2 boot-scoped to the caller's own + managed-club
+  // rows (whats-next.md §7) — this admin page shows every club's roster, so
+  // it fetches every membership on demand instead (CONTRACT shape #4). The
+  // per-club Active/Roster stats below gate on `status === 'ready'` — a
+  // partial read here would silently show "0 active" for a club whose data
+  // just hasn't arrived yet, not an obviously-missing row.
+  const { rows: adminMembershipRows, status: membershipsStatus } = useAdminMemberships();
+  const membershipsByPerson = useMemo(() => groupAdminMembershipsByPerson(adminMembershipRows), [adminMembershipRows]);
 
   const personName = (id: string | null) => {
     const p = id ? db.people.find((x) => x.id === id) : null;
@@ -99,25 +109,33 @@ export function AdminClubs() {
         <span style={{ fontSize: 13, color: 'var(--ink-soft)' }}>{filteredClubs.length} club{filteredClubs.length !== 1 ? 's' : ''}</span>
         <button className="btn primary" style={{ marginLeft: 'auto' }} onClick={() => setEditing('new')}>+ New club</button>
       </div>
+      {membershipsStatus === 'loading' && (
+        <p style={{ color: 'var(--ink-soft)', fontSize: 13, marginBottom: 8 }}>Loading membership status…</p>
+      )}
       <div className="card" style={{ overflow: 'hidden' }}>
         <table className="tbl">
           <thead><tr><th>Club</th><th>Region</th><th className="num">Roster</th><th className="num">Active</th><th>Flags</th><th /></tr></thead>
           <tbody>
             {filteredClubs.map((c) => {
               const roster = db.people.filter((p) => p.mainClubId === c.id);
-              const active = roster.filter((p) => p.memberships.some((m) => m.seasonId === season.id && m.status === 'active'));
-              const coaches = roster.filter((p) => p.kind === 'coach' && p.memberships.some((m) => m.seasonId === season.id && m.status === 'active'));
+              const membershipsReady = membershipsStatus === 'ready';
+              const hasActiveMembership = (p: (typeof roster)[number]) =>
+                (membershipsByPerson.get(p.id) ?? []).some((m) => m.seasonId === season.id && m.status === 'active');
+              const active = membershipsReady ? roster.filter(hasActiveMembership) : [];
+              const coaches = membershipsReady ? roster.filter((p) => p.kind === 'coach' && hasActiveMembership(p)) : [];
               const pendingCart = (db.carts[c.id] ?? []).length;
               const flags: string[] = [];
-              if (coaches.length === 0) flags.push('No coaches');
+              // "No coaches" depends on membership data being loaded — never
+              // flag it from an empty-because-still-loading set.
+              if (membershipsReady && coaches.length === 0) flags.push('No coaches');
               if (pendingCart > 0) flags.push(`${pendingCart} unpaid cart items`);
               return (
                 <tr key={c.id}>
                   <td><Link to={`/club/${c.id}`} style={{ fontWeight: 600 }}>{c.name}</Link></td>
                   <td>{c.region}</td>
                   <td className="num">{roster.length}</td>
-                  <td className="num">{active.length}</td>
-                  <td>{flags.length === 0 ? <Badge tone="ok">✓ Complete</Badge> : flags.map((f) => <Badge key={f} tone="warn">{f}</Badge>)}</td>
+                  <td className="num">{membershipsReady ? active.length : '…'}</td>
+                  <td>{!membershipsReady ? null : flags.length === 0 ? <Badge tone="ok">✓ Complete</Badge> : flags.map((f) => <Badge key={f} tone="warn">{f}</Badge>)}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
                     <button className="btn small ghost" onClick={() => setEditing(c)}>Edit</button>{' '}
                     <a className="btn small ghost" href={`mailto:${c.email}`}>✉ Contact</a>
