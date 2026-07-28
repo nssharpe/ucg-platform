@@ -9,6 +9,7 @@ import { analyzeMessage, normalizeToGsm7 } from '../../lib/sms-segments';
 import { estimateSmsCost, partitionByConsent } from '../../lib/sms-send';
 import { classifyDeliveryStatus } from '../../lib/sms-inbound';
 import { currentSeason } from '../../lib/season-lifecycle';
+import { useAdminMemberships, groupAdminMembershipsByPerson } from '../../lib/memberships-admin-slice';
 
 // ---------- Communicate ----------
 
@@ -197,27 +198,45 @@ export function Communicate() {
     [db.clubs],
   );
 
-  const recipients = useMemo(() => db.people.filter((p) => {
-    const isManager = managerIdSet.has(p.id);
-    // Include the person if they match ANY checked audience group. Checking
-    // "Club managers" must include a manager regardless of whether they are an
-    // athlete or coach — the previous athlete-first exclusion dropped
-    // athlete-managers before the manager check ever ran.
-    const matchesGroup =
-      (aud.athletes && p.kind === 'athlete') ||
-      (aud.coaches && p.kind === 'coach') ||
-      (aud.managers && isManager);
-    if (!matchesGroup) return false;
-    const has = p.memberships.some((m) => m.seasonId === season.id && m.status === 'active');
-    if (aud.withMembership === 'with' && !has) return false;
-    if (aud.withMembership === 'without' && has) return false;
-    if (regions.length) {
-      const club = db.clubs.find((c) => c.id === p.mainClubId);
-      const r = club?.region ?? STATE_REGIONS[p.state] ?? 'Other';
-      if (!regions.includes(r)) return false;
-    }
-    return true;
-  }), [db.people, db.clubs, managerIdSet, aud, regions, season.id]);
+  // memberships are Tier 2 boot-scoped to the caller's own + managed-club
+  // rows (whats-next.md §7) — the "with/without membership" audience filter
+  // needs every person's status league-wide, so it fetches on demand instead
+  // (CONTRACT shape #4). A partial read here isn't just a wrong NUMBER, it's
+  // a wrong SEND — "without membership" would wrongly match everyone (and
+  // "with" would match no one) if computed before this is ready, so the
+  // filter is gated below and the Send button is disabled while it matters.
+  const { rows: adminMembershipRows, status: membershipsStatus } = useAdminMemberships();
+  const membershipsByPerson = useMemo(() => groupAdminMembershipsByPerson(adminMembershipRows), [adminMembershipRows]);
+  const membershipFilterActive = aud.withMembership !== 'any';
+  const membershipFilterBlocked = membershipFilterActive && membershipsStatus !== 'ready';
+
+  const recipients = useMemo(() => {
+    // The membership filter can't be evaluated correctly until it's loaded —
+    // return no recipients rather than a wrongly-filtered set (never send to
+    // the wrong list because a fetch hadn't finished yet).
+    if (membershipFilterBlocked) return [];
+    return db.people.filter((p) => {
+      const isManager = managerIdSet.has(p.id);
+      // Include the person if they match ANY checked audience group. Checking
+      // "Club managers" must include a manager regardless of whether they are an
+      // athlete or coach — the previous athlete-first exclusion dropped
+      // athlete-managers before the manager check ever ran.
+      const matchesGroup =
+        (aud.athletes && p.kind === 'athlete') ||
+        (aud.coaches && p.kind === 'coach') ||
+        (aud.managers && isManager);
+      if (!matchesGroup) return false;
+      const has = (membershipsByPerson.get(p.id) ?? []).some((m) => m.seasonId === season.id && m.status === 'active');
+      if (aud.withMembership === 'with' && !has) return false;
+      if (aud.withMembership === 'without' && has) return false;
+      if (regions.length) {
+        const club = db.clubs.find((c) => c.id === p.mainClubId);
+        const r = club?.region ?? STATE_REGIONS[p.state] ?? 'Other';
+        if (!regions.includes(r)) return false;
+      }
+      return true;
+    });
+  }, [db.people, db.clubs, managerIdSet, aud, regions, season.id, membershipFilterBlocked, membershipsByPerson]);
 
   // Club emails for the recipient list
   const clubEmailRows = useMemo(() => {
@@ -534,9 +553,12 @@ export function Communicate() {
             {audienceCount} recipient{audienceCount !== 1 ? 's' : ''}{' '}
             matching your Audience filters{channel === 'sms' ? ' who have opted in to SMS' : ''}.
           </p>
+          {membershipFilterBlocked && (
+            <p style={{ fontSize: 13, color: 'var(--ink-soft)' }}>Loading membership status for the audience filter…</p>
+          )}
           <button
             className="btn primary"
-            disabled={sending || audienceCount === 0}
+            disabled={sending || audienceCount === 0 || membershipFilterBlocked}
             onClick={sendToAudience}
           >
             {sending ? 'Sending…' : `Send to ${audienceCount} →`}

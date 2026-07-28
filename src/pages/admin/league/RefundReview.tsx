@@ -6,6 +6,7 @@ import { Badge, Modal } from '../../../components/ui';
 import { fmtMoney } from '../../../lib/scoring';
 import { refundAmountCents } from '../../../lib/pricing';
 import { processRefund } from '../../../lib/supabase';
+import { useAdminInvoices } from '../../../lib/invoices-admin-slice';
 import type { RefundRequest } from '../../../lib/types';
 
 const REASON_LABEL: Record<RefundRequest['reason'], string> = {
@@ -22,6 +23,16 @@ export function RefundReview() {
   const fmtDate = useFmtDate();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<{ request: RefundRequest; action: 'approve' | 'reject' } | null>(null);
+
+  // invoices are Tier 2 boot-scoped to the caller's own + managed-club rows
+  // (whats-next.md §7) — a refund_manager reviewing requests league-wide
+  // needs every invoice's items to resolve what's being refunded, so this
+  // fetches on demand instead (CONTRACT shape #4). The ACTUAL refund amount
+  // is always computed server-side by process-refund regardless of what
+  // renders here, but showing "Item not yet resolved" for every request
+  // because this list was scoped-empty would still be a badly misleading
+  // review queue, so gate item resolution on `invoicesStatus === 'ready'`.
+  const { rows: invoices, status: invoicesStatus } = useAdminInvoices();
 
   const requests = useMemo(() => db.refundRequests ?? [], [db.refundRequests]);
   const pending = useMemo(
@@ -44,10 +55,11 @@ export function RefundReview() {
   /** Resolve the item this request references (both kinds stamp invoiceItemId
    *  — see request-refund's registration-kind fix) by scanning every invoice's
    *  items. Not every request necessarily has one visible yet (e.g. a
-   *  host-club $0 entry never gets an invoice_item at all). */
+   *  host-club $0 entry never gets an invoice_item at all), and none resolve
+   *  before the on-demand invoices fetch (above) is ready. */
   const itemFor = (r: RefundRequest) => {
-    if (!r.invoiceItemId) return null;
-    for (const inv of db.invoices) {
+    if (!r.invoiceItemId || invoicesStatus !== 'ready') return null;
+    for (const inv of invoices) {
       const item = inv.items.find((i) => i.id === r.invoiceItemId);
       if (item) return item;
     }
@@ -114,7 +126,9 @@ export function RefundReview() {
                 server-side and may be lower if a coupon was applied to the purchase
               </span>
             )}
-            {!exp && !noPayment && <Badge tone="info">Item not yet resolved</Badge>}
+            {!exp && !noPayment && (
+              <Badge tone="info">{invoicesStatus === 'loading' ? 'Loading item…' : 'Item not yet resolved'}</Badge>
+            )}
           </div>
         )}
 

@@ -365,6 +365,34 @@ const rowToMembership = (r: Row<'memberships'>): Membership => ({
   clubCartPending: (r as { club_cart_pending?: boolean }).club_cart_pending ?? false,
 });
 
+/** Builds `Invoice[]` (with nested `items`) from raw `invoices` +
+ *  `invoice_items` rows — shared by `loadAll`'s Tier 2 scoped read and every
+ *  on-demand invoices fetch below (`fetchInvoicesForPerson`,
+ *  `fetchAllInvoicesAdmin`) so the row→app-shape mapping lives in exactly one
+ *  place. */
+function buildInvoicesFromRows(invoiceRows: Row<'invoices'>[], invoiceItemRows: Row<'invoice_items'>[]): Invoice[] {
+  const itemsByInvoice = new Map<string, Invoice['items']>();
+  for (const r of invoiceItemRows) {
+    const arr = itemsByInvoice.get(r.invoice_id) ?? [];
+    arr.push({ id: r.id, label: r.label, amount: Number(r.amount), kind: r.kind, refUserId: r.ref_user_id ?? undefined, refunded: r.refunded,
+      ...((r as { ref_reg_ids?: string[] | null }).ref_reg_ids ? { refRegIds: (r as { ref_reg_ids?: string[] | null }).ref_reg_ids ?? undefined } : {}),
+      ...((r as { ref_event_id?: string | null }).ref_event_id ? { refEventId: (r as { ref_event_id?: string | null }).ref_event_id ?? undefined } : {}),
+      ...((r as { ref_line_type?: string | null }).ref_line_type ? { refLineType: (r as { ref_line_type?: string | null }).ref_line_type as Invoice['items'][number]['refLineType'] } : {}),
+      ...((r as { addon_size?: string | null }).addon_size ? { addonSize: (r as { addon_size?: string | null }).addon_size ?? undefined } : {}),
+      ...((r as { addon_assignee?: string | null }).addon_assignee ? { addonAssigneeId: (r as { addon_assignee?: string | null }).addon_assignee ?? undefined } : {}) });
+    itemsByInvoice.set(r.invoice_id, arr);
+  }
+  return invoiceRows.map((r) => ({
+    id: r.id, number: r.number, clubId: r.club_id, athleteId: r.athlete_id,
+    createdAt: r.created_at, paidAt: r.paid_at, items: itemsByInvoice.get(r.id) ?? [],
+    ...(r.coupon_code ? { couponCode: r.coupon_code } : {}),
+    // Stripe finance fields (written by stripe-webhook; not in the generated
+    // Row type yet). Surfaced so Phase 5 finance reads the REAL processing fee.
+    stripePaymentIntentId: (r as { stripe_payment_intent_id?: string | null }).stripe_payment_intent_id ?? null,
+    stripeFee: (r as { stripe_fee?: number | null }).stripe_fee ?? null,
+  }));
+}
+
 const eventToRow = (m: Event) => ({
   // '' means "no host club" client-side (events-core.ts UCG-hosted-no-club
   // path, PM feedback 2026-07-22) — host_club_id is a nullable FK into
@@ -1099,6 +1127,85 @@ export async function fetchRegistrationsForPersonRemote(personId: string): Promi
   const { data, error } = await fetchScopedRows<RegistrationRowMaybeSurvey>('registrations', REGISTRATION_COLUMNS_NO_SURVEY, 'athlete_id', personId);
   if (error) { console.error('[supabase] fetchRegistrationsForPersonRemote failed:', error); return []; }
   return data.map(rowToRegistration);
+}
+
+// ---------------------------------------------------------------------------
+// Tier 2 on-demand escapes (whats-next.md §7 / data-layer-scale.md Tier 2):
+// memberships/invoices stay hydrated at boot but SCOPED (loadAll, above) to
+// the caller's own person + managed clubs. Everything below is for the two
+// kinds of read that scope deliberately excludes:
+//   - an ARBITRARY person's data (shape #6, same reasoning as
+//     fetchRegistrationsForPersonRemote — AdminMembers merge, Profile
+//     adminView, Club.tsx roster for a club the viewer doesn't manage,
+//     person-data.ts GDPR export). Never cached — completeness must come
+//     from the query.
+//   - LEAGUE-WIDE "everything" (shape #4 — Finance, RefundReview, AdminClubs,
+//     Communicate's recipient filter, Home's admin dashboard). Paginated,
+//     admin/finance_admin/refund_manager-only pages, fetched on demand when
+//     those pages mount — never on a normal boot/render path.
+// ---------------------------------------------------------------------------
+
+/** Every membership row for ONE arbitrary person, across every season. */
+export async function fetchMembershipsForPersonRemote(personId: string): Promise<Membership[]> {
+  if (!supabase) return [];
+  const { data, error } = await fetchScopedRows<Row<'memberships'>>('memberships', '*', 'person_id', personId);
+  if (error) { console.error('[supabase] fetchMembershipsForPersonRemote failed:', error); return []; }
+  return data.map(rowToMembership);
+}
+
+/** Every membership row for a SET of people (e.g. one club's roster),
+ *  grouped by person_id so a caller can re-attach to the right Athlete. */
+export async function fetchMembershipsForPersonIdsRemote(personIds: string[]): Promise<Map<string, Membership[]>> {
+  const out = new Map<string, Membership[]>();
+  if (!supabase || personIds.length === 0) return out;
+  for (const part of chunk(personIds, 200)) {
+    const { data, error } = await fetchScopedRowsIn<Row<'memberships'>>('memberships', '*', 'person_id', part);
+    if (error) { console.error('[supabase] fetchMembershipsForPersonIdsRemote failed:', error); continue; }
+    for (const r of data) {
+      const arr = out.get(r.person_id) ?? [];
+      arr.push(rowToMembership(r));
+      out.set(r.person_id, arr);
+    }
+  }
+  return out;
+}
+
+/** ALL memberships league-wide, grouped by person_id — admin-only, never on
+ *  a normal render path (see the block comment above). */
+export async function fetchAllMembershipsAdminRemote(): Promise<Map<string, Membership[]>> {
+  const out = new Map<string, Membership[]>();
+  if (!supabase) return out;
+  const { data, error } = await fetchAllRows<Row<'memberships'>>('memberships');
+  if (error) { console.error('[supabase] fetchAllMembershipsAdminRemote failed:', error); return out; }
+  for (const r of data) {
+    const arr = out.get(r.person_id) ?? [];
+    arr.push(rowToMembership(r));
+    out.set(r.person_id, arr);
+  }
+  return out;
+}
+
+/** One arbitrary person's invoices (+ nested items). */
+export async function fetchInvoicesForPersonRemote(personId: string): Promise<Invoice[]> {
+  if (!supabase) return [];
+  const { data: invoiceRows, error } = await fetchScopedRows<Row<'invoices'>>('invoices', '*', 'athlete_id', personId);
+  if (error) { console.error('[supabase] fetchInvoicesForPersonRemote failed:', error); return []; }
+  if (!invoiceRows.length) return [];
+  const ids = invoiceRows.map((r) => r.id);
+  const { data: itemRows, error: itemErr } = await fetchScopedRowsIn<Row<'invoice_items'>>('invoice_items', '*', 'invoice_id', ids);
+  if (itemErr) { console.error('[supabase] fetchInvoicesForPersonRemote (items) failed:', itemErr); return buildInvoicesFromRows(invoiceRows, []); }
+  return buildInvoicesFromRows(invoiceRows, itemRows);
+}
+
+/** ALL invoices (+ items) league-wide — admin-only, never on a normal render
+ *  path (see the block comment above). */
+export async function fetchAllInvoicesAdminRemote(): Promise<Invoice[]> {
+  if (!supabase) return [];
+  const { data: invoiceRows, error } = await fetchAllRows<Row<'invoices'>>('invoices');
+  if (error) { console.error('[supabase] fetchAllInvoicesAdminRemote failed:', error); return []; }
+  const { data: itemRows, error: itemErr } = await fetchAllRows<Row<'invoice_items'>>('invoice_items');
+  if (itemErr) { console.error('[supabase] fetchAllInvoicesAdminRemote (items) failed:', itemErr); return buildInvoicesFromRows(invoiceRows, []); }
+  return buildInvoicesFromRows(invoiceRows, itemRows);
 }
 
 /** Replace an owner's (club or athlete) cart with the given items. Uses a
@@ -2349,9 +2456,50 @@ export async function fetchPublishedWaiver(seasonId: string, waiverType: string)
 export async function loadAll(): Promise<DB | null> {
   if (!supabase) return null;
   try {
+    // Tier 2 scoping (docs/specs/2026-07-24-data-layer-scale.md, whats-next.md
+    // §7): resolve the caller's identity + managed-club ids FIRST, so the
+    // memberships/invoices/invoice_items reads below can be issued with an
+    // explicit caller-scoped filter instead of an unfiltered select('*').
+    // Under RLS the planner must evaluate the row-security predicate against
+    // EVERY row of an unfiltered scan to know what the caller may see — cost
+    // is O(table size) regardless of how cheap any single predicate call is.
+    // Narrowing the QUERY (an indexed .eq()/.in() filter, mirroring exactly
+    // what RLS already permits) lets the planner touch a handful of rows
+    // instead. clubManagersR/peopleR are fetched here rather than inside the
+    // main Promise.all below because they're needed to compute the scope
+    // before those queries can be built; both are reused unchanged by the
+    // normal processing further down (same variable names).
+    const [{ data: sessionData }, clubManagersR, peopleR] = await Promise.all([
+      supabase.auth.getSession(),
+      fetchAllRows<Row<'club_managers'>>('club_managers'),
+      fetchAllRows<Row<'people'>>('people'),
+    ]);
+    const authUserId = sessionData.session?.user?.id ?? null;
+    const myPersonId = authUserId
+      ? (peopleR.data ?? []).find((r) => r.auth_user_id === authUserId)?.id ?? null
+      : null;
+    // Mirrors manages_club(): every club with a club_managers row for this person.
+    const managedClubIds = myPersonId
+      ? [...new Set((clubManagersR.data ?? []).filter((r) => r.person_id === myPersonId).map((r) => r.club_id))]
+      : [];
+    // Mirrors memberships_read's predicate exactly (person_id = my_person_id()
+    // OR the person's main club is one the caller manages) — self plus the
+    // roster of every managed club. Built from the already-fetched peopleR
+    // (no extra query): people itself stays globally hydrated (unaffected by
+    // this change, Phase 4 territory), so this is a pure in-memory filter.
+    const visiblePersonIds = new Set<string>();
+    if (myPersonId) visiblePersonIds.add(myPersonId);
+    if (managedClubIds.length) {
+      for (const r of peopleR.data ?? []) {
+        if (r.main_club_id && managedClubIds.includes(r.main_club_id)) visiblePersonIds.add(r.id);
+      }
+    }
+    const emptyRows = <T,>() => Promise.resolve({ data: [] as T[], error: null as PostgrestError | null });
+
     const [
-      seasonsR, levelsR, clubsR, clubManagersR, peopleR, altClubsR, membershipsR,
-      eventsR, sessionsR, squadsR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
+      seasonsR, levelsR, clubsR, altClubsR, membershipsR,
+      eventsR, sessionsR, squadsR, couponsR, cartItemsR,
+      invoicesSelfR, invoicesClubR,
       clubRequestsR, appSettingsR, accountInvitesR, sanctionRequestsR, sanctionVotesR,
       waiverDocsR, waiverSigsR, clubMembershipsR, paymentsR, eventAdminsR, refundRequestsR, waitlistGroupsR,
       sessionRequestsR, competitionOrdersR, finalsLineupsR, eventCheckinsR, accountingCodesR, hostPayoutsR,
@@ -2360,10 +2508,16 @@ export async function loadAll(): Promise<DB | null> {
       fetchAllRows<Row<'seasons'>>('seasons'),
       fetchAllRows<Row<'levels'>>('levels'),
       fetchAllRows<Row<'clubs'>>('clubs'),
-      fetchAllRows<Row<'club_managers'>>('club_managers'),
-      fetchAllRows<Row<'people'>>('people'),
       fetchAllRows<Row<'person_alt_clubs'>>('person_alt_clubs'),
-      fetchAllRows<Row<'memberships'>>('memberships'),
+      // memberships: Tier 2 scoped read — self + managed-club rosters, exactly
+      // mirroring memberships_read's RLS predicate, so no one gains or loses
+      // visibility versus before; only the QUERY narrows. Privileged
+      // league-wide reads (AdminClubs, Communicate, Home's admin dashboard,
+      // AdminMembers merge, Profile adminView) now fetch on demand instead —
+      // see fetchAllMembershipsAdmin / fetchMembershipsForPerson below.
+      visiblePersonIds.size
+        ? fetchScopedRowsIn<Row<'memberships'>>('memberships', '*', 'person_id', [...visiblePersonIds])
+        : emptyRows<Row<'memberships'>>(),
       fetchAllRows<Row<'events'>>('events'),
       // event_sessions: `any` (not a stricter Row<'event_sessions'>) deliberately —
       // this table's generated `phase` column type (`string | null`) is looser than
@@ -2388,8 +2542,19 @@ export async function loadAll(): Promise<DB | null> {
       // fetchScoreByIdRemote / fetchScoresForRegIdsRemote.
       fetchAllRows<Row<'coupons'>>('coupons'),
       fetchAllRows<Row<'cart_items'>>('cart_items'),
-      fetchAllRows<Row<'invoices'>>('invoices'),
-      fetchAllRows<Row<'invoice_items'>>('invoice_items'),
+      // invoices: Tier 2 scoped read, same reasoning as memberships above —
+      // mirrors invoice_owner's RLS predicate (athlete_id = self OR
+      // manages_club(club_id)) as two separately-filterable queries (merged
+      // + de-duped just below) since an OR across two different columns
+      // can't be expressed via a single .eq()/.in(). invoice_items has no
+      // club_id/athlete_id of its own — fetched afterward, scoped to these
+      // invoices' ids (see below, after this Promise.all resolves).
+      myPersonId
+        ? fetchScopedRows<Row<'invoices'>>('invoices', '*', 'athlete_id', myPersonId)
+        : emptyRows<Row<'invoices'>>(),
+      managedClubIds.length
+        ? fetchScopedRowsIn<Row<'invoices'>>('invoices', '*', 'club_id', managedClubIds)
+        : emptyRows<Row<'invoices'>>(),
       fetchAllRows<Row<'club_requests'>>('club_requests'),
       fetchAllRows<Row<'app_settings'>>('app_settings'),       // 0007; tolerated if absent
       fetchAllRows<Row<'account_invites'>>('account_invites'),     // 0007; tolerated if absent
@@ -2416,10 +2581,23 @@ export async function loadAll(): Promise<DB | null> {
       fetchAllRows<Parameters<typeof rowToJudgeAccessCode>[0]>('judge_access_codes'),  // 2026-07-19; RLS-empty for non-hosts, tolerated if absent (not in generated types)
     ]);
 
+    // Merge + de-dup the two scoped invoices queries (a self-paid invoice
+    // can't also carry a managed club_id, but de-dup defensively by id
+    // anyway). invoice_items has no club_id/athlete_id of its own, so it's
+    // fetched separately, scoped to exactly these invoices' ids — still a
+    // Tier 2 scoped read, just sequenced after the ids are known.
+    const invoicesById = new Map<string, Row<'invoices'>>();
+    for (const r of [...(invoicesSelfR.data ?? []), ...(invoicesClubR.data ?? [])]) invoicesById.set(r.id, r);
+    const invoiceRowsScoped = [...invoicesById.values()];
+    const invoiceIdsScoped = invoiceRowsScoped.map((r) => r.id);
+    const invoiceItemsR = invoiceIdsScoped.length
+      ? await fetchScopedRowsIn<Row<'invoice_items'>>('invoice_items', '*', 'invoice_id', invoiceIdsScoped)
+      : { data: [] as Row<'invoice_items'>[], error: null as PostgrestError | null };
+
     // club_requests may not exist on a pre-0005 DB — tolerate its error, fail on the rest.
     const errors = [
       seasonsR, levelsR, clubsR, clubManagersR, peopleR, altClubsR, membershipsR,
-      eventsR, sessionsR, squadsR, couponsR, cartItemsR, invoicesR, invoiceItemsR,
+      eventsR, sessionsR, squadsR, couponsR, cartItemsR, invoicesSelfR, invoicesClubR, invoiceItemsR,
     ].map((r) => r.error).filter(Boolean);
     if (errors.length) { console.error('[supabase] loadAll failed:', errors); return null; }
 
@@ -2547,26 +2725,7 @@ export async function loadAll(): Promise<DB | null> {
     const registrations: Registration[] = [];
     const scores: Score[] = [];
 
-    const itemsByInvoice = new Map<string, Invoice['items']>();
-    for (const r of invoiceItemsR.data ?? []) {
-      const arr = itemsByInvoice.get(r.invoice_id) ?? [];
-      arr.push({ id: r.id, label: r.label, amount: Number(r.amount), kind: r.kind, refUserId: r.ref_user_id ?? undefined, refunded: r.refunded,
-        ...((r as { ref_reg_ids?: string[] | null }).ref_reg_ids ? { refRegIds: (r as { ref_reg_ids?: string[] | null }).ref_reg_ids ?? undefined } : {}),
-        ...((r as { ref_event_id?: string | null }).ref_event_id ? { refEventId: (r as { ref_event_id?: string | null }).ref_event_id ?? undefined } : {}),
-        ...((r as { ref_line_type?: string | null }).ref_line_type ? { refLineType: (r as { ref_line_type?: string | null }).ref_line_type as Invoice['items'][number]['refLineType'] } : {}),
-        ...((r as { addon_size?: string | null }).addon_size ? { addonSize: (r as { addon_size?: string | null }).addon_size ?? undefined } : {}),
-        ...((r as { addon_assignee?: string | null }).addon_assignee ? { addonAssigneeId: (r as { addon_assignee?: string | null }).addon_assignee ?? undefined } : {}) });
-      itemsByInvoice.set(r.invoice_id, arr);
-    }
-    const invoices: Invoice[] = (invoicesR.data ?? []).map((r: Row<'invoices'>) => ({
-      id: r.id, number: r.number, clubId: r.club_id, athleteId: r.athlete_id,
-      createdAt: r.created_at, paidAt: r.paid_at, items: itemsByInvoice.get(r.id) ?? [],
-      ...(r.coupon_code ? { couponCode: r.coupon_code } : {}),
-      // Stripe finance fields (written by stripe-webhook; not in the generated
-      // Row type yet). Surfaced so Phase 5 finance reads the REAL processing fee.
-      stripePaymentIntentId: (r as { stripe_payment_intent_id?: string | null }).stripe_payment_intent_id ?? null,
-      stripeFee: (r as { stripe_fee?: number | null }).stripe_fee ?? null,
-    }));
+    const invoices: Invoice[] = buildInvoicesFromRows(invoiceRowsScoped, invoiceItemsR.data ?? []);
 
     const carts: DB['carts'] = {};
     for (const r of cartItemsR.data ?? []) {

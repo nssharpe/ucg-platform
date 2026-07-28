@@ -97,19 +97,23 @@ export interface PersonDataExport {
  *  via `fetchScoresForRegIds` (scores-slice.ts) and
  *  `fetchRegistrationsForPerson` (registrations-slice.ts, CONTRACT shape #6 —
  *  a direct uncached fetch, never a slice, since completeness must come from
- *  the query for an arbitrary person) before calling in. */
-export function collectPersonData(db: DB, personId: string, scores: Score[], allRegistrations: Registration[]): PersonDataExport {
+ *  the query for an arbitrary person) before calling in. `invoices` is the
+ *  same shape (Tier 2, whats-next.md §7 — loadAll's boot read is scoped to
+ *  the caller's own + managed-club invoices) — the caller fetches via
+ *  `fetchInvoicesForPersonRemote` (supabase.ts) before calling in. */
+export function collectPersonData(db: DB, personId: string, scores: Score[], allRegistrations: Registration[], invoices: Invoice[]): PersonDataExport {
   const person = db.people.find((p) => p.id === personId) ?? null;
   const authUserId = person?.authUserId ?? null;
 
-  // Defensive filter: real callers (fetchRegistrationsForPerson) already
-  // scope this to `personId`, but filtering here too keeps the function
-  // self-contained/robust against a caller passing a broader set.
+  // Defensive filter: real callers (fetchRegistrationsForPerson /
+  // fetchInvoicesForPersonRemote) already scope these to `personId`, but
+  // filtering here too keeps the function self-contained/robust against a
+  // caller passing a broader set.
   const registrations = allRegistrations.filter((r) => r.athleteId === personId);
   const regIds = new Set(registrations.map((r) => r.id));
   const scopedScores = scores.filter((s) => regIds.has(s.regId));
 
-  const invoicesBilled = db.invoices.filter((inv) => inv.athleteId === personId);
+  const invoicesBilled = invoices.filter((inv) => inv.athleteId === personId);
   const cartItems = db.carts[personId] ?? [];
 
   const managedClubs = db.clubs.filter((c) => c.managerIds.includes(personId));

@@ -7,7 +7,7 @@ import { PersonForm } from '../../components/PersonForm';
 import { STATE_REGIONS } from '../../lib/types';
 import type { AccountInvite, Athlete, MembershipType, Registration } from '../../lib/types';
 import { randomPromoCode } from '../../lib/pricing';
-import { fetchAllRoles, pushAccountInvite, pushClubManager, pushMembership, pushRegistration, pushUserRole, deleteRegistration, sendEmail, pushPerson, deletePerson, adminResetMfa, type SendEmailResult } from '../../lib/supabase';
+import { fetchAllRoles, pushAccountInvite, pushClubManager, pushMembership, pushRegistration, pushUserRole, deleteRegistration, sendEmail, pushPerson, deletePerson, adminResetMfa, fetchMembershipsForPersonRemote, type SendEmailResult } from '../../lib/supabase';
 import { fetchRegistrationsForPerson, applyLocalRegistrationUpsert, applyLocalRegistrationRemove } from '../../lib/registrations-slice';
 import { escapeHtml } from '../../lib/sanitize-html';
 import { useCapabilities } from '../../lib/capabilities';
@@ -73,9 +73,18 @@ function MergeAthletesModal({ onClose }: { onClose: () => void }) {
     if (primary.id === dup.id) { toast('Cannot merge a person into themselves.'); return; }
 
     setMerging(true);
-    const [dupRegs, primaryRegs] = await Promise.all([
+    // memberships are Tier 2 boot-scoped to the caller's own + managed-club
+    // rows (whats-next.md §7) — `primary`/`dup` are ARBITRARY people, so
+    // `.memberships` off the (post-scoping) db.people objects can no longer
+    // be trusted here. Same reasoning as the registrations fetch just below:
+    // a fresh, targeted, UNCACHED fetch for BOTH people, run again right
+    // before the destructive merge (not reused from an earlier render) so
+    // completeness comes from the query, not from hoping a cache is warm.
+    const [dupRegs, primaryRegs, dupMemberships, primaryMemberships] = await Promise.all([
       fetchRegistrationsForPerson(dup.id),
       fetchRegistrationsForPerson(primary.id),
+      fetchMembershipsForPersonRemote(dup.id),
+      fetchMembershipsForPersonRemote(primary.id),
     ]);
     setMerging(false);
 
@@ -94,8 +103,8 @@ function MergeAthletesModal({ onClose }: { onClose: () => void }) {
       }
     }
 
-    const primaryMembershipSeasons = new Set(primary.memberships.map((m) => m.seasonId));
-    const membershipsToAdd = dup.memberships.filter((m) => !primaryMembershipSeasons.has(m.seasonId));
+    const primaryMembershipSeasons = new Set(primaryMemberships.map((m) => m.seasonId));
+    const membershipsToAdd = dupMemberships.filter((m) => !primaryMembershipSeasons.has(m.seasonId));
 
     const altClubsToAdd = (dup.altClubIds ?? []).filter((id) => !(primary.altClubIds ?? []).includes(id));
 
@@ -123,8 +132,14 @@ function MergeAthletesModal({ onClose }: { onClose: () => void }) {
         deleteRegistration(r.id);
         applyLocalRegistrationRemove(r);
       }
-      // 3. Merge memberships for seasons primary doesn't have
+      // 3. Merge memberships for seasons primary doesn't have. Reset from the
+      // freshly-fetched `primaryMemberships` (not the possibly Tier
+      // 2-incomplete `dp.memberships` already in local state — primary may
+      // not be the admin's own self/managed-club person) before appending
+      // the delta, so local state matches the DB immediately rather than
+      // waiting on the next full sync.
       const dp = d.people.find((x) => x.id === primary.id)!;
+      dp.memberships = [...primaryMemberships];
       for (const m of membershipsToAdd) {
         dp.memberships.push(m);
         pushMembership(primary.id, m);

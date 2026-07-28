@@ -168,6 +168,54 @@ simple.
 > `for all`-grants-DELETE cleanup, kept because it's correctness-independent of the
 > scale question) are in `supabase/README.md`'s entry for
 > `20260728015930_tier2_rls_policy_cost.sql` and `docs/whats-next.md` §7.
+>
+> **UPDATE (branch `perf/tier2-scoped-loadall`, drafted 2026-07-28): the scoping
+> above is now BUILT.** `loadAll` resolves the caller's person id (via
+> `supabase.auth.getSession()` matched against the already-fetched `people` rows)
+> and managed-club ids (from `club_managers`, mirroring `manages_club()`) BEFORE
+> issuing the memberships/invoices/invoice_items reads, then scopes each:
+> `memberships` by `person_id IN (self + managed-club rosters)`; `invoices` by two
+> merged queries (`athlete_id = self` OR `club_id IN (managed clubs)` -- a single
+> `.in()`/`.eq()` can't express an OR across two different columns); `invoice_items`
+> by `invoice_id IN (those invoices' ids)`, sequenced after the invoices query
+> resolves. No authorization change -- every non-privileged caller gets exactly the
+> rows RLS already permitted them; anon boot skips these three fetches entirely
+> when the scope is empty (zero network calls, strictly better than before).
+>
+> **Privileged league-wide consumers convert to on-demand fetches (CONTRACT shape
+> #4/#6), not boot data:** `Finance.tsx`/`RefundReview.tsx` (money surfaces --
+> gate every total on `status === 'ready'`), `AdminClubs.tsx`/`Communicate.tsx`'s
+> audience filter/`Home.tsx`'s admin dashboard (league-wide memberships),
+> `AdminMembers.tsx`'s merge modal (arbitrary-person memberships, fetched fresh --
+> never cached -- right before the destructive merge, same rule as its existing
+> registrations fetch), `Profile.tsx` adminView (a per-person memberships slice,
+> since this is a view/edit page where caching is a genuine win), `Club.tsx`'s
+> Roster/EventRegGrid (a by-club slice -- Club.tsx is reachable by ANY signed-in
+> account for ANY club, and an admin's `canManage` is true everywhere, so an
+> admin viewing a club they don't personally manage needs this too), and
+> `person-data.ts`'s GDPR export (`invoices` now a parameter, same shape as its
+> existing `scores`/`registrations` parameters). New code: `invoices-admin-slice.ts`,
+> `memberships-admin-slice.ts` (three shapes: league-wide, by-person, by-club),
+> plus `fetchMembershipsForPersonRemote`/`fetchMembershipsForPersonIdsRemote`/
+> `fetchAllMembershipsAdminRemote`/`fetchInvoicesForPersonRemote`/
+> `fetchAllInvoicesAdminRemote`/`buildInvoicesFromRows` in `supabase.ts`. All new
+> "everything"/by-person/by-club fetches route through the shared slice-cache
+> infra (`ensure`/`useScope`) so a future prefetch-on-hover can start a fetch
+> without a component mounting.
+>
+> **Measured (2026-07-28, scale-seeded staging at 0.5x, real club-manager JWT,
+> `VITE_DEV_AUTH_MANAGER_*` against `xogpiksqtkayxwmczlbx`):** with the manager
+> additionally granted a scale-seeded club (188 visible memberships, 95 invoices,
+> 115 invoice_items -- a real, non-trivial result set, not an empty one) --
+> `memberships` **455ms**, `invoices` **277ms**, `invoice_items` **365ms**, against
+> this same doc's baseline of `memberships` ~5.3s / `invoices` ~5.5s /
+> `invoice_items` ~7.4s for the old unfiltered read at the same table sizes
+> (5500/9000/12500 rows respectively) -- roughly a 10-20x improvement, and all
+> three comfortably clear of the `statement timeout` that the unfiltered reads hit
+> at this scale. Reproduced/cleaned via the same `seed-scale.mjs` harness;
+> staging verified restored to the documented fixture baseline after `--clean`
+> (memberships 70, invoices 14, invoice_items 14, people 84, registrations 130,
+> scores 248, events 4, clubs 9).
 
 **Tier 3 — Unbounded and contextual.** Never globally hydrated: `scores`,
 `registrations` beyond mine, `waiver_signatures`, `event_checkins`, `competition_orders`,

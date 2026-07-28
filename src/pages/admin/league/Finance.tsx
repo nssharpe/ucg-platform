@@ -10,6 +10,7 @@ import {
   reconcileScan, reconcileRefulfill, reconcileMarkRefunded,
   type ReconDriftRow,
 } from '../../../lib/supabase';
+import { useAdminInvoices } from '../../../lib/invoices-admin-slice';
 import type { AccountingCode, Event, HostPayout, Payment } from '../../../lib/types';
 import {
   buildFinanceTxns, buildFinanceSummary, buildFinanceSummarySheet, buildFinanceTxnsSheet,
@@ -79,6 +80,16 @@ export function Finance() {
   const [txnSearch, setTxnSearch] = useState('');
   const [exporting, setExporting] = useState(false);
 
+  // invoices are Tier 2 boot-scoped to the caller's own + managed-club rows
+  // (whats-next.md §7) — Finance is a league-wide money surface, so it fetches
+  // EVERY invoice on demand instead (CONTRACT shape #4, admin-only, never on
+  // a normal render path), routed through the shared slice-cache infra so a
+  // future prefetch-on-hover can call ensureAdminInvoices() independently of
+  // this component mounting. Money totals below must never compute from a
+  // partially-loaded set — every render that reads `invoices` gates on
+  // `invoicesStatus === 'ready'` first.
+  const { rows: invoices, status: invoicesStatus } = useAdminInvoices();
+
   const handleScopeChange = (newScope: string) => {
     setScope(newScope);
     setRange(computeDefaultRange(newScope, events));
@@ -94,7 +105,12 @@ export function Finance() {
   const accountingCodes = db.accountingCodes ?? [];
   const hostPayouts = db.hostPayouts ?? [];
 
-  const txns = buildFinanceTxns({ payments, invoices: db.invoices, refundRequests, events: db.events });
+  // Gate every money computation on a fully-loaded invoice set — a partial
+  // read here would silently render a WRONG (undercounted) total, not an
+  // obviously-missing row.
+  const txns = invoicesStatus === 'ready'
+    ? buildFinanceTxns({ payments, invoices, refundRequests, events: db.events })
+    : [];
   const summary = buildFinanceSummary(txns, { eventId, from: fromIso, to: toIso, accountingCodes, hostPayouts });
 
   const peopleById = new Map(db.people.map((p) => [p.id, { name: `${p.firstName} ${p.lastName}`, email: p.email }]));
@@ -219,11 +235,20 @@ export function Finance() {
               <input className="input" type="date" value={range.to} onChange={(ev) => setRange((r) => ({ ...r, to: ev.target.value }))} />
             </Field>
           </div>
-          <button className="btn primary" disabled={exporting} onClick={handleExport} style={{ marginBottom: 2 }}>
+          <button className="btn primary" disabled={exporting || invoicesStatus !== 'ready'} onClick={handleExport} style={{ marginBottom: 2 }}>
             {exporting ? 'Building…' : 'Export (.xlsx)'}
           </button>
         </div>
       </div>
+
+      {invoicesStatus === 'loading' && (
+        <p style={{ color: 'var(--ink-soft)', marginBottom: 16 }}>Loading invoices…</p>
+      )}
+      {invoicesStatus === 'error' && (
+        <p style={{ color: 'var(--err-600, #c0392b)', marginBottom: 16 }}>
+          Couldn't load invoices — the totals below may be wrong. Reload to try again.
+        </p>
+      )}
 
       <Tabs
         tabs={[

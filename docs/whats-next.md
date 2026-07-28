@@ -178,7 +178,7 @@ Suggested from a post-emv2 read of the platform; some have shipped, others are p
   still owns reviewing + merging Phase 3 and running Phases 4-5, plus
   investigating the new memberships/invoices RLS-timeout finding.
 
-## 7. 🐛 Expensive RLS on `memberships` / `invoices` / `invoice_items` (found 2026-07-26; hygiene fix shipped to staging 2026-07-28, performance root cause STILL OPEN)
+## 7. 🐛 Expensive RLS on `memberships` / `invoices` / `invoice_items` (found 2026-07-26; hygiene fix shipped to staging 2026-07-28; Tier-2 query-scoping fix DRAFTED 2026-07-28 on `perf/tier2-scoped-loadall`, not yet merged)
 
 Surfaced by 6.3's scale-seeding, and **architecturally more significant than it first
 reads**. Under the ANON/AUTHENTICATED role these three tables start failing with
@@ -230,21 +230,27 @@ row sets for a club manager and an athlete — and anon boot re-confirmed clean 
 baseline volume. Full narrative + both attempts' data: `supabase/README.md`'s entry for
 `20260728015930_tier2_rls_policy_cost.sql`.
 
-**What's actually still needed — this is unchanged and still nobody's built it:** Tier-2
-QUERY scoping in `loadAll`, exactly as
-[the data-layer scale spec already specifies](specs/2026-07-24-data-layer-scale.md#target-architecture)
-("Hydrate at boot but scoped to the caller... the change is mostly making the scoping
-explicit rather than relying on RLS to shrink a `select('*')`") but never implemented for
-these three tables. Under RLS, an unfiltered `select('*')` still costs the DB O(table
-size) — the planner must evaluate the row-security predicate against every row to know
-what the caller may see, no matter how cheap any single predicate call is. Only
-narrowing the QUERY (an indexed `.eq('person_id', ...)`/managed-club-ids filter,
-mirroring what RLS already permits) lets the planner touch a handful of rows instead of
-the whole table. Re-run `EXPLAIN (ANALYZE, BUFFERS)` at 0.5× scale once this is built —
-don't ship on theory, this section is now the second and third data points for that
-rule.
+**BUILT (branch `perf/tier2-scoped-loadall`, drafted 2026-07-28) — Tier-2 QUERY scoping
+in `loadAll`.** `loadAll` now resolves the caller's person id + managed-club ids first,
+then scopes memberships/invoices/invoice_items to exactly what RLS already permits that
+caller (self rows + managed-club rosters/invoices) instead of an unfiltered `select('*')`
+— no authorization change, only the query narrows. Privileged league-wide consumers
+(Finance, RefundReview, AdminClubs, Communicate's audience filter, Home's admin
+dashboard, AdminMembers' merge modal, Profile's adminView, Club.tsx's roster/event-reg
+grid, person-data.ts's export) were converted to on-demand fetches (new
+`invoices-admin-slice.ts` / `memberships-admin-slice.ts`, routed through the existing
+slice-cache infra) so they still see everything they need without that data riding along
+on every boot. Money surfaces gate every computed total on `status === 'ready'`.
+**Measured** (scale-seeded staging at 0.5×, real club-manager JWT, non-trivial result
+set — 188 memberships / 95 invoices / 115 invoice_items): `memberships` 455ms,
+`invoices` 277ms, `invoice_items` 365ms, vs. this section's own ~5.3s/~5.5s/~7.4s
+baseline for the old unfiltered read at the same table sizes — a 10–20× improvement,
+comfortably clear of the `statement timeout` the unfiltered reads hit at this scale.
+Full narrative + the exact query shapes: `docs/specs/2026-07-24-data-layer-scale.md`'s
+Tier 2 section. Controller still owns reviewing/merging the branch.
 
-Not urgent at current prod volume (invoices 43, invoice_items 69, memberships 39).
+Not urgent at current prod volume (invoices 43, invoice_items 69, memberships 39), but
+the fix is done rather than deferred.
 
 ## Architecture watch-list
 

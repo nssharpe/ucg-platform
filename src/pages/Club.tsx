@@ -9,7 +9,7 @@ import { Badge, Combo, Field, Modal } from '../components/ui';
 import { RefundRequestDialog, type RefundRequestItem } from '../components/RefundRequestDialog';
 import { useToast, useFmtDate } from '../components/ui-hooks';
 import { STATE_REGIONS, SHIRT_SIZES } from '../lib/types';
-import type { Athlete, CartItem, Club, Event, Registration, Season, WaitlistGroup } from '../lib/types';
+import type { Athlete, CartItem, Club, Event, Membership, Registration, Season, WaitlistGroup } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
 import {
   newRegistrationEntryTotal, reassignPartners, registrationChangeFee, changeIsEligible,
@@ -27,6 +27,7 @@ import {
 } from '../lib/supabase';
 import { cleanupCrossClubCart } from '../lib/cart-sync';
 import { useEventRegistrations, useClubRegistrations, applyLocalRegistrationUpsert, applyLocalRegistrationRemove, mergeUpsertedRegs } from '../lib/registrations-slice';
+import { useClubRosterMemberships, groupAdminMembershipsByPerson } from '../lib/memberships-admin-slice';
 import type { ClubMembership } from '../lib/types';
 import { ClubForm } from '../components/ClubForm';
 import { RegistrationEditor } from '../components/RegistrationEditor';
@@ -489,6 +490,17 @@ function Roster({ clubId, canManage }: { clubId: string; canManage: boolean }) {
   const [search, setSearch] = useState('');
   const [inviting, setInviting] = useState<string | null>(null);
 
+  // memberships are Tier 2 boot-scoped to the caller's own + managed-club
+  // rows (whats-next.md §7). That's already correct for a real manager's OWN
+  // club, but this page is reachable (RequireAccount) for ANY club, and an
+  // admin's `canManage` is true everywhere — so whenever management UI is
+  // shown, fetch this club's roster memberships on demand too (a harmless,
+  // cheap redundant refetch for the "it's already in Tier 2 scope" case,
+  // and the actual fix for "admin viewing a club they don't manage").
+  const { rows: clubMembershipRows, status: clubMembershipsStatus } = useClubRosterMemberships(canManage ? clubId : null);
+  const membershipsByPerson = useMemo(() => groupAdminMembershipsByPerson(clubMembershipRows), [clubMembershipRows]);
+  const membershipsOverrideReady = canManage && clubMembershipsStatus === 'ready';
+
   const invite = async (p: Athlete) => {
     if (!p.email) { toast('This member has no email on file.', { variant: 'error' }); return; }
     setInviting(p.id);
@@ -572,6 +584,7 @@ function Roster({ clubId, canManage }: { clubId: string; canManage: boolean }) {
         lvlName={lvlName}
         handleSort={handleSort}
         sortIcon={sortIcon}
+        membershipsByPerson={membershipsOverrideReady ? membershipsByPerson : null}
       />
       <RosterTable
         heading={`Coaches (${coaches.length})`}
@@ -585,6 +598,7 @@ function Roster({ clubId, canManage }: { clubId: string; canManage: boolean }) {
         lvlName={lvlName}
         handleSort={handleSort}
         sortIcon={sortIcon}
+        membershipsByPerson={membershipsOverrideReady ? membershipsByPerson : null}
       />
     </div>
   );
@@ -596,7 +610,7 @@ function Roster({ clubId, canManage }: { clubId: string; canManage: boolean }) {
 // coaches so coaches list with the same affordances regardless of membership.
 function RosterTable({
   heading, people, emptyText, season, canManage, isAdmin, inviting, onInvite,
-  lvlName, handleSort, sortIcon,
+  lvlName, handleSort, sortIcon, membershipsByPerson,
 }: {
   heading: string;
   people: Athlete[];
@@ -609,6 +623,11 @@ function RosterTable({
   lvlName: (id?: string) => string;
   handleSort: (col: SortCol) => void;
   sortIcon: (col: SortCol) => string;
+  /** Overrides `p.memberships` per row when set — Tier 2's boot scope only
+   *  guarantees `p.memberships` is correct for the caller's OWN managed
+   *  clubs, so an admin viewing a club they don't manage needs this
+   *  on-demand override (null while it's still loading or not needed). */
+  membershipsByPerson: Map<string, Membership[]> | null;
 }) {
   return (
     <div style={{ marginBottom: 18 }}>
@@ -633,7 +652,8 @@ function RosterTable({
             </thead>
             <tbody>
               {people.map((p) => {
-                const m = p.memberships.find((x) => x.seasonId === season?.id);
+                const pMemberships = membershipsByPerson?.get(p.id) ?? p.memberships;
+                const m = pMemberships.find((x) => x.seasonId === season?.id);
                 const isCoach = p.roles ? p.roles.coach : p.kind === 'coach';
                 const isAthlete = p.roles ? p.roles.athlete : p.kind === 'athlete';
                 return (
@@ -1006,6 +1026,15 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   // partial slice makes a registered athlete look unregistered, inviting a
   // manager to re-register and RE-CHARGE them, with no visible error.
   const { rows: eventRegs, status: regsStatus } = useEventRegistrations(event?.id);
+  // memberships are Tier 2 boot-scoped to the caller's own + managed-club
+  // rows (whats-next.md §7) — correct already for a real manager's OWN club,
+  // but an admin viewing a club they don't manage needs this on-demand
+  // override too (see the same reasoning + hook on Roster's `canManage`
+  // gate above), or `hasMembership` below would wrongly classify every
+  // athlete as having no membership.
+  const { rows: clubMembershipRows, status: clubMembershipsStatus } = useClubRosterMemberships(canManage ? clubId : null);
+  const clubMembershipsByPerson = useMemo(() => groupAdminMembershipsByPerson(clubMembershipRows), [clubMembershipRows]);
+  const membershipsOverrideReady = canManage && clubMembershipsStatus === 'ready';
   const season = currentSeason(db)!;
   // B4.2: past the event's last-date-to-edit, only an admin or the event's
   // HOST club may still edit (client-side UX only — registrations_edit_lockout
@@ -1064,8 +1093,10 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   if (!event) return <p>No events accepting registration.</p>;
   // MUST gate before computing hasActiveReg/registered/etc below (CONTRACT
   // completeness rule) — a loading slice must never be treated as "this
-  // athlete has no registrations".
-  if (regsStatus === 'loading') return <p>Loading…</p>;
+  // athlete has no registrations". Same reasoning extends to the
+  // club-roster-memberships override (canManage-gated, above) — while it's
+  // still loading, `hasMembership` must not be evaluated as "no one has one".
+  if (regsStatus === 'loading' || (canManage && clubMembershipsStatus === 'loading')) return <p>Loading…</p>;
 
   const regClosed = !eventIsInPhase(event, 'reg-open');
   // event-mgmt v2 Phase 3 (§H): refunds only offered for events hosted by the
@@ -1119,10 +1150,12 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   const hasActiveReg = (athleteId: string) => regsFor(athleteId).length > 0;
   // Registering to compete requires an ACTIVE ATHLETE-type membership — a
   // coach-only membership does not qualify (typed-membership residuals, T1).
-  const hasMembership = (athlete: Athlete) =>
-    !!athlete.memberships.find(
+  const hasMembership = (athlete: Athlete) => {
+    const memberships = membershipsOverrideReady ? (clubMembershipsByPerson.get(athlete.id) ?? []) : athlete.memberships;
+    return !!memberships.find(
       (m) => m.seasonId === season?.id && m.status === 'active' && membershipTypeOf(m) === 'athlete',
     );
+  };
 
   // Split athletes into three groups
   const registered = athletes.filter((a) => hasActiveReg(a.id));
