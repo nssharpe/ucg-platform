@@ -178,6 +178,32 @@ Suggested from a post-emv2 read of the platform; some have shipped, others are p
   still owns reviewing + merging Phase 3 and running Phases 4-5, plus
   investigating the new memberships/invoices RLS-timeout finding.
 
+## 7. 🐛 Expensive RLS on `memberships` / `invoices` / `invoice_items` (found 2026-07-26)
+
+Surfaced by 6.3's scale-seeding, and **architecturally more significant than it first
+reads**. Under the ANON/AUTHENTICATED role these three tables start failing with
+`canceling statement due to statement timeout` once they hold ~10k+ rows. A
+service-role client queries them fine, so it is not a grant gap — it reads like an
+expensive RLS policy (a per-row subquery/join) that nothing has ever exercised at
+volume.
+
+**Why it matters beyond a slow query:** these are **Tier 2** tables in the
+[data-layer scale spec](specs/2026-07-24-data-layer-scale.md) — the tier that
+deliberately STAYS globally hydrated because it's "bounded per user". Phases 2 and 3
+moved `scores` and `registrations` off global hydration; Phases 4–5 address `people`
+and localStorage. **None of them touch these three.** So this is a hole in the tiering
+assumption, not something the remaining phases will incidentally fix: the projection
+has ~18k invoices / ~25k invoice_items / ~11k memberships within two years, which is
+past where the timeout was observed.
+
+Worth doing before a real season accumulates that volume: `EXPLAIN ANALYZE` the
+policies on all three as `authenticated`, and check whether they can be rewritten with
+the `my_person_id()` / `manages_club()` SECURITY DEFINER helper pattern (which exists
+precisely to avoid per-row cross-table subqueries in policies — see CLAUDE.md's
+42P17 recursion note for the related trap).
+
+Not urgent at current prod volume (invoices 43, invoice_items 69, memberships 39).
+
 ## Architecture watch-list
 
 Not gaps yet — trigger conditions live in
