@@ -178,7 +178,7 @@ Suggested from a post-emv2 read of the platform; some have shipped, others are p
   still owns reviewing + merging Phase 3 and running Phases 4-5, plus
   investigating the new memberships/invoices RLS-timeout finding.
 
-## 7. 🐛 Expensive RLS on `memberships` / `invoices` / `invoice_items` (found 2026-07-26)
+## 7. 🐛 Expensive RLS on `memberships` / `invoices` / `invoice_items` (found 2026-07-26; hygiene fix shipped to staging 2026-07-28, performance root cause STILL OPEN)
 
 Surfaced by 6.3's scale-seeding, and **architecturally more significant than it first
 reads**. Under the ANON/AUTHENTICATED role these three tables start failing with
@@ -196,11 +196,53 @@ assumption, not something the remaining phases will incidentally fix: the projec
 has ~18k invoices / ~25k invoice_items / ~11k memberships within two years, which is
 past where the timeout was observed.
 
-Worth doing before a real season accumulates that volume: `EXPLAIN ANALYZE` the
-policies on all three as `authenticated`, and check whether they can be rewritten with
-the `my_person_id()` / `manages_club()` SECURITY DEFINER helper pattern (which exists
-precisely to avoid per-row cross-table subqueries in policies — see CLAUDE.md's
-42P17 recursion note for the related trap).
+**2026-07-28 (branch `perf/tier2-rls-policy-cost`, staging only, NOT prod) — policy-shape
+fix tried and MEASURED-REJECTED; controller made the call.** First attempt wrapped
+`memberships_write`'s and `invoice_items_read`'s raw cross-table subqueries in
+SECURITY DEFINER helpers (`manages_club_of_person`/`invoice_owner_or_manager`). At
+0.5×-scale that made `memberships` statistically unchanged (~5.0–5.3s either way,
+inside the measurement's own noise band) and `invoice_items` measurably **worse**
+(7.4s → 11.4s) — a fresh anon `loadAll`-shaped read at that scale still hit
+`statement timeout` on all three tables, i.e. signed-out boot was still broken. Root
+cause: Postgres can hash-materialize a raw correlated `EXISTS` subquery into a single
+semi-join pass over the referenced table (one scan total, confirmed via a
+`hashed SubPlan` plan node) — a SECURITY DEFINER function call is opaque to the
+planner and can never be hashed that way, so it pays its own per-call cost (~0.9ms
+measured) on every row of `loadAll`'s unfiltered scan, which loses to the
+hashed-subquery plan once the referenced table's own policy stack isn't already the
+dominant cost. **The controller rejected shipping that trade** (an 11.4s regression on
+`invoice_items` in exchange for architectural tidiness) and this is the second time in
+this repo a "clearly correct" RLS-predicate-shape theory didn't pan out on measurement
+(see `20260711023234`) — **don't retry a policy-rewrite fix for this without a fresh
+measurement; the planner-hashing behavior above is why it's a dead end.**
+
+What shipped instead, kept because it's a scale-independent correctness/hygiene win
+and does NOT claim a performance improvement: `memberships_read` and `memberships_write`
+(a `for all` policy) carried byte-identical predicates, evaluated and OR'd on every
+SELECT for zero semantic difference — collapsed to one `memberships_read` SELECT
+policy plus explicit `memberships_insert`/`memberships_update`/`memberships_delete`
+policies (retiring the `for all`, which silently granted DELETE too — the trap
+CLAUDE.md calls out, and the same shape already retired from `invoices`/`invoice_items`
+in the 2026-07-24 write lockdown). `invoice_items_read` and the two SECURITY DEFINER
+functions from the rejected attempt were fully reverted. Semantics re-verified via a
+rolled-back-transaction A/B against the true pristine original policies — byte-identical
+row sets for a club manager and an athlete — and anon boot re-confirmed clean at
+baseline volume. Full narrative + both attempts' data: `supabase/README.md`'s entry for
+`20260728015930_tier2_rls_policy_cost.sql`.
+
+**What's actually still needed — this is unchanged and still nobody's built it:** Tier-2
+QUERY scoping in `loadAll`, exactly as
+[the data-layer scale spec already specifies](specs/2026-07-24-data-layer-scale.md#target-architecture)
+("Hydrate at boot but scoped to the caller... the change is mostly making the scoping
+explicit rather than relying on RLS to shrink a `select('*')`") but never implemented for
+these three tables. Under RLS, an unfiltered `select('*')` still costs the DB O(table
+size) — the planner must evaluate the row-security predicate against every row to know
+what the caller may see, no matter how cheap any single predicate call is. Only
+narrowing the QUERY (an indexed `.eq('person_id', ...)`/managed-club-ids filter,
+mirroring what RLS already permits) lets the planner touch a handful of rows instead of
+the whole table. Re-run `EXPLAIN (ANALYZE, BUFFERS)` at 0.5× scale once this is built —
+don't ship on theory, this section is now the second and third data points for that
+rule.
 
 Not urgent at current prod volume (invoices 43, invoice_items 69, memberships 39).
 
