@@ -5,6 +5,7 @@ import { useCapabilities } from '../lib/capabilities';
 import { Badge, Field } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 import { useScoreById, writeScore } from '../lib/scores-slice';
+import { useRegistrationById } from '../lib/registrations-slice';
 import { APPARATUS } from '../lib/types';
 import type { Score } from '../lib/types';
 import { fmtScore } from '../lib/scoring';
@@ -44,7 +45,15 @@ function ScoreDetailInner({ score, applyOptimistic }: { score: Score; applyOptim
   const caps = useCapabilities();
   const toast = useToast();
 
-  const reg = db.registrations.find((r) => r.id === score.regId);
+  // Phase 3 (data-layer-scale), shape #3 (single record by id) — score.regId
+  // is a stable, known id, so a direct fetch-by-id is the right shape rather
+  // than pulling a whole event's worth of rows into an event slice just to
+  // resolve one. regStatus MUST gate canView below: while loading, `reg` is
+  // null just like "no such registration", and this page's self-view
+  // permission is `caps.personId === reg.athleteId` — evaluating that against
+  // a not-yet-loaded null would wrongly flash "Not available" at the athlete
+  // who owns this very score (a confident-denial bug, not just an empty list).
+  const { registration: reg, status: regStatus } = useRegistrationById(score.regId);
   const level = reg && db.levels.find((l) => l.id === reg.levelId);
   const calcCfg = score.calc && reg && level ? calcForLevel(level.id, score.apparatus) : null;
   const v2 = isCalcStateV2(score.calcState) && calcCfg && score.calcState.kind === calcCfg.kind
@@ -66,6 +75,8 @@ function ScoreDetailInner({ score, applyOptimistic }: { score: Score; applyOptim
   const canView = caps.isAdmin || caps.isEventHost(score.eventId)
     || (!!reg && caps.personId === reg.athleteId);
   const canAdjust = caps.isAdmin;
+
+  if (regStatus === 'loading') return <p>Loading…</p>;
 
   if (!canView) {
     return (

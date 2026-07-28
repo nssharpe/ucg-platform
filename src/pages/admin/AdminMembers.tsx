@@ -5,9 +5,10 @@ import { Badge, Combo, Field, Modal } from '../../components/ui';
 import { useToast } from '../../components/ui-hooks';
 import { PersonForm } from '../../components/PersonForm';
 import { STATE_REGIONS } from '../../lib/types';
-import type { AccountInvite, Athlete, MembershipType } from '../../lib/types';
+import type { AccountInvite, Athlete, MembershipType, Registration } from '../../lib/types';
 import { randomPromoCode } from '../../lib/pricing';
 import { fetchAllRoles, pushAccountInvite, pushClubManager, pushMembership, pushRegistration, pushUserRole, deleteRegistration, sendEmail, pushPerson, deletePerson, adminResetMfa, type SendEmailResult } from '../../lib/supabase';
+import { fetchRegistrationsForPerson, applyLocalRegistrationUpsert, applyLocalRegistrationRemove } from '../../lib/registrations-slice';
 import { escapeHtml } from '../../lib/sanitize-html';
 import { useCapabilities } from '../../lib/capabilities';
 import { membershipTypeOf } from '../../lib/capabilities-core';
@@ -20,12 +21,30 @@ function localEffectiveRoles(p: Athlete): { athlete: boolean; coach: boolean } {
 }
 
 // ---------- Merge Athletes modal ----------
+// Phase 3 (data-layer-scale), CONTRACT shape #6: this is the sharpest case in
+// the whole refactor. `dup`/`primary` are ARBITRARY people (not the signed-in
+// admin, not scoped to one event/club), and this read feeds a mutate() that
+// reassigns/hard-deletes registration rows and then deletes the person — an
+// incomplete read here silently ORPHANS registrations against a deleted
+// athleteId (data corruption, not a wrong count). Never a slice/cache: always
+// a fresh, targeted fetchRegistrationsForPerson call for BOTH people, run
+// again right before the destructive merge (not reused from an earlier
+// preview fetch) so completeness comes from the query, not from hoping a
+// cache is still warm.
 function MergeAthletesModal({ onClose }: { onClose: () => void }) {
   const db = useDB();
   const toast = useToast();
   const [primaryId, setPrimaryId] = useState<string | null>(null);
   const [dupId, setDupId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [merging, setMerging] = useState(false);
+  // Preview-only count, refetched whenever the duplicate selection changes.
+  // NEVER reused for the actual merge below — doMerge always re-fetches.
+  // Keyed by id (not a bare number) so the render can tell "loading for the
+  // CURRENTLY selected dup" apart from "stale count for a previous one" —
+  // this also avoids a synchronous setState-in-effect reset call (CLAUDE.md
+  // ESLint trap) when the selection changes or is cleared.
+  const [dupRegCount, setDupRegCount] = useState<{ id: string; count: number } | null>(null);
 
   const peopleOptions = useMemo(() =>
     db.people.map((p) => ({
@@ -39,19 +58,33 @@ function MergeAthletesModal({ onClose }: { onClose: () => void }) {
   const primary = primaryId ? db.people.find((p) => p.id === primaryId) ?? null : null;
   const dup = dupId ? db.people.find((p) => p.id === dupId) ?? null : null;
 
+  useEffect(() => {
+    if (!dup) return;
+    let live = true;
+    fetchRegistrationsForPerson(dup.id).then((regs) => { if (live) setDupRegCount({ id: dup.id, count: regs.length }); });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dup?.id]);
+
   const canConfirm = primary && dup && primary.id !== dup.id;
 
-  const doMerge = () => {
+  const doMerge = async () => {
     if (!primary || !dup) return;
     if (primary.id === dup.id) { toast('Cannot merge a person into themselves.'); return; }
 
+    setMerging(true);
+    const [dupRegs, primaryRegs] = await Promise.all([
+      fetchRegistrationsForPerson(dup.id),
+      fetchRegistrationsForPerson(primary.id),
+    ]);
+    setMerging(false);
+
     // Compute what will change before mutating
-    const dupRegs = db.registrations.filter((r) => r.athleteId === dup.id);
     const primaryRegKeys = new Set(
-      db.registrations.filter((r) => r.athleteId === primary.id).map((r) => `${r.eventId}|${r.discipline}|${r.levelId}`)
+      primaryRegs.map((r) => `${r.eventId}|${r.discipline}|${r.levelId}`)
     );
-    const regsToMove: typeof dupRegs = [];
-    const regsToDrop: typeof dupRegs = [];
+    const regsToMove: Registration[] = [];
+    const regsToDrop: Registration[] = [];
     for (const r of dupRegs) {
       const key = `${r.eventId}|${r.discipline}|${r.levelId}`;
       if (primaryRegKeys.has(key)) {
@@ -67,13 +100,19 @@ function MergeAthletesModal({ onClose }: { onClose: () => void }) {
     const altClubsToAdd = (dup.altClubIds ?? []).filter((id) => !(primary.altClubIds ?? []).includes(id));
 
     const applied = mutate((d) => {
-      // 1. Repoint registrations: move clean ones to primary
+      // 1. Repoint registrations: move clean ones to primary. Falls back to
+      // the freshly-fetched row (`r`) when not found in d.registrations —
+      // that array is empty in Supabase-configured mode once Stage 4 lands,
+      // so relying on finding it there would silently no-op EVERY repoint
+      // (the write-side twin of the read-side completeness bug this whole
+      // function exists to close).
       for (const r of regsToMove) {
-        const dr = d.registrations.find((x) => x.id === r.id);
-        if (dr) {
-          dr.athleteId = primary.id;
-          pushRegistration(dr, dr.sessionId);
-        }
+        const idx = d.registrations.findIndex((x) => x.id === r.id);
+        const base = idx >= 0 ? d.registrations[idx] : r;
+        const next: Registration = { ...base, athleteId: primary.id };
+        if (idx >= 0) d.registrations[idx] = next;
+        pushRegistration(next, next.sessionId);
+        applyLocalRegistrationUpsert(next);
       }
       // 2. Drop collision registrations (and their scores)
       for (const r of regsToDrop) {
@@ -82,6 +121,7 @@ function MergeAthletesModal({ onClose }: { onClose: () => void }) {
         // Drop the registration
         d.registrations = d.registrations.filter((x) => x.id !== r.id);
         deleteRegistration(r.id);
+        applyLocalRegistrationRemove(r);
       }
       // 3. Merge memberships for seasons primary doesn't have
       const dp = d.people.find((x) => x.id === primary.id)!;
@@ -158,7 +198,7 @@ function MergeAthletesModal({ onClose }: { onClose: () => void }) {
           <ul style={{ margin: '6px 0 0 16px', lineHeight: 1.7 }}>
             <li>Keep: <strong>{primary.firstName} {primary.lastName}</strong> ({primary.email})</li>
             <li>Remove: <strong>{dup.firstName} {dup.lastName}</strong> ({dup.email})</li>
-            <li>Registrations from duplicate: {db.registrations.filter((r) => r.athleteId === dup.id).length} total (collisions with primary will be dropped)</li>
+            <li>Registrations from duplicate: {dup && dupRegCount?.id === dup.id ? `${dupRegCount.count} total (collisions with primary will be dropped)` : 'loading…'}</li>
             <li>Memberships from duplicate: {dup.memberships.filter((m) => !primary.memberships.some((pm) => pm.seasonId === m.seasonId)).length} new season(s) will transfer</li>
             <li>Club manager roles on: {db.clubs.filter((c) => c.managerIds.includes(dup.id)).map((c) => c.name).join(', ') || 'none'}</li>
             {!primary.authUserId && dup.authUserId && <li>Auth account will transfer from duplicate to primary</li>}
@@ -183,10 +223,10 @@ function MergeAthletesModal({ onClose }: { onClose: () => void }) {
           </>
         ) : (
           <>
-            <button className="btn danger" onClick={doMerge}>
-              Confirm — merge and remove duplicate
+            <button className="btn danger" disabled={merging} onClick={doMerge}>
+              {merging ? 'Merging…' : 'Confirm — merge and remove duplicate'}
             </button>
-            <button className="btn ghost" onClick={() => setConfirming(false)}>Back</button>
+            <button className="btn ghost" disabled={merging} onClick={() => setConfirming(false)}>Back</button>
           </>
         )}
       </div>

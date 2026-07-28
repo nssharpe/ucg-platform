@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useDB } from '../lib/store';
 import { judgeUnlock, judgeSubmitScore } from '../lib/supabase';
 import { useEventScores, writeScore, applyLocalScoreUpdate } from '../lib/scores-slice';
+import { useEventRegistrations } from '../lib/registrations-slice';
 import { Badge, Field } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 import { APPARATUS } from '../lib/types';
@@ -46,6 +47,7 @@ export function Judge() {
   );
   const eventRec = db.events.find((m) => m.id === eventId);
   const { rows: eventScores, status: scoresStatus } = useEventScores(eventRec?.id);
+  const { rows: eventRegs, status: regsStatus } = useEventRegistrations(eventRec?.id);
   const [sessionId, setSessionId] = useState(eventRec?.sessions[0]?.id ?? '');
   const session = eventRec?.sessions.find((s) => s.id === sessionId) ?? eventRec?.sessions[0];
   const apparatusDefs = session ? APPARATUS[session.discipline] : [];
@@ -86,15 +88,19 @@ export function Judge() {
   // end them on an event they have no code for.
   const selectableEvents = privileged ? db.events : db.events.filter((m) => accessMap[m.id]);
 
+  // eventRegs is the by-event slice (Phase 3) — a fresh array reference on
+  // every slice update, so depending on it (rather than `db`) also fixes the
+  // M6 in-place-mutation staleness this useMemo would otherwise carry
+  // (mutate() never reassigns db.registrations on an update).
   const regs = useMemo(() => {
     if (!eventRec || !session) return [];
-    const inSession = db.registrations.filter((r) => r.eventId === eventRec.id && r.sessionId === session.id && !r.refunded && r.apparatus.includes(apparatus));
+    const inSession = eventRegs.filter((r) => r.eventId === eventRec.id && r.sessionId === session.id && !r.refunded && r.apparatus.includes(apparatus));
     return inSession.sort((a, b) => {
       const an = db.people.find((p) => p.id === a.athleteId)!;
       const bn = db.people.find((p) => p.id === b.athleteId)!;
       return an.lastName.localeCompare(bn.lastName);
     });
-  }, [db, eventRec, session, apparatus]);
+  }, [eventRegs, db.people, eventRec, session, apparatus]);
 
   const scoreFor = (regId: string) => eventScores.find((s) => s.id === `${eventRec?.id}|${regId}|${apparatus}`);
 
@@ -476,8 +482,8 @@ export function Judge() {
           <table className="tbl">
             <thead><tr><th>Athlete</th><th>Club</th><th>Level</th><th className="num">Score</th><th /></tr></thead>
             <tbody>
-              {scoresStatus === 'loading' ? (
-                <tr><td colSpan={5} style={{ color: 'var(--ink-soft)' }}>Loading scores…</td></tr>
+              {scoresStatus === 'loading' || regsStatus === 'loading' ? (
+                <tr><td colSpan={5} style={{ color: 'var(--ink-soft)' }}>Loading…</td></tr>
               ) : (
                 <>
                   {regs.map((r) => {

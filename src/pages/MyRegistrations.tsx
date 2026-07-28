@@ -7,6 +7,7 @@ import { useToast, useFmtDate } from '../components/ui-hooks';
 import { tzAbbrev } from '../lib/timezone';
 import { pushRegistration, pushCampSurvey, pushCart, syncSynchroPartnerLevelRemote, cancelWaitlistGroup, deleteRegistration, fetchCampSurveys } from '../lib/supabase';
 import { RegistrationEditor } from '../components/RegistrationEditor';
+import { useMyRegistrations, useEventRegistrations, applyLocalRegistrationUpsert, applyLocalRegistrationRemove, mergeUpsertedRegs } from '../lib/registrations-slice';
 import {
   newRegistrationEntryTotal, registrationChangeFee, changeIsEligible, syncSynchroPartnerLevel, lateFeeApplies, lateFeeAnchor,
   campSurveyQuestionsOf, campSurveyAnswersValid, campSurveyToStored, campSurveyAnswerLabel, requiredSessionRequests,
@@ -52,6 +53,17 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [refundTarget, setRefundTarget] = useState<{ event: Event; item: RefundRequestItem } | null>(null);
 
+  // Phase 3 (data-layer-scale): "mine" (Tier 2, synchronous — CONTRACT §2) is
+  // the primary source throughout this page, since every registration here
+  // belongs to the signed-in caller (personId) — no loading state to gate on,
+  // matching the page's pre-refactor zero-flicker UX. priorDisciplineCount/
+  // existingForAthlete callers MUST use this, not a by-event slice, per the
+  // COMPLETENESS rule. Synchro-partner sync needs a DIFFERENT athlete's
+  // registration though, so it separately uses the by-event slice
+  // (editingEventRegs) keyed on whichever event is currently being edited.
+  const myRegs = useMyRegistrations();
+  const { rows: editingEventRegs, status: editingEventRegsStatus } = useEventRegistrations(editingEventId);
+
   const lvlName = (id?: string) => db.levels.find((l) => l.id === id)?.name ?? '—';
   const nameOf = (id: string) => {
     const p = db.people.find((x) => x.id === id);
@@ -80,20 +92,19 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   };
 
   // Group this athlete's (non-refunded) registrations by event. NOT memoized
-  // (M6 fix, 2026-07-02): `mutate()` (store.ts) mutates `db.registrations` in
-  // place for an update (`d.registrations[idx] = reg`) rather than reassigning
-  // the array, so a `useMemo` keyed on `db.registrations` never sees an
-  // update-only edit — exactly this page's own `saveRegs` above, meaning the
-  // grid showed stale data right after its own save (M6). `useDB()`'s
-  // subscription already re-renders on every store change, so recomputing
-  // this plain filter/group per render is correct and cheap (same precedent
-  // as Cart.tsx's un-memoized `cart`).
+  // (M6 fix, 2026-07-02): mutate() (store.ts) mutates db.registrations in
+  // place for an update rather than reassigning the array, so a useMemo keyed
+  // on db.registrations would never see an update-only edit. Phase 3: myRegs
+  // (the "mine" slice cache) is a fresh array reference on every update, so
+  // it doesn't carry that trap either way — recomputing this plain
+  // filter/group per render is still correct and cheap (same precedent as
+  // Cart.tsx's un-memoized `cart`).
   const byEvent = (() => {
     // Include refunded-but-kept regs (`keepListed`, event-mgmt v2 Phase 3 spec
     // §H) so a post-edit-deadline refund still shows here — with apparatus
     // locked and a "Refunded" badge — instead of silently vanishing (a
     // pre-deadline refund deletes the row outright, so it naturally drops out).
-    const mine = db.registrations.filter((r) => r.athleteId === personId && (!r.refunded || r.keepListed));
+    const mine = myRegs.filter((r) => r.athleteId === personId && (!r.refunded || r.keepListed));
     const groups = new Map<string, Registration[]>();
     for (const r of mine) {
       const arr = groups.get(r.eventId) ?? [];
@@ -157,14 +168,15 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
       }
       if (keepPaidHistory) {
         const idx = d.registrations.findIndex((r) => r.id === reg.id);
-        if (idx >= 0) {
-          const next = { ...d.registrations[idx], waitlisted: false, waitlistGroupId: null };
-          d.registrations[idx] = next;
-          pushRegistration(next);
-        }
+        const base = idx >= 0 ? d.registrations[idx] : reg;
+        const next = { ...base, waitlisted: false, waitlistGroupId: null };
+        if (idx >= 0) d.registrations[idx] = next;
+        pushRegistration(next);
+        applyLocalRegistrationUpsert(next);
       } else {
         d.registrations = d.registrations.filter((r) => r.id !== reg.id);
         deleteRegistration(reg.id);
+        applyLocalRegistrationRemove(reg);
       }
     });
     if (!applied) return; // offline read-only gate — no false success toast
@@ -190,10 +202,10 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   // spot is the original entry purchase, not an edit, so it deliberately
   // never passes through changeIsEligible.
   const completeWaitlistCheckout = (event: Event, group: WaitlistGroup) => {
-    const groupRegs = db.registrations.filter((r) => r.waitlistGroupId === group.id && r.waitlisted && r.athleteId === personId);
+    const groupRegs = myRegs.filter((r) => r.waitlistGroupId === group.id && r.waitlisted && r.athleteId === personId);
     if (groupRegs.length === 0) return;
     const applied = mutate((d) => {
-      const priorRegs = d.registrations.filter(
+      const priorRegs = myRegs.filter(
         (r) => r.eventId === event.id && r.athleteId === personId
           && !r.refunded && !groupRegs.some((g) => g.id === r.id) && !r.waitlisted,
       );
@@ -207,16 +219,17 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
       });
       for (const reg of groupRegs) {
         const idx = d.registrations.findIndex((r) => r.id === reg.id);
-        if (idx < 0) continue;
+        const base = idx >= 0 ? d.registrations[idx] : reg;
         const next: Registration = {
-          ...d.registrations[idx],
+          ...base,
           waitlisted: false, // waitlistGroupId kept — audit trail + sweep pass-1 signal
           paid: entryTotal === 0, // host-club $0 (shouldn't normally be waitlisted; stay consistent)
           updatedPending: false,
           holdExpiresAt: entryTotal > 0 ? holdStamp(event, event.sessions, Date.now()) : undefined,
         };
-        d.registrations[idx] = next;
+        if (idx >= 0) d.registrations[idx] = next;
         pushRegistration(next);
+        applyLocalRegistrationUpsert(next);
       }
       if (entryTotal > 0) {
         const cart = d.carts[personId] ?? (d.carts[personId] = []);
@@ -259,18 +272,25 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
     const alreadyPendingItem = changeFeePendingItem(event);
     const alreadyPending = !!alreadyPendingItem;
     let chargedFee = 0;
+    // Phase 3: read from the pre-write "mine" snapshot — this is the FIRST
+    // read of registration state in this call, so it can't have gone stale
+    // relative to d.registrations (perpetually empty in Supabase-configured
+    // mode once Stage 4 lands). priorDisciplineCount below MUST come from
+    // "mine" per the COMPLETENESS rule, not a by-event slice.
+    const existingForAthlete = myRegs.filter(
+      (r) => r.eventId === event.id && r.athleteId === personId && !r.refunded,
+    );
     const applied = mutate((d) => {
-      const existingForAthlete = d.registrations.filter(
-        (r) => r.eventId === event.id && r.athleteId === personId && !r.refunded,
-      );
       const editingExisting = existingForAthlete.length > 0;
       const newDiscSet = new Set(newRegs.map((r) => r.discipline));
 
-      // Snapshot the PRE-edit state for the eligibility check below, before the
-      // retain-and-blank loop mutates these same row objects in place (it sets
-      // old.clubId = selectedClubId on deselected rows) — computing `before`
-      // from `existingForAthlete` AFTER that loop would silently see the NEW
-      // club on a deselected discipline and mask a chargeable club switch.
+      // Snapshot the PRE-edit state for the eligibility check below — needed
+      // even now that the retain-and-blank loop no longer mutates these row
+      // objects in place (Phase 3: it produces NEW objects instead, since
+      // existingForAthlete's rows may be the "mine" slice cache's own row
+      // objects, which must never be mutated directly — only replaced via
+      // applyLocalRegistrationUpsert). Kept as its own snapshot for clarity
+      // and because `before` needs plain-value copies regardless.
       const beforeClubId = existingForAthlete[0]?.clubId ?? selectedClubId;
       const beforeDisciplines = existingForAthlete.map((r) => ({
         discipline: r.discipline,
@@ -279,16 +299,25 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
         ...(r.apparatusLevels ? { apparatusLevels: r.apparatusLevels } : {}),
       }));
 
-      // Retain (do NOT delete) deselected disciplines: blank them out instead.
+      // Retain (do NOT delete) deselected disciplines: blank them out instead
+      // — building a NEW object per row (Phase 3: never mutate a slice-cache
+      // row's fields directly; produce a new object and go through
+      // applyLocalRegistrationUpsert, same as every other write in this
+      // refactor).
+      const blankedRegs: Registration[] = [];
       for (const old of existingForAthlete) {
         if (!newDiscSet.has(old.discipline)) {
-          old.apparatus = [];
-          delete old.apparatusLevels;
-          delete old.partnerAthleteId;
-          old.clubId = selectedClubId;
+          const blanked: Registration = { ...old, apparatus: [] };
+          delete blanked.apparatusLevels;
+          delete blanked.partnerAthleteId;
+          blanked.clubId = selectedClubId;
           // squad_id is host-managed (squads table); never write a non-squad id here.
           // Passing old.sessionId set squad_id to a session id → registrations_squad_id_fkey.
-          pushRegistration(old);
+          const idx = d.registrations.findIndex((r) => r.id === old.id);
+          if (idx >= 0) d.registrations[idx] = blanked;
+          pushRegistration(blanked);
+          applyLocalRegistrationUpsert(blanked);
+          blankedRegs.push(blanked);
         }
       }
 
@@ -360,6 +389,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
         if (idx >= 0) d.registrations[idx] = reg;
         else d.registrations.push(reg);
         pushRegistration(reg);
+        applyLocalRegistrationUpsert(reg);
       }
 
       // Synchro same-level auto-sync (B4.4): whoever actively saves a partner
@@ -370,7 +400,14 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
       // PARTNER's own registration row (a different athlete, often a
       // different club) — the RPC re-derives + authorizes it server-side
       // from the caller's OWN just-saved registration.
-      const eventRegsForSync = d.registrations.filter((r) => r.eventId === event.id && !r.refunded);
+      //
+      // Phase 3: the partner is a DIFFERENT athlete, so this needs the
+      // by-event slice (editingEventRegs — event.id === editingEventId here,
+      // since this only runs from the edit modal), not "mine". Merged with
+      // this call's own writes (newRegs + blankedRegs) via mergeUpsertedRegs
+      // so a partner pairing involving a row this SAME save just touched is
+      // still found.
+      const eventRegsForSync = mergeUpsertedRegs(editingEventRegs, [...newRegs, ...blankedRegs]).filter((r) => r.eventId === event.id && !r.refunded);
       for (const reg of newRegs) {
         const partnerUpdate = syncSynchroPartnerLevel(eventRegsForSync, reg);
         const mySyLevel = reg.apparatusLevels?.SY;
@@ -378,6 +415,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
           const idx = d.registrations.findIndex((r) => r.id === partnerUpdate.id);
           if (idx >= 0) d.registrations[idx] = partnerUpdate;
           syncSynchroPartnerLevelRemote(reg.id, mySyLevel);
+          applyLocalRegistrationUpsert(partnerUpdate);
         }
       }
 
@@ -451,7 +489,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   // Feeds RegistrationEditor's `existing` prop — must include keepListed
   // refunded rows too, or the editor can't show its locked/refunded state.
   const existingForEvent = (event: Event) =>
-    db.registrations.filter((r) => r.eventId === event.id && r.athleteId === personId && (!r.refunded || r.keepListed));
+    myRegs.filter((r) => r.eventId === event.id && r.athleteId === personId && (!r.refunded || r.keepListed));
 
   return (
     <div style={{ maxWidth: 820 }}>
@@ -674,6 +712,12 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
       {editingEventId && me && (() => {
         const event = db.events.find((m) => m.id === editingEventId);
         if (!event) return null;
+        // COMPLETENESS: allEventRegs feeds capacity checks, which are
+        // event-wide across every club — must be the full by-event slice
+        // (editingEventRegs, gated on 'ready' here) rather than db.registrations.
+        if (editingEventRegsStatus === 'loading') {
+          return <Modal title={`Edit registration — ${event.name}`} onClose={() => setEditingEventId(null)}><p>Loading…</p></Modal>;
+        }
         const existing = existingForEvent(event);
         const currentClubId = existing[0]?.clubId ?? me.mainClubId ?? affiliatedClubs[0]?.id ?? null;
         if (!currentClubId) return null;
@@ -690,7 +734,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
             changeFeeApplies={changeFeeApplies(event)}
             onClose={() => setEditingEventId(null)}
             onSave={(selectedClubId, regs) => saveRegs(event, selectedClubId, regs)}
-            allEventRegs={db.registrations.filter((r) => r.eventId === event.id && !r.refunded)}
+            allEventRegs={editingEventRegs.filter((r) => !r.refunded)}
             waitlistGroups={db.waitlistGroups?.filter((g) => g.eventId === event.id) ?? []}
           />
         );
@@ -774,6 +818,7 @@ function EditRegistrationModal({
         const updated: Registration = { ...(idx >= 0 ? d.registrations[idx] : r), campSurvey: stored };
         if (idx >= 0) d.registrations[idx] = updated; else d.registrations.push(updated);
         pushRegistration(updated);
+        applyLocalRegistrationUpsert(updated);
         // camp_survey travels through its own targeted-update write (see
         // pushCampSurvey's doc comment) — never via the row upsert above.
         pushCampSurvey(updated.id, stored);

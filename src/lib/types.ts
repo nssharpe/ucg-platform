@@ -459,6 +459,16 @@ export interface Registration {
   levelId: string;
   apparatus: string[]; // apparatus codes
   sessionId: string | null;
+  /** Which of the session's squads this registration is placed in — the DB's
+   *  own source of truth for squad membership (registrations.squad_id).
+   *  `Event.sessions[].squads[].athleteRegIds` (the reverse index) used to be
+   *  built from this at `loadAll` time; Phase 3 (data-layer-scale) removed
+   *  registrations from loadAll, so SquadBuilder (Events.tsx) now bootstraps
+   *  that reverse index from this field via the by-event slice instead —
+   *  see its `hydratedRef` effect. Read-only for that purpose; SquadBuilder
+   *  still writes squad_id via `pushRegistration`'s existing squadId
+   *  parameter / `pushEventSessions`, unchanged. */
+  squadId?: string | null;
   /** Placement category (e.g. "Collegiate Women", "Community Men+") — drives
    *  results grouping badges & filters, mirroring the Nationals results viewer. */
   category?: string;

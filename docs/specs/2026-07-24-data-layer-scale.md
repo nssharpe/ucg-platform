@@ -357,9 +357,78 @@ Phase 2's component-level numbers above still stand on their own: removing the f
 `registrations` as the dominant remaining cost — which is precisely what Phase 3
 addresses.
 
-**Phase 3 — Move `registrations` to slices.** The big one: 60 references across 20
-files. Tier 2 keeps "my registrations" synchronous, so the work concentrates in the
-event/club-scoped surfaces (Club, Events, host dashboards, nationals components).
+**Phase 3 — Move `registrations` to slices. ✅ DRAFTED 2026-07-27, branch
+`perf/6-3-phase3-registrations-slice`, NOT YET merged/deployed.** The big one: ~61
+references across ~20 files, closed out in four staged, individually-verified
+commits per file/concern group (Stage 1 infra → Stage 2 easy reads → Stage 3
+money-critical writes → Stage 4 arbitrary-person fetches + loadAll removal).
+
+*What shipped on the branch:* `src/lib/registrations-slice.ts`, reusing Phase
+2's `slice-cache.ts` infrastructure completely unchanged, implementing all SIX
+CONTRACT shapes (registrations needed two more than scores did — see the
+CONTRACT section above): `useEventRegistrations` (by event), `useMyRegistrations`
+(Tier 2 "mine", synchronous — `<MyRegistrationsBoot/>` mounted in App.tsx),
+`useRegistrationById` (single record), the unchanged `db.registrations`
+"everything" path (`pushAll`/`nationals.ts`, needed no changes — same
+conclusion Phase 2 reached for scores), `useClubRegistrations` (by club,
+cross-event — the shape scores didn't need), and `fetchRegistrationsForPerson`
+(arbitrary person, direct uncached fetch — the other new shape). `loadAll` no
+longer fetches `registrations`; `SEED_VERSION` bumped to 9.
+
+Every one of the ~61 original consumers was converted, plus several more the
+CONTRACT explicitly names as canonical (`Home.tsx`'s `ClubManagerCard`/
+`AthleteDashboard`) or that a full post-Stage-3 sweep turned up
+(`scoring.ts`'s `sessionResults`, `Results.tsx`). The COMPLETENESS section
+below was written from this phase's own recon and drove three real fixes,
+not just mechanical swaps:
+- **Club.tsx's `hasActiveReg` roster classification** (the highest-risk read
+  named below) gates the whole roster render on `status === 'ready'`.
+- **A write-side twin of the completeness bug**, found in three places
+  (Club.tsx's `swapAthlete`/waitlist-checkout, `MyRegistrations.tsx`'s
+  retain-and-blank loop, `AdminMembers.tsx`'s duplicate-athlete merge): code
+  that read `d.registrations.find(id)` to get a base row to update would
+  silently no-op once `d.registrations` is permanently empty in
+  Supabase-configured mode — every such site now falls back to the
+  already-fetched slice/fetch row instead of trusting `d.registrations` to
+  contain it.
+- **A real architectural gap in `loadAll` itself**: `Event.sessions[].squads[].athleteRegIds`
+  (which registration is placed in which squad) used to be built inside
+  `loadAll` by cross-referencing `registrations.squad_id` — with no other
+  data source. Fixed by adding `Registration.squadId` (mapped from the
+  already-selected `squad_id` column) and having `SquadBuilder` (Events.tsx)
+  bootstrap `athleteRegIds` from the by-event slice once, per session, via a
+  `hydratedSessionIds` ref-gated effect — otherwise every previously-built
+  squad would have silently rendered empty on reopen, and "Auto-split
+  evenly" would have overwritten real squad_id values with a fresh random
+  split on save.
+
+*Measured (2026-07-27, scale-seeded staging: 50,130 registrations, 175,000
+scores — the fullest seed run yet, not the ~30% partial run Phase 2 measured
+against):* a full paginated fetch of the entire `registrations` table — the
+load Phase 3 removes from every boot — took **22.9 s** and transferred
+**~24.7 MB** of JSON. The replacement, the largest single scale-seeded
+event's registrations (674 rows) via the new per-event slice fetch, took
+**~0.4 s / ~200 KB**, paid only when that event's page is opened.
+
+A full live end-to-end `loadAll()` boot comparison was blocked again, this
+time by a genuinely NEW finding (not a misdiagnosis like Phase 2's): once
+`memberships`/`invoices`/`invoice_items` hold 10k+ rows, ANON/AUTHENTICATED
+queries against them fail with `500` / "canceling statement due to statement
+timeout" — reproduced directly, and confirmed NOT a missing grant: a
+service-role client queries the same tables fine (12,498 memberships, no
+error). This reads like an expensive RLS policy (a per-row subquery/join)
+that nothing has exercised at this scale before now. **Untouched by the
+Phase 3 diff** (Phase 3 never reads either table) — a real, separate
+production risk worth investigating before a real nationals season
+accumulates 10k+ memberships/invoices, but out of scope for this phase.
+`docs/whats-next.md` carries the follow-up.
+
+*Reproduce/clean:* same `scripts/seed-scale.mjs` harness as Phase 1 — this
+run hit two transient `fetch failed`/`statement timeout` errors mid-seed and
+mid-clean respectively; both resolved on a plain re-run (the script's
+upserts are idempotent per the header comment). Verified restored to the
+documented baseline after `--clean`: scores 248, registrations 130, people
+84, events 4, clubs 9.
 
 **Phase 4 — Slim the `people` directory projection**, with full rows on demand.
 

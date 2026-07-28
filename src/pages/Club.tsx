@@ -26,6 +26,7 @@ import {
   syncSynchroPartnerLevelRemote, cancelWaitlistGroup,
 } from '../lib/supabase';
 import { cleanupCrossClubCart } from '../lib/cart-sync';
+import { useEventRegistrations, useClubRegistrations, applyLocalRegistrationUpsert, applyLocalRegistrationRemove, mergeUpsertedRegs } from '../lib/registrations-slice';
 import type { ClubMembership } from '../lib/types';
 import { ClubForm } from '../components/ClubForm';
 import { RegistrationEditor } from '../components/RegistrationEditor';
@@ -997,6 +998,14 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   const openEvents = db.events.filter((m) => eventIsInPhase(m, 'reg-open') || eventIsInPhase(m, 'reg-closed'));
   const [eventId, setEventId] = useState(openEvents.find((m) => eventIsInPhase(m, 'reg-open'))?.id ?? openEvents[0]?.id);
   const event = db.events.find((m) => m.id === eventId);
+  // Phase 3 (data-layer-scale): the by-event slice, replacing db.registrations
+  // throughout this component. Called unconditionally (Rules of Hooks) before
+  // any early return below — event?.id is undefined-safe. regsStatus gates
+  // the whole roster render further down: this file's `hasActiveReg`
+  // classification is the highest-risk read in the refactor (CLAUDE.md) — a
+  // partial slice makes a registered athlete look unregistered, inviting a
+  // manager to re-register and RE-CHARGE them, with no visible error.
+  const { rows: eventRegs, status: regsStatus } = useEventRegistrations(event?.id);
   const season = currentSeason(db)!;
   // B4.2: past the event's last-date-to-edit, only an admin or the event's
   // HOST club may still edit (client-side UX only — registrations_edit_lockout
@@ -1022,7 +1031,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   // clubId moved away), and their new club can't see the registration at all
   // (roster filter never included them, since mainClubId never changes).
   const eventRegAthleteIds = new Set(
-    db.registrations.filter((r) => r.eventId === event?.id && r.clubId === clubId && !r.refunded).map((r) => r.athleteId),
+    eventRegs.filter((r) => r.clubId === clubId && !r.refunded).map((r) => r.athleteId),
   );
   const athletes = db.people.filter(
     (p) => p.kind === 'athlete' && (p.mainClubId === clubId || eventRegAthleteIds.has(p.id)),
@@ -1039,12 +1048,24 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   // anyway, and the function is idempotent + no-op when clean, so a missed
   // immediate re-run just means the toast surfaces on the next mount/resync
   // instead of instantly — not a money-correctness gap like H5/H6/H7 above.
+  //
+  // Phase 3: cleanupCrossClubCart needs this CLUB's cross-event registrations
+  // (CONTRACT shape #5) — the club cart can hold pending lines for events
+  // other than the one currently selected above (eventRegs, by-event, isn't
+  // enough here). Gated on 'ready' so a loading slice can't cause a stale
+  // line to be missed this pass (idempotent — it'll be caught next time).
+  const clubRegsAllEvents = useClubRegistrations(clubId);
   useEffect(() => {
-    cleanupCrossClubCart(db, clubId, toast);
+    if (clubRegsAllEvents.status !== 'ready') return;
+    cleanupCrossClubCart(db, clubRegsAllEvents.rows, clubId, toast);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [db, clubId]);
+  }, [db, clubId, clubRegsAllEvents.status]);
 
   if (!event) return <p>No events accepting registration.</p>;
+  // MUST gate before computing hasActiveReg/registered/etc below (CONTRACT
+  // completeness rule) — a loading slice must never be treated as "this
+  // athlete has no registrations".
+  if (regsStatus === 'loading') return <p>Loading…</p>;
 
   const regClosed = !eventIsInPhase(event, 'reg-open');
   // event-mgmt v2 Phase 3 (§H): refunds only offered for events hosted by the
@@ -1090,8 +1111,8 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   // event-mgmt v2 Phase 3 spec §H: "name still appears in event materials"
   // for a post-edit-deadline refund) — but NOT a refunded row whose refund
   // deleted it outright (pre-deadline refunds have no row left at all).
-  const allRegs = db.registrations.filter(
-    (r) => r.eventId === event.id && r.clubId === clubId && (!r.refunded || r.keepListed),
+  const allRegs = eventRegs.filter(
+    (r) => r.clubId === clubId && (!r.refunded || r.keepListed),
   );
 
   const regsFor = (athleteId: string) => allRegs.filter((r) => r.athleteId === athleteId);
@@ -1162,14 +1183,17 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
       }
       const ids = new Set(deletable.map((r) => r.id));
       d.registrations = d.registrations.filter((r) => !ids.has(r.id));
-      for (const id of ids) deleteRegistration(id);
+      for (const reg of deletable) {
+        deleteRegistration(reg.id);
+        applyLocalRegistrationRemove(reg);
+      }
       for (const reg of kept) {
         const idx = d.registrations.findIndex((r) => r.id === reg.id);
-        if (idx >= 0) {
-          const next = { ...d.registrations[idx], waitlisted: false, waitlistGroupId: null };
-          d.registrations[idx] = next;
-          pushRegistration(next);
-        }
+        const base = idx >= 0 ? d.registrations[idx] : reg;
+        const next = { ...base, waitlisted: false, waitlistGroupId: null };
+        if (idx >= 0) d.registrations[idx] = next;
+        pushRegistration(next);
+        applyLocalRegistrationUpsert(next);
       }
     });
     if (!applied) return; // offline read-only gate — no false success toast
@@ -1195,7 +1219,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   // not an edit, so it deliberately never passes through changeIsEligible.
   const completeWaitlistCheckout = (group: WaitlistGroup) => {
     if (clubMembershipBlocked()) return;
-    const groupRegs = db.registrations.filter((r) => r.waitlistGroupId === group.id && r.waitlisted);
+    const groupRegs = eventRegs.filter((r) => r.waitlistGroupId === group.id && r.waitlisted);
     if (groupRegs.length === 0) return;
     const byAthlete = new Map<string, Registration[]>();
     for (const r of groupRegs) {
@@ -1208,8 +1232,11 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
       for (const [athleteId, regs] of byAthlete) {
         // Prior (non-waitlisted, non-refunded) regs the athlete already holds
         // at this event+club — drives second-discipline pricing + late anchor,
-        // mirroring addToCart's own computation.
-        const priorRegs = d.registrations.filter(
+        // mirroring addToCart's own computation. Read from the pre-write
+        // eventRegs snapshot (Phase 3), not d.registrations (empty once
+        // Stage 4 lands) — safe here since `regs` (this group's own rows,
+        // excluded below) are the only rows this mutate() call writes.
+        const priorRegs = eventRegs.filter(
           (r) => r.eventId === event.id && r.athleteId === athleteId && r.clubId === clubId
             && !r.refunded && !regs.some((g) => g.id === r.id) && !r.waitlisted,
         );
@@ -1222,16 +1249,17 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
         });
         for (const reg of regs) {
           const idx = d.registrations.findIndex((r) => r.id === reg.id);
-          if (idx < 0) continue;
+          const base = idx >= 0 ? d.registrations[idx] : reg;
           const next: Registration = {
-            ...d.registrations[idx],
+            ...base,
             waitlisted: false, // waitlistGroupId kept — audit trail + sweep pass-1 signal
             paid: entryTotal === 0, // host-club $0 (shouldn't normally be waitlisted, but stay consistent)
             updatedPending: false,
             holdExpiresAt: entryTotal > 0 ? holdStamp(event, event.sessions, Date.now()) : undefined,
           };
-          d.registrations[idx] = next;
+          if (idx >= 0) d.registrations[idx] = next;
           pushRegistration(next);
+          applyLocalRegistrationUpsert(next);
         }
         if (entryTotal > 0) {
           const athlete = d.people.find((p) => p.id === athleteId);
@@ -1260,7 +1288,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   // Cross-club lock (3d): the OTHER club this athlete is already PAID-registered
   // with for this event. Non-null ⇒ not selectable here. shortName for the note.
   const lockedToClubShortName = (athleteId: string): string | null => {
-    const otherClubId = paidRegistrationClub(db.registrations, {
+    const otherClubId = paidRegistrationClub(eventRegs, {
       athleteId, eventId: event.id, excludeClubId: clubId,
     });
     if (!otherClubId) return null;
@@ -1291,7 +1319,11 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
     let addedEntryFee = 0;
     let chargedChangeFee = 0;
     const applied = mutate((d) => {
-      const existingForAthlete = d.registrations.filter(
+      // Read from the pre-write eventRegs snapshot (Phase 3) — this is the
+      // FIRST read of registration state in this call, so it can't have gone
+      // stale relative to d.registrations (which is about to become
+      // perpetually empty in Supabase-configured mode once Stage 4 lands).
+      const existingForAthlete = eventRegs.filter(
         (r) => r.eventId === event.id && r.athleteId === athleteId && r.clubId === clubId && !r.refunded,
       );
 
@@ -1303,6 +1335,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
         if (!newDiscSet.has(old.discipline)) {
           d.registrations = d.registrations.filter((r) => r.id !== old.id);
           deleteRegistration(old.id);
+          applyLocalRegistrationRemove(old);
         }
       }
 
@@ -1382,6 +1415,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
           d.registrations.push(reg);
         }
         pushRegistration(reg);
+        applyLocalRegistrationUpsert(reg);
       }
 
       // Synchro same-level auto-sync (B4.4): whoever actively saves a partner
@@ -1392,7 +1426,12 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
       // PARTNER's own registration row (a different athlete, often a
       // different club) — the RPC re-derives + authorizes it server-side
       // from the caller's OWN just-saved registration.
-      const eventRegsForSync = d.registrations.filter((r) => r.eventId === event.id && !r.refunded);
+      //
+      // Phase 3: this needs the POST-upsert view (newRegs were just written
+      // above) — the pre-write eventRegs snapshot alone would miss them, so
+      // merge it with newRegs via mergeUpsertedRegs rather than re-reading
+      // d.registrations (which reflects the write only in demo mode).
+      const eventRegsForSync = mergeUpsertedRegs(eventRegs, newRegs).filter((r) => r.eventId === event.id && !r.refunded);
       for (const reg of newRegs) {
         const partnerUpdate = syncSynchroPartnerLevel(eventRegsForSync, reg);
         const mySyLevel = reg.apparatusLevels?.SY;
@@ -1400,6 +1439,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
           const idx = d.registrations.findIndex((r) => r.id === partnerUpdate.id);
           if (idx >= 0) d.registrations[idx] = partnerUpdate;
           syncSynchroPartnerLevelRemote(reg.id, mySyLevel);
+          applyLocalRegistrationUpsert(partnerUpdate);
         }
       }
 
@@ -1492,8 +1532,12 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   const addToCart = (athleteId: string, regs: Registration[]) => {
     if (clubMembershipBlocked()) return;
     let hostFree = false;
-    const applied = mutate((d) => {
-      const existingForAthlete = d.registrations.filter(
+    // Offline-gated via mutate() even though this step doesn't touch `d` —
+    // it stamps paid/holdExpiresAt on `regs` (a parameter), and must not run
+    // at all while offline (the same guarantee mutate()'s single choke point
+    // gives every other write).
+    const applied = mutate((_d) => {
+      const existingForAthlete = eventRegs.filter(
         (r) => r.eventId === event.id && r.athleteId === athleteId && r.clubId === clubId && !r.refunded,
       );
       const priorDisciplineCount = existingForAthlete.length;
@@ -1538,7 +1582,10 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
       );
       const athlete = d.people.find((p) => p.id === athleteId)!;
       if (!already.has(athleteId)) {
-        const priorRegsForLine = d.registrations.filter(
+        // eventRegs (pre-write snapshot) is equivalent to d.registrations
+        // here: `regs` are explicitly excluded either way, and eventRegs
+        // never had them in the first place.
+        const priorRegsForLine = eventRegs.filter(
           (r) => r.eventId === event.id && r.athleteId === athleteId && r.clubId === clubId && !r.refunded
             && !regs.some((nr) => nr.id === r.id),
         );
@@ -1574,7 +1621,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   // function (eligibility/authorization/audit row/emails), matching the
   // self-serve flow in MyRegistrations.tsx.
   const openRefundDialog = (athleteId: string) => {
-    const regs = db.registrations.filter(
+    const regs = eventRegs.filter(
       (x) => x.eventId === event.id && x.athleteId === athleteId && x.clubId === clubId
         && !x.refunded && !x.refundRequested && x.paid === true,
     );
@@ -1588,51 +1635,59 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
 
   // Swap a registration to another club athlete (who has membership). Applies the
   // change fee when within the change-fee window (e.g. after reg close).
+  //
+  // Phase 3 (data-layer-scale): the transformation is computed as a pure step
+  // over the pre-write eventRegs snapshot BEFORE calling mutate(), rather than
+  // mutating d.registrations rows in place and re-reading d.registrations for
+  // the synchro-partner repoint pass — d.registrations will be perpetually
+  // empty in Supabase-configured mode once Stage 4 removes registrations from
+  // loadAll, so an in-place-mutate-then-reread pattern would silently no-op
+  // every part of this function. mutate() below only applies the precomputed
+  // rows to d.registrations for demo-mode's sake and fans out to the slice.
   const swapAthlete = (fromId: string, toId: string) => {
     const to = db.people.find((p) => p.id === toId);
     if (!to) return;
     const swapFee = changeFeeApplies ? registrationChangeFee(event, { competingClubId: clubId }) : 0;
+
+    const toSwap = eventRegs.filter((r) => r.eventId === event.id && r.athleteId === fromId && r.clubId === clubId && !r.refunded);
+    // Snapshot the FULL prior registration row (before athleteId/paid/
+    // updatedPending are transformed below) so deleting the resulting
+    // change-fee cart item later can revert the swap (unified-cart-b2 Task A).
+    const priorById = new Map(toSwap.map((r) => [r.id, r]));
+    const swapped: Registration[] = toSwap.map((r) => {
+      const next: Registration = { ...r, athleteId: toId };
+      // A chargeable swap re-pends a previously-paid registration.
+      if (swapFee > 0 && r.paid) { next.paid = false; next.updatedPending = true; }
+      // A chargeable swap adds a change-fee cart line below referencing every
+      // swapped reg — stamp a fresh capacity hold on all of them (event-mgmt
+      // v2 P4), matching that line's condition exactly.
+      if (swapFee > 0 && event.changeFee) { next.holdExpiresAt = holdStamp(event, event.sessions, Date.now()); }
+      return next;
+    });
+    const swappedRegIds = swapped.map((r) => r.id);
+
+    // 3e: any OTHER (event-scoped, non-refunded) registration that named the
+    // swapped-OUT athlete as its synchro partner must now point at the
+    // swapped-IN athlete. Scope mirrors the partner model (same event, not
+    // refunded). reassignPartners skips the swapped athletes' own rows.
+    // Computed over the POST-swap view (eventRegs merged with `swapped`) so a
+    // partner's own row reflects the just-applied swap even within this same
+    // synchronous call.
+    const postSwapEventRegs = mergeUpsertedRegs(eventRegs.filter((r) => r.eventId === event.id && !r.refunded), swapped);
+    const repointed = reassignPartners(postSwapEventRegs, fromId, toId);
+
     const applied = mutate((d) => {
-      const swappedRegIds: string[] = [];
-      // Snapshot the FULL prior registration row (before athleteId/paid/
-      // updatedPending are mutated below) so deleting the resulting change-fee
-      // cart item later can revert the swap (unified-cart-b2 Task A).
-      const priorById = new Map<string, Registration>();
-      for (const r of d.registrations) {
-        if (r.eventId === event.id && r.athleteId === fromId && r.clubId === clubId && !r.refunded) {
-          priorById.set(r.id, { ...r });
-          r.athleteId = toId;
-          // A chargeable swap re-pends a previously-paid registration.
-          if (swapFee > 0 && r.paid) {
-            r.paid = false;
-            r.updatedPending = true;
-          }
-          // A chargeable swap adds a change-fee cart line below referencing
-          // every swapped reg — stamp a fresh capacity hold on all of them
-          // (event-mgmt v2 P4), matching that line's condition exactly.
-          if (swapFee > 0 && event.changeFee) {
-            r.holdExpiresAt = holdStamp(event, event.sessions, Date.now());
-          }
-          swappedRegIds.push(r.id);
-          pushRegistration(r, r.sessionId);
-        }
+      for (const sw of swapped) {
+        const idx = d.registrations.findIndex((r) => r.id === sw.id);
+        if (idx >= 0) d.registrations[idx] = sw;
+        pushRegistration(sw, sw.sessionId);
+        applyLocalRegistrationUpsert(sw);
       }
-      // 3e: any OTHER (event-scoped, non-refunded) registration that named the
-      // swapped-OUT athlete as its synchro partner must now point at the
-      // swapped-IN athlete. Scope mirrors the partner model (same event, not
-      // refunded). reassignPartners skips the swapped athletes' own rows.
-      const eventRegs = d.registrations.filter((r) => r.eventId === event.id && !r.refunded);
-      const repointed = reassignPartners(
-        eventRegs.map((r) => ({ id: r.id, athleteId: r.athleteId, partnerAthleteId: r.partnerAthleteId ?? null })),
-        fromId,
-        toId,
-      );
-      for (const rp of repointed) {
-        const reg = d.registrations.find((r) => r.id === rp.id);
-        if (reg) {
-          reg.partnerAthleteId = rp.partnerAthleteId;
-          pushRegistration(reg, reg.sessionId);
-        }
+      for (const reg of repointed) {
+        const idx = d.registrations.findIndex((r) => r.id === reg.id);
+        if (idx >= 0) d.registrations[idx] = reg;
+        pushRegistration(reg, reg.sessionId);
+        applyLocalRegistrationUpsert(reg);
       }
 
       if (swapFee > 0 && event.changeFee) {
@@ -1736,7 +1791,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
       {canManage && (db.waitlistGroups ?? [])
         .filter((g) => g.eventId === event.id && g.clubId === clubId && g.status === 'notified')
         .map((g) => {
-          const groupRegs = db.registrations.filter((r) => r.waitlistGroupId === g.id && r.waitlisted);
+          const groupRegs = eventRegs.filter((r) => r.waitlistGroupId === g.id && r.waitlisted);
           if (groupRegs.length === 0) return null;
           const names = [...new Set(groupRegs.map((r) => nameOf(r.athleteId)))].join(', ');
           return (
@@ -1982,13 +2037,13 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
             onSave={(regs) => saveRegs(editingAthlete.id, regs)}
             onCancel={() => setEditingAthleteId(null)}
             changeFeeApplies={changeFeeApplies}
-            incomingPartnerId={findIncomingSynchroPartner(db.registrations, event.id, editingAthlete.id)?.athleteId ?? null}
+            incomingPartnerId={findIncomingSynchroPartner(eventRegs, event.id, editingAthlete.id)?.athleteId ?? null}
             incomingPartnerSyLevel={(() => {
-              const r = findIncomingSynchroPartner(db.registrations, event.id, editingAthlete.id);
+              const r = findIncomingSynchroPartner(eventRegs, event.id, editingAthlete.id);
               return r ? (r.apparatusLevels?.SY ?? r.levelId) : null;
             })()}
             isAdmin={caps.isAdmin}
-            allEventRegs={db.registrations.filter((r) => r.eventId === event.id && !r.refunded)}
+            allEventRegs={eventRegs.filter((r) => !r.refunded)}
             waitlistGroups={db.waitlistGroups?.filter((g) => g.eventId === event.id) ?? []}
           />
         </Modal>
@@ -2010,12 +2065,12 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
             season={season}
             onSave={(regs) => addToCart(registerAthlete.id, regs)}
             onCancel={() => setRegisterAthleteId(null)}
-            incomingPartnerId={findIncomingSynchroPartner(db.registrations, event.id, registerAthlete.id)?.athleteId ?? null}
+            incomingPartnerId={findIncomingSynchroPartner(eventRegs, event.id, registerAthlete.id)?.athleteId ?? null}
             incomingPartnerSyLevel={(() => {
-              const r = findIncomingSynchroPartner(db.registrations, event.id, registerAthlete.id);
+              const r = findIncomingSynchroPartner(eventRegs, event.id, registerAthlete.id);
               return r ? (r.apparatusLevels?.SY ?? r.levelId) : null;
             })()}
-            allEventRegs={db.registrations.filter((r) => r.eventId === event.id && !r.refunded)}
+            allEventRegs={eventRegs.filter((r) => !r.refunded)}
             waitlistGroups={db.waitlistGroups?.filter((g) => g.eventId === event.id) ?? []}
           />
         </Modal>

@@ -11,6 +11,7 @@ import { APPARATUS } from '../lib/types';
 import type { Registration, Score } from '../lib/types';
 import type { AthleteResult } from '../lib/scoring';
 import { useEventScores } from '../lib/scores-slice';
+import { useEventRegistrations } from '../lib/registrations-slice';
 import { eventIsInPhase } from '../lib/events-core';
 import { appBaseUrl, copyToClipboard } from '../lib/url';
 
@@ -77,10 +78,11 @@ export function EventResults() {
   // overlay is now wired as the slice's own invalidation signal
   // (scores-slice.ts), so this is just a normal by-event read.
   const { rows: eventScores, status: scoresStatus } = useEventScores(event?.id);
+  const { rows: eventRegs, status: regsStatus } = useEventRegistrations(event?.id);
 
   const computed = useMemo(
-    () => (event && session ? sessionResults(db, event, session.id, eventScores) : null),
-    [db, event, session, eventScores],
+    () => (event && session ? sessionResults(event, session.id, eventScores, eventRegs) : null),
+    [event, session, eventScores, eventRegs],
   );
 
   // Tie-aware places (1,2,2,4) per (level, category) group — the viewer's
@@ -192,8 +194,8 @@ export function EventResults() {
         />
       </div>
 
-      {scoresStatus === 'loading' ? (
-        <p style={{ color: 'var(--ink-soft)', fontSize: 14 }}>Loading scores…</p>
+      {scoresStatus === 'loading' || regsStatus === 'loading' ? (
+        <p style={{ color: 'var(--ink-soft)', fontSize: 14 }}>Loading…</p>
       ) : (
       <>
       {view === 'aa' && (

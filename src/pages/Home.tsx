@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { useDB } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { useMyScores } from '../lib/scores-slice';
+import { useMyRegistrations, useClubRegistrations } from '../lib/registrations-slice';
 import { Stat, Badge } from '../components/ui';
 import { useFmtDate } from '../components/ui-hooks';
 import { fmtMoney } from '../lib/scoring';
@@ -236,6 +237,9 @@ function ClubManagerCard({ clubId }: { clubId: string }) {
   const db = useDB();
   const fmtDate = useFmtDate();
   const season = currentSeason(db);
+  // Phase 3 (data-layer-scale), CONTRACT shape #5 (by club, cross-event) —
+  // called unconditionally (Rules of Hooks) before the early returns below.
+  const { rows: clubRegs, status: clubRegsStatus } = useClubRegistrations(clubId);
   const club = db.clubs.find((c) => c.id === clubId);
   if (!club) return null;
   if (!season) return null; // no active season configured — nothing to show
@@ -252,10 +256,12 @@ function ClubManagerCard({ clubId }: { clubId: string }) {
   );
 
   // Events this club is registered for (at least one athlete reg from this club)
+  // — no by-event slice can serve this (it's discovering events, not scoped
+  // to one), hence the dedicated by-club, cross-event slice (CONTRACT shape #5).
   const clubEventIds = [...new Set(
-    db.registrations.filter((r) => r.clubId === clubId && !r.refunded).map((r) => r.eventId)
+    clubRegs.filter((r) => r.clubId === clubId && !r.refunded).map((r) => r.eventId)
   )];
-  const clubEvents = db.events.filter((m) => clubEventIds.includes(m.id));
+  const clubEvents = clubRegsStatus === 'ready' ? db.events.filter((m) => clubEventIds.includes(m.id)) : [];
 
   return (
     <div className="card card-pad">
@@ -364,6 +370,7 @@ function AthleteDashboard() {
   const fmtDate = useFmtDate();
   const caps = useCapabilities();
   const myScoresAll = useMyScores(); // hooks run unconditionally, before the early returns below
+  const myRegsAll = useMyRegistrations(); // Phase 3, CONTRACT shape #2 ("mine") — same reasoning
   const me = caps.person;
   const season = currentSeason(db);
   if (!me) return null;
@@ -382,7 +389,7 @@ function AthleteDashboard() {
   }));
   const allMembershipsActive = membershipItems.length > 0
     && membershipItems.every((it) => it.row?.status === 'active');
-  const myRegs = db.registrations.filter((r) => r.athleteId === me.id && !r.refunded);
+  const myRegs = myRegsAll.filter((r) => r.athleteId === me.id && !r.refunded);
   const openEvents = db.events.filter((m) => eventIsInPhase(m, 'reg-open'));
 
   // Clubs the athlete is associated with

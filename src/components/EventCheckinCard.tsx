@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { pushEventCheckin, confirmEventCheckin } from '../lib/supabase';
+import { useEventRegistrations } from '../lib/registrations-slice';
 import { checkinAthleteCount } from '../lib/pricing';
 import { Modal, Field, Badge } from './ui';
 import type { EventCheckin } from '../lib/types';
@@ -28,7 +29,9 @@ export function EventCheckinCard({ eventId, scope }: { eventId: string; scope: E
   const db = useDB();
   const caps = useCapabilities();
 
-  const regs = db.registrations.filter((r) => {
+  // Phase 3 (data-layer-scale): the by-event slice instead of db.registrations.
+  const { rows: eventRegs, status: regsStatus } = useEventRegistrations(eventId);
+  const regs = eventRegs.filter((r) => {
     if (r.eventId !== eventId || r.refunded || r.waitlisted) return false;
     return scope.clubId ? r.clubId === scope.clubId : r.athleteId === scope.personId;
   });
@@ -40,6 +43,15 @@ export function EventCheckinCard({ eventId, scope }: { eventId: string; scope: E
   });
 
   const isClub = !!scope.clubId;
+
+  if (regsStatus === 'loading') {
+    return (
+      <div className="card card-pad" style={{ marginBottom: 18 }}>
+        <h3 className="card-title">Check-in</h3>
+        <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)' }}>Loading…</p>
+      </div>
+    );
+  }
 
   return (
     <div className="card card-pad" style={{ marginBottom: 18 }}>
@@ -156,7 +168,9 @@ function CheckinOpenForm({ row, isClub, myPersonId }: {
 export function EventCheckinAdminCard({ eventId }: { eventId: string }) {
   const db = useDB();
   const caps = useCapabilities();
-  const regs = db.registrations.filter((r) => r.eventId === eventId && !r.refunded && !r.waitlisted);
+  // Phase 3 (data-layer-scale): the by-event slice instead of db.registrations.
+  const { rows: eventRegs, status: regsStatus } = useEventRegistrations(eventId);
+  const regs = eventRegs.filter((r) => r.eventId === eventId && !r.refunded && !r.waitlisted);
 
   const clubOptions = [...new Set(regs.map((r) => r.clubId))]
     .map((clubId) => db.clubs.find((c) => c.id === clubId))
@@ -209,6 +223,16 @@ export function EventCheckinAdminCard({ eventId }: { eventId: string }) {
       check-in from their own account; the selector below previews a specific club's check-in screen.
     </p>
   );
+
+  if (regsStatus === 'loading') {
+    return (
+      <div className="card card-pad" style={{ marginBottom: 18 }}>
+        <h3 className="card-title">Check-in — open &amp; view as</h3>
+        {explainer}
+        <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)' }}>Loading…</p>
+      </div>
+    );
+  }
 
   if (rows.length === 0) {
     return (

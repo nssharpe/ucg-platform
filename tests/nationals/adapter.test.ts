@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { DB, Event, NationalsConfig, Score } from '../../src/lib/types';
+import type { DB, Event, NationalsConfig, Registration, Score } from '../../src/lib/types';
 import {
   platformCategory,
   buildEntries,
@@ -57,7 +57,7 @@ function scenario() {
   });
 
   const db = { levels: [], clubs, people, events: [event], registrations, scores } as unknown as DB;
-  return { db, event, scores: scores as unknown as Score[] };
+  return { db, event, registrations: registrations as unknown as Registration[], scores: scores as unknown as Score[] };
 }
 
 describe('nationals adapter', () => {
@@ -68,8 +68,8 @@ describe('nationals adapter', () => {
   });
 
   it('builds engine entries from registrations + scores', () => {
-    const { db, event, scores } = scenario();
-    const entries = buildEntries(db, event, 'WAG', scores, 'prelim');
+    const { db, event, registrations, scores } = scenario();
+    const entries = buildEntries(db, event, registrations, 'WAG', scores, 'prelim');
     expect(entries).toHaveLength(4);
     const a = entries.find((e) => e.first === 'A')!;
     expect(a.category).toBe('Community Women+');
@@ -79,8 +79,8 @@ describe('nationals adapter', () => {
   });
 
   it('computes prelim AA placement + qualification through the engine', () => {
-    const { db, event, scores } = scenario();
-    const { prelims } = computeArtisticDiscipline(db, event, 'WAG', scores);
+    const { db, event, registrations, scores } = scenario();
+    const { prelims } = computeArtisticDiscipline(db, event, registrations, 'WAG', scores);
     const byName = new Map(prelims.results.map((r) => [r.entry.first, r]));
     expect(byName.get('A')!.aa!.place).toBe(1);
     expect(byName.get('D')!.aa!.place).toBe(4);
@@ -90,18 +90,18 @@ describe('nationals adapter', () => {
   });
 
   it('scratched scores are excluded from placement', () => {
-    const { db, event, scores } = scenario();
+    const { db, event, registrations, scores } = scenario();
     // Scratch athlete A's vault — still place-eligible on other events, but VT place skips A.
     const aVault = (scores as unknown as { regId: string; apparatus: string; scratched?: boolean }[]).find((s) => s.regId === 'r0' && s.apparatus === 'VT')!;
     aVault.scratched = true;
-    const { prelims } = computeArtisticDiscipline(db, event, 'WAG', scores);
+    const { prelims } = computeArtisticDiscipline(db, event, registrations, 'WAG', scores);
     const a = prelims.results.find((r) => r.entry.first === 'A')!;
     expect(a.apparatus.VT.place).toBeNull();
   });
 
   it('computeNationals returns a WAG bundle for a Nationals event', () => {
-    const { db, event, scores } = scenario();
-    const bundle = computeNationals(db, event, scores);
+    const { db, event, registrations, scores } = scenario();
+    const bundle = computeNationals(db, event, registrations, scores);
     expect(bundle.wag).toBeTruthy();
     expect(bundle.wag!.awards.length).toBeGreaterThan(0);
   });

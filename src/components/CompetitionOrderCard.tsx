@@ -9,6 +9,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useDB, mutate } from '../lib/store';
+import { useEventRegistrations } from '../lib/registrations-slice';
 import { pushCompetitionOrder } from '../lib/supabase';
 import { APPARATUS } from '../lib/types';
 import type { Event, CompetitionOrder, Level } from '../lib/types';
@@ -39,10 +40,12 @@ export function CompetitionOrderCard({
 }) {
   const db = useDB();
 
-  // Read db.* directly each render (M6 in-place-mutation trap, CLAUDE.md) —
-  // mutate() never reassigns db.registrations/db.competitionOrders on an
-  // in-place update.
-  const clubRegs = db.registrations.filter(
+  // Phase 3 (data-layer-scale): registrations read from the by-event slice
+  // instead of db.registrations — also sidesteps the M6 in-place-mutation
+  // trap (mutate() never reassigns db.registrations on an update), since
+  // eventRegs is a fresh array reference on every slice update.
+  const { rows: eventRegs, status: regsStatus } = useEventRegistrations(event.id);
+  const clubRegs = eventRegs.filter(
     (r) => r.eventId === event.id && r.clubId === clubId
       && (r.discipline === 'MAG' || r.discipline === 'WAG')
       && !r.refunded && !r.waitlisted,
@@ -56,7 +59,21 @@ export function CompetitionOrderCard({
 
   const [levelId, setLevelId] = useState<string | undefined>(undefined);
 
-  if (!canManage || levels.length === 0) return null;
+  if (!canManage) return null;
+  // Distinguish "still loading" from "genuinely no MAG/WAG registrations" —
+  // the latter is this card's real empty state and stays a silent `null`
+  // (mirrors the pre-slice behavior); the former would otherwise render
+  // nothing while data is in flight, which reads as "nothing to set up here"
+  // rather than "still loading".
+  if (regsStatus === 'loading') {
+    return (
+      <div className="card card-pad" style={{ marginBottom: 18 }}>
+        <h3 className="card-title">Set competition order</h3>
+        <p style={{ fontSize: 13, color: 'var(--ink-soft)' }}>Loading…</p>
+      </div>
+    );
+  }
+  if (levels.length === 0) return null;
 
   const level = levels.find((l) => l.id === levelId) ?? levels[0];
   const locked = !!event.competitionOrderLocked;
@@ -69,7 +86,7 @@ export function CompetitionOrderCard({
     .filter((c) => apparatusCodes.has(c));
 
   const nameOf = (regId: string): string => {
-    const reg = db.registrations.find((r) => r.id === regId);
+    const reg = eventRegs.find((r) => r.id === regId);
     const p = reg ? db.people.find((x) => x.id === reg.athleteId) : undefined;
     return p ? `${p.firstName} ${p.lastName}` : 'Unknown athlete';
   };

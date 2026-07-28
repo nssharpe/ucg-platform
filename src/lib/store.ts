@@ -21,7 +21,11 @@ const LS_KEY = 'ucg-db-v1';
 // now) — a stale v7 snapshot could carry a multi-MB `db.scores` array from
 // before this change, so it must be discarded and reseeded/re-synced rather
 // than loaded, which is exactly what removes the payload this phase targets.
-const SEED_VERSION = 8;
+// Bumped to 9 for Phase 3 (2026-07-27 data-layer-scale): registrations no
+// longer ride along in a Supabase-backed snapshot either
+// (src/lib/registrations-slice.ts owns that read path now) — same reasoning,
+// a stale v8 snapshot could carry a multi-MB `db.registrations` array.
+const SEED_VERSION = 9;
 
 let db: DB = load();
 const listeners = new Set<() => void>();
