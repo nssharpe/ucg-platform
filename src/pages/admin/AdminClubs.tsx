@@ -9,6 +9,7 @@ import type { Club, ClubRequest, Region } from '../../lib/types';
 import { pushClub, pushClubManager, pushClubRequest } from '../../lib/supabase';
 import { currentSeason } from '../../lib/season-lifecycle';
 import { useAdminMemberships, groupAdminMembershipsByPerson } from '../../lib/memberships-admin-slice';
+import { useAdminPeople } from '../../lib/people-admin-slice';
 
 // ---------- Clubs ----------
 export function AdminClubs() {
@@ -27,9 +28,16 @@ export function AdminClubs() {
   // just hasn't arrived yet, not an obviously-missing row.
   const { rows: adminMembershipRows, status: membershipsStatus } = useAdminMemberships();
   const membershipsByPerson = useMemo(() => groupAdminMembershipsByPerson(adminMembershipRows), [adminMembershipRows]);
+  // Phase 4 (data-layer-scale.md): same reasoning as adminMembershipRows
+  // above — this page shows every club's roster, so people are also
+  // league-wide (shape #3). Roster/Active counts below already gate on
+  // membershipsStatus === 'ready'; peopleReady adds the analogous gate for
+  // the roster COUNT itself.
+  const { rows: adminPeopleRows, status: peopleStatus } = useAdminPeople();
+  const peopleReady = peopleStatus === 'ready';
 
   const personName = (id: string | null) => {
-    const p = id ? db.people.find((x) => x.id === id) : null;
+    const p = id ? adminPeopleRows.find((x) => x.id === id) : null;
     return p ? `${p.firstName} ${p.lastName}` : 'Unknown';
   };
 
@@ -109,7 +117,7 @@ export function AdminClubs() {
         <span style={{ fontSize: 13, color: 'var(--ink-soft)' }}>{filteredClubs.length} club{filteredClubs.length !== 1 ? 's' : ''}</span>
         <button className="btn primary" style={{ marginLeft: 'auto' }} onClick={() => setEditing('new')}>+ New club</button>
       </div>
-      {membershipsStatus === 'loading' && (
+      {(membershipsStatus === 'loading' || peopleStatus === 'loading') && (
         <p style={{ color: 'var(--ink-soft)', fontSize: 13, marginBottom: 8 }}>Loading membership status…</p>
       )}
       <div className="card" style={{ overflow: 'hidden' }}>
@@ -117,25 +125,25 @@ export function AdminClubs() {
           <thead><tr><th>Club</th><th>Region</th><th className="num">Roster</th><th className="num">Active</th><th>Flags</th><th /></tr></thead>
           <tbody>
             {filteredClubs.map((c) => {
-              const roster = db.people.filter((p) => p.mainClubId === c.id);
+              const roster = peopleReady ? adminPeopleRows.filter((p) => p.mainClubId === c.id) : [];
               const membershipsReady = membershipsStatus === 'ready';
               const hasActiveMembership = (p: (typeof roster)[number]) =>
                 (membershipsByPerson.get(p.id) ?? []).some((m) => m.seasonId === season.id && m.status === 'active');
-              const active = membershipsReady ? roster.filter(hasActiveMembership) : [];
-              const coaches = membershipsReady ? roster.filter((p) => p.kind === 'coach' && hasActiveMembership(p)) : [];
+              const active = membershipsReady && peopleReady ? roster.filter(hasActiveMembership) : [];
+              const coaches = membershipsReady && peopleReady ? roster.filter((p) => p.kind === 'coach' && hasActiveMembership(p)) : [];
               const pendingCart = (db.carts[c.id] ?? []).length;
               const flags: string[] = [];
-              // "No coaches" depends on membership data being loaded — never
-              // flag it from an empty-because-still-loading set.
-              if (membershipsReady && coaches.length === 0) flags.push('No coaches');
+              // "No coaches" depends on membership AND people data being
+              // loaded — never flag it from an empty-because-still-loading set.
+              if (membershipsReady && peopleReady && coaches.length === 0) flags.push('No coaches');
               if (pendingCart > 0) flags.push(`${pendingCart} unpaid cart items`);
               return (
                 <tr key={c.id}>
                   <td><Link to={`/club/${c.id}`} style={{ fontWeight: 600 }}>{c.name}</Link></td>
                   <td>{c.region}</td>
-                  <td className="num">{roster.length}</td>
-                  <td className="num">{membershipsReady ? active.length : '…'}</td>
-                  <td>{!membershipsReady ? null : flags.length === 0 ? <Badge tone="ok">✓ Complete</Badge> : flags.map((f) => <Badge key={f} tone="warn">{f}</Badge>)}</td>
+                  <td className="num">{peopleReady ? roster.length : '…'}</td>
+                  <td className="num">{membershipsReady && peopleReady ? active.length : '…'}</td>
+                  <td>{!membershipsReady || !peopleReady ? null : flags.length === 0 ? <Badge tone="ok">✓ Complete</Badge> : flags.map((f) => <Badge key={f} tone="warn">{f}</Badge>)}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
                     <button className="btn small ghost" onClick={() => setEditing(c)}>Edit</button>{' '}
                     <a className="btn small ghost" href={`mailto:${c.email}`}>✉ Contact</a>

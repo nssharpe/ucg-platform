@@ -10,6 +10,7 @@ import { estimateSmsCost, partitionByConsent } from '../../lib/sms-send';
 import { classifyDeliveryStatus } from '../../lib/sms-inbound';
 import { currentSeason } from '../../lib/season-lifecycle';
 import { useAdminMemberships, groupAdminMembershipsByPerson } from '../../lib/memberships-admin-slice';
+import { useAdminPeople } from '../../lib/people-admin-slice';
 
 // ---------- Communicate ----------
 
@@ -208,14 +209,22 @@ export function Communicate() {
   const { rows: adminMembershipRows, status: membershipsStatus } = useAdminMemberships();
   const membershipsByPerson = useMemo(() => groupAdminMembershipsByPerson(adminMembershipRows), [adminMembershipRows]);
   const membershipFilterActive = aud.withMembership !== 'any';
-  const membershipFilterBlocked = membershipFilterActive && membershipsStatus !== 'ready';
+  // Phase 4 (data-layer-scale.md): db.people at boot no longer covers the
+  // whole league — the audience filter needs everyone, same league-wide
+  // shape (#3) as the memberships fetch above and the SAME "wrong SEND, not
+  // just a wrong number" stakes: an unfiltered `db.people` (boot-scoped to
+  // just the admin's own club, if any) would silently under-address every
+  // send. Gated into membershipFilterBlocked below so the Send button stays
+  // disabled and recipients stays empty (never wrongly-filtered) until ready.
+  const { rows: adminPeopleRows, status: peopleStatus } = useAdminPeople();
+  const membershipFilterBlocked = (membershipFilterActive && membershipsStatus !== 'ready') || peopleStatus !== 'ready';
 
   const recipients = useMemo(() => {
     // The membership filter can't be evaluated correctly until it's loaded —
     // return no recipients rather than a wrongly-filtered set (never send to
     // the wrong list because a fetch hadn't finished yet).
     if (membershipFilterBlocked) return [];
-    return db.people.filter((p) => {
+    return adminPeopleRows.filter((p) => {
       const isManager = managerIdSet.has(p.id);
       // Include the person if they match ANY checked audience group. Checking
       // "Club managers" must include a manager regardless of whether they are an
@@ -236,7 +245,7 @@ export function Communicate() {
       }
       return true;
     });
-  }, [db.people, db.clubs, managerIdSet, aud, regions, season.id, membershipFilterBlocked, membershipsByPerson]);
+  }, [adminPeopleRows, db.clubs, managerIdSet, aud, regions, season.id, membershipFilterBlocked, membershipsByPerson]);
 
   // Club emails for the recipient list
   const clubEmailRows = useMemo(() => {
@@ -257,16 +266,16 @@ export function Communicate() {
   // People options for test-send Combo
   // For text-message sends, search/show by phone; for email, by email.
   const peopleOptions = useMemo(() =>
-    db.people.map((p) => ({
+    adminPeopleRows.map((p) => ({
       value: p.id,
       label: `${p.firstName} ${p.lastName}`,
       sub: channel === 'sms' ? (p.phone || '(no phone)') : p.email,
     })).sort((a, b) => a.label.localeCompare(b.label)),
-    [db.people, channel]
+    [adminPeopleRows, channel]
   );
 
   const addTestPerson = (id: string) => {
-    const p = db.people.find((x) => x.id === id);
+    const p = adminPeopleRows.find((x) => x.id === id);
     if (!p || testGroup.some((x) => x.id === id)) return;
     setTestGroup((g) => [...g, p]);
     setTestPersonId(null);
@@ -554,7 +563,7 @@ export function Communicate() {
             matching your Audience filters{channel === 'sms' ? ' who have opted in to SMS' : ''}.
           </p>
           {membershipFilterBlocked && (
-            <p style={{ fontSize: 13, color: 'var(--ink-soft)' }}>Loading membership status for the audience filter…</p>
+            <p style={{ fontSize: 13, color: 'var(--ink-soft)' }}>Loading the audience list…</p>
           )}
           <button
             className="btn primary"
