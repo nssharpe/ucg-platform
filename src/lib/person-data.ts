@@ -100,9 +100,13 @@ export interface PersonDataExport {
  *  the query for an arbitrary person) before calling in. `invoices` is the
  *  same shape (Tier 2, whats-next.md §7 — loadAll's boot read is scoped to
  *  the caller's own + managed-club invoices) — the caller fetches via
- *  `fetchInvoicesForPersonRemote` (supabase.ts) before calling in. */
-export function collectPersonData(db: DB, personId: string, scores: Score[], allRegistrations: Registration[], invoices: Invoice[]): PersonDataExport {
-  const person = db.people.find((p) => p.id === personId) ?? null;
+ *  `fetchInvoicesForPersonRemote` (supabase.ts) before calling in. `person`
+ *  is the same shape again (Phase 4, data-layer-scale.md — loadAll's people
+ *  read is now ALSO scoped to self + managed-club rosters) — the caller
+ *  fetches via `fetchPersonRemote` (supabase.ts, uncached direct fetch) and
+ *  passes it in rather than this function reading `db.people.find`, since an
+ *  export subject is routinely someone outside the admin's own boot scope. */
+export function collectPersonData(db: DB, personId: string, scores: Score[], allRegistrations: Registration[], invoices: Invoice[], person: Athlete | null): PersonDataExport {
   const authUserId = person?.authUserId ?? null;
 
   // Defensive filter: real callers (fetchRegistrationsForPerson /

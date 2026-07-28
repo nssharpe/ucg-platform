@@ -10,7 +10,7 @@ import { membershipTypeOf } from '../lib/capabilities-core';
 import { isProfileDirty } from '../lib/profile-core';
 import { currentSeason } from '../lib/season-lifecycle';
 import { GENERAL_WAIVER_TYPE } from '../lib/types';
-import { pushClubRequest, pushMembership, pushPerson, deleteRegistration, sendEmail, createWaiverLink, fetchPublishedWaiver, requestManagerAccess, adminDeletePerson, fetchInvoicesForPersonRemote } from '../lib/supabase';
+import { pushClubRequest, pushMembership, pushPerson, deleteRegistration, sendEmail, createWaiverLink, fetchPublishedWaiver, requestManagerAccess, adminDeletePerson, fetchInvoicesForPersonRemote, fetchPersonRemote } from '../lib/supabase';
 import { getSession, useAuthLoading, useRolesLoaded } from '../lib/auth';
 import { syncFromSupabase } from '../lib/store';
 import { MfaSection } from './ProfileMfa';
@@ -23,6 +23,7 @@ import { collectPersonData } from '../lib/person-data';
 import { fetchScoresForRegIds } from '../lib/scores-slice';
 import { fetchRegistrationsForPerson, applyLocalRegistrationRemove } from '../lib/registrations-slice';
 import { useMembershipsForPerson } from '../lib/memberships-admin-slice';
+import { usePersonAdmin } from '../lib/people-admin-slice';
 import { downloadPersonDataJson, downloadPersonDataPdf } from '../lib/person-export';
 import type { AdminDeletePersonManifest } from '../lib/supabase';
 
@@ -148,7 +149,16 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   const authLoading = useAuthLoading();
   const rolesLoaded = useRolesLoaded();
   const personId = adminView ? params.personId! : caps.personId;
-  const personRaw = db.people.find((p) => p.id === personId);
+  // Phase 4 (data-layer-scale.md): db.people at boot only carries self +
+  // managed-club rosters — adminView targets an ARBITRARY other person, who
+  // is very often outside that scope (an admin viewing any member, not just
+  // ones on a club they manage). usePersonAdmin fetches+caches that one
+  // person on demand (a view/edit page, so caching is a genuine win — see
+  // its doc comment in people-admin-slice.ts). Hooks run unconditionally
+  // (before the early "not found" return below); the self (non-adminView)
+  // path keeps reading db.people directly since self is always in boot scope.
+  const { rows: adminPersonRows, status: adminPersonStatus } = usePersonAdmin(adminView ? personId : null);
+  const personRaw = adminView ? adminPersonRows[0] : db.people.find((p) => p.id === personId);
   // memberships are Tier 2 boot-scoped to the caller's own + managed-club
   // rows (whats-next.md §7) — adminView can target someone OTHER than the
   // signed-in caller, so `personRaw.memberships` can't be trusted there.
@@ -162,7 +172,12 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   // Self view: are we still resolving auth/sync, so a missing person is just
   // "not loaded yet" rather than "no access"? Don't show not-found during this
   // window — show the loader, then (once settled) redirect Home if truly absent.
+  // adminView gets the SAME "still loading, not actually missing" treatment
+  // now that its person row is an on-demand fetch rather than always-present
+  // boot-scoped data — a still-loading fetch must never flash "Person not
+  // found" for a real, existing person (Phase 4 CONTRACT completeness rule).
   const selfResolving = !adminView && (authLoading || !rolesLoaded);
+  const adminViewResolving = adminView && adminPersonStatus === 'loading';
 
   // Determine if we should auto-open edit mode and return to membership after save
   const returnParam = searchParams.get('return');
@@ -250,9 +265,11 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
 
   // While auth/sync is still resolving on the self view, show the loader rather
   // than a transient "Person not found" (feedback 1i/1j). Same Loading… style
-  // as App's PageFallback.
+  // as App's PageFallback. adminViewResolving is the Phase 4 equivalent for
+  // adminView's on-demand person fetch — a still-loading usePersonAdmin must
+  // never render as "Person not found" for a real, existing person.
   if (!person) {
-    if (selfResolving || selfNoAccess) {
+    if (selfResolving || selfNoAccess || adminViewResolving) {
       return <div style={{ padding: 40, textAlign: 'center', color: 'var(--ink-soft)' }}>Loading…</div>;
     }
     return <p>Person not found.</p>;
@@ -383,7 +400,10 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                 // invoices: same reasoning (Tier 2, whats-next.md §7) — a
                 // direct, uncached fetch for completeness on an arbitrary person.
                 const invoices = await fetchInvoicesForPersonRemote(pid);
-                const data = collectPersonData(db, pid, scores, registrations, invoices);
+                // person: same reasoning again (Phase 4, data-layer-scale.md) —
+                // db.people at boot doesn't cover an arbitrary export subject.
+                const exportPerson = await fetchPersonRemote(pid);
+                const data = collectPersonData(db, pid, scores, registrations, invoices, exportPerson);
                 downloadPersonDataJson(data);
                 downloadPersonDataPdf(data);
                 toast('Data export downloaded (JSON + PDF).');
@@ -1111,7 +1131,17 @@ function AdminMembershipControls({
   const db = useDB();
   const toast = useToast();
   const caps = useCapabilities();
-  const person = db.people.find((x) => x.id === personId)!;
+  // Phase 4 (data-layer-scale.md): `personId` here is an ARBITRARY member
+  // the admin is administering — db.people at boot doesn't cover them, same
+  // reasoning as the memberships fetch right below (a view/edit page, so
+  // caching is a genuine win — cache-shared with Profile's own top-level
+  // usePersonAdmin(personId) call for this same id, so this costs no extra
+  // fetch beyond that one). `person!` is safe once membershipsReady-style
+  // gating below (isActive/activate/confirmRevoke) only runs from user
+  // interaction after the row has rendered, which only happens once
+  // adminPersonStatus is 'ready' (see the render guard further down).
+  const { rows: adminPersonRows, status: adminPersonStatus } = usePersonAdmin(personId);
+  const person = adminPersonRows[0];
   // memberships are Tier 2 boot-scoped to the caller's own + managed-club
   // rows (whats-next.md §7) — `personId` here is an ARBITRARY member the
   // admin is administering, so `person.memberships` off db.people can't be
@@ -1220,6 +1250,14 @@ function AdminMembershipControls({
   const visibleSeasons = db.seasons.filter((s) =>
     activeSeason ? s.startsOn >= activeSeason.startsOn : s.endsOn >= todayIso
   );
+
+  // Phase 4: `person` (an arbitrary member, fetched on demand above) may
+  // still be loading, or genuinely not resolve — every render path below
+  // reads person.firstName/lastName/id, so gate here rather than risk a
+  // crash on an undefined person mid-fetch.
+  if (!person) {
+    return <p style={{ color: 'var(--ink-soft)' }}>{adminPersonStatus === 'loading' ? 'Loading…' : 'Person not found.'}</p>;
+  }
 
   return (
     <>
