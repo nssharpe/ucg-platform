@@ -403,13 +403,21 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   failures 'permanent' (no retry; boot-wired toast + drain-then-`syncFromSupabase()`
   rollback in `supabase.ts`); non-React code toasts via `pushToast` (`lib/toast-bus.ts`),
   the imperative escape hatch into the same ToastProvider.
-- **Slice layer (Phases 2+3 both MERGED to `main` 2026-07-26):**
-  neither `scores` nor `registrations` is globally hydrated any more.
-  `db.scores`/`db.registrations` exist only for unconfigured/demo mode. Read scores
-  via `useEventScores(eventId)` / `useMyScores()` / `useScoreById()`
-  (`src/lib/scores-slice.ts`); read registrations via `useEventRegistrations(eventId)`
-  / `useMyRegistrations()` / `useRegistrationById()` / `useClubRegistrations(clubId)`
-  / `fetchRegistrationsForPerson(personId)` (`src/lib/registrations-slice.ts`) — both
+- **Slice layer (Phases 0-5 of the data-layer-scale project ALL SHIPPED, last
+  2026-07-28):** `scores`, `registrations`, and `people` are no longer globally
+  hydrated — `db.scores`/`db.registrations` exist only for unconfigured/demo mode, and
+  `db.people` at boot is scoped to self + managed-club rosters only (Phase 4, rewritten
+  from a slim/full field split to a which-ROWS-load split — every row returned is
+  always complete). Read scores via `useEventScores(eventId)` / `useMyScores()` /
+  `useScoreById()` (`src/lib/scores-slice.ts`); registrations via
+  `useEventRegistrations(eventId)` / `useMyRegistrations()` / `useRegistrationById()` /
+  `useClubRegistrations(clubId)` / `fetchRegistrationsForPerson(personId)`
+  (`src/lib/registrations-slice.ts`); people beyond boot scope via
+  `usePeopleNames(ids)` (thin name+club, `public_competitors`-backed — works for
+  ANONYMOUS callers too, unlike the real `people` table) / `usePeopleForIds(ids)` (full
+  rows) / `usePeopleForClub(clubId)` / `useAdminPeople()` (league-wide, admin-only) /
+  `usePersonAdmin(personId)` / `fetchPersonRemote(personId)` (uncached, for a
+  destructive write) (`src/lib/people-slice.ts` + `src/lib/people-admin-slice.ts`) — all
   built on the shared, generic `src/lib/slice-cache.ts`. Hooks return `{ rows, status }`
   and **`status` is non-optional on purpose** — never render an empty state without
   checking `status === 'loading'` first, or you turn "not loaded" into a confident
@@ -417,30 +425,31 @@ Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
   example: a partial read there invites re-registering, and re-charging, an
   already-registered athlete). Slices are memory-only (never localStorage). Pure
   modules take rows as PARAMETERS (`scoring.ts`, `nationals-adapter.ts`,
-  `person-data.ts`, `cart-sync.ts`). `fetchRegistrationsForPerson`/
-  `person-data.ts`/`AdminMembers.tsx`'s merge deliberately do a targeted DIRECT
-  fetch for an arbitrary (non-signed-in-caller) person rather than reading any
-  cache — completeness there must come from the query, since an incomplete read
-  feeds a write that can orphan/corrupt data.
-- **Data-layer scale (6.3):** `node --env-file=.env.local scripts/seed-scale.mjs`
-  seeds a 2-year-projection dataset into **STAGING ONLY** (hard-guarded against the
-  prod ref; every row id prefixed `scale-`; `--clean` removes exactly those and is
-  verified to restore staging — occasionally hits a transient `fetch failed`/
-  `statement timeout` mid-run; the script's upserts are idempotent, just re-run).
-  Measured 2026-07-26 at 50k regs / 52k scores: **21.1 s cold boot, 28.95 MB
-  localStorage** — and the quota error did NOT fire (Chromium accepted it), so
-  **don't treat a localStorage quota error as the alarm**. Boot time is the real
-  signal. Phase 2 removing `scores` cut ~14.46s/~21.7MB of that; Phase 3 removing
-  `registrations` cuts a further ~22.9s/~24.7MB (measured 2026-07-27 against a
-  50,130-row scale-seed: full-table fetch 22.9s/~24.7MB vs the largest single
-  event's slice fetch ~0.4s/~200KB). **New finding from the Phase 3 measurement
-  (unrelated to registrations, not yet investigated):** once `memberships`/
-  `invoices`/`invoice_items` hold 10k+ rows, ANON/AUTHENTICATED queries against them
-  start failing with `500`/"canceling statement due to statement timeout" —
-  confirmed NOT a missing grant (a service-role client queries them fine), so this
-  looks like an expensive RLS policy nothing has exercised at scale before. Worth a
-  follow-up before a real season accumulates that many rows. Full writeup:
-  `docs/specs/2026-07-24-data-layer-scale.md`.
+  `person-data.ts`, `cart-sync.ts`). `fetchRegistrationsForPerson`/`fetchPersonRemote`/
+  `person-data.ts`/`AdminMembers.tsx`'s merge deliberately do a targeted DIRECT fetch
+  for an arbitrary (non-signed-in-caller) person/registration set rather than reading
+  any cache — completeness there must come from the query, since an incomplete read
+  feeds a write that can orphan/corrupt data. **localStorage persistence (Phase 5)** is
+  restricted to Tier 1 reference data + small Tier 2 caller data
+  (`PERSISTED_KEYS` in `src/lib/store.ts`) when Supabase-backed — everything else
+  reconstructs empty and refills from the `syncFromSupabase()` that always follows
+  boot; demo/unconfigured mode still persists the whole `db` (no server to re-sync
+  from there). `SEED_VERSION` is 10.
+- **Data-layer scale (6.3) — COMPLETE, Phases 0-5 all shipped.**
+  `node --env-file=.env.local scripts/seed-scale.mjs` seeds a 2-year-projection dataset
+  into **STAGING ONLY** (hard-guarded against the prod ref; every row id prefixed
+  `scale-`; `--clean` removes exactly those — occasionally hits a transient
+  `fetch failed`/`statement timeout` mid-run; the script's upserts are idempotent, just
+  re-run). ⚠ **2026-07-28: staging's scaled tables were found already at 0 rows before
+  seeding** — the documented Playwright E2E fixture baseline is not currently present;
+  👤 Nate should reseed it before relying on `npm run test:e2e` against staging.
+  Final measurement (0.5×-scale, 2026-07-28): persisted localStorage snapshot
+  **28.95 MB → ~53 KB**; persisted `people` count **1 row** (self) regardless of league
+  size. **Known remaining gap:** `payments` is still an unscoped `fetchAllRows` in
+  `loadAll` (same statement-timeout risk `memberships`/`invoices`/`invoice_items` had
+  before their 2026-07-28 fix — see `docs/whats-next.md` §7) — worth the same
+  query-scoping treatment before a real season pushes it past 10k rows. Full writeup +
+  every phase's measurements: `docs/specs/2026-07-24-data-layer-scale.md`.
 - **New DB collection plumbing:** add to `types.ts` (`DB.<x>`), `rowTo<X>` +
   `push<X>`/`delete<X>` in `supabase.ts`, and the `loadAll` Promise.all + map +
   conditional spread. `from('<new_table>')` typechecks even if absent from `database.types`.

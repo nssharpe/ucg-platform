@@ -572,10 +572,146 @@ upserts are idempotent per the header comment). Verified restored to the
 documented baseline after `--clean`: scores 248, registrations 130, people
 84, events 4, clubs 9.
 
-**Phase 4 — Slim the `people` directory projection**, with full rows on demand.
+**Phase 4 — Scope which people load. ✅ SHIPPED 2026-07-28, branch
+`perf/6-3-phase4-5-people-scoping`.** Rewritten from the original "slim
+projection + full rows on demand" design (see "Phase 4 is REWRITTEN" above) —
+every person row is COMPLETE, just fewer of them load. loadAll's boot read
+is now scoped to self + managed-club rosters (two narrow queries: a
+`.eq('auth_user_id', ...)` self lookup, then `.in('main_club_id',
+managedClubIds)` for the roster), mirroring the Tier 2 memberships/invoices
+scoping exactly. Five on-demand shapes cover everything outside that scope:
 
-**Phase 5 — Restrict what persists to `localStorage`** to Tier 1 + Tier 2, and bump
-`SEED_VERSION` so stale full-fat snapshots are discarded rather than loaded.
+- `fetchPersonRemote` / `usePersonAdmin` (people-admin-slice.ts) — one
+  arbitrary person, full row. Uncached for a destructive write (AdminMembers'
+  duplicate-athlete merge, alongside its existing fresh registrations/
+  memberships re-fetch) or a one-off export (person-data.ts's GDPR export,
+  which gained a `person` parameter the same way it already had `scores`/
+  `registrations`/`invoices`); cached via `usePersonAdmin` for a view/edit
+  page (Profile.tsx adminView).
+- `fetchPeopleForClubRemote` / `usePeopleForClub` — one club's full roster
+  (mainClubId OR alt-club affiliation), for a viewer who doesn't personally
+  manage that club (Club.tsx — the biggest single consumer, 19 sites — falls
+  back to boot-scoped `db.people` while loading so a real manager's own club
+  still paints instantly).
+- `fetchAllPeopleAdminRemote` / `useAdminPeople` — league-wide, admin-only
+  (AdminMembers, AdminClubs, Communicate's audience/`audienceCount`, Home's
+  admin dashboard, UserRoles, Sanction, ClubForm's manager picker).
+- `fetchPeopleForIdsRemote` / `usePeopleForIds` (people-admin-slice.ts) —
+  full-row by-ids batch for consumers needing more than name+club: nationals
+  categorization (gender/placement/studentStatus — `nationals-adapter.ts`'s
+  `buildEntries` gained a `people` parameter the same way Phase 3 added
+  `allEventRegs`), the registration-workbook CSV export
+  (shirt/dietary/email/phone/emergency), `NationalsSummaryCard`'s
+  `independentCount` stat.
+- `fetchPublicPeopleForIdsRemote` / `usePeopleNames` (people-slice.ts) — thin
+  name+club batch (`CompetitorRef`), backed by the `public_competitors` VIEW
+  rather than the `people` table, for pure name-display consumers (Results,
+  Judge, ScoreDetail, EventCheckinCard, CompetitionOrderCard,
+  FinalsLineupEditor, CapacityConflictDialog). Also `fetchAllPublicCompetitorsRemote`
+  / `useAllCompetitors` — the same view, full-table, for Clubs.tsx's public
+  directory (member counts + manager names across every club, reachable by
+  ANY signed-in account, not just admin).
+
+**A real, pre-existing bug found and fixed as a side effect of building the
+by-ids shape correctly.** `people`'s only SELECT policy is
+`people_self_read` (self OR `is_admin()` OR `manages_club(main_club_id)`) —
+there is no policy granting visibility into an arbitrary other club's
+roster. `public_competitors` (migration `20260601000004`, `security_invoker
+= false`) exists specifically so, per its own top-of-file comment, "the
+live-results & meet pages work with no login" — but the app never actually
+queried it; every read went through the real `people` table instead.
+**Verified empirically (2026-07-28) against live prod as a genuine anonymous
+session:** an anon visitor's persisted `db.people` was `[]`, meaning the
+public, no-login Results page showed blank athlete names for every visitor
+who wasn't signed in. Confirmed fixed post-Phase-4 against scale-seeded
+staging: an anonymous session (`db.people` length 0, confirmed via
+localStorage) opening a Results page with real scale-seeded scores showed
+correct cross-club names ("Diego Wright — Cap City", "Jonah Bauer — Texas
+A&M", etc.) via the new `public_competitors`-backed shape.
+
+**Danger list, all verified:**
+- `caps.person` stays a complete row for the signed-in caller (self is
+  always in boot scope by construction — `capabilities-core.ts`/
+  `capabilities.ts` needed no changes). Membership pricing
+  (`Membership.tsx`'s `priceForTypes(season, types, me.memberships)`) still
+  reads off it directly.
+- Synchro-partner eligibility (`RegistrationEditor.tsx`'s `partnerOptions`)
+  keeps drawing candidates from the caller's boot-scoped roster
+  (`allAthletes`, passed by Club.tsx/Events.tsx/MyRegistrations.tsx) — the
+  recon's own conclusion that this narrowing is acceptable (not a
+  regression) held up; those callers' `allAthletes` prop was left
+  unconverted by design.
+- Nationals categorization gets the full event field's people via
+  `usePeopleForIds`, gated on `status === 'ready'` alongside the existing
+  `allEventRegs` gate.
+- Counts (`Home`'s active-member stats, `Club`'s `rosterSize`,
+  `AdminMembers`' `{rows.length} people`, `Communicate`'s `audienceCount`,
+  `AdminClubs`' per-club Roster/Active, `NationalsSummaryCard`'s
+  `independentCount`) all gate on the relevant fetch's `status === 'ready'`
+  — verified live against prod (2,636 people, 223 clubs): AdminMembers
+  showed "2636 people", AdminClubs showed real per-club roster/active
+  counts, Communicate's audience count read "2633" recipients when
+  filtering to Athletes.
+
+**What still persists to localStorage:** see Phase 5 below.
+
+**Phase 5 — Restrict what persists to `localStorage`. ✅ SHIPPED 2026-07-28,
+same branch.** Only `PERSISTED_KEYS` (`src/lib/store.ts`) survive to
+localStorage when Supabase-backed: Tier 1 reference data (`seasons`,
+`levels`, `clubs`, `coupons`, `waiverDocuments`, `accountingCodes`,
+`regionOverrides`) plus Tier 2 caller-scoped data now kept small by Phase 4
+(`people`, `invoices`, `carts`). `events` is added alongside Tier 1 even
+though the original tiering table above didn't list it — it's just as
+bounded as clubs and just as central to first paint (Home/the Events
+index/Results index all read it synchronously on the very first render), so
+dropping it would have cost the "instant first paint on a repeat visit"
+property the spec's "THE ACTUAL GOAL" section says to keep. Every other
+collection (every Tier 3 table — `clubRequests`, `sanctionRequests`,
+`waiverSignatures`, `payments`, `refundRequests`, `waitlistGroups`,
+`sessionRequests`, `competitionOrders`, `finalsLineups`, `eventCheckins`,
+`eventAdmins`, `accountInvites`, `sanctionVotes`, `clubMemberships`,
+`hostPayouts`, `judgeAccessCodes`, plus `registrations`/`scores` which were
+already memory-only via the slice layer) is reconstructed empty/undefined on
+load and refilled by the `syncFromSupabase()` call that unconditionally
+follows boot — normally within a few seconds. Demo/unconfigured mode
+(the password-gate prototype) is unchanged — persists the whole `db`, since
+there's no server there to re-sync from. Cross-tab sync now **merges** the
+incoming persisted subset onto the receiving tab's existing in-memory `db`
+(`{ ...db, ...parsed.db }`) instead of replacing it outright, so a
+multi-tab session doesn't have its already-fetched Tier 3 collections wiped
+to `undefined` by another tab's write. `SEED_VERSION` bumped to 10.
+
+*Measured (2026-07-28, scale-seeded staging at 0.5×: 3,000 people, 30 clubs,
+40 events, 25,000 registrations, 87,500 scores, 5,500 memberships, 9,000
+invoices, 12,500 invoice_items, 9,000 payments):*
+
+| | Pre-Phase-4/5 baseline (measured 2026-07-26) | Post-Phase-4/5 (measured 2026-07-28) |
+|---|---|---|
+| Persisted snapshot | 28.95 MB | **~52–53 KB** (~550× smaller) |
+| Persisted `people` count | 1 row (RLS-scoped to the signed-in dev user in that run) | **1 row** (self only — confirmed via a real club-manager session; league-wide admin surfaces fetch on demand instead, never persisted) |
+| Persisted keys | everything | `seasons, levels, clubs, events, coupons, people, invoices, carts` (confirmed via direct localStorage inspection) |
+| localStorage quota error | did not fire | still not the alarm — payload is now trivially small regardless |
+
+Cold-boot `syncFromSupabase()` hydration at this scale took 2.4–7.9 s across
+several runs (dominated by the tables Phase 4/5 didn't touch — `payments` at
+9,000 unscoped rows especially; `memberships`/`invoices`/`invoice_items`
+stay fast per the Tier 2 measurement above). This is a real remaining cost,
+separate from the 28.95 MB persisted-snapshot problem Phase 5 removes and
+the people-query-cost problem Phase 4 removes — `docs/whats-next.md`
+carries the follow-up (the same "500/statement-timeout at 10k+ rows" finding
+flagged under Phase 3 covers `payments` too, not just
+memberships/invoices/invoice_items).
+
+*Reproduce/clean:* same `scripts/seed-scale.mjs` harness. This run found
+staging's row counts were already 0 across every scaled table BEFORE
+seeding (no Playwright E2E fixture baseline present) — the seed→clean cycle
+is self-consistent (verified staging returned to exactly 0 across every
+scaled table after `--clean`, matching what was there before this session
+touched it), but that means staging currently does **not** carry the
+documented fixture baseline (memberships 70, invoices 14, invoice_items 14,
+people 84, registrations 130, scores 248, events 4, clubs 9) — worth a
+follow-up to reseed it before the next person relies on that baseline being
+present.
 
 ## Verification requirements
 
@@ -586,3 +722,14 @@ documented baseline after `--clean`: scores 248, registrations 130, people
   state while its slice is still loading.
 - Phase 0: prove the fix by seeding >1000 rows in one table on staging and confirming
   the client sees all of them (this is the regression test for the bug).
+
+## Status: Phases 0–5 all shipped (2026-07-28)
+
+The core data-layer-scale work described in this spec is complete: the silent-truncation
+bug is fixed (Phase 0), `scores`/`registrations`/`people` all moved off unconditional
+global hydration onto scoped boot reads + on-demand fetches (Phases 2–4), and
+localStorage persistence is restricted to Tier 1 + small Tier 2 (Phase 5). Remaining
+follow-ups, tracked in `docs/whats-next.md`: the perceived-speed phase (prefetch-on-hover,
+service-worker caching, navigation-timing measurement — deliberately out of scope here,
+see "THE ACTUAL GOAL" above) and the `payments`/`memberships`/`invoice_items`
+statement-timeout-at-scale finding for tables this spec's phases didn't scope.

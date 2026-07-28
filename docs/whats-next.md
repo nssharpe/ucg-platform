@@ -141,8 +141,7 @@ Suggested from a post-emv2 read of the platform; some have shipped, others are p
   links) reduce Julia-as-support and make fall-season onboarding of hosts cheaper.
 2. **Privacy-friendly analytics + Web Vitals** (Plausible/PostHog) once real users
   arrive; optional Sentry for stack traces with releases.
-3. 🟡 **Data-layer scale path — Phases 0-3 DONE and merged to `main`,
-  Phases 4-5 OPEN**
+3. ✅ **Data-layer scale path — Phases 0-5 ALL DONE**
   ([spec](specs/2026-07-24-data-layer-scale.md)). Phase 0 fixed the silent
   1000-row truncation (shipped). Phase 1 (2026-07-26) built the staging-only
   `scripts/seed-scale.mjs` harness + boot instrumentation, then MEASURED: at 50k
@@ -170,13 +169,28 @@ Suggested from a post-emv2 read of the platform; some have shipped, others are p
   those tables hold 10k+ rows — confirmed NOT an RLS-grant gap (a
   service-role client queries them fine), so this reads like an expensive RLS
   policy (a per-row subquery/join) that was never exercised at scale before.
-  Untouched by the Phase 3 diff (Phase 3 doesn't read either table) — a real,
-  separate finding worth a follow-up investigation before a real nationals
-  approaches 10k+ memberships/invoices, but out of scope for Phase 3 itself.
-  Phase 4 (slim the `people` directory projection) and Phase 5 (restrict
-  localStorage persistence to Tier 1+2) are the next actual fixes; controller
-  still owns reviewing + merging Phase 3 and running Phases 4-5, plus
-  investigating the new memberships/invoices RLS-timeout finding.
+  Untouched by the Phase 3 diff (Phase 3 doesn't read either table) — see §7
+  below, RESOLVED 2026-07-28 by scoping the query (not the RLS policy).
+  **Phase 4 (2026-07-28) was REWRITTEN from "slim the `people` projection"
+  to "scope which people load"** — a 2026-07-26 recon found the originally-
+  proposed slim/full field split wrong in both directions and its danger
+  list ran through membership pricing, synchro eligibility, and nationals
+  categorization; scoping which ROWS load (mirroring the Tier 2 pattern
+  above) sidesteps all of it, since every row returned is still complete.
+  loadAll's boot people read is now self + managed-club rosters only; five
+  on-demand shapes (arbitrary person, by-club, league-wide-admin, by-ids
+  full, by-ids thin via a newly-wired-up `public_competitors` view) cover
+  every other consumer across ~36 files. Building the thin by-ids shape
+  surfaced and fixed a real pre-existing bug: anonymous visitors to the
+  public, no-login Results page saw blank athlete names (verified live
+  against prod, then confirmed fixed against scale-seeded staging as a true
+  anon session). **Phase 5 (2026-07-28)** restricts localStorage persistence
+  to Tier 1 + small Tier 2 (`seasons/levels/clubs/events/coupons/
+  waiverDocuments/accountingCodes/regionOverrides/people/invoices/carts`) —
+  measured 28.95 MB → ~53 KB on 0.5×-scale staging, persisted `people` down
+  to 1 row (self) vs. 3,000 seeded. Full writeup, danger-list verification,
+  and measurements: `docs/specs/2026-07-24-data-layer-scale.md`'s Phase 4/5
+  sections.
 
 ## 7. ✅ RESOLVED 2026-07-28 — expensive Tier-2 reads on `memberships` / `invoices` / `invoice_items`
 
@@ -279,6 +293,23 @@ Tier 2 section. Controller still owns reviewing/merging the branch.
 
 Not urgent at current prod volume (invoices 43, invoice_items 69, memberships 39), but
 the fix is done rather than deferred.
+
+**Addendum (2026-07-28, Phase 5 boot measurement): `payments` likely carries the same
+risk, unscoped.** Cold-boot `syncFromSupabase()` against 0.5×-scale staging (9,000
+payments, alongside the now-fast-scoped memberships/invoices/invoice_items) took
+2.4–7.9 s — `payments` is fetched via a plain unscoped `fetchAllRows` in `loadAll`, the
+same shape memberships/invoices/invoice_items had before this section's fix. Not
+re-measured in isolation (out of scope for the Phase 4/5 session that found it), but
+worth the same query-scoping treatment (self + managed-club, mirroring §7's fix) before
+a real season pushes it past 10k rows.
+
+**Also 2026-07-28: the scale-seed harness found staging's row counts were already 0
+across every scaled table (`memberships`/`invoices`/`invoice_items`/`people`/
+`registrations`/`scores`/`events`/`clubs`) *before* seeding** — the documented Playwright
+E2E fixture baseline (memberships 70, invoices 14, invoice_items 14, people 84,
+registrations 130, scores 248, events 4, clubs 9) is not currently present on staging.
+👤 Nate: reseed the E2E fixture before the next person relies on `npm run test:e2e`
+against staging having that baseline.
 
 ## Architecture watch-list
 
