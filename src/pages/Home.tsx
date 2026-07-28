@@ -11,6 +11,7 @@ import { offeredMembershipTypes } from '../lib/pricing';
 import { membershipTypeOf } from '../lib/capabilities-core';
 import { currentSeason } from '../lib/season-lifecycle';
 import { useAdminMemberships, groupAdminMembershipsByPerson } from '../lib/memberships-admin-slice';
+import { useAdminPeople } from '../lib/people-admin-slice';
 import { useMemo } from 'react';
 import logotypeAlt2 from '../assets/brand/logotype-alt2.svg';
 
@@ -139,13 +140,18 @@ function AdminAttentionList() {
   // Hooks must run unconditionally before the early return just below.
   const { rows: adminMembershipRows, status: membershipsStatus } = useAdminMemberships();
   const membershipsByPerson = useMemo(() => groupAdminMembershipsByPerson(adminMembershipRows), [adminMembershipRows]);
+  // Phase 4 (data-layer-scale.md): db.people at boot no longer covers the
+  // whole league — this list is league-wide, same shape (#3) as the
+  // memberships fetch above. Hooks run unconditionally before the early
+  // return just below.
+  const { rows: adminPeopleRows, status: peopleStatus } = useAdminPeople();
   if (!season) return <p style={{ color: 'var(--ink-soft)' }}>No active season configured.</p>;
-  if (membershipsStatus !== 'ready') {
+  if (membershipsStatus !== 'ready' || peopleStatus !== 'ready') {
     return <p style={{ color: 'var(--ink-soft)' }}>Loading…</p>;
   }
 
   // Under-18 athletes whose current-season membership is awaiting a guardian waiver.
-  const pendingWaivers = db.people.filter((p) =>
+  const pendingWaivers = adminPeopleRows.filter((p) =>
     isUnder18(p.dob) && (membershipsByPerson.get(p.id) ?? []).some((m) => m.seasonId === season.id && m.status === 'pending-waiver'),
   );
 
@@ -159,7 +165,7 @@ function AdminAttentionList() {
   // membership — having a coach is not a requirement (per 2026-06-22 feedback).
 
   // Pending club payment memberships
-  const pendingPayment = db.people.filter((p) =>
+  const pendingPayment = adminPeopleRows.filter((p) =>
     (membershipsByPerson.get(p.id) ?? []).some((m) => m.seasonId === season.id && m.status === 'pending-club-payment')
   );
 
@@ -209,6 +215,10 @@ function AdminDashboard() {
   // shares the same underlying cache entry, so this costs no extra fetch.
   const { rows: adminMembershipRows, status: membershipsStatus } = useAdminMemberships();
   const membershipsByPerson = useMemo(() => groupAdminMembershipsByPerson(adminMembershipRows), [adminMembershipRows]);
+  // Phase 4 (data-layer-scale.md): same reasoning as AdminAttentionList
+  // above — these stat tiles are league-wide. AdminAttentionList shares the
+  // same underlying cache entry, so this costs no extra fetch.
+  const { rows: adminPeopleRows, status: peopleStatus } = useAdminPeople();
   if (!season) {
     return (
       <div className="card card-pad">
@@ -218,13 +228,13 @@ function AdminDashboard() {
     );
   }
 
-  const membershipsReady = membershipsStatus === 'ready';
+  const membershipsReady = membershipsStatus === 'ready' && peopleStatus === 'ready';
   const activeMembers = membershipsReady
-    ? db.people.filter((p) => (membershipsByPerson.get(p.id) ?? []).some((m) => m.seasonId === season.id && m.status === 'active'))
+    ? adminPeopleRows.filter((p) => (membershipsByPerson.get(p.id) ?? []).some((m) => m.seasonId === season.id && m.status === 'active'))
     : [];
   const clubsWithMembership = membershipsReady
     ? db.clubs.filter((c) =>
-        db.people.some((p) => p.mainClubId === c.id && (membershipsByPerson.get(p.id) ?? []).some((m) => m.seasonId === season.id && m.status === 'active')))
+        adminPeopleRows.some((p) => p.mainClubId === c.id && (membershipsByPerson.get(p.id) ?? []).some((m) => m.seasonId === season.id && m.status === 'active')))
     : [];
   const eventsThisSeason = db.events.length;
 
