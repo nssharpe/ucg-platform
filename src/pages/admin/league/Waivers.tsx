@@ -9,6 +9,7 @@ import { downloadWaiverProof, formatSignedAt } from '../../../lib/waiver-proof';
 import { sanitizeWaiverHtml } from '../../../lib/sanitize-html';
 import { pushWaiverDocument } from '../../../lib/supabase';
 import { currentSeason } from '../../../lib/season-lifecycle';
+import { usePeopleNames } from '../../../lib/people-slice';
 
 // ---------- Waivers ----------
 export function Waivers() {
@@ -45,19 +46,26 @@ export function Waivers() {
     toast(`${t} waiver v${doc.version} published.`);
   };
 
+  const seasonSignatures = useMemo(
+    () => (db.waiverSignatures ?? []).filter((s) => s.seasonId === selectedSeasonId),
+    [db.waiverSignatures, selectedSeasonId],
+  );
+  // Phase 4 (data-layer-scale.md): db.people at boot no longer covers every
+  // signer league-wide — thin name-only lookup (this list never reads any
+  // other person field), scoped to this season's signatures.
+  const { rows: signerRefs } = usePeopleNames(seasonSignatures.map((s) => s.personId));
   const signed = useMemo(() => {
     const lq = signedQ.toLowerCase();
-    return (db.waiverSignatures ?? [])
-      .filter((s) => s.seasonId === selectedSeasonId)
+    return seasonSignatures
       .map((s) => {
-        const p = db.people.find((x) => x.id === s.personId);
+        const p = signerRefs.find((x) => x.id === s.personId);
         const name = p ? `${p.firstName} ${p.lastName}` : s.personId;
         const v = (db.waiverDocuments ?? []).find((d) => d.id === s.waiverDocumentId)?.version ?? 0;
         return { sig: s, name, version: v };
       })
       .filter((r) => !lq || r.name.toLowerCase().includes(lq))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [db.waiverSignatures, db.waiverDocuments, db.people, selectedSeasonId, signedQ]);
+  }, [seasonSignatures, db.waiverDocuments, signerRefs, signedQ]);
 
   return (
     <div>

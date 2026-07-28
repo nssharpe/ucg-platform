@@ -7,6 +7,7 @@ import { fmtMoney } from '../../../lib/scoring';
 import { refundAmountCents } from '../../../lib/pricing';
 import { processRefund } from '../../../lib/supabase';
 import { useAdminInvoices } from '../../../lib/invoices-admin-slice';
+import { useAdminPeople } from '../../../lib/people-admin-slice';
 import type { RefundRequest } from '../../../lib/types';
 
 const REASON_LABEL: Record<RefundRequest['reason'], string> = {
@@ -33,6 +34,10 @@ export function RefundReview() {
   // because this list was scoped-empty would still be a badly misleading
   // review queue, so gate item resolution on `invoicesStatus === 'ready'`.
   const { rows: invoices, status: invoicesStatus } = useAdminInvoices();
+  // Phase 4 (data-layer-scale.md): db.people at boot no longer covers the
+  // whole league — requesters/reviewers can be from any club, same
+  // league-wide shape (#3) as the invoices fetch above.
+  const { rows: adminPeopleRows } = useAdminPeople();
 
   const requests = useMemo(() => db.refundRequests ?? [], [db.refundRequests]);
   const pending = useMemo(
@@ -45,7 +50,7 @@ export function RefundReview() {
   );
 
   const personName = (id: string | null | undefined) => {
-    const p = db.people.find((x) => x.id === id);
+    const p = adminPeopleRows.find((x) => x.id === id);
     return p ? `${p.firstName} ${p.lastName}` : (id ?? '—');
   };
   const clubName = (id: string | null | undefined) => db.clubs.find((c) => c.id === id)?.name ?? '—';
