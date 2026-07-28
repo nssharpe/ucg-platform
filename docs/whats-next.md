@@ -178,7 +178,7 @@ Suggested from a post-emv2 read of the platform; some have shipped, others are p
   still owns reviewing + merging Phase 3 and running Phases 4-5, plus
   investigating the new memberships/invoices RLS-timeout finding.
 
-## 7. 🐛 Expensive RLS on `memberships` / `invoices` / `invoice_items` (found 2026-07-26)
+## 7. 🐛 Expensive RLS on `memberships` / `invoices` / `invoice_items` (found 2026-07-26, partial fix drafted 2026-07-28 — STILL OPEN)
 
 Surfaced by 6.3's scale-seeding, and **architecturally more significant than it first
 reads**. Under the ANON/AUTHENTICATED role these three tables start failing with
@@ -196,11 +196,33 @@ assumption, not something the remaining phases will incidentally fix: the projec
 has ~18k invoices / ~25k invoice_items / ~11k memberships within two years, which is
 past where the timeout was observed.
 
-Worth doing before a real season accumulates that volume: `EXPLAIN ANALYZE` the
-policies on all three as `authenticated`, and check whether they can be rewritten with
-the `my_person_id()` / `manages_club()` SECURITY DEFINER helper pattern (which exists
-precisely to avoid per-row cross-table subqueries in policies — see CLAUDE.md's
-42P17 recursion note for the related trap).
+**2026-07-28 (branch `perf/tier2-rls-policy-cost`, staging only, NOT prod):** the
+raw-cross-table-RLS-subquery root cause was fixed via SECURITY DEFINER helpers
+(`manages_club_of_person`/`invoice_owner_or_manager`, migration
+`20260728015930_tier2_rls_policy_cost.sql`, detail + semantics proof in
+`supabase/README.md`'s migration table) — this is a real, verified-safe architectural
+fix (byte-identical row-visibility A/B'd against the old policies, anon grants matched
+to every other RLS helper) and it's worth keeping. **But it does NOT solve the
+timeout.** Re-measuring at 0.5×-scale post-fix: `memberships` only marginally better
+(~5.0–5.3s vs 7.3s, within noise), `invoice_items` measurably WORSE (~11.4s vs 7.4s),
+and a fresh `loadAll`-shaped anon read at that scale still hits `statement timeout` on
+all three tables — **signed-out boot is still broken at 0.5×-projection volume.**
+Root cause of the shortfall: Postgres can hash-materialize a raw correlated `EXISTS`
+subquery into a single semi-join pass over the referenced table, but a SECURITY
+DEFINER function call is opaque to the planner and can never be hashed that way — it
+pays its own per-call overhead (~0.9ms measured) on every outer row, which loses to
+the hashed-subquery plan on a full unfiltered table scan (exactly `loadAll`'s access
+pattern) once the referenced table's own policy stack isn't the dominant cost.
+
+**What's actually still needed:** Tier-3 treatment — stop `loadAll` from fully
+hydrating these three tables and move to scoped/sliced reads (the same pattern Phase 2
+did for `scores` and Phase 3 did for `registrations`), or a schema change that lets the
+policy predicate be a plain indexed column comparison instead of any per-row
+cross-table lookup (e.g. denormalizing an owning-club/person id directly onto
+`invoice_items`). Re-run `EXPLAIN (ANALYZE, BUFFERS)` at 0.5× scale against whichever
+approach is tried next — don't trust a policy rewrite's plausibility alone, this round
+is the second time a "clearly correct" theory (see `20260711023234`) didn't fully pan
+out on measurement.
 
 Not urgent at current prod volume (invoices 43, invoice_items 69, memberships 39).
 
