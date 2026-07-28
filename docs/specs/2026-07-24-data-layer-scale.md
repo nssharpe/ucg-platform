@@ -122,6 +122,70 @@ change; there is no version of the current design that survives this.
 
 ---
 
+## THE ACTUAL GOAL (Nate, 2026-07-28) — perceived speed, not payload size
+
+Important context that reframes this whole spec. The original "hydrate everything at
+boot" design was a deliberate attempt at **McMaster-Carr-style instant navigation** —
+the platform UCG is replacing is painfully slow to use, and that is the problem being
+solved. Payload size and boot time are proxies; **"does clicking around feel instant"
+is the real success metric.**
+
+Worth being clear about what McMaster actually does, because it is nearly the opposite
+of what this app was doing: server-rendered HTML, **small** per-page payloads,
+aggressive CDN + service-worker caching, and — the key trick — **prefetching the next
+page on hover/intent**, so the content is already in the browser by the time you click.
+It never ships the whole catalogue to the client. Loading 29 MB up front is the
+antithesis of that approach, and a 21-second first load is the worst possible outcome
+for perceived speed.
+
+So the slice work in Phases 2-3 moves this app *toward* McMaster's model, not away from
+it. But it comes with an honest tradeoff that must be tracked:
+
+> **Boot got much faster; navigation got slightly slower.** Opening a Results page used
+> to be ~0 ms (already in memory) and now costs a measured **~0.78 s** at nationals
+> scale. Good trade overall — nobody tolerates a 21 s boot — but it is a regression on
+> the exact axis the project cares about, and it is only fully repaid by prefetching.
+
+**Consequence: a perceived-speed phase belongs in this plan and was never scoped.**
+The slice layer makes it cheap, and in fact only became *possible* because of it —
+`slice-cache.ts` already exposes `ensure(key)`, which starts a fetch without rendering
+anything. Before the slice layer there was nothing to prefetch: data was either all
+loaded or not loaded.
+
+- **Prefetch on hover/focus** for event / results / club links — highest value, ~a line
+  per link. Every new on-demand fetch should route through `ensure()` so it stays
+  startable independently of a component mounting; do not foreclose this.
+- **Service-worker caching** of the app shell (the PWA already exists).
+- **Skeletons / keep-previous-content**, never a blank panel. A page that flashes empty
+  on every visit reads as *slower* than the thing being replaced, whatever the numbers
+  say.
+- **Measure navigation timing and LCP**, not just cold boot. The current scoreboard is
+  incomplete: boot is well measured, click-to-content is not measured at all.
+
+Two constraints this implies elsewhere:
+1. **The hosting move is a prerequisite for part of this.** Proper CDN caching and HTML
+   prefetching do not work under GitHub Pages with a HashRouter — see whats-next §2.4
+   (Cloudflare Pages + `BrowserRouter`). Full server-rendering would be a re-platform
+   (Next.js/Remix) and is NOT recommended at ~6 months to launch; prefetching data in
+   the current SPA captures most of the benefit at a fraction of the risk.
+2. **Phase 5 must keep persisting Tier 1 to `localStorage`.** Instant first paint on a
+   repeat visit is the one genuinely McMaster-ish property this app already has;
+   dropping it wholesale would work against the goal.
+
+### Phase 4 is REWRITTEN on the strength of this (2026-07-28)
+
+The original Phase 4 — split every person into a slim row plus on-demand full rows — is
+superseded. The 2026-07-26 recon found the proposed subset wrong in both directions
+(`gradYear`, the field the spec named, has **zero** standalone uses; `altClubIds`, which
+it excluded, is read at 9 ordinary sites), and the split's danger list runs through
+membership *pricing*, synchro eligibility, and nationals categorization.
+
+The Tier-2 insight applies instead: **scope which people load, rather than splitting
+every person into partial rows.** A club manager needs their roster; an athlete needs
+the names at their event; an admin fetches league-wide on demand. Same payload win, no
+"which fields belong in slim?" problem, and it sidesteps the entire danger list — every
+row you get is a complete row.
+
 ## Target architecture
 
 ### Tier the tables by growth shape
