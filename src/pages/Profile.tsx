@@ -10,7 +10,7 @@ import { membershipTypeOf } from '../lib/capabilities-core';
 import { isProfileDirty } from '../lib/profile-core';
 import { currentSeason } from '../lib/season-lifecycle';
 import { GENERAL_WAIVER_TYPE } from '../lib/types';
-import { pushClubRequest, pushMembership, pushPerson, deleteRegistration, sendEmail, createWaiverLink, fetchPublishedWaiver, requestManagerAccess, adminDeletePerson } from '../lib/supabase';
+import { pushClubRequest, pushMembership, pushPerson, deleteRegistration, sendEmail, createWaiverLink, fetchPublishedWaiver, requestManagerAccess, adminDeletePerson, fetchInvoicesForPersonRemote } from '../lib/supabase';
 import { getSession, useAuthLoading, useRolesLoaded } from '../lib/auth';
 import { syncFromSupabase } from '../lib/store';
 import { MfaSection } from './ProfileMfa';
@@ -22,6 +22,7 @@ import { eventIsInPhase } from '../lib/events-core';
 import { collectPersonData } from '../lib/person-data';
 import { fetchScoresForRegIds } from '../lib/scores-slice';
 import { fetchRegistrationsForPerson, applyLocalRegistrationRemove } from '../lib/registrations-slice';
+import { useMembershipsForPerson } from '../lib/memberships-admin-slice';
 import { downloadPersonDataJson, downloadPersonDataPdf } from '../lib/person-export';
 import type { AdminDeletePersonManifest } from '../lib/supabase';
 
@@ -147,7 +148,17 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   const authLoading = useAuthLoading();
   const rolesLoaded = useRolesLoaded();
   const personId = adminView ? params.personId! : caps.personId;
-  const person = db.people.find((p) => p.id === personId);
+  const personRaw = db.people.find((p) => p.id === personId);
+  // memberships are Tier 2 boot-scoped to the caller's own + managed-club
+  // rows (whats-next.md §7) — adminView can target someone OTHER than the
+  // signed-in caller, so `personRaw.memberships` can't be trusted there.
+  // Hooks run unconditionally (before the early "not found" return below),
+  // and the slice is cache-shared with AdminMembershipControls's own call
+  // for the same personId, so this costs no extra fetch beyond that one.
+  const { rows: adminMemberships, status: adminMembershipsStatus } = useMembershipsForPerson(adminView ? personId : null);
+  const person = personRaw && adminView
+    ? { ...personRaw, memberships: adminMembershipsStatus === 'ready' ? adminMemberships : personRaw.memberships }
+    : personRaw;
   // Self view: are we still resolving auth/sync, so a missing person is just
   // "not loaded yet" rather than "no access"? Don't show not-found during this
   // window — show the loader, then (once settled) redirect Home if truly absent.
@@ -369,7 +380,10 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                 const registrations = await fetchRegistrationsForPerson(pid);
                 const regIds = registrations.map((r) => r.id);
                 const scores = await fetchScoresForRegIds(regIds);
-                const data = collectPersonData(db, pid, scores, registrations);
+                // invoices: same reasoning (Tier 2, whats-next.md §7) — a
+                // direct, uncached fetch for completeness on an arbitrary person.
+                const invoices = await fetchInvoicesForPersonRemote(pid);
+                const data = collectPersonData(db, pid, scores, registrations, invoices);
                 downloadPersonDataJson(data);
                 downloadPersonDataPdf(data);
                 toast('Data export downloaded (JSON + PDF).');
@@ -1098,6 +1112,14 @@ function AdminMembershipControls({
   const toast = useToast();
   const caps = useCapabilities();
   const person = db.people.find((x) => x.id === personId)!;
+  // memberships are Tier 2 boot-scoped to the caller's own + managed-club
+  // rows (whats-next.md §7) — `personId` here is an ARBITRARY member the
+  // admin is administering, so `person.memberships` off db.people can't be
+  // trusted. Fetched via the per-person slice (caching is a genuine win on
+  // this view/edit page, unlike a destructive merge) and used for BOTH
+  // display and the mutate() base lookups below — never `person.memberships`.
+  const { rows: memberships, status: membershipsStatus } = useMembershipsForPerson(personId);
+  const membershipsReady = membershipsStatus === 'ready';
   // Season for which the "pending waiver" link popup is open.
   const [waiverPopupSeason, setWaiverPopupSeason] = useState<string | null>(null);
 
@@ -1105,7 +1127,7 @@ function AdminMembershipControls({
   // Shared per season (the single General waiver, confirmed final) — NOT
   // per-type, so this check stays season-only.
   const hasWaiverOnFile = (seasonId: string) =>
-    person.memberships.some((x) => x.seasonId === seasonId && x.waiverSignedAt) ||
+    memberships.some((x) => x.seasonId === seasonId && x.waiverSignedAt) ||
     (db.waiverSignatures ?? []).some((x) => x.personId === person.id && x.seasonId === seasonId);
 
   // Admin "Activate": if a waiver is already on file the membership goes active
@@ -1114,18 +1136,25 @@ function AdminMembershipControls({
   // flips it to active via record-waiver-signature. Acts on ONLY the given
   // type's row — athlete and coach memberships are independent (T2).
   const activate = (seasonId: string, type: MembershipType) => {
+    if (!membershipsReady) return;
     const seasonName = db.seasons.find((s) => s.id === seasonId)?.name ?? seasonId;
     const waiverOk = hasWaiverOnFile(seasonId);
+    const status = waiverOk ? 'active' : 'pending-waiver';
+    let em = memberships.find((x) => x.seasonId === seasonId && membershipTypeOf(x) === type);
+    em = em
+      ? { ...em, status, activatedByAdmin: true, paidVia: em.paidVia || 'comp' }
+      : { seasonId, type, status, waiverSignedAt: null, waiverSignedBy: null, paidVia: 'comp', activatedByAdmin: true };
+    const emResolved = em;
     const applied = mutate((d) => {
       const pid = d.people.find((x) => x.id === personId)!;
-      let em = pid.memberships.find((x) => x.seasonId === seasonId && membershipTypeOf(x) === type);
-      const status = waiverOk ? 'active' : 'pending-waiver';
-      if (em) { em.status = status; em.activatedByAdmin = true; if (!em.paidVia) em.paidVia = 'comp'; }
-      else {
-        em = { seasonId, type, status, waiverSignedAt: null, waiverSignedBy: null, paidVia: 'comp', activatedByAdmin: true };
-        pid.memberships.push(em);
-      }
-      pushMembership(pid.id, em);
+      // Reset from the freshly-fetched `memberships` (not the possibly Tier
+      // 2-incomplete pid.memberships already in local state) before
+      // upserting this one, so local state matches the DB immediately.
+      const idx = memberships.findIndex((x) => x.seasonId === seasonId && membershipTypeOf(x) === type);
+      pid.memberships = idx >= 0
+        ? memberships.map((x, i) => (i === idx ? emResolved : x))
+        : [...memberships, emResolved];
+      pushMembership(pid.id, emResolved);
     });
     if (!applied) return; // offline read-only gate — no false success toast
     if (waiverOk) toast(`${membershipTypeLabel(type)} membership activated for ${seasonName}.`);
@@ -1136,7 +1165,7 @@ function AdminMembershipControls({
   };
 
   const confirmRevoke = async () => {
-    if (!revokeTarget) return;
+    if (!revokeTarget || !membershipsReady) return;
     const { seasonId, type } = revokeTarget;
     // Phase 3 (data-layer-scale), CONTRACT shape #6: personId here is an
     // ARBITRARY member being administered (not the signed-in admin), so this
@@ -1145,14 +1174,18 @@ function AdminMembershipControls({
     // fetched for the athlete-membership branch, which is the only one that
     // touches registrations.
     const personRegs = type === 'athlete' ? await fetchRegistrationsForPerson(personId) : [];
+    const em = memberships.find((x) => x.seasonId === seasonId && membershipTypeOf(x) === type);
+    const emResolved = em ? { ...em, status: 'none' as const } : null;
     let removedCount = 0;
     const applied = mutate((d) => {
       const personInDraft = d.people.find((x) => x.id === personId)!;
-      // Update membership status for ONLY this type's row.
-      const em = personInDraft.memberships.find((x) => x.seasonId === seasonId && membershipTypeOf(x) === type);
-      if (em) {
-        em.status = 'none';
-        pushMembership(personInDraft.id, em);
+      // Same reset-then-upsert reasoning as activate() above.
+      if (emResolved) {
+        const idx = memberships.findIndex((x) => x.seasonId === seasonId && membershipTypeOf(x) === type);
+        personInDraft.memberships = idx >= 0 ? memberships.map((x, i) => (i === idx ? emResolved : x)) : memberships;
+        pushMembership(personInDraft.id, emResolved);
+      } else {
+        personInDraft.memberships = memberships;
       }
       // Removing from upcoming competitions only makes sense when revoking the
       // ATHLETE membership — a coach membership doesn't gate registration, so
@@ -1200,12 +1233,13 @@ function AdminMembershipControls({
         <div key={s.id} style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
           <strong style={{ fontSize: 13 }}>{s.name}{s.id === activeSeason?.id ? ' (Current)' : ''}:</strong>
           {MEMBERSHIP_TYPES.map((type) => {
-            const m = person.memberships.find((x) => x.seasonId === s.id && membershipTypeOf(x) === type);
+            const m = membershipsReady ? memberships.find((x) => x.seasonId === s.id && membershipTypeOf(x) === type) : undefined;
             const isActive = m?.status === 'active';
             return (
               <span key={type} style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
                 <span style={{ fontSize: 12, color: 'var(--ink-soft)' }}>{membershipTypeLabel(type)}:</span>
-                {isActive ? <Badge tone="ok">Active{m?.activatedByAdmin ? ' (admin)' : ''}</Badge>
+                {!membershipsReady ? <Badge tone="info">…</Badge>
+                  : isActive ? <Badge tone="ok">Active{m?.activatedByAdmin ? ' (admin)' : ''}</Badge>
                   : m?.status === 'pending-club-payment' ? <Badge tone="warn">Pending club</Badge>
                   : m?.status === 'pending-waiver' ? (
                     <button
@@ -1232,7 +1266,7 @@ function AdminMembershipControls({
                     </button>
                   );
                 })()}
-                {caps.isAdmin && (
+                {caps.isAdmin && membershipsReady && (
                   isActive ? (
                     <button className="btn small ghost" onClick={() => setRevokeTarget({ seasonId: s.id, type })}>Revoke</button>
                   ) : m?.status === 'pending-waiver' ? (

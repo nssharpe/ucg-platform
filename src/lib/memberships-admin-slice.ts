@@ -2,7 +2,7 @@
 // 2026-07-24-data-layer-scale.md): loadAll's boot read attaches memberships
 // only to `person.memberships` for the caller's own + managed-club rosters,
 // so anything needing memberships for OTHER people fetches on demand here
-// instead. Two shapes, both routed through the shared slice-cache infra so
+// instead. Three shapes, all routed through the shared slice-cache infra so
 // `ensure`/prefetch-on-hover works without a redesign later:
 //
 //   - "Everything" (shape #4): a single fixed key, admin-only, used by
@@ -17,8 +17,14 @@
 //     (revisit the same admin profile ⇒ instant render + background
 //     refresh) rather than a correctness risk, since nothing destructive
 //     reads straight off this cache.
+//   - "One club's roster" (below): Club.tsx's Roster is reachable by ANY
+//     signed-in account for ANY club (RequireAccount, not manager-gated),
+//     and an admin's `canManage` is true for every club — but Tier 2's boot
+//     scope only covers clubs the caller is a registered manager of, so an
+//     admin opening a club they don't personally manage needs this too.
 import { createEventScopedSlice } from './slice-cache';
-import { fetchAllMembershipsAdminRemote, fetchMembershipsForPersonRemote } from './supabase';
+import { fetchAllMembershipsAdminRemote, fetchMembershipsForPersonRemote, fetchMembershipsForPersonIdsRemote } from './supabase';
+import { getDB } from './store';
 import type { Membership } from './types';
 
 export interface MembershipRowWithPerson { personId: string; membership: Membership; }
@@ -78,4 +84,33 @@ const personMembershipsSlice = createEventScopedSlice<Membership>({
  *  refetches. */
 export function useMembershipsForPerson(personId: string | undefined | null) {
   return personMembershipsSlice.useScope(personId);
+}
+
+// ---------------------------------------------------------------------------
+// One club's roster memberships (Club.tsx's Roster — an admin can open ANY
+// club's page, not just ones they manage, so Tier 2's boot scope (which only
+// covers the caller's OWN managed clubs) doesn't carry a non-managed club's
+// roster data for them; a real manager's OWN club is already correct via
+// Tier 2, so this is a cheap redundant-but-harmless refetch for that case)
+// ---------------------------------------------------------------------------
+
+const clubRosterMembershipsSlice = createEventScopedSlice<MembershipRowWithPerson>({
+  // Resolves the roster from the already-hydrated `people` (Tier 1/special
+  // case, unaffected by this refactor) rather than requiring the caller to
+  // pass person ids through the single-string scope key.
+  fetchScope: async (clubId) => {
+    const rosterIds = getDB().people.filter((p) => p.mainClubId === clubId).map((p) => p.id);
+    const byPerson = await fetchMembershipsForPersonIdsRemote(rosterIds);
+    const out: MembershipRowWithPerson[] = [];
+    for (const [personId, list] of byPerson) for (const membership of list) out.push({ personId, membership });
+    return out;
+  },
+  idOf: (r) => `${r.personId}:${r.membership.seasonId}:${r.membership.type}`,
+});
+
+/** One club's roster memberships, `{ rows, status }` (use
+ *  `groupAdminMembershipsByPerson` for the per-person map). `clubId` is the
+ *  scope key. */
+export function useClubRosterMemberships(clubId: string | undefined | null) {
+  return clubRosterMembershipsSlice.useScope(clubId);
 }
