@@ -22,6 +22,8 @@ import { reportError } from './report-error';
 type Row<T extends keyof Database['public']['Tables']> = Database['public']['Tables'][T]['Row'];
 /** A database function's row return shape (for `.rpc()` results). */
 type FnReturns<T extends keyof Database['public']['Functions']> = Database['public']['Functions'][T]['Returns'];
+/** A VIEW's row type (Views live in a separate generated namespace from Tables). */
+type ViewRow<T extends keyof Database['public']['Views']> = Database['public']['Views'][T]['Row'];
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
@@ -349,6 +351,56 @@ const personToRow = (p: Athlete) => ({
   emergency: p.emergency ?? {}, dietary: p.dietary ?? [], dietary_notes: p.dietaryNotes ?? '',
   achievements: p.achievements ?? [],
 });
+
+/** Row -> Athlete, given the person's already-resolved child collections.
+ *  Extracted (Phase 4, data-layer-scale.md) from what used to be inline in
+ *  loadAll so every scoped people fetcher below shares ONE mapping — a
+ *  person row from a boot fetch, a by-club fetch, or a single-arbitrary-
+ *  person fetch must all produce byte-identical Athlete shapes. `altClubIds`/
+ *  `memberships` default to `[]` for fetchers that deliberately don't
+ *  resolve them (see buildPeopleFromRows's callers) — Phase 4's own contract
+ *  is "every row you get is COMPLETE", but "complete" here means every
+ *  FIELD is present with its correct type, not that every caller re-fetches
+ *  child collections it already gets from a sibling hook (e.g. Club.tsx/
+ *  Profile.tsx/AdminMembers.tsx already pair a people fetch with
+ *  useClubRosterMemberships/useMembershipsForPerson/fetchMembershipsForPersonRemote
+ *  for memberships specifically — duplicating that fetch here would double
+ *  the query cost for no consumer that needs it). */
+const rowToPerson = (r: Row<'people'>, altClubIds: string[] = [], memberships: Membership[] = []): Athlete => ({
+  id: r.id, authUserId: r.auth_user_id ?? null, kind: r.kind as Athlete['kind'],
+  roles: (r.roles ?? { athlete: r.kind !== 'coach', coach: r.kind === 'coach' }) as Athlete['roles'],
+  firstName: r.first_name, lastName: r.last_name, email: r.email,
+  dob: r.dob ?? '', gender: r.gender as Athlete['gender'], placement: (r.placement ?? {}) as Athlete['placement'], gradYear: r.grad_year ?? 0,
+  studentStatus: (r.student_status ?? '') as Athlete['studentStatus'], shirt: r.shirt ?? '', country: r.country ?? '', state: r.state ?? '',
+  outsideUs: (r as { outside_us?: boolean }).outside_us ?? false,
+  phone: r.phone ?? '', smsConsent: r.sms_consent ?? false, smsConsentAt: r.sms_consent_at ?? null,
+  mainClubId: r.main_club_id, altClubIds,
+  levels: (r.levels ?? {}) as Athlete['levels'], emergency: (r.emergency ?? { contact: '', relation: '', phone: '' }) as Athlete['emergency'],
+  dietary: (r.dietary ?? []) as Athlete['dietary'], dietaryNotes: r.dietary_notes ?? '',
+  memberships, achievements: (r.achievements ?? []) as Athlete['achievements'],
+});
+
+/** Batch version of rowToPerson: groups altClubRows/membershipRows by
+ *  person_id and maps every people row in one pass. */
+function buildPeopleFromRows(
+  rows: Row<'people'>[],
+  altClubRows: Row<'person_alt_clubs'>[] = [],
+  membershipRows: Row<'memberships'>[] = [],
+): Athlete[] {
+  const altClubsByPerson = new Map<string, string[]>();
+  for (const r of altClubRows) {
+    const arr = altClubsByPerson.get(r.person_id) ?? [];
+    arr.push(r.club_id);
+    altClubsByPerson.set(r.person_id, arr);
+  }
+  const membershipsByPerson = new Map<string, Membership[]>();
+  for (const r of membershipRows) {
+    const arr = membershipsByPerson.get(r.person_id) ?? [];
+    arr.push(rowToMembership(r));
+    membershipsByPerson.set(r.person_id, arr);
+  }
+  return rows.map((r) => rowToPerson(r, altClubsByPerson.get(r.id) ?? [], membershipsByPerson.get(r.id) ?? []));
+}
 
 const membershipToRow = (personId: string, m: Membership) => ({
   // Membership has no TS id; derive a stable one (0004 dropped the uuid default).
@@ -1206,6 +1258,160 @@ export async function fetchAllInvoicesAdminRemote(): Promise<Invoice[]> {
   const { data: itemRows, error: itemErr } = await fetchAllRows<Row<'invoice_items'>>('invoice_items');
   if (itemErr) { console.error('[supabase] fetchAllInvoicesAdminRemote (items) failed:', itemErr); return buildInvoicesFromRows(invoiceRows, []); }
   return buildInvoicesFromRows(invoiceRows, itemRows);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 (data-layer-scale.md, rewritten 2026-07-28): people scoping.
+// loadAll's boot read is scoped to the caller's own row + the rosters of
+// clubs they belong to or manage (see loadAll below) -- every other "which
+// people" shape lives here. Every row any of these return is a COMPLETE
+// Athlete row (Phase 4 was rewritten from a slim/full field split to a
+// which-ROWS-load split -- see the spec's "THE ACTUAL GOAL" section).
+//
+// A note on RLS visibility, discovered while building this (not written
+// down anywhere else): `people`'s only SELECT policy is `people_self_read`
+// (self OR is_admin() OR manages_club(main_club_id)), plus narrow
+// refund_manager/finance_admin read policies -- there is NO policy granting
+// visibility into an arbitrary OTHER club's roster. That's the same ceiling
+// the OLD unscoped `select('*')` already had (RLS evaluates every row
+// either way), so fetchPeopleForIdsRemote/fetchPersonRemote/
+// fetchPeopleForClubRemote/fetchAllPeopleAdminRemote below don't grant a
+// non-admin caller anything they couldn't already see -- they just narrow
+// the QUERY, exactly like the memberships/invoices Tier 2 scoping above.
+//
+// The one place this bit: `public_competitors` is a `security_invoker =
+// false` VIEW (id/first_name/last_name/main_club_id only) that migration
+// 20260601000004 created specifically so "the live-results & meet pages
+// work with no login" (its own comment) -- but the app has never actually
+// queried it. Verified empirically (2026-07-28, live prod, anon session):
+// an anonymous Results.tsx visitor's persisted `db.people` is `[]` --
+// athlete names are silently blank on the public live-results page today,
+// for EVERY visitor who isn't signed in. Pre-existing, not a regression
+// this phase introduces -- but fetchPublicPeopleForIdsRemote below (used by
+// people-slice.ts's by-ids shape for pure name-lookup consumers: Results,
+// Judge, ScoreDetail, EventCheckinCard, CompetitionOrderCard,
+// FinalsLineupEditor, CapacityConflictDialog) finally wires it up, which
+// fixes that bug as a natural side effect of doing the scoping correctly.
+// Consumers that need MORE than name+club (nationals categorization's
+// gender/placement/studentStatus; the registration-workbook export's
+// shirt/dietary/email/phone/emergency) go through fetchPeopleForIdsRemote
+// instead (the real `people` table, same RLS ceiling as before -- those
+// surfaces are admin/sanctioning/host gated already).
+// ---------------------------------------------------------------------------
+
+/** Thin competitor projection backing the public `public_competitors` view
+ *  -- id/name/club only, readable by ANON and every authenticated caller
+ *  regardless of club affiliation (unlike the real `people` table). Use for
+ *  pure "show me this athlete's name" needs; use fetchPeopleForIdsRemote
+ *  instead when a consumer needs gender/placement/studentStatus/dietary/etc. */
+export interface CompetitorRef { id: string; firstName: string; lastName: string; mainClubId: string | null; }
+
+/** Every competitor name for a SET of ids, batched (never N sequential
+ *  per-athlete fetches) via `public_competitors`. Backs people-slice.ts's
+ *  by-ids shape. */
+export async function fetchPublicPeopleForIdsRemote(personIds: string[]): Promise<CompetitorRef[]> {
+  if (!supabase || personIds.length === 0) return [];
+  const out: CompetitorRef[] = [];
+  for (const part of chunk(personIds, 200)) {
+    const { data, error } = await supabase
+      .from('public_competitors')
+      .select('id, first_name, last_name, main_club_id')
+      .in('id', part);
+    if (error) { console.error('[supabase] fetchPublicPeopleForIdsRemote failed:', error); continue; }
+    for (const r of (data ?? []) as ViewRow<'public_competitors'>[]) {
+      if (!r.id) continue;
+      out.push({ id: r.id, firstName: r.first_name ?? '', lastName: r.last_name ?? '', mainClubId: r.main_club_id });
+    }
+  }
+  return out;
+}
+
+/** One arbitrary person, full row -- Phase 4 shape #4/#6 (AdminMembers
+ *  merge modal, person-data.ts GDPR export, Profile.tsx adminView's
+ *  underlying fetch via people-admin-slice.ts's usePersonAdmin). altClubIds
+ *  resolved (AdminMembers merge reads it); memberships deliberately left `[]`
+ *  -- every caller already fetches memberships separately via
+ *  fetchMembershipsForPersonRemote/useMembershipsForPerson (see the doc
+ *  comment on rowToPerson). */
+export async function fetchPersonRemote(personId: string): Promise<Athlete | null> {
+  if (!supabase) return null;
+  const [{ data: rows, error }, { data: altRows, error: altErr }] = await Promise.all([
+    fetchScopedRows<Row<'people'>>('people', '*', 'id', personId),
+    fetchScopedRows<Row<'person_alt_clubs'>>('person_alt_clubs', '*', 'person_id', personId),
+  ]);
+  if (error || altErr) { console.error('[supabase] fetchPersonRemote failed:', error ?? altErr); return null; }
+  const row = rows[0];
+  if (!row) return null;
+  return buildPeopleFromRows([row], altRows)[0] ?? null;
+}
+
+/** Every person for a SET of ids, full rows -- Phase 4 shape #2 for
+ *  consumers needing more than name+club (nationals-adapter.ts's
+ *  categorization math, Events.tsx's registration-workbook export). Same
+ *  RLS ceiling as the old unscoped select('*') (see the block comment
+ *  above) -- correct for admin, same pre-existing gap for a
+ *  sanctioning-only (non-admin) caller viewing another club's athletes.
+ *  Batched, never N sequential per-athlete fetches. altClubIds/memberships
+ *  left `[]` (no current consumer of this shape reads either). */
+export async function fetchPeopleForIdsRemote(personIds: string[]): Promise<Athlete[]> {
+  if (!supabase || personIds.length === 0) return [];
+  const out: Athlete[] = [];
+  for (const part of chunk(personIds, 200)) {
+    const { data, error } = await fetchScopedRowsIn<Row<'people'>>('people', '*', 'id', part);
+    if (error) { console.error('[supabase] fetchPeopleForIdsRemote failed:', error); continue; }
+    out.push(...buildPeopleFromRows(data));
+  }
+  return out;
+}
+
+/** Every person on one club's roster (mainClubId OR person_alt_clubs) --
+ *  Phase 4 shape #1's sibling for Club.tsx's Roster/ClubManagers/
+ *  EventRegGrid when the viewer doesn't personally manage the club (Tier
+ *  2's boot scope only covers clubs the caller manages, but Club.tsx is
+ *  reachable by ANY signed-in account for ANY club, and an admin's
+ *  `canManage` is true everywhere -- mirrors fetchMembershipsForPersonIdsRemote's
+ *  reasoning in memberships-admin-slice.ts's clubRosterMembershipsSlice,
+ *  which this replaces as that slice's people source once `db.people` is no
+ *  longer globally hydrated). altClubIds resolved (ClubManagers' candidate
+ *  filter reads it); memberships left `[]` (Club.tsx already pairs this
+ *  with useClubRosterMemberships). */
+export async function fetchPeopleForClubRemote(clubId: string): Promise<Athlete[]> {
+  if (!supabase) return [];
+  const [{ data: mainRows, error: mainErr }, { data: altLinkRows, error: altLinkErr }] = await Promise.all([
+    fetchScopedRows<Row<'people'>>('people', '*', 'main_club_id', clubId),
+    fetchScopedRows<Row<'person_alt_clubs'>>('person_alt_clubs', '*', 'club_id', clubId),
+  ]);
+  if (mainErr || altLinkErr) { console.error('[supabase] fetchPeopleForClubRemote failed:', mainErr ?? altLinkErr); return []; }
+  const rowsById = new Map<string, Row<'people'>>();
+  for (const r of mainRows) rowsById.set(r.id, r);
+  const altOnlyIds = altLinkRows.map((r) => r.person_id).filter((id) => !rowsById.has(id));
+  if (altOnlyIds.length) {
+    const { data: altPersonRows, error: altPersonErr } = await fetchScopedRowsIn<Row<'people'>>('people', '*', 'id', altOnlyIds);
+    if (altPersonErr) console.error('[supabase] fetchPeopleForClubRemote (alt-club members) failed:', altPersonErr);
+    else for (const r of altPersonRows) rowsById.set(r.id, r);
+  }
+  const rows = [...rowsById.values()];
+  if (!rows.length) return [];
+  const ids = rows.map((r) => r.id);
+  const { data: altClubRows, error: altClubErr } = await fetchScopedRowsIn<Row<'person_alt_clubs'>>('person_alt_clubs', '*', 'person_id', ids);
+  if (altClubErr) { console.error('[supabase] fetchPeopleForClubRemote (altClubIds) failed:', altClubErr); return buildPeopleFromRows(rows); }
+  return buildPeopleFromRows(rows, altClubRows);
+}
+
+/** Every person league-wide -- Phase 4 shape #3, admin-only (AdminMembers,
+ *  AdminClubs, Communicate's audience, Home's admin dashboard, UserRoles),
+ *  never on a normal render path for a non-admin. Full altClubIds (cheap
+ *  alongside an already-full-table fetch); memberships left `[]` -- every
+ *  existing league-wide consumer already pairs this with
+ *  useAdminMemberships() instead of reading person.memberships. */
+export async function fetchAllPeopleAdminRemote(): Promise<Athlete[]> {
+  if (!supabase) return [];
+  const [{ data: rows, error }, { data: altRows, error: altErr }] = await Promise.all([
+    fetchAllRows<Row<'people'>>('people'),
+    fetchAllRows<Row<'person_alt_clubs'>>('person_alt_clubs'),
+  ]);
+  if (error || altErr) { console.error('[supabase] fetchAllPeopleAdminRemote failed:', error ?? altErr); return []; }
+  return buildPeopleFromRows(rows, altRows);
 }
 
 /** Replace an owner's (club or athlete) cart with the given items. Uses a
@@ -2465,35 +2671,53 @@ export async function loadAll(): Promise<DB | null> {
     // is O(table size) regardless of how cheap any single predicate call is.
     // Narrowing the QUERY (an indexed .eq()/.in() filter, mirroring exactly
     // what RLS already permits) lets the planner touch a handful of rows
-    // instead. clubManagersR/peopleR are fetched here rather than inside the
-    // main Promise.all below because they're needed to compute the scope
-    // before those queries can be built; both are reused unchanged by the
-    // normal processing further down (same variable names).
-    const [{ data: sessionData }, clubManagersR, peopleR] = await Promise.all([
+    // instead. clubManagersR (and, since Phase 4, the scoped people reads
+    // below) are fetched here rather than inside the main Promise.all below
+    // because they're needed to compute the scope before those queries can
+    // be built; clubManagersR is reused unchanged by the normal processing
+    // further down (same variable name), and `peopleR` is reconstructed in
+    // the same `{ data, error }` shape so it is too.
+    const [{ data: sessionData }, clubManagersR] = await Promise.all([
       supabase.auth.getSession(),
       fetchAllRows<Row<'club_managers'>>('club_managers'),
-      fetchAllRows<Row<'people'>>('people'),
     ]);
     const authUserId = sessionData.session?.user?.id ?? null;
-    const myPersonId = authUserId
-      ? (peopleR.data ?? []).find((r) => r.auth_user_id === authUserId)?.id ?? null
-      : null;
+    // Phase 4 (data-layer-scale.md, rewritten 2026-07-28): `people` is no
+    // longer globally hydrated either — same Tier 2 reasoning as
+    // memberships/invoices above, scoped to self + managed-club rosters.
+    // Resolve the caller's own row via a single narrow
+    // .eq('auth_user_id', ...) query FIRST, instead of scanning a full
+    // people fetch to find it (that full scan was the old approach this
+    // replaces).
+    const selfR = authUserId
+      ? await fetchScopedRows<Row<'people'>>('people', '*', 'auth_user_id', authUserId)
+      : { data: [] as Row<'people'>[], error: null as PostgrestError | null };
+    const selfRow = (selfR.data ?? [])[0] ?? null;
+    const myPersonId = selfRow?.id ?? null;
     // Mirrors manages_club(): every club with a club_managers row for this person.
     const managedClubIds = myPersonId
       ? [...new Set((clubManagersR.data ?? []).filter((r) => r.person_id === myPersonId).map((r) => r.club_id))]
       : [];
-    // Mirrors memberships_read's predicate exactly (person_id = my_person_id()
-    // OR the person's main club is one the caller manages) — self plus the
-    // roster of every managed club. Built from the already-fetched peopleR
-    // (no extra query): people itself stays globally hydrated (unaffected by
-    // this change, Phase 4 territory), so this is a pure in-memory filter.
-    const visiblePersonIds = new Set<string>();
-    if (myPersonId) visiblePersonIds.add(myPersonId);
-    if (managedClubIds.length) {
-      for (const r of peopleR.data ?? []) {
-        if (r.main_club_id && managedClubIds.includes(r.main_club_id)) visiblePersonIds.add(r.id);
-      }
-    }
+    // Roster of every managed club — another narrow query (main_club_id IN
+    // managedClubIds), never a full-table scan. Self may already be in their
+    // own managed club's roster (a manager who's also an athlete/coach on
+    // it) — deduped into peopleRowsById below.
+    const rosterR = managedClubIds.length
+      ? await fetchScopedRowsIn<Row<'people'>>('people', '*', 'main_club_id', managedClubIds)
+      : { data: [] as Row<'people'>[], error: null as PostgrestError | null };
+    const peopleRowsById = new Map<string, Row<'people'>>();
+    if (selfRow) peopleRowsById.set(selfRow.id, selfRow);
+    for (const r of rosterR.data ?? []) peopleRowsById.set(r.id, r);
+    // Kept as `peopleR` (same shape fetchAllRows/fetchScopedRows return) so
+    // every downstream reference below is unchanged.
+    const peopleR = { data: [...peopleRowsById.values()], error: selfR.error ?? rosterR.error };
+    // This scoped fetch's own result IS the boot "visible people" set now —
+    // mirrors memberships_read's RLS predicate exactly (self OR managed-club
+    // roster), which is exactly what was just queried above, so no extra
+    // pass over a full people array is needed to compute it (Tier 2's
+    // original memberships/invoices scoping had to derive this from an
+    // already-fetched full people list; Phase 4 removed that list).
+    const visiblePersonIds = new Set(peopleRowsById.keys());
     const emptyRows = <T,>() => Promise.resolve({ data: [] as T[], error: null as PostgrestError | null });
 
     const [
@@ -2613,31 +2837,11 @@ export async function loadAll(): Promise<DB | null> {
     }
     const clubs: Club[] = (clubsR.data ?? []).map((r) => ({ ...rowToClub(r), managerIds: managersByClub.get(r.id) ?? [] }));
 
-    const altClubsByPerson = new Map<string, string[]>();
-    for (const r of altClubsR.data ?? []) {
-      const arr = altClubsByPerson.get(r.person_id) ?? [];
-      arr.push(r.club_id);
-      altClubsByPerson.set(r.person_id, arr);
-    }
-    const membershipsByPerson = new Map<string, Membership[]>();
-    for (const r of membershipsR.data ?? []) {
-      const arr = membershipsByPerson.get(r.person_id) ?? [];
-      arr.push(rowToMembership(r));
-      membershipsByPerson.set(r.person_id, arr);
-    }
-    const people: Athlete[] = (peopleR.data ?? []).map((r: Row<'people'>) => ({
-      id: r.id, authUserId: r.auth_user_id ?? null, kind: r.kind as Athlete['kind'],
-      roles: (r.roles ?? { athlete: r.kind !== 'coach', coach: r.kind === 'coach' }) as Athlete['roles'],
-      firstName: r.first_name, lastName: r.last_name, email: r.email,
-      dob: r.dob ?? '', gender: r.gender as Athlete['gender'], placement: (r.placement ?? {}) as Athlete['placement'], gradYear: r.grad_year ?? 0,
-      studentStatus: (r.student_status ?? '') as Athlete['studentStatus'], shirt: r.shirt ?? '', country: r.country ?? '', state: r.state ?? '',
-      outsideUs: (r as { outside_us?: boolean }).outside_us ?? false,
-      phone: r.phone ?? '', smsConsent: r.sms_consent ?? false, smsConsentAt: r.sms_consent_at ?? null,
-      mainClubId: r.main_club_id, altClubIds: altClubsByPerson.get(r.id) ?? [],
-      levels: (r.levels ?? {}) as Athlete['levels'], emergency: (r.emergency ?? { contact: '', relation: '', phone: '' }) as Athlete['emergency'],
-      dietary: (r.dietary ?? []) as Athlete['dietary'], dietaryNotes: r.dietary_notes ?? '',
-      memberships: membershipsByPerson.get(r.id) ?? [], achievements: (r.achievements ?? []) as Athlete['achievements'],
-    }));
+    // Phase 4: reuses the same rowToPerson/buildPeopleFromRows mapping every
+    // on-demand people fetcher uses (fetchPersonRemote et al, above) — this
+    // boot path is now just "the scoped rows, with real altClubIds/
+    // memberships" rather than a third copy of the same field mapping.
+    const people: Athlete[] = buildPeopleFromRows(peopleR.data ?? [], altClubsR.data ?? [], membershipsR.data ?? []);
 
     const squadsBySession = new Map<string, Event['sessions'][number]['squads']>();
     for (const r of (squadsR.data ?? []).sort((a: Row<'squads'>, b: Row<'squads'>) => a.sort_order - b.sort_order)) {
