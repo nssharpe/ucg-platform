@@ -12,6 +12,7 @@ import type { Registration, Score } from '../lib/types';
 import type { AthleteResult } from '../lib/scoring';
 import { useEventScores } from '../lib/scores-slice';
 import { useEventRegistrations } from '../lib/registrations-slice';
+import { usePeopleNames, nameLookup } from '../lib/people-slice';
 import { eventIsInPhase } from '../lib/events-core';
 import { appBaseUrl, copyToClipboard } from '../lib/url';
 
@@ -79,6 +80,16 @@ export function EventResults() {
   // (scores-slice.ts), so this is just a normal by-event read.
   const { rows: eventScores, status: scoresStatus } = useEventScores(event?.id);
   const { rows: eventRegs, status: regsStatus } = useEventRegistrations(event?.id);
+  // Phase 4 (data-layer-scale.md): db.people at boot no longer covers
+  // cross-club competitors — this is a PUBLIC, no-login results page, so
+  // names come from the thin public_competitors-backed shape (works for an
+  // anonymous visitor too, unlike the real people table). Derived from the
+  // full by-event registration set (not session-scoped) so switching the
+  // session selector below doesn't need a refetch.
+  const athleteIds = useMemo(() => [...new Set(eventRegs.map((r) => r.athleteId))], [eventRegs]);
+  const { rows: competitorRefs, status: peopleStatus } = usePeopleNames(athleteIds);
+  const athleteNameById = useMemo(() => nameLookup(competitorRefs), [competitorRefs]);
+  const competitorById = useMemo(() => new Map(competitorRefs.map((r) => [r.id, r])), [competitorRefs]);
 
   const computed = useMemo(
     () => (event && session ? sessionResults(event, session.id, eventScores, eventRegs) : null),
@@ -113,10 +124,7 @@ export function EventResults() {
   const { byLevel, apparatusRankings, teamScores } = computed;
   const events = APPARATUS[session.discipline];
   const clubName = (id: string) => db.clubs.find((c) => c.id === id)?.shortName ?? id;
-  const athleteName = (athleteId: string) => {
-    const a = db.people.find((p) => p.id === athleteId);
-    return a ? `${a.firstName} ${a.lastName}` : athleteId;
-  };
+  const athleteName = (athleteId: string) => athleteNameById.get(athleteId) ?? athleteId;
 
   // H3: absolute link to this results page. The session isn't part of the
   // route/query (`sessionId` is local component state only), so there's
@@ -139,8 +147,7 @@ export function EventResults() {
   const matchesFilters = (r: AthleteResult) => {
     if (catFilter && (r.reg.category ?? '') !== catFilter) return false;
     if (search) {
-      const a = db.people.find((p) => p.id === r.reg.athleteId);
-      const hay = `${a?.firstName} ${a?.lastName} ${clubName(r.reg.clubId)}`.toLowerCase();
+      const hay = `${athleteName(r.reg.athleteId)} ${clubName(r.reg.clubId)}`.toLowerCase();
       if (!hay.includes(search.toLowerCase())) return false;
     }
     return true;
@@ -148,7 +155,10 @@ export function EventResults() {
 
   const sortRows = (rows: AthleteResult[]): AthleteResult[] => {
     const val = (r: AthleteResult): string | number => {
-      if (sort.key === '_name') { const a = db.people.find((p) => p.id === r.reg.athleteId); return `${a?.lastName} ${a?.firstName}`.toLowerCase(); }
+      if (sort.key === '_name') {
+        const a = competitorById.get(r.reg.athleteId);
+        return `${a?.lastName ?? ''} ${a?.firstName ?? ''}`.toLowerCase();
+      }
       if (sort.key === '_club') return clubName(r.reg.clubId).toLowerCase();
       if (sort.key === '_cat') return r.reg.category ?? '';
       if (sort.key === '_aa') return r.aa;
@@ -194,7 +204,7 @@ export function EventResults() {
         />
       </div>
 
-      {scoresStatus === 'loading' || regsStatus === 'loading' ? (
+      {scoresStatus === 'loading' || regsStatus === 'loading' || peopleStatus === 'loading' ? (
         <p style={{ color: 'var(--ink-soft)', fontSize: 14 }}>Loading…</p>
       ) : (
       <>
