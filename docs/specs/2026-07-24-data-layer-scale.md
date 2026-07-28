@@ -139,6 +139,36 @@ the scoping explicit rather than relying on RLS to shrink a `select('*')`. Stays
 and stays synchronous, which is what keeps My Registrations / Cart / Purchase History
 simple.
 
+> **STATUS (2026-07-28): `memberships` / `invoices` / `invoice_items` are still
+> UNSCOPED in `loadAll`** — this paragraph's fix was written down 2026-07-24 but never
+> built for these three tables, and that's exactly the hole whats-next §7 describes:
+> under RLS, an unfiltered `select('*')` still costs the DB O(table size), because the
+> planner must evaluate the row-security predicate against every row to know what the
+> caller may see — no rewrite of the predicate's *shape* changes that big-O, only
+> narrowing the *query* does (an indexed `.eq('person_id', ...)`-style filter lets the
+> planner touch a handful of rows instead of the whole table). A same-day investigation
+> tried the predicate-shape route anyway (wrapping the cross-table subqueries in
+> `memberships`/`invoice_items`'s RLS policies in SECURITY DEFINER helper functions,
+> matching the existing `manages_club()`/`my_person_id()` pattern) and it was
+> **measured and rejected**: at 0.5×-projected scale, `memberships` came back
+> statistically unchanged (~5.0–5.3s either way) and `invoice_items` got measurably
+> **worse** (7.4s → 11.4s). Root cause: Postgres can hash-materialize a raw correlated
+> `EXISTS` subquery into a single semi-join pass over the referenced table (confirmed
+> via a `hashed SubPlan` node in the plan), but a SECURITY DEFINER function call is
+> opaque to the planner and can never be hashed that way — it pays its own per-call
+> cost (~0.9ms measured) on every row of an unfiltered scan, which loses to the
+> hashed-subquery plan once the referenced table's own policy stack isn't already the
+> dominant cost. **Do not re-attempt a policy-rewrite fix for this — the fix is
+> implementing the scoping this paragraph already specifies**: explicit
+> caller-scoped filters on `memberships` / `invoices` / `invoice_items` in `loadAll`
+> (self rows + the caller's managed-club ids, mirroring what RLS already permits —
+> same shape as the Tier 3 slice work Phases 2–3 did for `scores`/`registrations`, just
+> staying synchronous/hydrated-at-boot per Tier 2's definition rather than moving to
+> on-demand slices). Full data + the surviving hygiene fix (duplicate-SELECT-policy /
+> `for all`-grants-DELETE cleanup, kept because it's correctness-independent of the
+> scale question) are in `supabase/README.md`'s entry for
+> `20260728015930_tier2_rls_policy_cost.sql` and `docs/whats-next.md` §7.
+
 **Tier 3 — Unbounded and contextual.** Never globally hydrated: `scores`,
 `registrations` beyond mine, `waiver_signatures`, `event_checkins`, `competition_orders`,
 `finals_lineups`, `session_requests`, `waitlist_groups`, `event_admins`,
