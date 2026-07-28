@@ -5,6 +5,7 @@ import { useCapabilities } from '../lib/capabilities';
 import { Badge } from '../components/ui';
 import { CLUB_ACCESS_LABELS } from '../lib/types';
 import type { Region } from '../lib/types';
+import { useAllCompetitors } from '../lib/people-slice';
 
 const REGIONS: Region[] = [
   'Northeast',
@@ -40,16 +41,25 @@ export function Clubs() {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [db.clubs, search, regionFilter]);
 
+  // Phase 4 (data-layer-scale.md): db.people at boot no longer covers the
+  // whole league, and this directory is reachable by ANY signed-in account
+  // (RequireAccount, not admin-gated) — league-wide via the thin
+  // public_competitors-backed shape (works for every viewer regardless of
+  // club affiliation, unlike people-admin-slice's useAdminPeople which is
+  // RLS-gated to admin/managed-club/self).
+  const { rows: allCompetitors, status: competitorsStatus } = useAllCompetitors();
+  const competitorsReady = competitorsStatus === 'ready';
+
   // Pre-compute member counts: people whose mainClubId === club.id
   const memberCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const p of db.people) {
+    for (const p of allCompetitors) {
       if (p.mainClubId) {
         counts[p.mainClubId] = (counts[p.mainClubId] ?? 0) + 1;
       }
     }
     return counts;
-  }, [db.people]);
+  }, [allCompetitors]);
 
   return (
     <div>
@@ -134,9 +144,9 @@ export function Clubs() {
             </thead>
             <tbody>
               {clubs.map((club) => {
-                const count = memberCounts[club.id] ?? 0;
+                const count = competitorsReady ? (memberCounts[club.id] ?? 0) : null;
                 const managerNames = club.managerIds
-                  .map((id) => db.people.find((p) => p.id === id))
+                  .map((id) => allCompetitors.find((p) => p.id === id))
                   .filter((p): p is NonNullable<typeof p> => !!p)
                   .map((p) => `${p.firstName} ${p.lastName}`);
 
@@ -171,7 +181,7 @@ export function Clubs() {
                     <td style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
                       {CLUB_ACCESS_LABELS[club.access] ?? club.access}
                     </td>
-                    <td className="num">{count}</td>
+                    <td className="num">{count ?? '…'}</td>
                     <td style={{ fontSize: 13 }}>
                       {managerNames.length > 0
                         ? managerNames.join(', ')

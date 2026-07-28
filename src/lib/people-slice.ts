@@ -27,7 +27,7 @@
 // admin/sanctioning/host — those surfaces are already gated that way).
 import { useMemo } from 'react';
 import { useDB } from './store';
-import { isSupabaseConfigured, fetchPublicPeopleForIdsRemote, type CompetitorRef } from './supabase';
+import { isSupabaseConfigured, fetchPublicPeopleForIdsRemote, fetchAllPublicCompetitorsRemote, type CompetitorRef } from './supabase';
 import { createEventScopedSlice, type SliceResult } from './slice-cache';
 
 export type { CompetitorRef };
@@ -78,4 +78,31 @@ export function nameLookup(rows: CompetitorRef[]): Map<string, string> {
   const out = new Map<string, string>();
   for (const r of rows) out.set(r.id, `${r.firstName} ${r.lastName}`.trim());
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// League-wide, thin (Clubs.tsx's public club directory — member counts +
+// manager names across EVERY club, reachable by any signed-in account, not
+// just admin — see fetchAllPublicCompetitorsRemote's doc comment in
+// supabase.ts for why this is a separate shape from people-admin-slice.ts's
+// useAdminPeople, which is RLS-gated to admin/managed-club/self).
+// ---------------------------------------------------------------------------
+
+const LEAGUE_KEY = 'league';
+
+const allCompetitorsSlice = createEventScopedSlice<CompetitorRef>({
+  fetchScope: () => fetchAllPublicCompetitorsRemote(),
+  idOf: (r) => r.id,
+});
+
+/** Every competitor name+club league-wide, `{ rows, status }`. Any count
+ *  computed over this MUST gate on `status === 'ready'` first. */
+export function useAllCompetitors(): SliceResult<CompetitorRef> {
+  const demoDb = useDB();
+  const remote = allCompetitorsSlice.useScope(isSupabaseConfigured ? LEAGUE_KEY : null);
+  if (!isSupabaseConfigured) {
+    const rows: CompetitorRef[] = demoDb.people.map((p) => ({ id: p.id, firstName: p.firstName, lastName: p.lastName, mainClubId: p.mainClubId }));
+    return { rows, status: 'ready' };
+  }
+  return remote;
 }

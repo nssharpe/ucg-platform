@@ -1306,6 +1306,20 @@ export async function fetchAllInvoicesAdminRemote(): Promise<Invoice[]> {
  *  instead when a consumer needs gender/placement/studentStatus/dietary/etc. */
 export interface CompetitorRef { id: string; firstName: string; lastName: string; mainClubId: string | null; }
 
+/** Every competitor name+club league-wide, via `public_competitors` — unlike
+ *  fetchAllPeopleAdminRemote (the real `people` table, RLS-gated to
+ *  admin/managed-club/self), this works for ANY caller including anon,
+ *  since the view is a security-invoker=false RLS bypass by design. Backs
+ *  people-slice.ts's "everyone" shape (Clubs.tsx's public club directory —
+ *  member counts + manager names across every club, reachable by any
+ *  signed-in account, not just admin). */
+export async function fetchAllPublicCompetitorsRemote(): Promise<CompetitorRef[]> {
+  if (!supabase) return [];
+  const { data, error } = await fetchAllRows<ViewRow<'public_competitors'>>('public_competitors', 'id, first_name, last_name, main_club_id');
+  if (error) { console.error('[supabase] fetchAllPublicCompetitorsRemote failed:', error); return []; }
+  return data.filter((r) => !!r.id).map((r) => ({ id: r.id!, firstName: r.first_name ?? '', lastName: r.last_name ?? '', mainClubId: r.main_club_id }));
+}
+
 /** Every competitor name for a SET of ids, batched (never N sequential
  *  per-athlete fetches) via `public_competitors`. Backs people-slice.ts's
  *  by-ids shape. */
