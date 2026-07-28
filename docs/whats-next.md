@@ -178,7 +178,35 @@ Suggested from a post-emv2 read of the platform; some have shipped, others are p
   still owns reviewing + merging Phase 3 and running Phases 4-5, plus
   investigating the new memberships/invoices RLS-timeout finding.
 
-## 7. 🐛 Expensive RLS on `memberships` / `invoices` / `invoice_items` (found 2026-07-26; hygiene fix shipped to staging 2026-07-28; Tier-2 query-scoping fix DRAFTED 2026-07-28 on `perf/tier2-scoped-loadall`, not yet merged)
+## 7. ✅ RESOLVED 2026-07-28 — expensive Tier-2 reads on `memberships` / `invoices` / `invoice_items`
+
+**Fixed by scoping the QUERY, not the policy.** `loadAll` now resolves the caller's
+person id + managed-club ids first, then reads these three tables filtered to that
+scope. Measured on 0.5×-scale staging as a real club-manager JWT:
+
+| table | before (unfiltered) | after (caller-scoped) |
+|---|---|---|
+| `memberships` | ~5.3 s | **455 ms** |
+| `invoices` | ~5.5 s | **277 ms** |
+| `invoice_items` | ~7.4 s | **365 ms** |
+
+10–20×, comfortably clear of the statement timeout. Authorization is unchanged: every
+predicate is a strict subset of what RLS already permitted that caller, and anon skips
+these fetches entirely. League-wide consumers (Finance, RefundReview, AdminClubs,
+Communicate's audience, Home's admin dashboard, AdminMembers' merge, Club's roster for
+admins, the GDPR export) moved to on-demand admin slices that gate every computed total
+on `status === 'ready'`.
+
+**A policy-shape rewrite was tried first and REJECTED — do not retry it.** Wrapping the
+cross-table RLS subqueries in SECURITY DEFINER helpers made `invoice_items` *worse*
+(7.4 s → 11.4 s): Postgres can hash-materialize a raw correlated `EXISTS` into a single
+semi-join scan, whereas a function call is opaque to the planner and pays ~0.9 ms per
+outer row. The apparent `memberships` gain was inside measurement noise. Migration
+`20260728015930` kept only the unambiguous hygiene win (one SELECT policy instead of two
+identical ones, and explicit insert/update/delete replacing a `for all` that silently
+granted DELETE) — shipped staging + prod, justified as correctness, NOT performance.
+
+Original finding, kept for context:
 
 Surfaced by 6.3's scale-seeding, and **architecturally more significant than it first
 reads**. Under the ANON/AUTHENTICATED role these three tables start failing with
