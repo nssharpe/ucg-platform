@@ -15,6 +15,7 @@ import { groupRegsByWaitlistKey, isWaitlistable, regsAffectedByViolations, split
 import { shrinkOrDropCartLines } from '../lib/pricing';
 import { pushCart, pushRegistration, pushWaitlistGroup } from '../lib/supabase';
 import { useEventRegistrations, applyLocalRegistrationUpsert } from '../lib/registrations-slice';
+import { usePeopleNames, nameLookup } from '../lib/people-slice';
 import type { Registration, WaitlistGroup } from '../lib/types';
 
 // Tucked behind a plain helper (not a bare `Date.now()` inline in a hook/
@@ -131,11 +132,18 @@ export function CapacityConflictDialog({
   const waitlistableAffected = useMemo(() => affected.filter(isWaitlistable), [affected]);
   const blockedAffected = useMemo(() => affected.filter((r) => !isWaitlistable(r)), [affected]);
 
+  // Phase 4 (data-layer-scale.md): db.people at boot doesn't necessarily
+  // cover every affected athlete — thin name-only lookup, bounded to this
+  // checkout's own cart registrations (checkoutRegs). Called unconditionally
+  // (Rules of Hooks) before the loading early return below.
+  const { rows: conflictCompetitorRefs, status: conflictPeopleStatus } = usePeopleNames(checkoutRegs.map((r) => r.athleteId));
+  const conflictNameById = nameLookup(conflictCompetitorRefs);
+
   // MUST gate before any resolution action is offered — every button below
   // (waitlist/split) computes off eventRegs, and a partial read here would
   // undercount capacity usage (COMPLETENESS rule). All hooks above are
   // called unconditionally regardless of this branch (Rules of Hooks).
-  if (regsStatus === 'loading') {
+  if (regsStatus === 'loading' || conflictPeopleStatus === 'loading') {
     return (
       <Modal title={`Can't check out — ${eventName} is at capacity`} onClose={onClose}>
         <p style={{ fontSize: 13.5, color: 'var(--ink-soft)' }}>Loading…</p>
@@ -143,10 +151,7 @@ export function CapacityConflictDialog({
     );
   }
 
-  const nameOf = (athleteId: string) => {
-    const p = db.people.find((x) => x.id === athleteId);
-    return p ? `${p.firstName} ${p.lastName}` : 'athlete';
-  };
+  const nameOf = (athleteId: string) => conflictNameById.get(athleteId) ?? 'athlete';
   const levelName = (levelId?: string | null) => (levelId ? db.levels.find((l) => l.id === levelId)?.name ?? levelId : '—');
   const sessionName = (sessionId?: string | null) =>
     (sessionId ? event?.sessions.find((s) => s.id === sessionId)?.name ?? sessionId : '—');

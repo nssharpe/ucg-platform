@@ -16,6 +16,7 @@ import type { Event, FinalsLineup } from '../lib/types';
 import type { NationalsTeam } from '../lib/nationals-teams';
 import { finalsLineupValid, moveInLineup, toggleInLineup, FINALS_LINEUP_MAX } from '../lib/finals-lineup';
 import { useCapabilities } from '../lib/capabilities';
+import { usePeopleNames } from '../lib/people-slice';
 import { Badge } from './ui';
 
 /**
@@ -127,6 +128,13 @@ function ApparatusLineupCard({
   // missing reg).
   const { rows: eventRegs } = useEventRegistrations(event.id);
   const candidateRegIds = team.apparatusRegIds[apparatus] ?? [];
+  // Phase 4 (data-layer-scale.md): db.people at boot no longer covers an
+  // arbitrary team's roster — thin name-only lookup (nameOf below never
+  // reads any other field), same "briefly shows a fallback while loading"
+  // tolerance as eventRegs above (candidateRegIds is a small, bounded set).
+  const { rows: lineupCompetitorRefs } = usePeopleNames(
+    candidateRegIds.map((regId) => eventRegs.find((r) => r.id === regId)?.athleteId).filter((id): id is string => !!id),
+  );
   const existing = (db.finalsLineups ?? []).find(
     (l) => l.eventId === event.id && l.clubId === team.clubId && l.levelId === team.levelId
       && l.category === team.category && l.apparatus === apparatus,
@@ -144,7 +152,7 @@ function ApparatusLineupCard({
 
   const nameOf = (regId: string): string => {
     const reg = eventRegs.find((r) => r.id === regId);
-    const p = reg ? db.people.find((x) => x.id === reg.athleteId) : undefined;
+    const p = reg ? lineupCompetitorRefs.find((x) => x.id === reg.athleteId) : undefined;
     return p ? `${p.firstName} ${p.lastName}` : 'Unknown athlete';
   };
 
