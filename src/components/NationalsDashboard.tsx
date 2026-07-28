@@ -1,8 +1,9 @@
 import { Fragment, type ReactNode } from 'react';
 import { useDB } from '../lib/store';
 import { useEventRegistrations } from '../lib/registrations-slice';
+import { usePeopleForIds, usePeopleForClub } from '../lib/people-admin-slice';
 import { APPARATUS } from '../lib/types';
-import type { DB, Event, Registration } from '../lib/types';
+import type { Athlete, DB, Event, Registration } from '../lib/types';
 import { eligibleTeams, isAllAround, TEAM_MIN_PER_APPARATUS } from '../lib/nationals-teams';
 import { FinalsLineupEditor } from './FinalsLineupEditor';
 import { Badge } from './ui';
@@ -37,19 +38,32 @@ export function NationalsDashboard({ eventId, scope }: { eventId: string; scope:
   // return below is reached, since hooks must run in the same order every
   // render regardless of whether `event` resolves.
   const { rows: eventRegs, status: regsStatus } = useEventRegistrations(eventId);
+  // Phase 4 (data-layer-scale.md): db.people at boot no longer covers an
+  // arbitrary scope (a club-scoped registrant who isn't on that club's own
+  // roster, or an admin's "view as" of an independent athlete who isn't the
+  // signed-in caller) — fetch the scope's registered athletes' full rows
+  // once here and thread `people` down to every section exactly like `regs`
+  // already is, rather than each section reaching into db.people itself.
+  // For a personId scope, `scope.personId` is included even with zero regs
+  // (resolveScopeClubId's fallback needs that athlete's own mainClubId/
+  // altClubIds). `event`/`scope` are used via `eventId`/`scope` directly
+  // (not `event.id`) so this can run before the `!event` early return below.
+  const scopedRegIds = scopedActiveRegs(eventRegs, eventId, scope).map((r) => r.athleteId);
+  const peopleIds = 'clubId' in scope ? scopedRegIds : [...new Set([scope.personId, ...scopedRegIds])];
+  const { rows: people, status: peopleStatus } = usePeopleForIds(peopleIds);
   if (!event || event.kind !== 'nationals') return null;
 
   return (
     <div className="card card-pad" style={{ marginBottom: 18 }}>
       <h3 className="card-title">Nationals summary</h3>
-      {regsStatus === 'loading' ? (
+      {regsStatus === 'loading' || peopleStatus === 'loading' ? (
         <p style={MUTED_NOTE_STYLE}>Loading…</p>
       ) : (
         <>
-          <EligibleTeamsSection event={event} scope={scope} regs={eventRegs} />
-          <DecathlonSection event={event} scope={scope} regs={eventRegs} />
-          <CoachListSection event={event} scope={scope} regs={eventRegs} />
-          <BanquetGapSection event={event} scope={scope} regs={eventRegs} />
+          <EligibleTeamsSection event={event} scope={scope} regs={eventRegs} people={people} />
+          <DecathlonSection event={event} scope={scope} regs={eventRegs} people={people} />
+          <CoachListSection event={event} scope={scope} regs={eventRegs} people={people} />
+          <BanquetGapSection event={event} scope={scope} regs={eventRegs} people={people} />
           <AssignedSessionsSection event={event} scope={scope} regs={eventRegs} />
         </>
       )}
@@ -79,15 +93,15 @@ function scopedActiveRegs(regs: Registration[], eventId: string, scope: National
  *  since self-registration always picks one of the athlete's own main/alt
  *  clubs). Falls back to the athlete's `mainClubId`/first `altClubIds` entry,
  *  then null if the athlete truly has no club association on file. */
-function resolveScopeClubId(db: DB, event: Event, scope: NationalsDashboardScope, regs: Registration[]): string | null {
+function resolveScopeClubId(people: Athlete[], event: Event, scope: NationalsDashboardScope, regs: Registration[]): string | null {
   if ('clubId' in scope) return scope.clubId;
-  const athlete = db.people.find((p) => p.id === scope.personId);
+  const athlete = people.find((p) => p.id === scope.personId);
   const scopedRegs = scopedActiveRegs(regs, event.id, scope);
   return scopedRegs[0]?.clubId ?? athlete?.mainClubId ?? athlete?.altClubIds?.[0] ?? null;
 }
 
-function nameOf(db: DB, personId: string): string {
-  const p = db.people.find((x) => x.id === personId);
+function nameOf(people: Athlete[], personId: string): string {
+  const p = people.find((x) => x.id === personId);
   return p ? `${p.firstName} ${p.lastName}` : 'Unknown';
 }
 
@@ -102,7 +116,7 @@ const MUTED_NOTE_STYLE = { fontSize: 13, color: 'var(--ink-soft)', margin: 0 };
 // 1. Eligible teams — spec §L.3 item 1
 // ---------------------------------------------------------------------------
 
-function EligibleTeamsSection({ event, scope, regs: eventRegs }: { event: Event; scope: NationalsDashboardScope; regs: Registration[] }) {
+function EligibleTeamsSection({ event, scope, regs: eventRegs, people }: { event: Event; scope: NationalsDashboardScope; regs: Registration[]; people: Athlete[] }) {
   const db = useDB();
 
   if (!('clubId' in scope)) {
@@ -115,7 +129,7 @@ function EligibleTeamsSection({ event, scope, regs: eventRegs }: { event: Event;
   }
 
   const regs = scopedActiveRegs(eventRegs, event.id, scope);
-  const peopleById = new Map(db.people.map((p) => [p.id, p]));
+  const peopleById = new Map(people.map((p) => [p.id, p]));
   const teams = eligibleTeams(regs, peopleById);
   const levelName = (levelId: string) => db.levels.find((l) => l.id === levelId)?.name ?? levelId;
 
@@ -181,8 +195,7 @@ function EligibleTeamsSection({ event, scope, regs: eventRegs }: { event: Event;
 //    pre-scores planning list — NOT scored results)
 // ---------------------------------------------------------------------------
 
-function DecathlonSection({ event, scope, regs: eventRegs }: { event: Event; scope: NationalsDashboardScope; regs: Registration[] }) {
-  const db = useDB();
+function DecathlonSection({ event, scope, regs: eventRegs, people }: { event: Event; scope: NationalsDashboardScope; regs: Registration[]; people: Athlete[] }) {
   const regs = scopedActiveRegs(eventRegs, event.id, scope);
 
   const byAthlete = new Map<string, { wag?: boolean; mag?: boolean; tnt?: boolean }>();
@@ -208,7 +221,7 @@ function DecathlonSection({ event, scope, regs: eventRegs }: { event: Event; sco
         <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13.5 }}>
           {rows.map((row) => (
             <li key={row.athleteId}>
-              {nameOf(db, row.athleteId)} — {row.omnithon ? 'Omnithon (WAG + MAG + T&T all-around)' : 'Decathlon (WAG + MAG all-around)'}
+              {nameOf(people, row.athleteId)} — {row.omnithon ? 'Omnithon (WAG + MAG + T&T all-around)' : 'Decathlon (WAG + MAG all-around)'}
             </li>
           ))}
         </ul>
@@ -221,16 +234,25 @@ function DecathlonSection({ event, scope, regs: eventRegs }: { event: Event; sco
 // 3. Club coach list — spec §L.3 item 3
 // ---------------------------------------------------------------------------
 
-function CoachListSection({ event, scope, regs }: { event: Event; scope: NationalsDashboardScope; regs: Registration[] }) {
+function CoachListSection({ event, scope, regs, people }: { event: Event; scope: NationalsDashboardScope; regs: Registration[]; people: Athlete[] }) {
   const db = useDB();
-  const clubId = resolveScopeClubId(db, event, scope, regs);
+  const clubId = resolveScopeClubId(people, event, scope, regs);
+  // Phase 4 (data-layer-scale.md): coaches aren't necessarily registered
+  // athletes, so they're NOT covered by the by-ids `people` prop above (which
+  // is derived from registrations) — a genuine by-club roster need. Called
+  // unconditionally (Rules of Hooks) even when clubId is null (usePeopleForClub
+  // treats a null key as "nothing to fetch").
+  const { rows: clubPeopleRows, status: clubPeopleStatus } = usePeopleForClub(clubId);
   const club = clubId ? db.clubs.find((c) => c.id === clubId) : undefined;
-  const coaches = clubId ? db.people.filter((p) => p.mainClubId === clubId && p.roles?.coach) : [];
+  const coachesLoading = !!clubId && clubPeopleStatus === 'loading';
+  const coaches = clubId ? clubPeopleRows.filter((p) => p.mainClubId === clubId && p.roles?.coach) : [];
 
   return (
     <div style={SECTION_STYLE}>
       <SectionHeading>Coaches{club ? ` — ${club.name}` : ''}</SectionHeading>
-      {coaches.length === 0 ? (
+      {coachesLoading ? (
+        <p style={MUTED_NOTE_STYLE}>Loading…</p>
+      ) : coaches.length === 0 ? (
         <Badge tone="warn">No coaches on file{club ? ` for ${club.name}` : ''}</Badge>
       ) : (
         <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13.5 }}>
@@ -266,15 +288,22 @@ function ticketedPersonIds(db: DB, eventId: string): Set<string> {
   return ids;
 }
 
-function BanquetGapSection({ event, scope, regs: eventRegs }: { event: Event; scope: NationalsDashboardScope; regs: Registration[] }) {
+function BanquetGapSection({ event, scope, regs: eventRegs, people }: { event: Event; scope: NationalsDashboardScope; regs: Registration[]; people: Athlete[] }) {
   const db = useDB();
+  // Called unconditionally (Rules of Hooks) BEFORE the `!event.banquet` early
+  // return below — clubId/the club-roster fetch don't depend on that check.
+  const clubId = resolveScopeClubId(people, event, scope, eventRegs);
+  const { rows: clubPeopleRows, status: clubPeopleStatus } = usePeopleForClub(clubId);
   if (!event.banquet) return null;
+  if (!!clubId && clubPeopleStatus === 'loading') return <div style={SECTION_STYLE}><SectionHeading>Banquet ticket gap</SectionHeading><p style={MUTED_NOTE_STYLE}>Loading…</p></div>;
 
   const regs = scopedActiveRegs(eventRegs, event.id, scope);
   const athleteIds = regs.map((r) => r.athleteId);
-  const clubId = resolveScopeClubId(db, event, scope, eventRegs);
-  const coachIds = clubId ? db.people.filter((p) => p.mainClubId === clubId && p.roles?.coach).map((p) => p.id) : [];
+  const coachIds = clubId ? clubPeopleRows.filter((p) => p.mainClubId === clubId && p.roles?.coach).map((p) => p.id) : [];
   const registrantIds = [...new Set([...athleteIds, ...coachIds])];
+  // Coaches may not appear in `people` (derived from REGISTRATIONS) — combine
+  // with the by-club fetch so nameOf can resolve either kind of id.
+  const namesPool = [...people, ...clubPeopleRows];
 
   const ticketed = ticketedPersonIds(db, event.id);
   const missing = registrantIds.filter((id) => !ticketed.has(id));
@@ -288,7 +317,7 @@ function BanquetGapSection({ event, scope, regs: eventRegs }: { event: Event; sc
         <>
           <Badge tone="warn">{missing.length} without a ticket</Badge>
           <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 13.5 }}>
-            {missing.map((id) => <li key={id}>{nameOf(db, id)}</li>)}
+            {missing.map((id) => <li key={id}>{nameOf(namesPool, id)}</li>)}
           </ul>
         </>
       )}
