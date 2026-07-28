@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { useDB, mutate } from '../lib/store';
+import { mutate } from '../lib/store';
 import { Combo, Field, Modal } from './ui';
 import { useToast } from './ui-hooks';
 import { CLUB_ACCESS_LABELS, STATE_REGIONS } from '../lib/types';
 import type { Club, ClubAccess } from '../lib/types';
 import { pushClub } from '../lib/supabase';
 import { nextId } from '../lib/ids';
+import { useAdminPeople } from '../lib/people-admin-slice';
 
 const BLANK: Omit<Club, 'id'> = {
   name: '', shortName: '', state: '', region: 'Other',
@@ -16,8 +17,14 @@ const ACCESS_ENTRIES = Object.entries(CLUB_ACCESS_LABELS) as [ClubAccess, string
 
 /** Create (club undefined) or edit a club in a modal. */
 export function ClubForm({ club, onClose }: { club?: Club; onClose: () => void }) {
-  const db = useDB();
   const toast = useToast();
+  // Phase 4 (data-layer-scale.md): db.people at boot no longer covers the
+  // whole league — the manager picker below deliberately includes "any
+  // coach in the whole system" (not just this club's roster), which was
+  // already a league-wide need even before this change, so this always
+  // fetches league-wide regardless of whether the caller is an admin or a
+  // real club manager editing their own club.
+  const { rows: adminPeopleRows } = useAdminPeople();
   const [draft, setDraft] = useState<Omit<Club, 'id'>>(club ? { ...club } : BLANK);
   const set = (patch: Partial<Club>) => setDraft({ ...draft, ...patch });
   const region = STATE_REGIONS[draft.state] ?? 'Other';
@@ -74,7 +81,7 @@ export function ClubForm({ club, onClose }: { club?: Club; onClose: () => void }
       <Field label="Club managers" hint="Managers can edit the roster, register for events, and pay the club cart.">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 18px', maxHeight: 160, overflowY: 'auto' }}>
           {/* Keep the list manageable: coaches, this club's roster, and anyone already selected */}
-          {db.people
+          {adminPeopleRows
             .filter((p) => draft.managerIds.includes(p.id) || p.kind === 'coach' || (club && p.mainClubId === club.id))
             .sort((a, b) => a.lastName.localeCompare(b.lastName))
             .map((p) => (
