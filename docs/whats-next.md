@@ -303,13 +303,18 @@ re-measured in isolation (out of scope for the Phase 4/5 session that found it),
 worth the same query-scoping treatment (self + managed-club, mirroring §7's fix) before
 a real season pushes it past 10k rows.
 
-**Also 2026-07-28: the scale-seed harness found staging's row counts were already 0
-across every scaled table (`memberships`/`invoices`/`invoice_items`/`people`/
-`registrations`/`scores`/`events`/`clubs`) *before* seeding** — the documented Playwright
-E2E fixture baseline (memberships 70, invoices 14, invoice_items 14, people 84,
-registrations 130, scores 248, events 4, clubs 9) is not currently present on staging.
-👤 Nate: reseed the E2E fixture before the next person relies on `npm run test:e2e`
-against staging having that baseline.
+**Also 2026-07-28 — a reported "staging fixtures are missing" alarm, CHECKED AND FALSE.**
+The Phase 4/5 run reported that staging's scaled tables read 0 rows before seeding and
+concluded the Playwright E2E fixture baseline was gone, raising a 👤 action for Nate to
+reseed. Verified directly after the run: staging is **at the documented baseline
+exactly** — memberships 70, invoices 14, invoice_items 14, people 84, registrations 130,
+scores 248, events 4, clubs 9, with **zero `scale-` tagged rows** remaining. **No action
+needed.** The most likely explanation is that the harness's pre-seed count was taken
+against the `scale-`-prefixed rows specifically (which correctly read 0 before seeding),
+not against total row counts. Recorded because this is the second false environment
+alarm this week — the other was the "missing `GRANT SELECT` on registrations" that turned
+out to be the column-revoke trap — and both cost a spurious action item. **Re-verify an
+environment claim against the environment before acting on it.**
 
 ## Architecture watch-list
 

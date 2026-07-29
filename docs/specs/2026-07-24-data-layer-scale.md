@@ -704,14 +704,11 @@ memberships/invoices/invoice_items).
 
 *Reproduce/clean:* same `scripts/seed-scale.mjs` harness. This run found
 staging's row counts were already 0 across every scaled table BEFORE
-seeding (no Playwright E2E fixture baseline present) — the seed→clean cycle
-is self-consistent (verified staging returned to exactly 0 across every
-scaled table after `--clean`, matching what was there before this session
-touched it), but that means staging currently does **not** carry the
-documented fixture baseline (memberships 70, invoices 14, invoice_items 14,
-people 84, registrations 130, scores 248, events 4, clubs 9) — worth a
-follow-up to reseed it before the next person relies on that baseline being
-present.
+seeding. NOTE (verified after the run): the conclusion drawn from this — that the
+Playwright E2E fixture baseline was missing — was WRONG. Staging measured at the
+documented baseline exactly (memberships 70, invoices 14, invoice_items 14, people 84,
+registrations 130, scores 248, events 4, clubs 9) with zero `scale-` rows left. The
+seed->clean cycle
 
 ## Verification requirements
 
