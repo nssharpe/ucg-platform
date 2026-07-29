@@ -6,6 +6,7 @@ import type { Coupon } from '../../../lib/types';
 import { fmtMoney } from '../../../lib/scoring';
 import { randomPromoCode, couponValid } from '../../../lib/pricing';
 import { pushCoupon, deleteCoupon } from '../../../lib/supabase';
+import { useAdminPeople } from '../../../lib/people-admin-slice';
 
 // ---------- Promo codes (W14) ----------
 type CouponDraft = {
@@ -57,6 +58,11 @@ type CouponEditDraft = {
 export function Promos() {
   const db = useDB();
   const toast = useToast();
+  // Phase 4 (data-layer-scale.md): db.people at boot no longer covers the
+  // whole league — the "restricted to account" picker and its display need
+  // any account league-wide, same shape (#3) as every other admin-only
+  // whole-league surface.
+  const { rows: adminPeopleRows } = useAdminPeople();
   const [draft, setDraft] = useState<CouponDraft>({
     code: '', discountType: 'pct', value: '', appliesTo: 'any', appliesToEventId: null,
     startsAt: '', endsAt: '', maxUses: '', restrictAccount: false, restrictedToPersonId: null,
@@ -248,7 +254,7 @@ export function Promos() {
         {draft.restrictAccount && (
           <Field label="Restricted to account">
             <Combo
-              options={db.people.map((p) => ({ value: p.id, label: `${p.firstName} ${p.lastName}`, sub: p.email })).sort((a, b) => a.label.localeCompare(b.label))}
+              options={adminPeopleRows.map((p) => ({ value: p.id, label: `${p.firstName} ${p.lastName}`, sub: p.email })).sort((a, b) => a.label.localeCompare(b.label))}
               value={draft.restrictedToPersonId}
               onChange={(v) => setDraft({ ...draft, restrictedToPersonId: v })}
               placeholder="Search by name or email…"
@@ -284,7 +290,7 @@ export function Promos() {
                   <td>
                     <strong style={{ fontFamily: 'monospace' }}>{c.code}</strong>
                     {c.restrictedToPersonId && (() => {
-                      const p = db.people.find((x) => x.id === c.restrictedToPersonId);
+                      const p = adminPeopleRows.find((x) => x.id === c.restrictedToPersonId);
                       return <span style={{ display: 'block', fontSize: 11, color: 'var(--ink-soft)' }} data-tip="Only this account can redeem this code">🔒 {p ? `${p.firstName} ${p.lastName}` : 'specific account'}</span>;
                     })()}
                   </td>

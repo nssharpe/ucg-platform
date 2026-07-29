@@ -25,7 +25,66 @@ const LS_KEY = 'ucg-db-v1';
 // longer ride along in a Supabase-backed snapshot either
 // (src/lib/registrations-slice.ts owns that read path now) — same reasoning,
 // a stale v8 snapshot could carry a multi-MB `db.registrations` array.
-const SEED_VERSION = 9;
+// Bumped to 10 for Phase 5 (2026-07-28 data-layer-scale): the persisted
+// snapshot itself is now restricted to Tier 1 reference data + small Tier 2
+// caller-scoped data (PERSISTED_KEYS below) when Supabase-backed — a stale
+// v9 snapshot carries the FULL db (every Tier 3 collection, unscoped
+// people, etc.), which `load()`'s new reconstruction logic doesn't expect,
+// so it must be discarded and reseeded/re-synced same as every prior bump.
+const SEED_VERSION = 10;
+
+// Phase 5 (data-layer-scale.md): only these keys persist to localStorage
+// when Supabase-backed. Tier 1 (seasons/levels/clubs/coupons/
+// waiverDocuments/accountingCodes/regionOverrides) is small, bounded
+// reference data needed by nearly every page — keeping it persisted is what
+// preserves instant first paint on a repeat visit, the one genuinely
+// McMaster-ish property this app already has (see the spec's "THE ACTUAL
+// GOAL" section — dropping persistence wholesale would work AGAINST the
+// goal, not toward it). `events` is added alongside Tier 1 even though the
+// spec's original enumeration didn't list it: it's just as small/bounded as
+// clubs (tens to low hundreds of rows, never scores/registrations-scale)
+// and just as central to first paint (Home, the Events index, Results index
+// all read it synchronously on the very first render). Tier 2
+// (people/invoices/carts) is the caller-scoped data Phase 4's boot scoping
+// already keeps small (self + managed-club rosters). Everything else —
+// every Tier 3 collection (clubRequests, sanctionRequests, waiverSignatures,
+// payments, refundRequests, waitlistGroups, sessionRequests,
+// competitionOrders, finalsLineups, eventCheckins, eventAdmins,
+// accountInvites, sanctionVotes, clubMemberships, hostPayouts,
+// judgeAccessCodes) plus registrations/scores (already memory-only via the
+// slice layer, always `[]` here regardless) — is intentionally NOT
+// persisted. It's reconstructed empty/undefined on load and refilled by the
+// syncFromSupabase() call that unconditionally follows boot (line ~160
+// below) within roughly a second at the measured Tier-2 scoping speeds —
+// this is what removes the 28.95 MB snapshot the spec measured at scale.
+// Demo/unconfigured mode is UNCHANGED (persists the whole `db`) — there is
+// no server to re-sync from there, so restricting persistence would
+// silently lose data on every reload rather than get refilled a moment
+// later.
+const PERSISTED_KEYS = [
+  'seasons', 'levels', 'clubs', 'events', 'coupons',
+  'waiverDocuments', 'accountingCodes', 'regionOverrides',
+  'people', 'invoices', 'carts',
+] as const satisfies readonly (keyof DB)[];
+
+/** DB fields required by the `DB` interface but deliberately excluded from
+ *  persistence (see PERSISTED_KEYS) — reconstructed empty so the returned
+ *  object still satisfies `DB`'s required fields until the next
+ *  syncFromSupabase() fills them in for real. Every OTHER excluded field is
+ *  optional on `DB` and every consumer already reads it via `db.x ?? []`
+ *  (the same defensive pattern used since before these fields existed at
+ *  all), so `undefined` there needs no explicit default. */
+function emptyRequiredDefaults(): Pick<DB, 'registrations' | 'scores' | 'clubRequests'> {
+  return { registrations: [], scores: [], clubRequests: [] };
+}
+
+/** Picks only PERSISTED_KEYS off a full `DB` for localStorage — Supabase-
+ *  backed mode only (see persist()). */
+function pickPersisted(full: DB): Partial<DB> {
+  const out: Partial<DB> = {};
+  for (const k of PERSISTED_KEYS) (out as Record<string, unknown>)[k] = full[k];
+  return out;
+}
 
 let db: DB = load();
 const listeners = new Set<() => void>();
@@ -36,20 +95,33 @@ function load(): DB {
     const raw = localStorage.getItem(LS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed.__v === SEED_VERSION) return parsed.db;
+      if (parsed.__v === SEED_VERSION) {
+        // Demo/unconfigured mode: the persisted snapshot is the full db (see
+        // persist()) — load it as-is, unchanged from pre-Phase-5 behavior.
+        if (!isSupabaseConfigured) return parsed.db as DB;
+        // Supabase-backed: the snapshot is the Tier 1 + Tier 2 subset only —
+        // reconstruct a full DB shape so every required field is present;
+        // the omitted Tier 3 collections read as empty/undefined until
+        // syncFromSupabase() (called unconditionally right after this module
+        // finishes loading) fills them in for real.
+        return { ...emptyRequiredDefaults(), ...(parsed.db as Partial<DB>) } as DB;
+      }
     }
   } catch { /* fall through to fresh seed */ }
   return buildSeed();
 }
 
-/** Persists `db` to localStorage. Returns the serialized payload's size
+/** Persists `db` to localStorage (Supabase-backed: only PERSISTED_KEYS —
+ *  see the block comment above; demo/unconfigured: the whole `db`, unchanged
+ *  from pre-Phase-5 behavior). Returns the serialized payload's size
  *  (UTF-16 code units — a cheap, already-computed proxy for bytes; the JSON
  *  this store holds is overwhelmingly ASCII, so re-encoding to count real
  *  UTF-8 bytes would just be a second full pass over a multi-MB string for
  *  no material accuracy gain) so callers can pair it with a hydration
  *  duration for boot instrumentation — see `maybeReportBootMetrics` below. */
 function persist(): number {
-  const json = JSON.stringify({ __v: SEED_VERSION, db });
+  const persisted: DB | Partial<DB> = isSupabaseConfigured ? pickPersisted(db) : db;
+  const json = JSON.stringify({ __v: SEED_VERSION, db: persisted });
   const payloadBytes = json.length;
   try {
     localStorage.setItem(LS_KEY, json);
@@ -160,7 +232,14 @@ window.addEventListener('storage', (e) => {
     try {
       const parsed = JSON.parse(e.newValue);
       if (parsed.__v === SEED_VERSION) {
-        db = parsed.db;
+        // Phase 5: in Supabase-backed mode the OTHER tab's persisted payload
+        // is also just the Tier 1 + Tier 2 subset (see persist()) — merge it
+        // onto THIS tab's existing in-memory db rather than replacing it
+        // outright, so this tab's own already-fetched Tier 3 collections
+        // (refund requests, waiver signatures, etc.) aren't wiped to
+        // undefined by a cross-tab event carrying none of that data. Demo
+        // mode is unchanged (parsed.db is the full db there too).
+        db = isSupabaseConfigured ? { ...db, ...(parsed.db as Partial<DB>) } : (parsed.db as DB);
         snapshotVersion++;
         listeners.forEach((l) => l());
       }

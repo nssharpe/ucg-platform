@@ -7,7 +7,7 @@
  * Jules-level-code mapping is needed for live data (that map only exists in the
  * fixture extractor). See docs/specs/2026-06-13-nationals-qual-awards.md.
  */
-import type { DB, Discipline, Level, Event, NationalsConfig, PlacementCategory, Registration, Score } from './types';
+import type { Athlete, DB, Discipline, Level, Event, NationalsConfig, PlacementCategory, Registration, Score } from './types';
 import {
   WAG,
   MAG,
@@ -138,8 +138,17 @@ function sessionsFor(event: Event, discipline: Discipline, phase?: Phase) {
  * math over the whole field, so a partial read here yields plausible but
  * WRONG placements, not just missing rows. Never pass a club-narrowed
  * subset.
+ * `people` (Phase 4, data-layer-scale.md / COMPLETENESS — same reasoning as
+ * `allEventRegs`): db.people at boot is no longer globally hydrated either
+ * (scoped to self + managed-club rosters), so this is now a caller-supplied
+ * parameter too — the full event field's people, fetched via
+ * `usePeopleForIds` (people-admin-slice.ts) keyed off `allEventRegs`' athlete
+ * ids and gated on `status === 'ready'` by the caller. A partial people set
+ * would silently fall back to `athlete?.field ?? ''` defaults below for the
+ * missing rows, which is the SAME "plausible but WRONG" failure mode as a
+ * partial registration set — never pass a club-narrowed subset here either.
  */
-export function buildEntries(db: DB, event: Event, allEventRegs: Registration[], discipline: Discipline, scores: Score[], phase?: Phase): AthleteEntry[] {
+export function buildEntries(db: DB, event: Event, allEventRegs: Registration[], people: Athlete[], discipline: Discipline, scores: Score[], phase?: Phase): AthleteEntry[] {
   const def = DISCIPLINE_DEFS[discipline];
   const sessionIds = new Set(sessionsFor(event, discipline, phase).map((s) => s.id));
   const regs = allEventRegs.filter(
@@ -148,7 +157,7 @@ export function buildEntries(db: DB, event: Event, allEventRegs: Registration[],
   const scoreMap = new Map<string, Score>();
   for (const s of scores) if (sessionIds.has(s.sessionId)) scoreMap.set(`${s.regId}|${s.apparatus}`, s);
 
-  const peopleById = new Map(db.people.map((p) => [p.id, p]));
+  const peopleById = new Map(people.map((p) => [p.id, p]));
   const clubsById = new Map(db.clubs.map((c) => [c.id, c]));
 
   return regs.map((reg) => {
@@ -201,18 +210,18 @@ export interface ArtisticDisciplineResult {
 }
 
 /** Run an artistic discipline (WAG/MAG) end-to-end: prelims, finals, awards.
- *  `allEventRegs` — see `buildEntries`'s doc comment (COMPLETENESS). */
-export function computeArtisticDiscipline(db: DB, event: Event, allEventRegs: Registration[], discipline: 'WAG' | 'MAG', scores: Score[]): ArtisticDisciplineResult {
+ *  `allEventRegs`/`people` — see `buildEntries`'s doc comment (COMPLETENESS). */
+export function computeArtisticDiscipline(db: DB, event: Event, allEventRegs: Registration[], people: Athlete[], discipline: 'WAG' | 'MAG', scores: Score[]): ArtisticDisciplineResult {
   const def = DISCIPLINE_DEFS[discipline];
   const cfg = event.nationalsConfig!;
   const engineCfg = toEngineConfig(cfg);
   // Non-finals levels = competing levels that aren't finals levels.
   engineCfg.nonFinalsLevels = competingLevels(event, discipline).filter((l) => !engineCfg.finalsLevels.includes(l));
 
-  const prelimEntries = buildEntries(db, event, allEventRegs, discipline, scores, 'prelim');
+  const prelimEntries = buildEntries(db, event, allEventRegs, people, discipline, scores, 'prelim');
   const prelims = computeArtistic(prelimEntries, def, engineCfg, { finals: false });
 
-  const finalEntries = buildEntries(db, event, allEventRegs, discipline, scores, 'final');
+  const finalEntries = buildEntries(db, event, allEventRegs, people, discipline, scores, 'final');
   const qualifiedTeams = new Set<string>();
   for (const t of prelims.teams)
     if (t.category !== 'Mixed' && t.qual === 'Y') qualifiedTeams.add(`${t.club}|${t.level}|${t.category}`);
@@ -242,7 +251,7 @@ const NAME: Record<string, string> = { VT: 'Vault', UB: 'Bars', BB: 'Beam', FX: 
  *  the UI. On the platform AA is always the event sum, so AA-sum/decimal checks
  *  rarely fire; SV caps, finals team completeness, and prelim-qual-vs-finals
  *  eligibility are the meaningful ones. */
-export function computeNationalsValidation(db: DB, event: Event, allEventRegs: Registration[], scores: Score[]): ValidationIssue[] {
+export function computeNationalsValidation(db: DB, event: Event, allEventRegs: Registration[], people: Athlete[], scores: Score[]): ValidationIssue[] {
   const cfg = event.nationalsConfig;
   if (!cfg) return [];
   const issues: ValidationIssue[] = [];
@@ -252,12 +261,12 @@ export function computeNationalsValidation(db: DB, event: Event, allEventRegs: R
     const engineCfg = toEngineConfig(cfg);
     engineCfg.nonFinalsLevels = competingLevels(event, discipline).filter((l) => !engineCfg.finalsLevels.includes(l));
 
-    const prelimEntries = buildEntries(db, event, allEventRegs, discipline, scores, 'prelim');
+    const prelimEntries = buildEntries(db, event, allEventRegs, people, discipline, scores, 'prelim');
     const vp = validateArtistic(prelimEntries, def, engineCfg, false);
     for (const f of vp.svCap) issues.push({ discipline, group: 'Prelim SV cap', detail: `${f.first} ${f.last} — ${NAME[f.apparatus]} ${f.score} over cap` });
     for (const f of vp.decimal) issues.push({ discipline, group: 'Prelim score precision', detail: `${f.first} ${f.last} — ${NAME[f.apparatus] ?? f.apparatus} ${f.score} not a 0.001 multiple` });
 
-    const finalEntries = buildEntries(db, event, allEventRegs, discipline, scores, 'final');
+    const finalEntries = buildEntries(db, event, allEventRegs, people, discipline, scores, 'final');
     if (!finalEntries.length) continue;
     const prelims = computeArtistic(prelimEntries, def, engineCfg, { finals: false });
     const qualifiedTeams = new Set<string>();
@@ -281,26 +290,26 @@ export function computeNationalsValidation(db: DB, event: Event, allEventRegs: R
 }
 
 /** Compute everything for a Nationals event that the UI needs.
- *  `allEventRegs` — see `buildEntries`'s doc comment (COMPLETENESS). */
-export function computeNationals(db: DB, event: Event, allEventRegs: Registration[], scores: Score[]): NationalsBundle {
+ *  `allEventRegs`/`people` — see `buildEntries`'s doc comment (COMPLETENESS). */
+export function computeNationals(db: DB, event: Event, allEventRegs: Registration[], people: Athlete[], scores: Score[]): NationalsBundle {
   const cfg = event.nationalsConfig;
   if (!cfg) return { decathlon: [], omnithon: [] };
   const bundle: NationalsBundle = { decathlon: [], omnithon: [] };
 
-  if (event.disciplines.includes('WAG')) bundle.wag = computeArtisticDiscipline(db, event, allEventRegs, 'WAG', scores);
-  if (event.disciplines.includes('MAG')) bundle.mag = computeArtisticDiscipline(db, event, allEventRegs, 'MAG', scores);
+  if (event.disciplines.includes('WAG')) bundle.wag = computeArtisticDiscipline(db, event, allEventRegs, people, 'WAG', scores);
+  if (event.disciplines.includes('MAG')) bundle.mag = computeArtisticDiscipline(db, event, allEventRegs, people, 'MAG', scores);
   if (event.disciplines.includes('TNT')) {
-    const entries = buildEntries(db, event, allEventRegs, 'TNT', scores, 'prelim');
+    const entries = buildEntries(db, event, allEventRegs, people, 'TNT', scores, 'prelim');
     bundle.tnt = { results: computeTnt(entries, PLATFORM_TNT, cfg.tntCutoffs ?? {}) };
   }
 
   // Combined awards (prelims), only when both artistic disciplines ran.
-  const wagEntries = event.disciplines.includes('WAG') ? buildEntries(db, event, allEventRegs, 'WAG', scores, 'prelim') : [];
-  const magEntries = event.disciplines.includes('MAG') ? buildEntries(db, event, allEventRegs, 'MAG', scores, 'prelim') : [];
+  const wagEntries = event.disciplines.includes('WAG') ? buildEntries(db, event, allEventRegs, people, 'WAG', scores, 'prelim') : [];
+  const magEntries = event.disciplines.includes('MAG') ? buildEntries(db, event, allEventRegs, people, 'MAG', scores, 'prelim') : [];
   if (wagEntries.length && magEntries.length) {
     bundle.decathlon = computeDecathlon(wagEntries, magEntries);
     if (event.disciplines.includes('TNT')) {
-      bundle.omnithon = computeOmnithon(wagEntries, magEntries, buildEntries(db, event, allEventRegs, 'TNT', scores, 'prelim'));
+      bundle.omnithon = computeOmnithon(wagEntries, magEntries, buildEntries(db, event, allEventRegs, people, 'TNT', scores, 'prelim'));
     }
   }
   return bundle;

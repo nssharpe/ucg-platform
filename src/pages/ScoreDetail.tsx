@@ -6,6 +6,7 @@ import { Badge, Field } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 import { useScoreById, writeScore } from '../lib/scores-slice';
 import { useRegistrationById } from '../lib/registrations-slice';
+import { usePeopleNames } from '../lib/people-slice';
 import { APPARATUS } from '../lib/types';
 import type { Score } from '../lib/types';
 import { fmtScore } from '../lib/scoring';
@@ -66,7 +67,11 @@ function ScoreDetailInner({ score, applyOptimistic }: { score: Score; applyOptim
   const [nativeSt, setNativeSt] = useState<unknown>(() => v2?.state ?? null);
   const [note, setNote] = useState('');
 
-  const athlete = reg && db.people.find((p) => p.id === reg.athleteId);
+  // Phase 4 (data-layer-scale.md): db.people at boot no longer covers an
+  // arbitrary competitor — thin name-only lookup (admins/hosts can view any
+  // athlete's score, not just their own club's).
+  const { rows: athleteRefs } = usePeopleNames(reg ? [reg.athleteId] : []);
+  const athlete = athleteRefs[0];
   const event = db.events.find((m) => m.id === score.eventId);
   const session = event?.sessions.find((s) => s.id === score.sessionId);
   const club = reg && db.clubs.find((c) => c.id === reg.clubId);

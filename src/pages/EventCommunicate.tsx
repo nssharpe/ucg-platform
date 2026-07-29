@@ -37,6 +37,7 @@ import { sendEventEmail, sendSms, logComm, fetchCommLog, type CommLogEntry } fro
 import { analyzeMessage } from '../lib/sms-segments';
 import { estimateSmsCost, partitionByConsent } from '../lib/sms-send';
 import { matchesEventCommFilters, type EventCommRole } from '../../supabase/functions/_shared/event-comm';
+import { usePeopleForIds } from '../lib/people-admin-slice';
 import type { Discipline } from '../lib/types';
 
 const ROLE_OPTIONS: { key: EventCommRole; label: string }[] = [
@@ -415,15 +416,19 @@ function SmsSection({
     ));
   }, [eventRegs, eventId, sessionIds, levelIds, disciplines]);
 
-  const recipients = useMemo(() => {
+  const recipientIds = useMemo(() => {
     const personIds = new Set<string>();
     if (roles.has('athlete')) matched.forEach((r) => personIds.add(r.athleteId));
     if (roles.has('manager')) {
       const clubIds = new Set(matched.map((r) => r.clubId).filter(Boolean));
       db.clubs.filter((c) => clubIds.has(c.id)).forEach((c) => c.managerIds.forEach((id) => personIds.add(id)));
     }
-    return db.people.filter((p) => personIds.has(p.id));
-  }, [matched, roles, db.clubs, db.people]);
+    return [...personIds];
+  }, [matched, roles, db.clubs]);
+  // Phase 4 (data-layer-scale.md): db.people at boot no longer covers every
+  // registrant/manager at this event — full rows (p.phone is read below),
+  // derived from the just-computed recipient id set.
+  const { rows: recipients } = usePeopleForIds(recipientIds);
 
   const withPhone = recipients.filter((p) => p.phone);
   const { eligible, excluded } = partitionByConsent(withPhone);

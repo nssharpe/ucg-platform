@@ -11,6 +11,7 @@ import {
   type ReconDriftRow,
 } from '../../../lib/supabase';
 import { useAdminInvoices } from '../../../lib/invoices-admin-slice';
+import { useAdminPeople } from '../../../lib/people-admin-slice';
 import type { AccountingCode, Event, HostPayout, Payment } from '../../../lib/types';
 import {
   buildFinanceTxns, buildFinanceSummary, buildFinanceSummarySheet, buildFinanceTxnsSheet,
@@ -113,7 +114,11 @@ export function Finance() {
     : [];
   const summary = buildFinanceSummary(txns, { eventId, from: fromIso, to: toIso, accountingCodes, hostPayouts });
 
-  const peopleById = new Map(db.people.map((p) => [p.id, { name: `${p.firstName} ${p.lastName}`, email: p.email }]));
+  // Phase 4 (data-layer-scale.md): db.people at boot no longer covers the
+  // whole league — Finance is a money surface touching payers across every
+  // club, same league-wide shape (#3) as the invoices fetch above.
+  const { rows: adminPeopleRows } = useAdminPeople();
+  const peopleById = new Map(adminPeopleRows.map((p) => [p.id, { name: `${p.firstName} ${p.lastName}`, email: p.email }]));
   const clubNameById = new Map(db.clubs.map((c) => [c.id, c.name]));
   const eventNameById = new Map(db.events.map((e) => [e.id, e.name]));
 

@@ -59,7 +59,7 @@ const AUTH_UID = 'auth-1';
 describe('collectPersonData inclusion', () => {
   it('returns null person for an unknown id, empty collections otherwise', () => {
     const db = baseDb();
-    const out = collectPersonData(db, PID, [], [], db.invoices);
+    const out = collectPersonData(db, PID, [], [], db.invoices, db.people.find((p) => p.id === PID) ?? null);
     expect(out.person).toBeNull();
     expect(out.registrations).toEqual([]);
     expect(out.scores).toEqual([]);
@@ -68,14 +68,14 @@ describe('collectPersonData inclusion', () => {
   it('collects the person row', () => {
     const db = baseDb();
     db.people = [{ id: PID, authUserId: AUTH_UID, firstName: 'A', lastName: 'B' } as never];
-    const out = collectPersonData(db, PID, db.scores, db.registrations, db.invoices);
+    const out = collectPersonData(db, PID, db.scores, db.registrations, db.invoices, db.people.find((p) => p.id === PID) ?? null);
     expect(out.person?.id).toBe(PID);
   });
 
   it('collects clubs the person manages', () => {
     const db = baseDb();
     db.clubs = [{ id: 'c1', managerIds: [PID] } as never, { id: 'c2', managerIds: ['other'] } as never];
-    const out = collectPersonData(db, PID, db.scores, db.registrations, db.invoices);
+    const out = collectPersonData(db, PID, db.scores, db.registrations, db.invoices, db.people.find((p) => p.id === PID) ?? null);
     expect(out.managedClubs.map((c) => c.id)).toEqual(['c1']);
   });
 
@@ -89,7 +89,7 @@ describe('collectPersonData inclusion', () => {
       { id: 's1', regId: 'r1' } as never,
       { id: 's2', regId: 'r2' } as never,
     ];
-    const out = collectPersonData(db, PID, db.scores, db.registrations, db.invoices);
+    const out = collectPersonData(db, PID, db.scores, db.registrations, db.invoices, db.people.find((p) => p.id === PID) ?? null);
     expect(out.registrations.map((r) => r.id)).toEqual(['r1']);
     expect(out.scores.map((s) => s.id)).toEqual(['s1']);
   });
@@ -97,14 +97,14 @@ describe('collectPersonData inclusion', () => {
   it('collects invoices billed to the person', () => {
     const db = baseDb();
     db.invoices = [{ id: 'i1', athleteId: PID } as never, { id: 'i2', athleteId: 'other' } as never];
-    const out = collectPersonData(db, PID, db.scores, db.registrations, db.invoices);
+    const out = collectPersonData(db, PID, db.scores, db.registrations, db.invoices, db.people.find((p) => p.id === PID) ?? null);
     expect(out.invoicesBilled.map((i) => i.id)).toEqual(['i1']);
   });
 
   it("collects the person's own cart", () => {
     const db = baseDb();
     db.carts = { [PID]: [{ id: 'ci1' } as never], other: [{ id: 'ci2' } as never] };
-    const out = collectPersonData(db, PID, db.scores, db.registrations, db.invoices);
+    const out = collectPersonData(db, PID, db.scores, db.registrations, db.invoices, db.people.find((p) => p.id === PID) ?? null);
     expect(out.cartItems.map((i) => i.id)).toEqual(['ci1']);
   });
 
@@ -114,7 +114,7 @@ describe('collectPersonData inclusion', () => {
     db.accountInvites = [{ id: 'ai1', personId: PID } as never];
     db.sanctionRequests = [{ id: 'sr1', requesterPersonId: PID } as never];
     db.refundRequests = [{ id: 'rr1', requesterPersonId: PID } as never];
-    const out = collectPersonData(db, PID, db.scores, db.registrations, db.invoices);
+    const out = collectPersonData(db, PID, db.scores, db.registrations, db.invoices, db.people.find((p) => p.id === PID) ?? null);
     expect(out.clubRequests.map((r) => r.id)).toEqual(['cr1']);
     expect(out.accountInvites.map((r) => r.id)).toEqual(['ai1']);
     expect(out.sanctionRequests.map((r) => r.id)).toEqual(['sr1']);
@@ -129,7 +129,7 @@ describe('collectPersonData inclusion', () => {
       { id: 'v2', voterUserId: AUTH_UID } as never,
       { id: 'v3', voterUserId: 'someone-else' } as never,
     ];
-    const out = collectPersonData(db, PID, db.scores, db.registrations, db.invoices);
+    const out = collectPersonData(db, PID, db.scores, db.registrations, db.invoices, db.people.find((p) => p.id === PID) ?? null);
     expect(out.sanctionVotes.map((v) => v.id).sort()).toEqual(['v1', 'v2']);
   });
 
@@ -140,7 +140,7 @@ describe('collectPersonData inclusion', () => {
     db.waitlistGroups = [{ id: 'wg1', personId: PID } as never];
     db.sessionRequests = [{ id: 'sq1', personId: PID } as never];
     db.eventCheckins = [{ id: 'ck1', personId: PID } as never];
-    const out = collectPersonData(db, PID, db.scores, db.registrations, db.invoices);
+    const out = collectPersonData(db, PID, db.scores, db.registrations, db.invoices, db.people.find((p) => p.id === PID) ?? null);
     expect(out.waiverSignatures.map((r) => r.id)).toEqual(['w1']);
     expect(out.payments.map((r) => r.id)).toEqual(['pay1']);
     expect(out.waitlistGroups.map((r) => r.id)).toEqual(['wg1']);
@@ -152,7 +152,7 @@ describe('collectPersonData inclusion', () => {
     const db = baseDb();
     db.people = [{ id: PID, authUserId: AUTH_UID } as never];
     db.eventAdmins = [{ id: 'ea1', userId: AUTH_UID } as never, { id: 'ea2', userId: 'someone-else' } as never];
-    const out = collectPersonData(db, PID, db.scores, db.registrations, db.invoices);
+    const out = collectPersonData(db, PID, db.scores, db.registrations, db.invoices, db.people.find((p) => p.id === PID) ?? null);
     expect(out.eventAdmins.map((r) => r.id)).toEqual(['ea1']);
   });
 
@@ -162,7 +162,7 @@ describe('collectPersonData inclusion', () => {
       { code: 'PERSONAL', restrictedToPersonId: PID } as never,
       { code: 'GENERAL', restrictedToPersonId: null } as never,
     ];
-    const out = collectPersonData(db, PID, db.scores, db.registrations, db.invoices);
+    const out = collectPersonData(db, PID, db.scores, db.registrations, db.invoices, db.people.find((p) => p.id === PID) ?? null);
     expect(out.restrictedCoupons.map((c) => c.code)).toEqual(['PERSONAL']);
   });
 });

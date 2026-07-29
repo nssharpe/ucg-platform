@@ -3,6 +3,7 @@ import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { pushEventCheckin, confirmEventCheckin } from '../lib/supabase';
 import { useEventRegistrations } from '../lib/registrations-slice';
+import { usePeopleForIds } from '../lib/people-admin-slice';
 import { checkinAthleteCount } from '../lib/pricing';
 import { Modal, Field, Badge } from './ui';
 import type { EventCheckin } from '../lib/types';
@@ -171,6 +172,13 @@ export function EventCheckinAdminCard({ eventId }: { eventId: string }) {
   // Phase 3 (data-layer-scale): the by-event slice instead of db.registrations.
   const { rows: eventRegs, status: regsStatus } = useEventRegistrations(eventId);
   const regs = eventRegs.filter((r) => r.eventId === eventId && !r.refunded && !r.waitlisted);
+  // Phase 4 (data-layer-scale.md): db.people at boot no longer covers the
+  // whole event field — this admin tool lists every club AND every
+  // independent athlete registered anywhere at the event. Needs mainClubId
+  // (not just name+club), so the full by-ids shape rather than the thin
+  // name-only one.
+  const checkinAthleteIds = [...new Set(regs.map((r) => r.athleteId))];
+  const { rows: checkinPeople, status: checkinPeopleStatus } = usePeopleForIds(checkinAthleteIds);
 
   const clubOptions = [...new Set(regs.map((r) => r.clubId))]
     .map((clubId) => db.clubs.find((c) => c.id === clubId))
@@ -178,9 +186,9 @@ export function EventCheckinAdminCard({ eventId }: { eventId: string }) {
     .sort((a, b) => a.name.localeCompare(b.name));
 
   const independentOptions = [...new Set(
-    regs.filter((r) => db.people.find((p) => p.id === r.athleteId)?.mainClubId === null).map((r) => r.athleteId),
+    regs.filter((r) => checkinPeople.find((p) => p.id === r.athleteId)?.mainClubId === null).map((r) => r.athleteId),
   )]
-    .map((athleteId) => db.people.find((p) => p.id === athleteId))
+    .map((athleteId) => checkinPeople.find((p) => p.id === athleteId))
     .filter((p): p is NonNullable<typeof p> => !!p)
     .sort((a, b) => `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`));
 
@@ -224,7 +232,7 @@ export function EventCheckinAdminCard({ eventId }: { eventId: string }) {
     </p>
   );
 
-  if (regsStatus === 'loading') {
+  if (regsStatus === 'loading' || checkinPeopleStatus === 'loading') {
     return (
       <div className="card card-pad" style={{ marginBottom: 18 }}>
         <h3 className="card-title">Check-in — open &amp; view as</h3>

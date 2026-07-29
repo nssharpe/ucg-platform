@@ -13,7 +13,8 @@ import {
 import { fmtScore } from '../lib/scoring';
 import { useEventScores } from '../lib/scores-slice';
 import { useEventRegistrations } from '../lib/registrations-slice';
-import type { Event, NationalsConfig, PlacementCategory, Registration, Score } from '../lib/types';
+import { usePeopleForIds } from '../lib/people-admin-slice';
+import type { Athlete, Event, NationalsConfig, PlacementCategory, Registration, Score } from '../lib/types';
 import type { AwardTable } from '../nationals';
 
 const TABS = ['Config', 'Qualification', 'Awards', 'Validation'] as const;
@@ -32,14 +33,21 @@ export function Nationals() {
   // rank/award/qualification math over the WHOLE field — a partial by-event
   // slice yields plausible but WRONG placements, not just missing rows.
   const { rows: allEventRegs, status: regsStatus } = useEventRegistrations(event?.id);
+  // Phase 4 (data-layer-scale.md) / COMPLETENESS: same reasoning again — the
+  // full event field's people (gender/placement/studentStatus feed the
+  // categorization math), derived from the just-fetched registration set's
+  // athlete ids. A partial read here is the SAME "plausible but WRONG"
+  // failure mode as a partial registration set.
+  const athleteIds = useMemo(() => [...new Set(allEventRegs.map((r) => r.athleteId))], [allEventRegs]);
+  const { rows: people, status: peopleStatus } = usePeopleForIds(athleteIds);
 
-  const bundle = useMemo(() => (event ? computeNationals(db, event, allEventRegs, scores) : null), [db, event, allEventRegs, scores]);
-  const validation = useMemo(() => (event ? computeNationalsValidation(db, event, allEventRegs, scores) : []), [db, event, allEventRegs, scores]);
+  const bundle = useMemo(() => (event ? computeNationals(db, event, allEventRegs, people, scores) : null), [db, event, allEventRegs, people, scores]);
+  const validation = useMemo(() => (event ? computeNationalsValidation(db, event, allEventRegs, people, scores) : []), [db, event, allEventRegs, people, scores]);
 
   if (!event) return <div className="page"><p>Event not found.</p></div>;
   if (event.kind !== 'nationals') return <div className="page"><p>This isn’t a Nationals event.</p></div>;
   if (!caps.isEventHost(event.id)) return <div className="page"><p>You don’t have access to manage this event.</p></div>;
-  if (scoresStatus === 'loading' || regsStatus === 'loading') return <div className="page"><p>Loading…</p></div>;
+  if (scoresStatus === 'loading' || regsStatus === 'loading' || peopleStatus === 'loading') return <div className="page"><p>Loading…</p></div>;
 
   return (
     <div className="page">
@@ -58,14 +66,14 @@ export function Nationals() {
       </div>
 
       {tab === 'Config' && <NationalsConfigEditor event={event} />}
-      {tab === 'Qualification' && bundle && <QualificationView event={event} db={db} allEventRegs={allEventRegs} scores={scores} />}
+      {tab === 'Qualification' && bundle && <QualificationView event={event} db={db} allEventRegs={allEventRegs} people={people} scores={scores} />}
       {tab === 'Awards' && bundle && <AwardsView event={event} db={db} bundle={bundle} />}
       {tab === 'Validation' && <ValidationView issues={validation} />}
     </div>
   );
 }
 
-function QualificationView({ event, db, allEventRegs, scores }: { event: Event; db: ReturnType<typeof useDB>; allEventRegs: Registration[]; scores: Score[] }) {
+function QualificationView({ event, db, allEventRegs, people, scores }: { event: Event; db: ReturnType<typeof useDB>; allEventRegs: Registration[]; people: Athlete[]; scores: Score[] }) {
   const disciplines = (['WAG', 'MAG'] as const).filter((d) => event.disciplines.includes(d));
   const cfg = event.nationalsConfig!;
   return (
@@ -75,7 +83,7 @@ function QualificationView({ event, db, allEventRegs, scores }: { event: Event; 
         were pulled in by the 50% cross-club rule (placed below the cutoff).
       </p>
       {disciplines.map((d) => {
-        const res = computeArtisticDiscipline(db, event, allEventRegs, d, scores);
+        const res = computeArtisticDiscipline(db, event, allEventRegs, people, d, scores);
         return <DisciplineRoster key={d} discipline={d} res={res} cfg={cfg} db={db} />;
       })}
       {disciplines.length === 0 && <p>No WAG/MAG disciplines in this event.</p>}

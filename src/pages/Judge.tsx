@@ -17,6 +17,7 @@ import { ScoringPanel } from '../components/scoring/ScoringPanel';
 import { useCapabilities } from '../lib/capabilities';
 import { eventIsInPhase, scoringConfigOf } from '../lib/events-core';
 import { loadJudgeAccessMap, saveJudgeAccess, withJudgeAccess } from '../lib/judge-access-storage';
+import { usePeopleNames } from '../lib/people-slice';
 
 /** Combines a single effective start value with EITHER an averaged E-score OR
  *  averaged deductions into a final — the one code path both entry modes
@@ -48,6 +49,13 @@ export function Judge() {
   const eventRec = db.events.find((m) => m.id === eventId);
   const { rows: eventScores, status: scoresStatus } = useEventScores(eventRec?.id);
   const { rows: eventRegs, status: regsStatus } = useEventRegistrations(eventRec?.id);
+  // Phase 4 (data-layer-scale.md): db.people at boot no longer covers a
+  // judge's whole field — judges routinely score athletes from clubs they
+  // have no affiliation with. Thin name-only lookup (this page never reads
+  // any other athlete field).
+  const judgeAthleteIds = useMemo(() => [...new Set(eventRegs.map((r) => r.athleteId))], [eventRegs]);
+  const { rows: judgeCompetitorRefs, status: peopleStatus } = usePeopleNames(judgeAthleteIds);
+  const competitorById = useMemo(() => new Map(judgeCompetitorRefs.map((r) => [r.id, r])), [judgeCompetitorRefs]);
   const [sessionId, setSessionId] = useState(eventRec?.sessions[0]?.id ?? '');
   const session = eventRec?.sessions.find((s) => s.id === sessionId) ?? eventRec?.sessions[0];
   const apparatusDefs = session ? APPARATUS[session.discipline] : [];
@@ -96,11 +104,11 @@ export function Judge() {
     if (!eventRec || !session) return [];
     const inSession = eventRegs.filter((r) => r.eventId === eventRec.id && r.sessionId === session.id && !r.refunded && r.apparatus.includes(apparatus));
     return inSession.sort((a, b) => {
-      const an = db.people.find((p) => p.id === a.athleteId)!;
-      const bn = db.people.find((p) => p.id === b.athleteId)!;
-      return an.lastName.localeCompare(bn.lastName);
+      const an = competitorById.get(a.athleteId);
+      const bn = competitorById.get(b.athleteId);
+      return (an?.lastName ?? '').localeCompare(bn?.lastName ?? '');
     });
-  }, [eventRegs, db.people, eventRec, session, apparatus]);
+  }, [eventRegs, competitorById, eventRec, session, apparatus]);
 
   const scoreFor = (regId: string) => eventScores.find((s) => s.id === `${eventRec?.id}|${regId}|${apparatus}`);
 
@@ -134,7 +142,7 @@ export function Judge() {
   const panels2 = scoringConfig.panels === 2;
 
   const active = regs.find((r) => r.id === activeReg);
-  const activeAthlete = active && db.people.find((p) => p.id === active.athleteId);
+  const activeAthlete = active && competitorById.get(active.athleteId);
   const activeLevel = active && db.levels.find((l) => l.id === active.levelId);
   const calcCfg = activeLevel ? calcForLevel(activeLevel.id, apparatus) : null;
   const svMax = activeLevel?.svMax;
@@ -482,16 +490,16 @@ export function Judge() {
           <table className="tbl">
             <thead><tr><th>Athlete</th><th>Club</th><th>Level</th><th className="num">Score</th><th /></tr></thead>
             <tbody>
-              {scoresStatus === 'loading' || regsStatus === 'loading' ? (
+              {scoresStatus === 'loading' || regsStatus === 'loading' || peopleStatus === 'loading' ? (
                 <tr><td colSpan={5} style={{ color: 'var(--ink-soft)' }}>Loading…</td></tr>
               ) : (
                 <>
                   {regs.map((r) => {
-                    const a = db.people.find((p) => p.id === r.athleteId)!;
+                    const a = competitorById.get(r.athleteId);
                     const sc = scoreFor(r.id);
                     return (
                       <tr key={r.id}>
-                        <td><strong>{a.firstName} {a.lastName}</strong></td>
+                        <td><strong>{a?.firstName} {a?.lastName}</strong></td>
                         <td>{db.clubs.find((c) => c.id === r.clubId)?.shortName}</td>
                         <td style={{ fontSize: 13 }}>{db.levels.find((l) => l.id === r.levelId)?.name}</td>
                         <td className="num score">

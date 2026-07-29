@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useDB } from '../../../lib/store';
 import { Combo, Field } from '../../../components/ui';
 import { useToast } from '../../../components/ui-hooks';
 import { STATE_REGIONS } from '../../../lib/types';
 import type { Athlete } from '../../../lib/types';
 import { fetchAllRoles, fetchRegionalRepRegions, setRegionalRepRegion, pushUserRole } from '../../../lib/supabase';
+import { useAdminPeople } from '../../../lib/people-admin-slice';
 
 // ---------- User Roles (W12 task 1) ----------
 // 'admin' = Full League Admin (only role that can emulate users / access all admin features).
@@ -27,8 +27,11 @@ const REGION_OPTIONS: string[] = (() => {
 })();
 
 export function UserRoles() {
-  const db = useDB();
   const toast = useToast();
+  // Phase 4 (data-layer-scale.md): db.people at boot no longer covers the
+  // whole league — this page grants roles to ANY account, same league-wide
+  // shape (#3) as every other admin-only whole-league surface.
+  const { rows: adminPeopleRows } = useAdminPeople();
   // Load all role assignments from Supabase on mount.
   const [roleMap, setRoleMap] = useState<Map<string, Set<string>>>(new Map()); // userId → Set<role>
   const [regionMap, setRegionMap] = useState<Record<string, string>>({}); // userId → region (regional reps)
@@ -82,20 +85,20 @@ export function UserRoles() {
   // Find person by authUserId.
   const personByAuthId = useMemo(() => {
     const m = new Map<string, Athlete>();
-    for (const p of db.people) { if (p.authUserId) m.set(p.authUserId, p); }
+    for (const p of adminPeopleRows) { if (p.authUserId) m.set(p.authUserId, p); }
     return m;
-  }, [db.people]);
+  }, [adminPeopleRows]);
 
   const peopleWithAccount = useMemo(() =>
-    db.people.filter((p) => p.authUserId)
+    adminPeopleRows.filter((p) => p.authUserId)
       .map((p) => ({ value: p.id, label: `${p.firstName} ${p.lastName}`, sub: p.email }))
       .sort((a, b) => a.label.localeCompare(b.label)),
-    [db.people]
+    [adminPeopleRows]
   );
 
   const doAddRole = (role: string) => {
     if (!addPersonId) { toast('Select a person first.'); return; }
-    const person = db.people.find((p) => p.id === addPersonId);
+    const person = adminPeopleRows.find((p) => p.id === addPersonId);
     if (!person?.authUserId) { toast('That person has no linked account — they need an account before they can hold a role.'); return; }
     if (roleMap.get(person.authUserId)?.has(role)) { toast(`${person.firstName} already has the ${role} role.`); return; }
     grantRole(person.authUserId, role);

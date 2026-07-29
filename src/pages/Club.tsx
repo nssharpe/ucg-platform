@@ -28,6 +28,8 @@ import {
 import { cleanupCrossClubCart } from '../lib/cart-sync';
 import { useEventRegistrations, useClubRegistrations, applyLocalRegistrationUpsert, applyLocalRegistrationRemove, mergeUpsertedRegs } from '../lib/registrations-slice';
 import { useClubRosterMemberships, groupAdminMembershipsByPerson } from '../lib/memberships-admin-slice';
+import { usePeopleForClub } from '../lib/people-admin-slice';
+import { usePeopleNames } from '../lib/people-slice';
 import type { ClubMembership } from '../lib/types';
 import { ClubForm } from '../components/ClubForm';
 import { RegistrationEditor } from '../components/RegistrationEditor';
@@ -86,6 +88,20 @@ export function ClubPage({ view }: { view: ClubView }) {
   const [editingClub, setEditingClub] = useState(false);
   const [addingAthlete, setAddingAthlete] = useState(false);
   const [addingCoach, setAddingCoach] = useState(false);
+  // Phase 4 (data-layer-scale.md): `db.people` at boot is now scoped to self +
+  // managed-club rosters, so a viewer who ISN'T this club's own manager (any
+  // signed-in member browsing another club's page, or an admin, whose
+  // `canManage` is true everywhere but whose boot scope only covers clubs
+  // THEY manage) needs an on-demand fetch for rosterSize/managerNames, which
+  // are shown to every viewer, not just managers. Falls back to the
+  // boot-scoped `db.people` while loading (correct instantly for the common
+  // case — a manager on their own club's page — and self-corrects once the
+  // fetch resolves for everyone else, rather than flashing a blank/zero
+  // count). Called unconditionally, ABOVE the `if (!club) return` below
+  // (Rules of Hooks) — `club?.id`/`club?.managerIds` are safe when club is
+  // still undefined (the hooks treat a null/empty key as "nothing to fetch").
+  const { rows: clubPeopleRows, status: clubPeopleStatus } = usePeopleForClub(club?.id ?? null);
+  const { rows: managerRefs, status: managerNamesStatus } = usePeopleNames(club?.managerIds ?? []);
   if (!club) return <p>Club not found.</p>;
 
   const canManage = caps.isAdmin || caps.managedClubIds.includes(club.id);
@@ -98,12 +114,18 @@ export function ClubPage({ view }: { view: ClubView }) {
     : false;
   const isManager = canManage;
 
-  const rosterSize = db.people.filter((p) => p.mainClubId === club.id).length;
+  const clubPeopleReady = clubPeopleStatus === 'ready';
+  const rosterSize = (clubPeopleReady ? clubPeopleRows : db.people).filter((p) => p.mainClubId === club.id).length;
 
-  const managerNames = club.managerIds
-    .map((id) => db.people.find((p) => p.id === id))
-    .filter((p): p is Athlete => !!p)
-    .map((p) => `${p.firstName} ${p.lastName}`);
+  const managerNameOf = (id: string): string | null => {
+    if (managerNamesStatus === 'ready') {
+      const r = managerRefs.find((x) => x.id === id);
+      if (r) return `${r.firstName} ${r.lastName}`;
+    }
+    const p = db.people.find((x) => x.id === id);
+    return p ? `${p.firstName} ${p.lastName}` : null;
+  };
+  const managerNames = club.managerIds.map(managerNameOf).filter((n): n is string => !!n);
 
   // Clubs the user can switch between from here: league admins see all clubs,
   // managers see the clubs they manage. Only shown when there's a real choice.
@@ -433,10 +455,18 @@ function ClubMembershipReview({ club, season, isCurrent, isFuture, onConfirm, on
 function ClubManagers({ club }: { club: Club }) {
   const db = useDB();
   const toast = useToast();
+  // Only ever mounted when canManage is already true (ClubPage gates it) —
+  // fetch this club's full roster (mainClubId OR alt-club affiliation,
+  // matching the old candidates filter below exactly) on demand, falling
+  // back to boot-scoped db.people while loading (correct instantly for a
+  // real manager's own club; self-corrects for an admin viewing a club they
+  // don't personally manage).
+  const { rows: clubPeopleRows, status: clubPeopleStatus } = usePeopleForClub(club.id);
+  const effectivePeople = clubPeopleStatus === 'ready' ? clubPeopleRows : db.people;
   const managers = club.managerIds
-    .map((id) => db.people.find((p) => p.id === id))
+    .map((id) => effectivePeople.find((p) => p.id === id) ?? db.people.find((p) => p.id === id))
     .filter((p): p is Athlete => !!p);
-  const candidates = db.people
+  const candidates = effectivePeople
     .filter((p) =>
       !club.managerIds.includes(p.id) &&
       (p.mainClubId === club.id || p.altClubIds.includes(club.id)),
@@ -500,6 +530,12 @@ function Roster({ clubId, canManage }: { clubId: string; canManage: boolean }) {
   const { rows: clubMembershipRows, status: clubMembershipsStatus } = useClubRosterMemberships(canManage ? clubId : null);
   const membershipsByPerson = useMemo(() => groupAdminMembershipsByPerson(clubMembershipRows), [clubMembershipRows]);
   const membershipsOverrideReady = canManage && clubMembershipsStatus === 'ready';
+  // Phase 4 (data-layer-scale.md): same override pattern as the memberships
+  // hook right above — db.people at boot only carries a real manager's OWN
+  // club roster, so an admin viewing a club they don't personally manage
+  // needs this on-demand fetch too.
+  const { rows: clubPeopleRows, status: clubPeopleStatus } = usePeopleForClub(canManage ? clubId : null);
+  const peopleOverrideReady = canManage && clubPeopleStatus === 'ready';
 
   const invite = async (p: Athlete) => {
     if (!p.email) { toast('This member has no email on file.', { variant: 'error' }); return; }
@@ -526,7 +562,7 @@ function Roster({ clubId, canManage }: { clubId: string; canManage: boolean }) {
   // directly per render instead (same precedent as Cart.tsx's `cart`);
   // `useDB()`'s subscription already re-renders this component on every
   // store change, so this is correct and cheap.
-  const allRoster = db.people.filter((p) => p.mainClubId === clubId);
+  const allRoster = (peopleOverrideReady ? clubPeopleRows : db.people).filter((p) => p.mainClubId === clubId);
 
   const filtered = search.trim()
     ? allRoster.filter((p) =>
@@ -802,6 +838,13 @@ function ClubAddonsCard({ event, clubId, canManage }: { event: Event; clubId: st
   // synchronous setState-in-effect needed to reset it.
   const [draft, setDraft] = useState<ClubAddonDraft>(() => initialClubAddonDraft());
   const [addonRefundTarget, setAddonRefundTarget] = useState<RefundRequestItem | null>(null);
+  // Phase 4 (data-layer-scale.md): called unconditionally (Rules of Hooks)
+  // before the canManage early-return below — falls back to boot-scoped
+  // db.people while loading (correct instantly for a real manager's own
+  // club; self-corrects for an admin viewing a club they don't personally
+  // manage).
+  const { rows: clubPeopleRows, status: clubPeopleStatus } = usePeopleForClub(clubId);
+  const effectivePeople = clubPeopleStatus === 'ready' ? clubPeopleRows : db.people;
 
   const tshirtOpen = !!event.tshirtAddon && addonPurchaseOpen(event.tshirtAddon, event.regCloses, now);
   const banquetOpen = !!event.banquet && addonPurchaseOpen(event.banquet, event.regCloses, now);
@@ -809,12 +852,12 @@ function ClubAddonsCard({ event, clubId, canManage }: { event: Event; clubId: st
 
   if (!canManage || (!tshirtOpen && !banquetOpen && !bannerOpen)) return null;
 
-  const roster = db.people.filter(
+  const roster = effectivePeople.filter(
     (p) => p.mainClubId === clubId && (p.roles ? (p.roles.athlete || p.roles.coach) : (p.kind === 'athlete' || p.kind === 'coach')),
   ).sort((a, b) => a.lastName.localeCompare(b.lastName));
 
   const nameOf = (id: string) => {
-    const p = db.people.find((x) => x.id === id);
+    const p = effectivePeople.find((x) => x.id === id);
     return p ? `${p.firstName} ${p.lastName}` : 'Unknown';
   };
 
@@ -1035,6 +1078,16 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   const { rows: clubMembershipRows, status: clubMembershipsStatus } = useClubRosterMemberships(canManage ? clubId : null);
   const clubMembershipsByPerson = useMemo(() => groupAdminMembershipsByPerson(clubMembershipRows), [clubMembershipRows]);
   const membershipsOverrideReady = canManage && clubMembershipsStatus === 'ready';
+  // Phase 4 (data-layer-scale.md): same override pattern as clubMembershipRows
+  // above — db.people at boot only carries a real manager's OWN club roster,
+  // so an admin viewing a club they don't personally manage needs this
+  // on-demand fetch too. `effectivePeople` replaces every db.people
+  // find/filter below that's scoped to this club's roster (the roster
+  // itself, synchro-partner candidates, swap-athlete targets, the
+  // edit/register modals' subject athlete).
+  const { rows: clubPeopleRows, status: clubPeopleStatus } = usePeopleForClub(canManage ? clubId : null);
+  const peopleOverrideReady = canManage && clubPeopleStatus === 'ready';
+  const effectivePeople = peopleOverrideReady ? clubPeopleRows : db.people;
   const season = currentSeason(db)!;
   // B4.2: past the event's last-date-to-edit, only an admin or the event's
   // HOST club may still edit (client-side UX only — registrations_edit_lockout
@@ -1062,7 +1115,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   const eventRegAthleteIds = new Set(
     eventRegs.filter((r) => r.clubId === clubId && !r.refunded).map((r) => r.athleteId),
   );
-  const athletes = db.people.filter(
+  const athletes = effectivePeople.filter(
     (p) => p.kind === 'athlete' && (p.mainClubId === clubId || eventRegAthleteIds.has(p.id)),
   ).sort((a, b) => a.lastName.localeCompare(b.lastName));
 
@@ -1094,9 +1147,10 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   // MUST gate before computing hasActiveReg/registered/etc below (CONTRACT
   // completeness rule) — a loading slice must never be treated as "this
   // athlete has no registrations". Same reasoning extends to the
-  // club-roster-memberships override (canManage-gated, above) — while it's
-  // still loading, `hasMembership` must not be evaluated as "no one has one".
-  if (regsStatus === 'loading' || (canManage && clubMembershipsStatus === 'loading')) return <p>Loading…</p>;
+  // club-roster-memberships/-people overrides (canManage-gated, above) —
+  // while either is still loading, `hasMembership`/`athletes` must not be
+  // evaluated as "no one has one"/"the roster is empty".
+  if (regsStatus === 'loading' || (canManage && (clubMembershipsStatus === 'loading' || clubPeopleStatus === 'loading'))) return <p>Loading…</p>;
 
   const regClosed = !eventIsInPhase(event, 'reg-open');
   // event-mgmt v2 Phase 3 (§H): refunds only offered for events hosted by the
@@ -1165,7 +1219,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   const lvlName = (id?: string) => db.levels.find((l) => l.id === id)?.name ?? '—';
 
   const nameOf = (id: string) => {
-    const p = db.people.find((x) => x.id === id);
+    const p = effectivePeople.find((x) => x.id === id);
     return p ? `${p.firstName} ${p.lastName}` : 'partner';
   };
 
@@ -1333,7 +1387,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   // mirroring MyRegistrations.tsx's changeFeeLabel/changeFeePending).
   const changeFeeLabel = (athlete: Athlete) => `${event.name} change fee — ${athlete.firstName} ${athlete.lastName}`;
   const changeFeePendingItem = (athleteId: string) => {
-    const athlete = db.people.find((p) => p.id === athleteId);
+    const athlete = effectivePeople.find((p) => p.id === athleteId);
     if (!athlete) return undefined;
     const label = changeFeeLabel(athlete);
     return (db.carts[clubId] ?? []).find((c) => c.kind === 'meet-entry' && c.refLineType === 'change' && c.label === label);
@@ -1678,7 +1732,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   // every part of this function. mutate() below only applies the precomputed
   // rows to d.registrations for demo-mode's sake and fans out to the slice.
   const swapAthlete = (fromId: string, toId: string) => {
-    const to = db.people.find((p) => p.id === toId);
+    const to = effectivePeople.find((p) => p.id === toId);
     if (!to) return;
     const swapFee = changeFeeApplies ? registrationChangeFee(event, { competingClubId: clubId }) : 0;
 
@@ -1740,8 +1794,8 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
     setEditingAthleteId(null);
   };
 
-  const editingAthlete = editingAthleteId ? db.people.find((p) => p.id === editingAthleteId) : null;
-  const registerAthlete = registerAthleteId ? db.people.find((p) => p.id === registerAthleteId) : null;
+  const editingAthlete = editingAthleteId ? effectivePeople.find((p) => p.id === editingAthleteId) : null;
+  const registerAthlete = registerAthleteId ? effectivePeople.find((p) => p.id === registerAthleteId) : null;
 
   return (
     <div>
@@ -2050,7 +2104,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
                   value={null}
                   placeholder="Search a club member with membership…"
                   onChange={(toId) => {
-                    const to = db.people.find((p) => p.id === toId);
+                    const to = effectivePeople.find((p) => p.id === toId);
                     if (to && window.confirm(`Swap ${editingAthlete.firstName} ${editingAthlete.lastName}'s registration to ${to.firstName} ${to.lastName}?${changeFeeApplies && event.changeFee ? ` A ${fmtMoney(event.changeFee.amount)} change fee applies.` : ''}`)) {
                       swapAthlete(editingAthlete.id, toId);
                     }
@@ -2064,7 +2118,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
             athlete={editingAthlete}
             clubId={clubId}
             existing={regsFor(editingAthlete.id)}
-            allAthletes={db.people.filter((p) => p.kind === 'athlete')}
+            allAthletes={effectivePeople.filter((p) => p.kind === 'athlete')}
             levels={db.levels}
             season={season}
             onSave={(regs) => saveRegs(editingAthlete.id, regs)}
@@ -2093,7 +2147,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
             athlete={registerAthlete}
             clubId={clubId}
             existing={[]}
-            allAthletes={db.people.filter((p) => p.kind === 'athlete')}
+            allAthletes={effectivePeople.filter((p) => p.kind === 'athlete')}
             levels={db.levels}
             season={season}
             onSave={(regs) => addToCart(registerAthlete.id, regs)}

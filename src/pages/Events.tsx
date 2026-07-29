@@ -23,10 +23,13 @@ import {
   hostDeleteRegistration, hostUpsertRegistration, insuranceCertificateUrl,
   listSanctioningTeam, manageWaitlist, markMedalsReceived, pushCampSurvey, pushCart, pushEvent, pushEventSessions, pushJudgeAccessCode, pushRegistration,
   revokeEventAdmin, revokeJudgeAccessCode, syncSynchroPartnerLevelRemote, uploadInsuranceCertificate,
+  fetchPublicPeopleForIdsRemote,
 } from '../lib/supabase';
 import type { HostAddonRow, HostRosterRow, SanctioningTeamMember, WaitlistQueueRow } from '../lib/supabase';
 import { fetchEventScoresOnce } from '../lib/scores-slice';
 import { useEventRegistrations, useMyRegistrations, fetchEventRegistrationsOnce, applyLocalRegistrationUpsert, applyLocalRegistrationRemove, mergeUpsertedRegs } from '../lib/registrations-slice';
+import { usePeopleNames } from '../lib/people-slice';
+import { usePeopleForIds, fetchPeopleForIdsOnce } from '../lib/people-admin-slice';
 import { summarizeRoster, levelNameResolver } from '../lib/host-page';
 import { buildRegistrationWorkbookSheets } from '../lib/host-export';
 import { downloadWorkbook } from '../lib/xlsx-download';
@@ -925,9 +928,12 @@ function WaitlistCard({ event, toast }: {
 // ---------------------------------------------------------------------------
 
 function CampSurveyResponsesCard({ event, regs }: { event: Event; regs: Registration[] }) {
-  const db = useDB();
   const [surveys, setSurveys] = useState<Record<string, Registration['campSurvey'] | null> | null>(null);
   const [showIndividual, setShowIndividual] = useState(false);
+  // Phase 4 (data-layer-scale.md): db.people at boot no longer covers every
+  // registrant at this event — thin name-only lookup (athleteName below
+  // never reads any other field).
+  const { rows: surveyCompetitorRefs } = usePeopleNames(regs.map((r) => r.athleteId));
 
   useEffect(() => {
     let live = true;
@@ -942,7 +948,7 @@ function CampSurveyResponsesCard({ event, regs }: { event: Event; regs: Registra
     .map((r) => ({
       reg: r,
       athleteName: (() => {
-        const p = db.people.find((pp) => pp.id === r.athleteId);
+        const p = surveyCompetitorRefs.find((pp) => pp.id === r.athleteId);
         return p ? `${p.firstName} ${p.lastName}` : r.athleteId;
       })(),
       survey: surveys[r.id]!,
@@ -1095,7 +1101,6 @@ const ADDON_LABEL: Record<NonNullable<HostAddonRow['refLineType']>, string> = {
 };
 
 function NationalsSummaryCard({ event }: { event: Event }) {
-  const db = useDB();
   const [addons, setAddons] = useState<HostAddonRow[] | null>(null);
   const [addonsError, setAddonsError] = useState<string | null>(null);
 
@@ -1116,8 +1121,13 @@ function NationalsSummaryCard({ event }: { event: Event }) {
   const regs = eventRegs.filter((r) => r.eventId === event.id && !r.refunded);
   const active = regs.filter((r) => !r.waitlisted);
   const waitlisted = regs.filter((r) => r.waitlisted).length;
+  // Phase 4 (data-layer-scale.md): db.people at boot no longer covers every
+  // registrant — independentCount below needs mainClubId (not just name),
+  // so the full by-ids shape. Called unconditionally (Rules of Hooks)
+  // before the loading early return.
+  const { rows: summaryPeople, status: summaryPeopleStatus } = usePeopleForIds(active.map((r) => r.athleteId));
 
-  if (regsStatus === 'loading') {
+  if (regsStatus === 'loading' || summaryPeopleStatus === 'loading') {
     return (
       <div className="card card-pad" style={{ marginBottom: 18 }}>
         <h3 className="card-title">Event summary</h3>
@@ -1141,7 +1151,7 @@ function NationalsSummaryCard({ event }: { event: Event }) {
   const athleteCount = new Set(active.map((r) => r.athleteId)).size;
   const clubIds = new Set(active.map((r) => r.clubId).filter((id): id is string => !!id));
   const independentCount = new Set(
-    active.filter((r) => db.people.find((p) => p.id === r.athleteId)?.mainClubId === null).map((r) => r.athleteId),
+    active.filter((r) => summaryPeople.find((p) => p.id === r.athleteId)?.mainClubId === null).map((r) => r.athleteId),
   ).size;
 
   const addonCounts = new Map<string, number>();
@@ -2646,9 +2656,15 @@ async function exportCsv(db: ReturnType<typeof useDB>, event: Event) {
   // "name still appears in event materials" for a post-edit-deadline refund);
   // a pre-deadline refund deletes its row outright and is naturally absent.
   const eventRegs = await fetchEventRegistrationsOnce(event.id);
+  const filteredRegs = eventRegs.filter((x) => x.eventId === event.id && (!x.refunded || x.keepListed));
+  // Phase 4 (data-layer-scale.md): db.people at boot no longer covers every
+  // registrant — this export needs full fields (shirt/dietary/email/phone/
+  // emergency/studentStatus), so the full by-ids shape, one-off (this is a
+  // plain async click handler, not a component — non-hook fetch).
+  const exportPeople = await fetchPeopleForIdsOnce([...new Set(filteredRegs.map((r) => r.athleteId))]);
   const rows = [['Athlete', 'Club', 'Discipline', 'Level', 'Session', 'Events', 'Shirt', 'Dietary', 'Email', 'Phone', 'Emergency contact', 'Student', 'Region']];
-  for (const r of eventRegs.filter((x) => x.eventId === event.id && (!x.refunded || x.keepListed))) {
-    const a = db.people.find((p) => p.id === r.athleteId)!;
+  for (const r of filteredRegs) {
+    const a = exportPeople.find((p) => p.id === r.athleteId)!;
     const club = db.clubs.find((c) => c.id === r.clubId)!;
     rows.push([
       `${a.firstName} ${a.lastName}`, club.name, r.discipline,
@@ -2668,10 +2684,14 @@ async function exportCsv(db: ReturnType<typeof useDB>, event: Event) {
  *  this is a one-off scoped fetch rather than a `db.scores` filter. */
 async function exportScoresCsv(db: ReturnType<typeof useDB>, event: Event) {
   const [scores, eventRegs] = await Promise.all([fetchEventScoresOnce(event.id), fetchEventRegistrationsOnce(event.id)]);
+  // Phase 4 (data-layer-scale.md): db.people at boot no longer covers every
+  // registrant — thin name-only lookup (only firstName/lastName read
+  // below), one-off (plain async click handler, not a component).
+  const scoresPeople = await fetchPublicPeopleForIdsRemote([...new Set(eventRegs.map((r) => r.athleteId))]);
   const rows = [['Athlete', 'Club', 'Session', 'Event', 'Level', 'D/SV', 'Deductions', 'E-score', 'Final', 'Source', 'Calculator', 'Entered by', 'Entered at', 'Adjusted at', 'Adjust note', 'Calculator state (JSON)']];
   for (const s of scores) {
     const reg = eventRegs.find((r) => r.id === s.regId);
-    const a = reg && db.people.find((p) => p.id === reg.athleteId);
+    const a = reg && scoresPeople.find((p) => p.id === reg.athleteId);
     const club = reg && db.clubs.find((c) => c.id === reg.clubId);
     const session = event.sessions.find((x) => x.id === s.sessionId);
     rows.push([
@@ -2737,6 +2757,12 @@ function SquadBuilder({ event, session }: { event: Event; session: EventSession 
   // mutate() blocks for exactly that reason (d.registrations is no longer
   // populated once Stage 4 removes registrations from loadAll).
   const { rows: eventRegs, status: regsStatus } = useEventRegistrations(event.id);
+  // Phase 4 (data-layer-scale.md): db.people at boot no longer covers every
+  // registrant — thin name-only lookup (name() below never reads any other
+  // field), derived from the FULL by-event set (same scope pushEventSessions
+  // needs, not just this session) so a copy-setup/cross-session reference
+  // still resolves.
+  const { rows: squadCompetitorRefs } = usePeopleNames(eventRegs.map((r) => r.athleteId));
 
   // Bootstrap (Phase 3 Stage 4): session.squads[].athleteRegIds — the
   // reverse index of "which registrations are in this squad" — used to be
@@ -2780,7 +2806,7 @@ function SquadBuilder({ event, session }: { event: Event; session: EventSession 
   const holding = regs.filter((r) => !placed.has(r.id));
   const name = (regId: string) => {
     const reg = regs.find((r) => r.id === regId);
-    const a = db.people.find((p) => p.id === reg?.athleteId);
+    const a = squadCompetitorRefs.find((p) => p.id === reg?.athleteId);
     return a ? `${a.firstName} ${a.lastName}` : regId;
   };
   const clubShort = (regId: string) => {

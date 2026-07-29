@@ -18,6 +18,7 @@ import { STATE_REGIONS, DISCIPLINES, SHIRT_SIZES } from '../lib/types';
 import { timezoneForState } from '../lib/timezone';
 import type { Discipline, Event, SanctionRequest, SanctionVote } from '../lib/types';
 import type { RibbonOption } from '../lib/ribbons';
+import { useAdminPeople } from '../lib/people-admin-slice';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -631,6 +632,11 @@ export function SanctionRequestForm() {
 export function SanctioningQueue() {
   const db = useDB();
   const caps = useCapabilities();
+  // Phase 4 (data-layer-scale.md): db.people at boot no longer covers the
+  // whole league — requesters can be from any club, same league-wide shape
+  // (#3) as every other admin/sanctioning-gated surface. Called
+  // unconditionally (Rules of Hooks) before the access-gate early return.
+  const { rows: adminPeopleRows } = useAdminPeople();
 
   if (!caps.isSanctioning) {
     return (
@@ -650,7 +656,7 @@ export function SanctioningQueue() {
   const clubName = (id: string) => db.clubs.find((c) => c.id === id)?.name ?? id;
   const requesterName = (id: string | null) => {
     if (!id) return 'Unknown';
-    const p = db.people.find((pp) => pp.id === id);
+    const p = adminPeopleRows.find((pp) => pp.id === id);
     return p ? `${p.firstName} ${p.lastName}` : id;
   };
 
@@ -763,6 +769,12 @@ export function SanctionVotePage() {
 
   const [voteChoice, setVoteChoice] = useState<'approve' | 'reject' | 'abstain' | ''>('');
   const [comment, setComment] = useState('');
+  // Phase 4 (data-layer-scale.md): db.people at boot no longer covers the
+  // whole league — the requester and every voter can be from any club. Full
+  // rows (not just names) since the voter match below needs authUserId.
+  // Called unconditionally (Rules of Hooks) before the access-gate early
+  // return further down.
+  const { rows: adminPeopleRows } = useAdminPeople();
 
   const request = (db.sanctionRequests ?? []).find((r) => r.id === requestId);
   const allVotes = (db.sanctionVotes ?? []).filter((v) => v.requestId === requestId);
@@ -805,7 +817,7 @@ export function SanctionVotePage() {
 
   const p = request.payload;
   const club = db.clubs.find((c) => c.id === request.hostClubId);
-  const requester = request.requesterPersonId ? db.people.find((pp) => pp.id === request.requesterPersonId) : null;
+  const requester = request.requesterPersonId ? adminPeopleRows.find((pp) => pp.id === request.requesterPersonId) : null;
 
   const castVote = () => {
     if (!voteChoice) return;
@@ -1110,7 +1122,7 @@ export function SanctionVotePage() {
                 </thead>
                 <tbody>
                   {allVotes.map((v) => {
-                    const voter = db.people.find((pp) => pp.id === v.voterUserId || pp.authUserId === v.voterUserId);
+                    const voter = adminPeopleRows.find((pp) => pp.id === v.voterUserId || pp.authUserId === v.voterUserId);
                     return (
                       <tr key={v.id}>
                         <td>{voter ? `${voter.firstName} ${voter.lastName}` : v.voterUserId.slice(0, 8)}</td>

@@ -17,6 +17,7 @@ import {
   sectionCap, splitIntoSections, flattenSections, sectionsValid, moveInSections, reconcileSections, computeDropIndex,
 } from '../lib/competition-order';
 import { Field, Badge } from './ui';
+import { usePeopleNames, nameLookup } from '../lib/people-slice';
 
 /**
  * Club-facing "Set Competition Order" drag UI (event-mgmt v2 Phase 5 B2, spec
@@ -58,6 +59,13 @@ export function CompetitionOrderCard({
     .sort((a, b) => a.discipline.localeCompare(b.discipline) || a.order - b.order);
 
   const [levelId, setLevelId] = useState<string | undefined>(undefined);
+  // Phase 4 (data-layer-scale.md): db.people at boot only covers a real
+  // manager's own club roster — an admin (canManage true everywhere) viewing
+  // a club they don't personally manage needs this too. Thin name-only
+  // lookup (nameOf below never reads any other field), called unconditionally
+  // (Rules of Hooks) before the canManage/loading early returns.
+  const { rows: orderCompetitorRefs, status: orderPeopleStatus } = usePeopleNames(clubRegs.map((r) => r.athleteId));
+  const orderNameById = nameLookup(orderCompetitorRefs);
 
   if (!canManage) return null;
   // Distinguish "still loading" from "genuinely no MAG/WAG registrations" —
@@ -65,7 +73,7 @@ export function CompetitionOrderCard({
   // (mirrors the pre-slice behavior); the former would otherwise render
   // nothing while data is in flight, which reads as "nothing to set up here"
   // rather than "still loading".
-  if (regsStatus === 'loading') {
+  if (regsStatus === 'loading' || orderPeopleStatus === 'loading') {
     return (
       <div className="card card-pad" style={{ marginBottom: 18 }}>
         <h3 className="card-title">Set competition order</h3>
@@ -87,8 +95,7 @@ export function CompetitionOrderCard({
 
   const nameOf = (regId: string): string => {
     const reg = eventRegs.find((r) => r.id === regId);
-    const p = reg ? db.people.find((x) => x.id === reg.athleteId) : undefined;
-    return p ? `${p.firstName} ${p.lastName}` : 'Unknown athlete';
+    return (reg && orderNameById.get(reg.athleteId)) || 'Unknown athlete';
   };
 
   return (
