@@ -3,665 +3,188 @@
 React + TypeScript + Vite. Live: https://nssharpe.github.io/ucg-platform/
 Supabase backend (env-gated). Deploys via GitHub Actions on push to `main`.
 
-**Keep this file lean.** It's loaded into every session AND every subagent.
-Operative rules only — feature history/narratives go in `docs/specs/`, `docs/plans/`,
-and git history (full pre-trim version: `docs/archive/CLAUDE-md-as-of-2026-07-02.md`).
-When the post-commit doc sweep touches this file, UPDATE-in-place or move detail out;
-never append changelog paragraphs.
+<!-- Restructured 2026-07-29 per Anthropic's context-engineering + steering guidance:
+     facts here, path-scoped constraints in .claude/rules/, procedures in .claude/skills/,
+     enforcement in hooks. Target for this file is UNDER 200 LINES. If you're about to
+     append a paragraph, ask first whether it belongs in a rule, a skill, or a spec. -->
+
+## Where knowledge lives
+
+**This file holds only what must be true in every session.** Everything else is routed:
+
+| Need | Location |
+| --- | --- |
+| Constraints for a specific area of the code | `.claude/rules/*.md` — path-scoped, load when you read a matching file |
+| Multi-step procedures | `.claude/skills/*/SKILL.md` — invoke by name |
+| Enforcement that must not depend on memory | hooks (`.claude/settings.json` + `scripts/`) |
+| Backend schema, RLS model, migration table, runbooks | `supabase/README.md` |
+| Open work | `docs/whats-next.md` (authoritative) |
+| Design specs / implementation plans | `docs/specs/`, `docs/plans/` |
+| Feature history and narratives | git log and the specs — **not this file** |
+
+Rules cover: `supabase-migrations`, `money-invariants`, `auth-and-mfa`,
+`registrations-and-camps`, `data-layer`, `edge-functions`, `ui-brand-and-layout`, `tests`.
+Skills: `verify-before-commit`, `responsive-sweep`, `migration-push`, `config-push-dryrun`.
+
+⚠ A path-scoped rule loads when a matching file is **read**. Anything you must know *before*
+opening a file belongs here or in a hook — that's why the review gate and the verification
+requirement are stated below rather than only in rules.
 
 ## Working style (Nate = PM, not hands-on)
-Do as much as possible directly. When a step is blocked only on a one-time setup or a
-permission grant, ask for *just that unblock*, then execute the step yourself. Nate has
-standing authorization to run `supabase db push` / apply migrations / deploy functions /
-edit `.env.local` (granted 2026-06-18). Still confirm genuinely destructive prod actions
-and show what will apply first.
 
-When executing a written implementation plan, **default to subagent-driven execution**
-(`superpowers:subagent-driven-development` — fresh subagent per task + review between
-tasks). Don't ask which execution mode to use (decided 2026-06-24).
+Do as much as possible directly. When a step is blocked only on a one-time setup or permission
+grant, ask for *just that unblock*, then execute the step yourself.
 
-**After finishing dev work, always merge the feature branch back to `main` and push
-(which deploys live) — don't stop to ask** (standing instruction, 2026-06-24):
-branch → implement → verify (tests + lint + responsive sweep) → merge → push.
-Run the suite, `npx eslint` the touched files, and confirm the build before pushing.
+**Standing authorizations** (don't hand these back as instructions): `supabase db push` against
+prod, applying migrations, deploying functions, editing `.env.local` (2026-06-18, extended to
+prod `db push` 2026-07-24); testing directly against the live production site (2026-07-02 — no
+real users besides Nate and Julia yet); temporary admin grants in STAGING `user_roles` for
+testing gated UI (staging only, announce first, revert same session).
 
-### Context/usage-optimized execution (standing rules)
-- **Keep the controller out of the editor.** Delegate reading/editing to subagents;
-  the controller reads only what it needs to write a precise brief.
-- **One implementer subagent per task/cohesive group; never run implementers in
-  parallel** (working-tree conflicts). Read-only reviewers MAY run in parallel.
+Still confirm genuinely destructive prod actions and show what will apply first.
+
+**After finishing dev work, always merge the feature branch back to `main` and push (which
+deploys live) — don't stop to ask** (2026-06-24): branch → implement → verify → merge → push.
+
+**Never spawn background task chips.** One once ran as its own session in `.claude/worktrees/`
+and pushed a competing migration to staging. Keep findings explicit in the core session.
+
+When executing a written implementation plan, default to subagent-driven execution
+(`superpowers:subagent-driven-development`) — fresh subagent per task, review between tasks.
+Don't ask which execution mode to use (2026-06-24).
+
+### Context/usage-optimized execution
+
+- **Keep the controller out of the editor.** Delegate reading/editing; the controller reads only
+  what it needs to write a precise brief.
+- **One implementer subagent per task; never run implementers in parallel** (working-tree
+  conflicts). Read-only reviewers MAY run in parallel.
 - **Dispatch straight from the spec** — skip redundant per-phase plan docs.
-- **Review subagent reports inline**; don't spin up separate reviewer subagents for
-  routine work.
-- **Subagents MUST verify with `npm run build`, not `tsc --noEmit`** (`tsc -b` catches
-  errors `--noEmit` misses — caused real rework). Require `npm run build` +
-  `npx eslint <touched files, incl. supabase/functions/**>` + `npx vitest run`
-  (+ a vitest test for any new PURE logic) before commit.
-- **Controller owns side-effects, batched at phase end:** one `supabase db push` for a
-  phase's migrations (sandbox disabled) + one loop deploying touched edge functions.
-  Subagents write migrations/edge-fn code but never push/deploy.
-- **Front-load clarifying questions per phase**; prefer a fresh session per phase with a
-  LEAN kickoff prompt that leans on these rules instead of repeating them.
-- **Don't reach for Workflow/`ultracode` to save usage** — one implementer per task is
-  the cheap path.
-- **Delegation has fixed overhead** (a subagent cold-starts and re-derives context):
-  the plan-big/execute-small split pays off on token-HEAVY work — reading many files,
-  mechanical edits, sweeps — not on narrow reasoning. A trivial, precisely-known edit
-  the controller can state exactly is cheaper done directly than briefed out.
-- **Send rework back to the SAME subagent** (SendMessage — its context persists) instead
-  of briefing a fresh implementer for review fixes/follow-ups on the same task.
-- **Rigor lives in the brief, not the model:** a cheaper model matches frontier rigor on
-  mechanical work only when the brief spells out the verification protocol and demands
-  evidence (commands run + output), not claims. Never assume a subagent self-imposes
-  rigor. (These three from Anthropic's plan-big-execute-small cookbook, reviewed
-  2026-07-11.)
+- **Review subagent reports inline**; don't spin up reviewers for routine work.
+- **Send rework back to the SAME subagent** (SendMessage — its context persists) rather than
+  briefing a fresh implementer for review fixes on the same task.
+- **Controller owns side-effects, batched at phase end:** one `db push` per phase's migrations,
+  one loop deploying touched functions. Subagents write migrations/edge-fn code but never
+  push/deploy.
+- **Front-load clarifying questions per phase.** Ask the ones whose answers would change the
+  data model, an interface, or a UX flow — not everything you're unsure about.
+- **Delegation has fixed overhead.** The plan-big/execute-small split pays off on token-HEAVY
+  work — reading many files, mechanical edits, sweeps — not on narrow reasoning. A trivial,
+  precisely-known edit the controller can state exactly is cheaper done directly.
+- **Don't reach for Workflow/`ultracode` to save usage** — one implementer per task is cheaper.
+- **Rigor lives in the brief, not the model.** A cheaper model matches frontier rigor on
+  mechanical work only when the brief spells out the verification protocol and demands evidence
+  (commands run + output), not claims. Never assume a subagent self-imposes rigor.
 
-### Model routing (adopted 2026-07-02 — adjust from the log)
-- **haiku:** mechanical work with an explicit verify checklist — renames, the DB-plumbing
-  recipe, doc sweeps, comment/label fixes.
+### Finding the unknowns (adopted 2026-07-29)
+
+Nate is a PM directing a codebase he doesn't hand-write, so the expensive failures are the ones
+neither of us thought to ask about.
+
+- **Blind-spot pass at phase kickoff:** before planning, state what would surprise Nate here and
+  what isn't being asked about. Camps shipped 2026-07-22 and had their discipline/session UI
+  stripped 2026-07-23 — he'd have said "camps don't have levels" instantly if asked.
+- **Prototype before spec** when requirements arrive as prose (especially Julia's). A throwaway
+  clickable prototype with mock data surfaces the "actually, no —" that prose never does.
+- **Prefer references to descriptions:** point at existing code implementing similar behavior
+  ("`pushCampSurvey` is the pattern") over describing the shape in words.
+- **Implementation notes during execution:** each implementer appends deviations from the plan to
+  a per-phase notes file, so the next subagent and the reviewer get the pivots without
+  re-deriving them.
+
+## Model routing
+
+**Reviewer tier** = the strongest model currently available on Nate's plan: **Fable if the plan
+has it, otherwise the top Opus.** Nate is on Pro (no Fable) and plans to take a Max month late in
+the project for a full sweep. Resolve "reviewer-tier" through this line only — don't hardcode a
+model name anywhere else.
+
+- **haiku:** mechanical work with an explicit verify checklist — renames, DB plumbing, doc
+  sweeps, comment/label fixes.
 - **sonnet (default implementer):** well-specified feature tasks, UI work, test writing.
-- **opus/fable-tier:** design/decomposition, review of anything touching money/auth/RLS,
-  migrations design, debugging weird failures. Effort: low for mechanical, default
-  otherwise, high only for review/debug/design.
-- **Money/auth/RLS/cart implementation → sonnet DRAFTS, controller ALWAYS fable-reviews
-  the diff before merge/push/apply** (learned 2026-07-02 across 2 tasks). Sonnet is
-  reliably good at the mechanical fix + enumeration + tests, but missed a real defect
-  each time on the money-invariant: a 2-step trigger-staging bypass, a PUBLIC-grant
-  no-op, a free-membership "clear the hold", an over-charge edge. The adversarial
-  invariant read is not delegable; budget for it.
+- **reviewer tier:** design/decomposition, review of anything touching money/auth/RLS, migration
+  design, debugging weird failures. Effort: low for mechanical, default otherwise, high only for
+  review/debug/design.
+- **Money/auth/RLS/cart implementation → sonnet DRAFTS, controller ALWAYS reviewer-tier-reviews
+  the diff before merge/push/apply** (learned 2026-07-02 across 2 tasks). Sonnet is reliably good
+  at the mechanical fix + enumeration + tests, but missed a real defect each time on the
+  money-invariant: a 2-step trigger-staging bypass, a PUBLIC-grant no-op, a free-membership
+  "clear the hold", an over-charge edge. **The adversarial invariant read is not delegable;
+  budget for it.**
+- **Advisor tool** (`advisorModel` in settings, `/advisor` to change): pays off most on
+  sonnet/haiku implementer subagents, where the context is small. Advisor reads are never cached,
+  so a call from a long controller session re-processes the whole transcript. It is a supplement
+  to the review gate above, never a replacement — its timing is model-driven and can't be forced.
 - After each routed task, append a row to `docs/model-routing-log.md` (task type, model,
   first-try outcome, tokens if known). Periodically distill the log back into these rules.
-- `node scripts/usage-report.mjs [--days N] [--json]` reports this project's per-session
-  token use by model from local transcripts. Remaining plan quota is NOT visible locally —
-  only `/usage` in the app shows it.
+- `node scripts/usage-report.mjs [--days N] [--json]` reports per-session token use by model from
+  local transcripts. Remaining plan quota is NOT visible locally — only `/usage` in the app.
 
-## Brand (2026 toolkit, applied 2026-07-08)
-Authoritative rules + palette + approved fg/bg pairings: `docs/specs/2026-07-08-ucg-rebrand.md`.
-Operative bits: exact hexes live as tokens in `src/index.css` (pale accents `--bluegreen`/
-`--purple`/`--gold` are FILLS ONLY, never text on light); display type = Greed Condensed
-Bold ALL CAPS, body = Suisse Intl. **Licensed woff2 files are served from the public
-`brand` Supabase Storage bucket (prod) and must NEVER be committed to this public repo**
-(EULA — web serving OK, repo redistribution not); @fontsource Archivo Black/Instrument
-Sans stay installed as fallbacks. Logos/discipline icons: `src/assets/brand/`
-(`DisciplineIcon.tsx` maps MAG/WAG/TNT). Toolkit source:
-`C:\Users\nssha\Steinsharpe Dropbox\...\2026 UCG Brand Toolkit` (fonts, PDFs, photography).
+## Verification (non-negotiable)
 
-## Naming: the Meet→Event rename (2026-06-27)
-"Meet" → **Event** everywhere, and gymnastics apparatus (previously also "events") →
-**apparatus**. When grepping or writing code:
-- **DB:** `events`, `event_sessions`, `event_id`, `ref_event_id`, `created_event_id`,
-  `registrations.apparatus` (+ `apparatus_levels`), `scores.apparatus`, enum `event_status`.
-- **TS:** `Event`, `EventSession`, `EventWizard`, `src/pages/Events.tsx`, `eventId`,
-  `isEventHost`, `refEventId`; `APPARATUS` const, `Registration.apparatus`/
-  `apparatusLevels`, `Score.apparatus`, nationals engine `Apparatus*` types,
-  calculator prop `apparatusCode`, TNT `TntApparatus`.
-- **PRESERVED (not renamed):** `'meet-entry'` invoice_item_kind, `meet-host` app_role,
-  `meet_kind` enum, persisted `NationalsConfig.cutoffs.event` jsonb key, opaque id-value
-  prefixes (`meet-…` seed ids, `scores.id` composite), DOM/realtime `event`s.
-- **Routes:** `/meets*` → `/events*` with slug-preserving `<Navigate replace>` redirects
-  (the standard idiom for retired routes — `/club/:id/cart` → `/cart` uses it too).
-- Older docs/specs predate the rename — mentally map `meet`/`ref_meet_id`/etc.
-  Details: `docs/specs/2026-06-26-events-rename-and-registration-flow.md`.
+**Before any commit, merge, or push: the `verify-before-commit` skill.** Short form —
+`npm run build` (never `tsc --noEmit`), `npx eslint <touched files>` including
+`supabase/functions/**`, `npx vitest run`, plus a vitest test for any new pure logic. Evidence
+before assertions: report the commands and their output, not a claim that they passed.
 
-## Supabase / migrations
-- Project ref `wkyerxlgricfphopocoz` (org NAIGC); CLI linked. Migrations in
-  `supabase/migrations/` — **the authoritative migration list + per-migration narrative +
-  schema/RLS model is `supabase/README.md`**; keep its table updated with every migration
-  (detail goes THERE, not here). **All migrations through `20260724211803` are applied
-  to BOTH staging and prod** (verified against both migration histories 2026-07-24 —
-  the 2026-07-22 pair and `20260723153216` turned out to have already reached prod,
-  despite older notes here claiming otherwise; re-check `supabase migration list`
-  rather than trusting a status line). **Nate granted standing authorization to run
-  `supabase db push` against prod (2026-07-24)** — do it directly, don't hand it back.
-  (Function deploys were classifier-blocked 2026-07-22 — `request-refund` may still
-  need a redeploy to prod+staging.) Security hardening:
-  Phase 1+2 applied; Phase 3 M2/M4/invoice-write-lockdown (2026-07-24) + M1 coupon
-  reservation (2026-07-26) all shipped to staging+prod. **Phase 3 is COMPLETE** — the LOW items shipped to staging+prod 2026-07-26
-  (`club_managers`/`app_settings` SELECT scoped to `authenticated`, an `error_logs`
-  20-inserts/minute rate-limit trigger, and 256-bit tokens in the 3 no-login token
-  generators, redeployed both envs). **RLS predicate vs grant revoke:** a restrictive
-  SELECT *policy* filters rows silently (anon gets `200 []`); only a `revoke select`
-  produces a 403. Don't add client-side error tolerance for the former — it costs a
-  fail-fast signal for real outages (`docs/plans/2026-07-02-security-hardening.md`).
-- ⚠ **`db.<ref>.supabase.co` is IPv6-ONLY since ~2026-07-23** — every direct-connection
-  command (`db push --db-url`, `backup-db.mjs`) fails `ENOTFOUND` without IPv6 egress.
-  Use the Supavisor **session** pooler: user `postgres.<ref>`, host
-  `aws-1-us-west-2.pooler.supabase.com`, port **5432** (not 6543; not `aws-0-`).
-  This silently killed the daily backup for a day before it was caught — full incident
-  + the fixed fallback in `supabase/README.md` "Data backups".
-- New migrations: `supabase migration new <name>` (timestamp filename format is required).
-  Apply via `supabase db push` — network is sandbox-blocked, run with sandbox disabled.
-- **Parallel-session collision (2026-07-24):** a background task chip spawned from a
-  subagent ran as its OWN session in `.claude/worktrees/`, wrote a competing migration
-  for the same finding, and pushed it to staging. Before any `db push`, run
-  `supabase migration list` and reconcile — a remote version with no local file means
-  another session touched the DB.
-- **Staging project `xogpiksqtkayxwmczlbx`** (`ucg-staging`, since 2026-07-04): the CLI
-  stays linked to PROD — target staging explicitly via `--project-ref`/`--db-url`
-  (creds under `STAGING_*` in `.env.local`; full runbook in `supabase/README.md`).
-  Apply new migrations to staging FIRST, then prod.
-- **Enum gotcha:** `ALTER TYPE ... ADD VALUE` can't be referenced in the same
-  transaction — put each enum addition in its OWN migration file.
-- Ids are app-generated **text**, not uuids (incl. FK cols like `payments.person_id`).
-- **Upsert-trigger trap:** the app writes whole-row upserts (`INSERT ... ON CONFLICT DO
-  UPDATE`), so BEFORE INSERT triggers fire with `tg_op='INSERT'`/`OLD=NULL` even when the
-  row exists — guard triggers must re-SELECT the pre-write row by `id`, never trust
-  `tg_op`/`OLD` (bit us live: `20260703034325`).
-- **RLS upsert trap:** an upsert must pass an INSERT policy's WITH CHECK even on the
-  conflict-update path — a manager-editable table needs BOTH insert+update policies.
-  Prefer separate insert/update policies over `for all` (which silently grants DELETE).
-- **Column-revoke × whole-row-upsert trap (broke prod 2026-07-17→23):** a
-  column-scoped SELECT lockdown (`revoke select on <table>` + `grant select
-  (<cols>)`) breaks EVERY whole-row upsert that writes the revoked column —
-  PostgREST compiles upserts to `ON CONFLICT DO UPDATE SET col = EXCLUDED.col`,
-  and Postgres requires SELECT privilege on columns referenced via EXCLUDED
-  (`return=minimal` does NOT save you; the 20260717205348 header's write-path
-  reasoning was wrong). `registrations.camp_survey` did this — every client
-  registration upsert failed 42501 for 6 days. **The error wording LIES:** a
-  revoked COLUMN surfaces as `42501: permission denied for table <table>` —
-  naming the TABLE, not the column — so it reads like a missing base grant and
-  has been misdiagnosed as exactly that (2026-07-26, cost a false "Nate must
-  re-grant SELECT on staging" action item). Before concluding an environment is
-  broken, retry with the app's explicit column list: `select('*')` on
-  `registrations` fails while `REGISTRATION_COLUMNS_NO_SURVEY` succeeds. Rule: a
-  column with revoked SELECT must NEVER appear in a `*ToRow` upsert mapping;
-  write it via a targeted column UPDATE (`pushCampSurvey` is the pattern). After ANY
-  column-privilege migration, live-probe the affected table's WRITE path as a
-  non-admin, not just reads. never client-side delete-then-insert rows the caller's
-  own permission derives from (e.g. `club_managers`) — the delete revokes the actor's
-  right to re-insert. Use a security-definer RPC that authorizes ONCE up front
-  (`replace_club_managers` is the pattern; write-queue op kind `'rpc'`).
-- **Fail-closed SQL:** in SECURITY DEFINER functions, wrap auth predicates in
-  `coalesce(..., false)` — for an anon caller an OR-chain over NULL evaluates to NULL
-  and `if not NULL` does NOT raise (bit us: `20260704133502`). Also revoke the default
-  PUBLIC execute grant on new functions.
-- **RLS policy recursion (42P17):** a new policy on table A whose subquery reads table B
-  recurses — and breaks ALL reads of A for every caller — when any of B's policies read
-  back into A (Postgres detects the cycle, errors regardless of role). Use SECURITY
-  DEFINER helper functions (the `my_person_id()`/`manages_club()` pattern) instead of raw
-  cross-table subqueries in policies (bit us live: `20260710230000` broke every
-  `invoice_items` read until hotfixed by `20260711023234`).
-- `payments.id` is the lone **uuid** PK in the schema — every other id (incl. FK cols
-  referencing it, e.g. `refund_requests.payment_id`) is app-generated text.
+`npm run build` does NOT run eslint, and CI fails the deploy on any lint **error** — so a clean
+build can still break the deploy.
 
-## Build / tooling gotchas
-- Keep the working copy at `C:\dev\ucg-platform` (short, space-free, outside Dropbox —
-  the old Dropbox path broke npm shims and locked `dist/`; never move it back).
-- Verify a build by grepping for "files generated" AND confirming `dist/index.html`'s
-  script refs exist under `dist/assets` — never trust the piped exit code alone.
-- Launch configs (`.claude/launch.json`): `ucg-dev` (5173), `ucg-preview` (5176,
-  `--strictPort`), `ucg-staging` (5177, `--mode staging` → the staging Supabase
-  project via `.env.staging.local`). If you run `vite preview` (serves `dist/`):
-  rebuild first and clear the service worker or it serves the previous bundle.
-- **Destructive-command guard (PreToolUse hook, 2026-07-11):**
-  `scripts/destructive-command-guard.mjs` (wired in `.claude/settings.json`)
-  denies catastrophic Bash commands (recursive delete of roots/repo/.git, remote
-  `supabase db reset`, force-push to main) and downgrades other destructive ones
-  to ask. Pattern-based — a quoted "rm -rf" in e.g. a commit message can
-  false-positive as "ask"; rephrase rather than fighting it.
-  `--self-test` runs its case battery. Daily DB backups: `scripts/backup-db.mjs`
-  + the "UCG DB Backup" scheduled task (runbook: `supabase/README.md` → "Data backups").
-- `npm run lint` is fully clean project-wide as of 2026-07-03 (the last 3 warnings were
-  fixed then) — keep it that way; still lint touched files before pushing rather than
-  relying on this staying true implicitly.
-- **CI gate:** the deploy workflow runs `npm run lint` and fails on any lint **error**
-  (existing warnings tolerated). `npm run build` does NOT run eslint — a clean build can
-  still break the deploy. ALWAYS `npx eslint <touched files>` before pushing. ESLint also
-  covers `supabase/functions/**`.
-- **ESLint traps:** no component defined inside another component's render (extract to
-  module scope); no synchronous `setState` in a `useEffect` body.
-- **Responsive verification:** any layout/CSS/topbar/nav change MUST be verified at
-  **375px / 768px / 1280px** (spot-check 1440) via `preview_resize` + `preview_screenshot`:
-  no horizontal overflow (`scrollWidth` ≤ `clientWidth`), topbar ≤ 2 lines, legible
-  contrast, and below **860px** the nav drawer opens/closes (hamburger → overlay → Esc →
-  link-tap). Breakpoint lives in `Layout.tsx` + `index.css` `@media (max-width: 860px)`.
-  - Topbar membership badges self-fit by **direct layout observation** (`TopbarMembership`
-    + ResizeObserver): render inline, stack only if the user chip wrapped
-    (`name.top - crumb.top > 6`). Width *estimation* was tried and abandoned — do NOT
-    reintroduce it. Stacked pinning is coach-left/athlete-right via CSS `order`.
-  - With dev auto-login active the badges render normally — verify directly. Only when
-    `VITE_DEV_AUTH_*` are blank, inject a worst-case topbar via `preview_eval` instead.
+## Hooks (enforcement, not reminders)
 
-## Tests
-- Vitest, **node environment by default** (`vitest.config.ts`, no app plugins). Tests
-  in `tests/**/*.test.{ts,tsx}` cover the **pure** logic: scoring engines
-  (`src/scoring/*`), `src/lib/pagination.ts`, `src/lib/profile-core.ts`, `src/lib/reg-estimate.ts`,
-  `src/lib/registration-status.ts`, `src/lib/navHistory.ts`, `src/lib/capabilities-core.ts` (split from React hooks so it
-  imports zero runtime deps), `src/lib/pricing.ts`. Run: `npm test` / `npx vitest run`.
-- Scoring tests encode ground-truth values from the original NAIGC calculators — they
-  lock in port correctness.
-- **Component tests (since 2026-07-18):** `tests/components/*.test.tsx` (jsdom via the
-  per-file `// @vitest-environment jsdom` docblock — environmentMatchGlobs is
-  deprecated; RTL cleanup is registered explicitly in `tests/components/setup.ts`
-  because `globals: false` disables RTL auto-cleanup). vitest.config force-blanks
-  `VITE_SUPABASE_URL`/`ANON_KEY` via `define` so the Supabase client stays inert
-  (vitest loads `.env.local` even without app plugins). Cover the money-adjacent UI
-  semantics: cart ✕ removal/revert (via real `removeCartItemWithSync` + shared
-  `CART_REMOVAL_MESSAGE`), RegistrationEditor change-fee derivation, hold badges.
-- **E2E (Playwright, since 2026-07-04):** `npm run test:e2e` — smoke specs in `e2e/`
-  (kept OUT of `tests/` so vitest doesn't pick them up) run chromium against a vite
-  server in `--mode staging` on port 5178 (auto-started; reuses if running). Covers
-  real Gate sign-in (incl. the no-account message), the seeded athlete cart, live
-  `create-checkout-session` → Stripe Embedded render, and events pages. Tests
-  suppress dev auto-login via `sessionStorage['ucg-dev-signed-out']`. Staging seeded
-  state is documented in `supabase/README.md`; keep specs in sync with it.
+`.claude/settings.json` wires two Bash hooks. They exist because prose instructions failed:
+
+- **PreToolUse** `scripts/destructive-command-guard.mjs` — denies catastrophic commands
+  (recursive delete of roots/repo/.git, remote `supabase db reset`, force-push to main) and asks
+  on other destructive ones, including `supabase db push` (reconcile first) and
+  `supabase config push` (auto-confirm trap). Pattern-based, so a quoted "rm -rf" in a commit
+  message can false-positive as "ask" — rephrase rather than fighting it. `--self-test` runs its
+  case battery.
+- **PostToolUse** `scripts/hooks/post-bash-checks.mjs` — doc-sweep reminder after `git commit`;
+  `verify_jwt` confirmation after `functions deploy`; dev-auth firewall grep of `dist/assets`
+  after a build. `--self-test` runs its case battery. **If a check reports it could not run,
+  verify manually** — don't read a skipped check as a pass.
+
+Daily DB backups: `scripts/backup-db.mjs` + the "UCG DB Backup" scheduled task (runbook:
+`supabase/README.md` → "Data backups").
+
+## Environment gotchas
+
+- Keep the working copy at `C:\dev\ucg-platform` — short, space-free, outside Dropbox. The old
+  Dropbox path broke npm shims and locked `dist/`. **Never move it back.**
+- Supabase project refs: prod `wkyerxlgricfphopocoz`, staging `xogpiksqtkayxwmczlbx`. The CLI
+  stays linked to PROD — target staging explicitly.
+- Ids are app-generated **text**, not uuids. `payments.id` is the lone uuid PK.
+- Naming: "Meet" → **Event**; gymnastics apparatus → **apparatus**. Several identifiers were
+  deliberately NOT renamed — see `.claude/rules/registrations-and-camps.md` before grepping.
 
 ## Docs
-- `README.md` overview; `docs/README.md` index; **`docs/whats-next.md` = the
-  authoritative open-work list** (reconciled 2026-07-19; completed items archived);
-  `supabase/README.md` backend schema/RLS/migration table; `docs/specs/` design
-  specs; `docs/plans/` implementation plans (do NOT recreate `docs/superpowers/`);
-  `docs/stripe-go-live-checklist.md`.
-- **Keep docs current after every commit** — a `PostToolUse` hook fires after `git commit`
-  reminding you to sweep README/CLAUDE.md/docs/supabase-README in the same session.
-  For THIS file that means update-in-place, keep it lean, push detail into specs/plans.
 
-## Auth patterns
-- **Dev test-auth (seeded auto-login):** `src/lib/dev-auth.ts` does a real
-  `signInWithPassword` of a seeded test user on dev boot (real JWT → RLS/Edge
-  Functions/member/club/admin/checkout UI all work locally). Bottom-left switcher flips
-  athlete/manager/admin (persists in `sessionStorage['ucg-dev-role']`); sign-out sets
-  `ucg-dev-signed-out` so it isn't undone by re-login. **Firewall:** loaded only via
-  dynamic `import('./dev-auth')` behind `if (import.meta.env.DEV)` in `auth.ts` — after
-  any build, grep `dist/assets` for `VITE_DEV_AUTH`/`initDevAuth` (must be NONE).
-  Credentials in gitignored `.env.local` (`VITE_DEV_AUTH_{ATHLETE,MANAGER,ADMIN}_{EMAIL,PASSWORD}`);
-  seeded emails in `docs/specs/2026-06-25-dev-test-auth.md`. If the vars are blank (fresh
-  clone/CI) the dev server is unauthenticated — rely on build/eslint/vitest + console
-  smoke test and flag auth flows for manual check.
-- **HashRouter vs Supabase implicit flow:** auth tokens arrive in the URL hash (clashes
-  with HashRouter). Invite/set-password links use `redirectTo` = app base + `?setpw=1`
-  (query survives hash-stripping); `App.tsx` detects it and routes `#/set-password`;
-  `SetPassword.tsx` waits ~2.5s for the async session. **Dashboard requirement:** redirect
-  URLs must include `https://nssharpe.github.io/ucg-platform/**` and
-  `http://localhost:5173/**` wildcards or the query is dropped. `Gate.tsx` also offers
-  forgot-password (same `?setpw=1` landing) and OTP magic-link sign-in.
-- **`rolesLoaded` gate:** roles load async after the session; `RequireAdmin`/role screens
-  must wait on `useRolesLoaded()` or they flash "access denied" on refresh. Reset on
-  sign-out/new user (`auth.ts`).
-- **Initial-paint auth flash (App.tsx):** `!session && authLoading && (hasLikelySession()
-  || hasAuthCallbackInUrl())` gates the very first render behind `<PageFallback/>` so
-  the app never paints in guest mode right before a session resolves.
-  `hasLikelySession()` covers a RETURNING session (refresh); `hasAuthCallbackInUrl()`
-  (added 2026-07-03, B7) covers a BRAND NEW one being established from a
-  signup-confirmation/magic-link/recovery URL token — `hasLikelySession()` alone misses
-  that case (no prior localStorage entry yet), which is exactly what caused the
-  "confirm my account → flashes a page" report.
-- **MFA / aal2 (2026-07-17):** TOTP opt-in (`ProfileMfa.tsx`); App.tsx renders the
-  `MfaChallenge` step-up interstitial when `needsMfaStepUp` (`mfa-core.ts`) — no-factor
-  accounts (incl. seeded dev/E2E users) never see it. **Passkey exemption (2026-07-18):
-  a passkey sign-in session (amr method `'passkey'`, still aal1 in GoTrue) skips the
-  TOTP step-up — enforced in LOCKSTEP at three layers (`needsMfaStepUp`,
-  `is_admin()` migration `20260718093940`, `_shared/jwt-aal.ts`); never change one
-  without the others or passkey-signed-in enrolled admins lock out.** `is_admin()` returns true only on
-  an aal2 JWT once the caller has a verified factor (`20260717140238`). **Privileged
-  edge functions MUST call `_shared/aal-guard.ts` `requireAalForEnrolledCaller` right
-  after their role gate** — service-role clients bypass the RLS-level hardening (9 fns
-  guarded; runbook in `supabase/README.md` "Auth: MFA"). Break-glass: `admin-reset-mfa`
-  (itself guarded) or the dashboard. WebAuthn-as-MFA (`mfa.enroll` factorType
-  'webauthn') is a PAID Supabase add-on ("Advanced MFA - WebAuthn", CLI quote
-  2026-07-18: "$75/month, then $10/month") — declined; `[auth.mfa.web_authn]` in
-  config.toml stays `false` (flipping it true triggers the CLI's cost-confirmation
-  prompt on push). The old Profile "Add a passkey" MFA-enroll UI was removed
-  2026-07-18 (no account could ever have enrolled one).
-- **Passkey SIGN-IN (free, shipped 2026-07-18):** a SEPARATE feature from the paid
-  MFA add-on above — `auth.signInWithPasskey()`/`auth.registerPasskey()`/
-  `auth.passkey.*`, fully typed in the installed SDK, opted into via
-  `experimental.passkey: true` on the client (`src/lib/supabase.ts`). "Sign in
-  with a passkey" on `Gate.tsx` (sign-in mode, feature-detected on
-  `window.PublicKeyCredential`); management (list/rename/remove/add) in the
-  Profile "Passkeys" card (`src/pages/ProfilePasskeys.tsx`, separate from the
-  Two-factor authentication card). Yields an aal1 session — a TOTP-enrolled user
-  still hits `MfaChallenge` for step-up, which is intended. `[auth.passkey]`/
-  `[auth.webauthn]` declared in config.toml mirroring the prod dashboard (RP
-  display "UCG Events", RP ID `nssharpe.github.io`, origin
-  `https://nssharpe.github.io`) so an undeclared-key `config push` can't
-  silently disable it. E2E: `e2e/passkey.spec.ts` uses Playwright's CDP virtual
-  authenticator; skips cleanly today because staging's RP ID isn't `localhost`.
-- **App roles** (`user_roles.role`, enum `app_role`): `admin`, `sanctioning`,
-  `regional_rep` (region via `regional_rep_regions`), `finance_admin`, `refund_manager`
-  (emv2 P3). Capabilities: `isSanctioning`/`isRegionalRep`/`isFinanceAdmin`/
-  `isRefundManager` — admins are NOT implicitly any of them.
-- **Self profile save stamps `auth_user_id`:** `pushPerson(p, { selfAuthUserId })` only
-  when saving one's OWN row (passes the `people` self-INSERT RLS branch); admin/manager
-  creation of others omits it.
+`README.md` overview; `docs/README.md` index; **`docs/whats-next.md` = the authoritative open-work
+list**; `supabase/README.md` backend schema/RLS/migration table; `docs/specs/` design specs;
+`docs/plans/` implementation plans (do NOT recreate `docs/superpowers/`);
+`docs/stripe-go-live-checklist.md`. Pre-trim version of this file:
+`docs/archive/CLAUDE-md-as-of-2026-07-02.md`.
 
-## Domain rules (registration / membership / cart)
-- **Club-membership gate is ON:** a club needs an active `club_memberships` row for a
-  season before its athletes can register or it can host — enforced at every registration
-  entry point via `clubHasActiveMembership`/`seasonForDate` (`capabilities-core.ts`).
-  New registration paths MUST apply this gate.
-- **Registration paid-state:** `Registration.paid` is the explicit entry-fee flag; new
-  regs land `paid:false` ("Pending Purchase"). The link between a cart/invoice line and
-  the reg(s) it pays is `refRegIds` — always match on it, never a heuristic; webhook
-  fulfillment flips exactly those regs. `updatedPending` marks a paid reg edited back to
-  pending by a change fee. **Host-club $0:** competing-for club == event host ⇒ fees $0
-  (`registrationEntryFee`/`registrationChangeFee`, pure, unit-tested) and regs are created
-  `paid:true` with NO cart line. **Cross-club lock:** `paidRegistrationClub` blocks
-  registering an athlete already paid-registered under another club for the same event
-  (pending regs don't lock). **Change eligibility:** `changeIsEligible(before,after)`
-  (`pricing.ts`) gates "Add change to cart" (add discipline / change level / change club /
-  swap athlete — NOT apparatus tweaks within a discipline).
-- **Camps are session-less/level-less/discipline-less (2026-07-22, UI stripped
-  2026-07-23):** camp events (`eventType === 'camp'`) save `sessions: []` and
-  `secondDisciplineFee: 0` (flat fee), auto-set `lastDateToEdit = regCloses`,
-  and keep `disciplines` only as "equipment available", defined at event
-  creation/edit for display on the Event page — registration itself asks
-  nothing discipline-related. `RegistrationEditor` camp mode shows a single
-  confirmation line (no checkboxes) and a brand-new camp registration always
-  saves exactly ONE row: `discipline: event.disciplines[0]` (fallback `'MAG'`),
-  `levelId: ''`, `apparatus: []`, `sessionId: null` — the discipline value only
-  exists to satisfy the NOT NULL enum column, never shown/asked about. Editing
-  a LEGACY multi-row camp registration (one row per discipline, from before
-  2026-07-23) keeps every row as-is (no delete/re-add churn) — only `clubId`
-  refreshes, so a club-only switch stays chargeable. Don't add code that
-  assumes a reg has a level/apparatus without a camp branch. **Camp survey is a
-  per-event question BUILDER (2026-07-23):** `campConfig.survey = { enabled,
-  questions: [{id,label,type:'text'|'single'|'multi',options?,required}] }`,
-  resolved via `campSurveyQuestionsOf(campConfig)` (`pricing.ts` — legacy
-  `overnightSurvey`/`surveyMandatory` events derive the classic 4 questions);
-  answers are `Registration.campSurvey: Record<questionId, string|string[]>`,
-  validated by `campSurveyAnswersValid`, written ONLY via `pushCampSurvey`
-  (targeted UPDATE — see the column-revoke × upsert trap above), rendered
-  generically in the wizard editor / reg flows / responses card / receipt email
-  (`_shared/camp-confirmation.ts`, keep in lockstep) / host export. **Roster tools
-  and "Competition setup" are removed entirely from the camp host dashboard**
-  (irrelevant for camps) — only the registration-workbook export (which still
-  carries the overnight-survey roster) remains.
-- **Member self-edit (`MyRegistrations.tsx`)** embeds the shared `RegistrationEditor`,
-  targets the member's OWN cart, same paid/`updatedPending` semantics as `Club.tsx`.
-  **CRITICAL divergence:** the member side NEVER deletes a registration — a fully
-  deselected discipline is retained-but-blanked; deletion stays a refund action.
-  `RegistrationEditor`'s optional `originalClubId` prop makes a club-only switch
-  chargeable (other callers omit it).
-- **Membership holds are INDEPENDENT** (waiver + club-payment can co-exist): derive via
-  `membershipHolds(m)` (`capabilities-core.ts`) — `waiverHold = !waiverSignedAt`,
-  `paymentHold = clubCartPending || status === 'pending-club-payment'`. Render bubbles
-  off `membershipHolds`, never the raw enum. `clubCartPending` is set on club-cart push
-  and cleared server-side by `stripe-webhook` fulfillment. KNOWN WART: the
-  `record-waiver-signature` function still flips club-pay rows to
-  `pending-club-payment` on signing without touching `clubCartPending` — if the club paid
-  before the guardian signed, a stale hold can be re-asserted.
-- **Unified cart:** `/cart` (`Cart.tsx`) renders the person's own cart PLUS a section per
-  managed club (shared `groupCartItems`/`CartCard`/`CartScope`/`ReceiptsSection`).
-  One payer entity per Stripe session (self OR one club) — no cross-entity mega-checkout.
-  Each line has a ✕ (`removeCartItemWithSync`, `src/lib/cart-sync.ts`): unpaid **entry**
-  line → delete the linked reg(s); **change** line with `prior_reg_snapshot` → revert
-  them; change line without snapshot (legacy) → remove line only + honest toast; anything
-  else → remove line only. Classifier is pure: `classifyCartRemoval` (`pricing.ts`);
-  its no-`refRegIds` ⇒ remove-only guard is the legacy-row safety net.
-  `downloadCartInvoice` (`receipt.ts`) is the pre-payment jsPDF estimate (NOT a receipt).
-- **In-place mutation trap:** `mutate()` (`store.ts`) mutates the shared `db` object
-  in place — a `useMemo`/`useEffect` keyed on a nested `db.*` path NEVER sees local
-  mutations (only a full `syncFromSupabase()` reload reassigns). Read `db.*` directly
-  each render; audit for this trap when touching store consumers.
-- **`mutate()` returns `boolean` (offline read-only gate, 2026-07-17):** when Supabase
-  is configured and the browser is offline, `mutate()` REFUSES the write (toasts, returns
-  `false`) so local state never diverges from a queue that isn't accepting new work. Any
-  call site whose continuation presumes success (success toast, modal close, navigate,
-  a `push*` OUTSIDE the callback) MUST guard on the return value — every existing site
-  was swept 2026-07-17. Write-queue side: `classifyWriteError` makes RLS/integrity/auth
-  failures 'permanent' (no retry; boot-wired toast + drain-then-`syncFromSupabase()`
-  rollback in `supabase.ts`); non-React code toasts via `pushToast` (`lib/toast-bus.ts`),
-  the imperative escape hatch into the same ToastProvider.
-- **Slice layer (Phases 0-5 of the data-layer-scale project ALL SHIPPED, last
-  2026-07-28):** `scores`, `registrations`, and `people` are no longer globally
-  hydrated — `db.scores`/`db.registrations` exist only for unconfigured/demo mode, and
-  `db.people` at boot is scoped to self + managed-club rosters only (Phase 4, rewritten
-  from a slim/full field split to a which-ROWS-load split — every row returned is
-  always complete). Read scores via `useEventScores(eventId)` / `useMyScores()` /
-  `useScoreById()` (`src/lib/scores-slice.ts`); registrations via
-  `useEventRegistrations(eventId)` / `useMyRegistrations()` / `useRegistrationById()` /
-  `useClubRegistrations(clubId)` / `fetchRegistrationsForPerson(personId)`
-  (`src/lib/registrations-slice.ts`); people beyond boot scope via
-  `usePeopleNames(ids)` (thin name+club, `public_competitors`-backed — works for
-  ANONYMOUS callers too, unlike the real `people` table) / `usePeopleForIds(ids)` (full
-  rows) / `usePeopleForClub(clubId)` / `useAdminPeople()` (league-wide, admin-only) /
-  `usePersonAdmin(personId)` / `fetchPersonRemote(personId)` (uncached, for a
-  destructive write) (`src/lib/people-slice.ts` + `src/lib/people-admin-slice.ts`) — all
-  built on the shared, generic `src/lib/slice-cache.ts`. Hooks return `{ rows, status }`
-  and **`status` is non-optional on purpose** — never render an empty state without
-  checking `status === 'loading'` first, or you turn "not loaded" into a confident
-  "none exist" (Club.tsx's roster `hasActiveReg` classification is the sharpest
-  example: a partial read there invites re-registering, and re-charging, an
-  already-registered athlete). Slices are memory-only (never localStorage). Pure
-  modules take rows as PARAMETERS (`scoring.ts`, `nationals-adapter.ts`,
-  `person-data.ts`, `cart-sync.ts`). `fetchRegistrationsForPerson`/`fetchPersonRemote`/
-  `person-data.ts`/`AdminMembers.tsx`'s merge deliberately do a targeted DIRECT fetch
-  for an arbitrary (non-signed-in-caller) person/registration set rather than reading
-  any cache — completeness there must come from the query, since an incomplete read
-  feeds a write that can orphan/corrupt data. **localStorage persistence (Phase 5)** is
-  restricted to Tier 1 reference data + small Tier 2 caller data
-  (`PERSISTED_KEYS` in `src/lib/store.ts`) when Supabase-backed — everything else
-  reconstructs empty and refills from the `syncFromSupabase()` that always follows
-  boot; demo/unconfigured mode still persists the whole `db` (no server to re-sync
-  from there). `SEED_VERSION` is 10.
-- **Data-layer scale (6.3) — COMPLETE, Phases 0-5 all shipped.**
-  `node --env-file=.env.local scripts/seed-scale.mjs` seeds a 2-year-projection dataset
-  into **STAGING ONLY** (hard-guarded against the prod ref; every row id prefixed
-  `scale-`; `--clean` removes exactly those — occasionally hits a transient
-  `fetch failed`/`statement timeout` mid-run; the script's upserts are idempotent, just
-  re-run). ⚠ **2026-07-28: staging's scaled tables were found already at 0 rows before
-  seeding** — the documented Playwright E2E fixture baseline is not currently present;
-  👤 Nate should reseed it before relying on `npm run test:e2e` against staging.
-  Final measurement (0.5×-scale, 2026-07-28): persisted localStorage snapshot
-  **28.95 MB → ~53 KB**; persisted `people` count **1 row** (self) regardless of league
-  size. **Known remaining gap:** `payments` is still an unscoped `fetchAllRows` in
-  `loadAll` (same statement-timeout risk `memberships`/`invoices`/`invoice_items` had
-  before their 2026-07-28 fix — see `docs/whats-next.md` §7) — worth the same
-  query-scoping treatment before a real season pushes it past 10k rows. Full writeup +
-  every phase's measurements: `docs/specs/2026-07-24-data-layer-scale.md`.
-- **New DB collection plumbing:** add to `types.ts` (`DB.<x>`), `rowTo<X>` +
-  `push<X>`/`delete<X>` in `supabase.ts`, and the `loadAll` Promise.all + map +
-  conditional spread. `from('<new_table>')` typechecks even if absent from `database.types`.
-  **Read it via `fetchAllRows` like every other table** — a bare `.select()` silently
-  truncates at PostgREST's 1000-row cap (fixed repo-wide 2026-07-24). If the table has
-  no `id` column, register its sort key in `COMPOSITE_SORT_KEYS` (`src/lib/pagination.ts`)
-  — pagination without a deterministic ORDER BY duplicates and skips rows.
-- **Toasts:** `useToast()(msg, { variant?: 'info'|'error', persist? })` — use
-  `{ variant: 'error' }` for failures (persist until closed).
-- **PDFs are client-side (jsPDF), on demand** (waiver proof, receipts, cart invoice) —
-  no server PDF/storage; regenerate from data.
+**Keep docs current after every commit** — a PostToolUse hook reminds you. For this file that
+means UPDATE-IN-PLACE and push detail into rules/skills/specs; never append changelog paragraphs.
 
-## Payments (Stripe — test mode; go-live checklist is Nate's action)
-All money flows through **Stripe Embedded Checkout** via two Edge Functions sharing
-`_shared/stripe.ts` (see `docs/specs/2026-06-25-stripe-integration.md` +
-`docs/specs/2026-06-26-stripe-s4-decomposition.md` for the build story):
-- `create-checkout-session` (auth'd; caller must own the cart items or manage the club):
-  **recomputes every line server-side** — cart `amount`s are display-only and NEVER
-  trusted. Handles all line kinds (memberships incl. club/member-targeted, event entries,
-  change fees, addons; honors host-club $0). **Entry-vs-change is derived from the
-  referenced registrations' STATE (`paid`/`updated_pending`), NOT the client
-  `ref_line_type` tag** (C4 fix — a brand-new reg can't be tagged 'change' to pay a cheap
-  change fee; a line is 'change' only when EVERY referenced reg is already
-  purchased/re-pended). **Ownership (H4):** every `ref_reg_ids` reg must belong to the
-  payer (self cart) or the club (club cart); membership `ref_user_id` must be the payer or
-  a club-affiliated person — else 403. Service fee = 3% + $0.30 rounded UP (`Math.ceil`,
-  mirrored in `src/lib/pricing.ts`). Coupons: client sends only a code; server validates +
-  reduces eligible lines per `appliesTo` scope (floor 0). Inserts a `pending` `payments`
-  row (money cols CENTS) with **`lines_snapshot`** — the validated, server-priced line set
-  frozen onto the row so the webhook fulfills from it, not from re-read (client-writable)
-  `cart_items` (closes the TOCTOU where a line's refs could be mutated post-create).
-  **$0-total free-order path (emv2 P3):** when a coupon fully covers the cart, the
-  function skips Stripe entirely — inserts the `payments` row with `stripe_session_id:
-  null` and calls the fulfillment core directly (inline retry-once + `error_logs` on
-  failure, so a failure never strands the order pending forever); FE `CartCheckout.tsx`
-  polls a `'free'` stage instead of mounting Stripe Embedded.
-- **Coupon reservation (M1, 2026-07-26):** an applied coupon is CLAIMED at
-  session-create via `reserve_coupon` (row-locks the coupon with `SELECT ... FOR
-  UPDATE`; capacity = `used_count` + live `coupon_reservations`), released on
-  `checkout.session.expired`/`async_payment_failed`, and converted to a redemption by
-  `redeem_coupon(code, person, payment_id)`. Reservations are TIME-BOUNDED (60 min) and
-  self-heal — never "fix" a stuck hold by decrementing `used_count`, which burns a use
-  permanently when a release doesn't run. `coupon_reservations` is server-only (RLS on,
-  zero policies); all three RPCs are service_role-only. Reserving happens strictly BELOW
-  the preview branch point — a preview must never consume a coupon use.
-- **`mode: 'preview'` on `create-checkout-session` (S4, 2026-07-25):** same auth + H4
-  ownership + capacity/survey validation + pricing recompute, returning the priced
-  lines/subtotal/fee/total and then RETURNING BEFORE ANY WRITE — no `payments` insert,
-  no `lines_snapshot`, no Stripe call, no coupon redemption. Search **`PREVIEW BRANCH
-  POINT`** in the function: everything below it writes, so new write logic goes BELOW
-  it (M1's coupon reservation especially — a preview must never reserve a coupon use).
-  The one write above it (the capacity hold-refresh) is individually `if (!isPreview)`
-  guarded. `Cart.tsx` uses it so cart and checkout can't show different prices; the
-  client requires a `preview: true` marker in the response, because a deployed function
-  predating preview mode ignores `mode` and runs a REAL checkout (this produced 7 stray
-  pending payments during development). **ALWAYS deploy this function before shipping a
-  client that calls preview.**
-- `stripe-webhook` (deploy `--no-verify-jwt`; signature via `constructEventAsync`,
-  fail-closed): fulfills **from `payments.lines_snapshot`** (falls back to live
-  `cart_items` only for pre-2026-07-02 pending payments with no snapshot). Because
-  fulfillment no longer depends on `cart_items`, the **atomic idempotency claim is at the
-  END** — all writes (membership activate, `registrations.paid` flip via `ref_reg_ids`,
-  invoice + `invoice_items` from snapshot amounts, `cart_items` delete) are idempotent
-  deterministic-id upserts, so a mid-fulfillment failure leaves `fulfilled_at` NULL and
-  Stripe's retry re-runs cleanly (H1 — no more permanently-stuck partial fulfillment); a
-  losing concurrent delivery redoes the same idempotent rows and only the claim WINNER
-  redeems the coupon (`redeem_coupon(code, payer)`) + emails the receipt. **M5:** before
-  fulfilling, asserts `session.amount_total === amount_subtotal + service_fee`; on mismatch
-  it logs to `error_logs` and does NOT fulfill (leaves the payment pending for review).
-  Club-billed for club carts (`invoices.club_id`), else payer; real `stripe_fee` from the
-  balance txn. Trusts the server-written `payments`/snapshot amounts, never the client.
-  The actual fulfillment logic (membership activate, reg paid-flip, invoice write, cart
-  clear, receipt) lives in shared `_shared/fulfill.ts` (`fulfillPayment`, emv2 P3 — the
-  same core the free-order path above calls); semantics unchanged from before extraction.
-- FE: `StripeCheckout.tsx` (embedded form + poll `payments` self-read until
-  `paid`/`failed`, ~60s cap, never falsely claims success; `loadStripe` once at module
-  scope) inside shared `CartCheckout.tsx` (promo input + server-returned
-  Subtotal/Coupon/Fee/Total — UI never sums client amounts as authoritative).
-- **Refunds (in-app, shipped emv2 P3, 2026-07-11):** only for events hosted by an
-  `is_league_host`-flagged club, OR any UCG-hosted event (`events.ucg_hosted` set —
-  since 2026-07-22 these need NO host club; `eventIsRefundEligible` + the
-  `request-refund` mirror check `ucgHosted` first, and `ucg_hosted` is admin-only
-  writable via guard trigger `20260722220449` precisely because it now grants
-  eligibility). Self-serve (`MyRegistrations.tsx`) or club-manager
-  (`Club.tsx`) request via `RefundRequestDialog` → edge fn `request-refund` (validates
-  ownership/eligibility/duplicates, emails requester + refund managers). Review at
-  `#/admin/refunds` (`refund_manager` or `admin` role) → edge fn `process-refund`:
-  reject (email, no state change) or approve — base amount is post-coupon `paid_cents`
-  from `payments.lines_snapshot` (legacy fallback: invoice_item list price), 100% at-or-
-  before `lastDateToEdit` else 75%, capped at the payment's remaining subtotal minus
-  prior approved refunds (`refundAmountCents`/`capRefundCents`, `pricing.ts`); service fee
-  never refunded; $0-capped approvals skip Stripe. On-time approval deletes the
-  registration; post-deadline keeps it `refunded`+`keep_listed` with apparatus blanked.
-  Refund receipts in PurchaseHistory. A Dashboard-issued refund (bypassing this flow)
-  still does NOT reflect back into `payments.status`.
-- **Stripe CLI** (logged in, account "UCG", test mode): `stripe trigger <event>` fires a
-  signed test event; verify via `stripe events list` (`pending_webhooks: 0` ⇒ all 2xx —
-  but wait ~20s after triggering, checking immediately is a false-positive trap). Stuck
-  event recipe: `stripe events resend <event-id> --webhook-endpoint <id> --confirm`.
-  Supabase has NO remote function-logs CLI — use the Stripe dashboard side or temp logs.
-  Look up API syntax with `stripe docs search|api|events ... -N --format=compact`
-  (always `-N` + a format flag) instead of guessing.
+## Open work — operative residuals only
 
-## Email / Edge Functions (Resend)
-- Shared helper `supabase/functions/_shared/resend.ts` (`sendOne`/`sendBatch`; optional
-  `cc`, `reply_to`, and `fromName` — the last swaps ONLY the sender display name, the
-  address always stays `RESEND_FROM`'s verified one; per-event "from" = alias+reply-to
-  by design). Secrets: `RESEND_API_KEY`, `RESEND_FROM` (naigc.org is verified),
-  `APP_PUBLIC_URL`.
-- All transactional emails render through `_shared/email-layout.ts` (`renderEmail({
-  heading, bodyHtml, cta?, footnoteHtml? })`) — the branded navy-header/white-card/
-  orange-CTA wrapper matching Supabase's magic-link email. New email-sending functions
-  should use it rather than composing bare `<p>` HTML. Exception: `send-email` (admin
-  free-text broadcast — caller controls the full body). Supabase Auth's own templates
-  (confirmation/invite/magic-link/recovery/…) are repo-managed since 2026-07-08 and
-  render from the SAME layout: `scripts/render-auth-email-templates.mts` →
-  `supabase/templates/*.html` → `supabase config push` (prod only — staging is free-tier
-  and 400s template pushes). ⚠ `config push` pushes DEFAULTS for undeclared `[auth]`
-  keys and AUTO-CONFIRMS under agent detection (closed stdin also defaults the prompt
-  to Yes) — dry-run with `echo n | supabase config push --agent no` and read the diff
-  first; keep every config.toml key deliberate. ⚠⚠ `echo n` feeds ONE line: if an
-  EXTRA prompt appears first (e.g. the paid-add-on cost confirmation when enabling
-  `[auth.mfa.web_authn]`), it eats the `n` and the real push prompt EOF-defaults to
-  YES — bit us live 2026-07-18 (pushed min-password-length 6 + secure_password_change
-  false to prod during a "dry run"; repaired same session). Pipe one `n` per
-  expected prompt (`printf 'n\nn\n'`) or count prompts from a prior run first.
-  Full runbook + traps: `supabase/README.md` "Auth email templates".
-- Deploy: `supabase functions deploy <name> --project-ref wkyerxlgricfphopocoz`
-  (sandbox disabled; no Docker; `_shared/` bundles automatically).
-- **CRITICAL — `--no-verify-jwt` is NOT sticky.** A bare redeploy silently resets
-  `verify_jwt=true` and Supabase's gateway then rejects the caller BEFORE the function
-  runs (no logs, invisible failure — a real customer charge sat unfulfilled 2026-07-02).
-  Three functions need the flag: **`stripe-webhook`, `sms-webhook`,
-  `notify-manager-access-denied`**. Before AND after touching any of them:
-  `supabase functions list --project-ref wkyerxlgricfphopocoz` → `verify_jwt: false`
-  for exactly those three.
-- **Invokers unwrap errors via `edgeErrorMessage(error)`** (the real JSON message), not
-  `error.message`. All invokers live in `src/lib/supabase.ts` — match the pattern.
-- Function inventory (all in `supabase/functions/`): `send-email` (admin-only broadcast),
-  `send-sms` (admin-only, Telnyx) + `sms-webhook` (Telnyx DLRs/inbound/STOP, Ed25519
-  verified, fail-closed), `request-guardian-waiver` / `record-waiver-signature` /
-  `create-waiver-link` (no-login waiver signing links), `notify-club-cart`,
-  `send-membership-welcome` (first no-club membership; CCs the regional team address only;
-  once-only guard is CLIENT-side in `Membership.tsx`), `send-club-invite`,
-  `invite-account` (admin-create auth user + set-password link), `request-manager-access`
-  / `notify-manager-access-denied` (no-login manager-access review),
-  `notify-sanction`, `send-event-email` (event-scoped email to registrants, emv2 P1 §J:
-  authorized for admin/sanctioning/host-club managers/event-admin grantees; recipients
-  resolved SERVER-side, hosts get no SMS, test-send = caller only, cc = one copy message;
-  verify_jwt true), `scheduled-dispatch` (pg_cron every 15 min; sanction-vote
-  reminders + event-owner task escalations (`owner-task` kind, emv2 P1 §B4) +
-  waitlist promotion sweep (emv2 P4 T7 — FIFO promote/requeue/complete, runbook in
-  `supabase/README.md`) + season lifecycle nag (`season-launch-nag`: escalating admin
-  emails to CREATE the next season row — P3 2026-07-20 retired the old automatic
-  July-1 `current` rollover, since "current"/"launched" are no longer stored flags,
-  everything derives from today's date vs. each season's `[startsOn, endsOn]` window,
-  spec `docs/specs/2026-07-20-season-card-ucg-events-and-cleanups.md` — pure logic
-  `src/lib/season-lifecycle.ts` MIRRORED in `_shared/season-lifecycle.ts`, keep in
-  lockstep); verify_jwt STAYS true + requires the `x-cron-secret` header
-  matching its `CRON_SECRET` secret — the runtime's env service key ≠ the legacy JWT,
-  bit us 2026-07-08), `manage-waitlist` (emv2 P4 T7: `promote`/`requeue` override =
-  admin/sanctioning only, `list` = + host-club managers/event-admin grantees;
-  verify_jwt true), `request-refund` / `process-refund`
-  (emv2 P3 refund request + review/Stripe-processing; both `verify_jwt: true` — the
-  no-verify-jwt trio above is UNCHANGED), `report-problem` (in-app "Report a problem"
-  nav-drawer entry, any signed-in caller; verify_jwt true; reporter identity resolved
-  server-side from the JWT, never the client payload; routes bug/question/unsure to a
-  hardcoded recipient map at the top of the function — update it there if the
-  recipients change), `reconcile-payments` (2026-07-18: admin/finance_admin + AAL;
-  scan stuck-pending + Stripe refund drift / guarded refulfill / mark-refunded —
-  Finance "Reconciliation" tab), `admin-delete-person` (2026-07-18: admin-only + AAL;
-  GDPR-ish delete/anonymize — tombstones the `people` row in place when financial/
-  waiver rows reference it, scrubs denormalized names from invoice/snapshot labels,
-  keeps waiver_signatures pending counsel; export side is client-only
-  `collectPersonData`/`person-export.ts`), `judge-entry` (2026-07-19, merged + deployed
-  prod & staging same day: codeless judge access — anonymous `unlock`/`submit`
-  ops resolve a `judge_access_codes` code/token to an event and write `scores`
-  server-side; validation in `_shared/judge-entry-core.ts` incl. size caps on
-  source/calc/calcState; verify_jwt true, NOT in the no-verify-jwt trio).
-  Notify-style functions allow any signed-in caller and resolve
-  recipients server-side; only `send-email`/`send-sms` are admin-gated. `scheduled-dispatch`
-  also runs the daily "anything wrong?" digest (`daily-digest` kind, new error_logs +
-  stuck-pending-payments summary, hardcoded recipient list in the function, at most
-  one per UTC day; runbook in `supabase/README.md`). (`send-receipt`
-  was removed 2026-07-04 — dead code, never called from `src/`; `stripe-webhook`'s own
-  `emailReceipt()` is the actual live receipt path — since emv2 P0 it also renders each
-  purchased event's `confirmation_email.bodyHtml` above the receipt, cc's the event
-  director when `ccOnConfirmation`, and applies reply-to/from-alias when unambiguous.)
-- **SMS consent is opt-OUT, not opt-in** (changed 2026-07-04): `people.sms_consent`
-  defaults to `true` — SMS is covered by the liability waiver signed at registration
-  (confirmed with Julia), so there's no Profile.tsx checkbox anymore. A STOP-family
-  reply (`sms-webhook`, unchanged) is the ONLY way to become ineligible —
-  `partitionByConsent` (`src/lib/sms-send.ts`) excludes only explicit `false`, treating
-  `undefined`/`true` as eligible. Migration `20260704015417` backfilled everyone to
-  `true` EXCEPT anyone who'd already sent a STOP reply (matched against `sms_messages`).
-## Deferred / TODO
-**The single authoritative open-work list is `docs/whats-next.md`** (reconciled
-2026-07-19) — update it there; don't grow a rival list here. Operative notes only:
-- **Event management v2 (Julia's 2026-07-06 requirements) is COMPLETE** — P0–P6 all
-  shipped to main + prod (last: P6 finance dashboards, 2026-07-16). Spec:
-  `docs/specs/2026-07-06-event-management-v2-requirements.md`; phase-by-phase history
-  lives in the spec, `docs/README.md` tables, memory, and git — not here.
-  Operative residuals (also in whats-next §4):
-  - **§L.2 DEFERRED per Julia** (her section incomplete): the session-assignment tool
-    + per-team session-timed finals reminders; only the admin-set
-    `finals_lineup_deadline_at` nag + 10pm hard lock shipped. All P5 UI is gated on
-    `event.kind === 'nationals'`.
-  - Host-payout "owed" formula CONFIRMED by Julia 2026-07-17: event gross collected
-    (registrations + add-ons, before service/admin fees), refunds NOT deducted
-    (hosts handle their own refunds) — implemented in `src/lib/finance.ts`.
-  - 👤 Nate: grant `finance_admin` (Julia/bookkeeper); verify the P3 prereqs landed
-    ("UCG - Main" `is_league_host` + `refund_manager` grants).
-- **Security hardening Phase 3** still TODO (`docs/plans/2026-07-02-security-hardening.md`).
-- **UI/UX review fixes** not started (`docs/plans/2026-07-04-uiux-review-fixes.md`) —
-  money-story task O1 first; ⚠️-marked tasks need the fable money review.
+The single authoritative list is `docs/whats-next.md`.
+
+- **Event management v2 is COMPLETE** (P0–P6 shipped, last 2026-07-16). Spec:
+  `docs/specs/2026-07-06-event-management-v2-requirements.md`. Residual: **§L.2 DEFERRED per
+  Julia** — the session-assignment tool + per-team session-timed finals reminders; only the
+  admin-set `finals_lineup_deadline_at` nag + 10pm hard lock shipped. All P5 UI is gated on
+  `event.kind === 'nationals'`.
+- **Security hardening Phases 1–3 are COMPLETE** (Phase 3 LOW items shipped to staging+prod
+  2026-07-26). Plan: `docs/plans/2026-07-02-security-hardening.md`.
+- **Data-layer scale (6.3) COMPLETE**, Phases 0–5. Known remaining gap: `payments` is still an
+  unscoped `fetchAllRows` in `loadAll` (`docs/whats-next.md` §7).
+- **UI/UX review fixes** not started (`docs/plans/2026-07-04-uiux-review-fixes.md`) — money-story
+  task O1 first; ⚠️-marked tasks need the reviewer-tier money review.
+- 👤 **Nate's actions:** grant `finance_admin` (Julia/bookkeeper); verify the P3 prereqs landed
+  ("UCG - Main" `is_league_host` + `refund_manager` grants); reseed staging scale fixtures before
+  relying on `npm run test:e2e`; `request-refund` may still need a redeploy to prod+staging
+  (function deploys were classifier-blocked 2026-07-22).

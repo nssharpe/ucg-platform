@@ -76,6 +76,14 @@ const RULES = [
     reason: 'Dropping stashes is unrecoverable.' },
   { re: /(supabase\s+db\s+query|psql)\b[\s\S]*\b(drop\s+(table|schema|database)|truncate)\b/i, decision: 'ask',
     reason: 'Destructive SQL (DROP/TRUNCATE) against a live database.' },
+  { re: /supabase\s+config\s+push/, decision: 'ask',
+    reason: 'supabase config push AUTO-CONFIRMS under agent detection and pushes DEFAULTS for ' +
+      'undeclared [auth] keys — it reset prod auth settings during a supposed dry run ' +
+      '(2026-07-18). Use the config-push-dryrun skill: one `n` per expected prompt, read the diff.' },
+  { re: /supabase\s+db\s+push/, decision: 'ask',
+    reason: 'Applies migrations to a remote DB. Run `supabase migration list` and reconcile FIRST ' +
+      '— a remote version with no local file means another session touched the DB. Staging ' +
+      '(--project-ref xogpiksqtkayxwmczlbx) before prod. See the migration-push skill.' },
   { re: /find\b[\s\S]*(\s-delete\b|-exec\s+rm\b)/, decision: 'ask',
     reason: 'find with -delete/-exec rm mass-deletes files.' },
 ]
@@ -124,6 +132,12 @@ if (process.argv.includes('--self-test')) {
     ['git push origin main', null],
     ['supabase db reset', 'deny'],
     ['supabase db reset --local', null],
+    ['supabase config push', 'ask'],
+    ['echo n | supabase config push --agent no', 'ask'], // the dry run can still apply for real
+    ['supabase db push', 'ask'],
+    ['supabase db push --project-ref xogpiksqtkayxwmczlbx', 'ask'],
+    ['supabase migration list', null],
+    ['supabase functions deploy stripe-webhook --no-verify-jwt', null],
     ['git clean -fd', 'ask'],
     ['git checkout .', 'ask'],
     ['git checkout -- .', 'ask'],

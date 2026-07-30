@@ -1,0 +1,111 @@
+---
+paths:
+  - "supabase/functions/**"
+  - "supabase/config.toml"
+  - "supabase/templates/**"
+  - "scripts/render-auth-email-templates.mts"
+  - "src/lib/sms-send.ts"
+  - "src/lib/season-lifecycle.ts"
+---
+
+# Edge Functions and transactional email
+
+Deploy: `supabase functions deploy <name> --project-ref wkyerxlgricfphopocoz` (sandbox disabled;
+no Docker; `_shared/` bundles automatically).
+
+## CRITICAL — `--no-verify-jwt` is NOT sticky
+
+A bare redeploy silently resets `verify_jwt=true`, and Supabase's gateway then rejects the caller
+BEFORE the function runs: no logs, invisible failure. A real customer charge sat unfulfilled
+2026-07-02.
+
+Three functions need the flag: **`stripe-webhook`, `sms-webhook`,
+`notify-manager-access-denied`**.
+
+A PostToolUse hook (`scripts/hooks/post-bash-checks.mjs`) now runs
+`supabase functions list --project-ref <ref>` after every `functions deploy` and reports if any
+of the three shows `verify_jwt: true`. **If that hook reports it could not run, check manually**
+— don't assume it's fine.
+
+## Email (Resend)
+
+Shared helper `_shared/resend.ts` (`sendOne`/`sendBatch`; optional `cc`, `reply_to`, and
+`fromName` — the last swaps ONLY the sender display name, the address always stays
+`RESEND_FROM`'s verified one; per-event "from" = alias + reply-to by design). Secrets:
+`RESEND_API_KEY`, `RESEND_FROM` (naigc.org is verified), `APP_PUBLIC_URL`.
+
+All transactional emails render through `_shared/email-layout.ts`
+(`renderEmail({ heading, bodyHtml, cta?, footnoteHtml? })`) — the branded navy-header /
+white-card / orange-CTA wrapper. **New email-sending functions should use it** rather than
+composing bare `<p>` HTML. Exception: `send-email` (admin free-text broadcast — the caller
+controls the full body).
+
+Supabase Auth's own templates (confirmation/invite/magic-link/recovery/…) are repo-managed and
+render from the SAME layout: `scripts/render-auth-email-templates.mts` →
+`supabase/templates/*.html` → `supabase config push` (prod only — staging is free-tier and 400s
+template pushes). **Before any `config push`, use the `config-push-dryrun` skill** — that
+command has pushed unintended auth defaults to prod. Full runbook: `supabase/README.md` →
+"Auth email templates".
+
+## Invoker pattern
+
+Invokers unwrap errors via `edgeErrorMessage(error)` (the real JSON message), **not**
+`error.message`. All invokers live in `src/lib/supabase.ts` — match the pattern.
+
+## Function inventory
+
+- **Broadcast/admin-gated:** `send-email`, `send-sms` (Telnyx).
+- **Webhooks (`--no-verify-jwt`):** `stripe-webhook`, `sms-webhook` (Telnyx DLRs/inbound/STOP,
+  Ed25519 verified, fail-closed), `notify-manager-access-denied`.
+- **Waivers:** `request-guardian-waiver`, `record-waiver-signature`, `create-waiver-link`.
+- **Notifications:** `notify-club-cart`, `send-membership-welcome` (first no-club membership; CCs
+  the regional team address only; the once-only guard is CLIENT-side in `Membership.tsx`),
+  `send-club-invite`, `invite-account`, `request-manager-access`, `notify-sanction`.
+- **Event-scoped:** `send-event-email` (authorized for admin/sanctioning/host-club
+  managers/event-admin grantees; recipients resolved SERVER-side; hosts get no SMS; test-send =
+  caller only; cc = one copy message).
+- **Money:** `create-checkout-session`, `stripe-webhook`, `request-refund`, `process-refund`,
+  `reconcile-payments` (admin/finance_admin + AAL).
+- **Ops:** `manage-waitlist` (`promote`/`requeue` = admin/sanctioning only; `list` = +
+  host-club managers/event-admin grantees), `admin-delete-person` (admin-only + AAL; tombstones
+  the `people` row in place when financial/waiver rows reference it, scrubs denormalized names
+  from invoice/snapshot labels, keeps waiver_signatures pending counsel; the export side is
+  client-only `collectPersonData`/`person-export.ts`), `judge-entry` (anonymous
+  `unlock`/`submit` resolve a `judge_access_codes` code/token to an event and write `scores`
+  server-side; validation in `_shared/judge-entry-core.ts` including size caps on
+  source/calc/calcState), `report-problem` (any signed-in caller; reporter identity resolved
+  server-side from the JWT, never the client payload; routes bug/question/unsure to a hardcoded
+  recipient map at the top of the function).
+- **`scheduled-dispatch`** (pg_cron every 15 min): sanction-vote reminders, event-owner task
+  escalations (`owner-task`), waitlist promotion sweep (FIFO promote/requeue/complete), season
+  lifecycle nag (`season-launch-nag` — escalating admin emails to CREATE the next season row),
+  and the daily "anything wrong?" digest (`daily-digest`: new error_logs + stuck-pending-payments
+  summary, hardcoded recipient list, at most one per UTC day).
+  **`verify_jwt` STAYS true** and it requires an `x-cron-secret` header matching its
+  `CRON_SECRET` secret — the runtime's env service key ≠ the legacy JWT (bit us 2026-07-08).
+
+Notify-style functions allow any signed-in caller and resolve recipients server-side; only
+`send-email`/`send-sms` are admin-gated. (`send-receipt` was removed 2026-07-04 as dead code —
+`stripe-webhook`'s own `emailReceipt()` is the live receipt path. It also renders each purchased
+event's `confirmation_email.bodyHtml` above the receipt, cc's the event director when
+`ccOnConfirmation`, and applies reply-to/from-alias when unambiguous.)
+
+## Lockstep mirrors — change both or neither
+
+- `src/lib/season-lifecycle.ts` ⇄ `_shared/season-lifecycle.ts`
+- camp survey rendering ⇄ `_shared/camp-confirmation.ts`
+- passkey/aal exemption: `mfa-core.ts` ⇄ `is_admin()` migration ⇄ `_shared/jwt-aal.ts`
+
+Seasons: P3 (2026-07-20) retired the automatic July-1 `current` rollover. "current"/"launched"
+are no longer stored flags — everything derives from today's date vs. each season's
+`[startsOn, endsOn]` window. Spec:
+`docs/specs/2026-07-20-season-card-ucg-events-and-cleanups.md`.
+
+## SMS consent is opt-OUT, not opt-in
+
+`people.sms_consent` defaults to `true` — SMS is covered by the liability waiver signed at
+registration (confirmed with Julia), so there is no Profile checkbox. A STOP-family reply
+(`sms-webhook`) is the ONLY way to become ineligible. `partitionByConsent`
+(`src/lib/sms-send.ts`) excludes only explicit `false`, treating `undefined`/`true` as eligible.
+Migration `20260704015417` backfilled everyone to `true` EXCEPT anyone who had already sent a
+STOP reply.
