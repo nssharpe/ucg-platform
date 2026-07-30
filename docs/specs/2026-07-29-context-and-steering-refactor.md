@@ -131,6 +131,22 @@ reviewer-tier diff review unchanged. Revisit from the routing log.
 - **Post-merge quizzes/explainers** (from the unknowns post). The equivalent already exists and is
   stronger: the mandatory reviewer-tier review of any money/auth/RLS diff before merge.
 
+## Follow-up: `AGENTS.md` reduced to a pointer
+
+`AGENTS.md` was a 449-line / 34.7 KB copy of a pre-refactor `CLAUDE.md`, written for the abandoned
+agy offload pipeline and committed accidentally. Claude Code reads `CLAUDE.md`, not `AGENTS.md`, so
+it consumed no context — but a diff against the old `CLAUDE.md` confirmed it held nothing unique
+and had drifted into being actively wrong: it cited `.Codex/launch.json` and `.Codex/settings.json`
+(nonexistent — a botched Claude→Codex find-replace), described security hardening Phase 3 as TODO,
+claimed there were no component tests, listed migrations as applied only through `20260711023234`,
+and named `docs/README.md` as the authoritative open-work list.
+
+Two contradicting instruction files is the failure mode this refactor exists to remove, so it is
+now a 53-line pointer: a routing table to `CLAUDE.md` / `.claude/rules/` / `.claude/skills/`, a
+note that agents without path-scoped-rule support must read the rule files directly, and the three
+non-negotiables restated for an agent that reads nothing else. Anything tempted to become a rule
+there goes in `CLAUDE.md` or a rule file instead.
+
 ## Adopted from the unknowns post
 
 Folded into `CLAUDE.md` → "Finding the unknowns": blind-spot pass at phase kickoff, prototype
