@@ -32,7 +32,20 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
    these dumps are the stated stand-in until Supabase Pro/PITR (item 2 above).
 6. **Security-review option + timing** — options brief at
    [research/2026-07-17-security-review-options.md](research/2026-07-17-security-review-options.md);
-   👤 Nate picks an option + timing (gates live keys).
+   👤 Nate picks an option + timing (gates live keys). 💬 Two additions worth folding into that
+   brief ([findings §7](specs/2026-07-31-review-and-cleanup-findings.md)): the **Claude Security
+   plugin**'s multi-agent whole-repo scan is a cheaper first pass before paying for a human
+   audit, and one `/code-review ultra` run on the money paths during the planned Max month.
+7. 💬 **Decide on the `security-guidance` plugin** ([findings §7](specs/2026-07-31-review-and-cleanup-findings.md)).
+   Anthropic's free first-party plugin reviews Claude's own diffs in-session; it's hooks-based,
+   matching this repo's enforcement model, and takes repo-specific rules —
+   **`.claude/claude-security-guidance.md` is already written and checked in** (encoding our
+   real traps: `for all` granting DELETE, the upsert trap, column-revoke, `verify_jwt`
+   stickiness, `mode:'preview'` purity, AAL, dev-auth firewall). It is inert until the plugin is
+   installed. ⚠️ **The catch is usage, not capability:** both model-backed layers default to
+   Opus 4.7 and fire on *every* file-changing turn and *every* commit — a standing tax on a Pro
+   plan. Recommended start: install with `ENABLE_CODE_SECURITY_REVIEW=0`, keeping only the
+   **free** per-edit pattern layer.
 
 ## 2. Launch blockers (🤖 buildable now)
 
