@@ -7,12 +7,12 @@ Live build/tooling notes live in [`../CLAUDE.md`](../CLAUDE.md); open work is
 
 > **Status legend:** ✅ shipped to `main` (live) · 🟡 partial / on a branch ·
 > 📘 reference (ongoing) · 📓 research (informational, not a commitment).
-> Last reconciled with the codebase: **2026-07-19**.
+> Last reconciled with the codebase: **2026-07-31**.
 
 ## Reference docs
 - [`whats-next.md`](whats-next.md) — **the authoritative open-work list** (Nate
   actions, launch blockers, quality passes, emv2 residuals, feature roadmap,
-  proposed additions); reconciled 2026-07-19. Update it there, not rival copies.
+  proposed additions); reconciled 2026-07-31. Update it there, not rival copies.
 - [`production-readiness.md`](production-readiness.md) — **gap analysis by dimension**
   (UX, security, reliability, observability, legal) with steps split between Nate and
   Claude. The ordered list of what to do next is [`whats-next.md`](whats-next.md).
@@ -49,9 +49,14 @@ Live build/tooling notes live in [`../CLAUDE.md`](../CLAUDE.md); open work is
 | [events-rename-and-registration-flow](specs/2026-06-26-events-rename-and-registration-flow.md) | The Meet→Event / event→apparatus rename + registration-flow rework | ✅ shipped |
 | [stripe-s4-decomposition](specs/2026-06-26-stripe-s4-decomposition.md) | S4 build decomposition (webhook fulfillment, invoices, receipts) | ✅ shipped |
 | [security-review-findings (7/02)](specs/2026-07-02-security-review-findings.md) | Deep review of the money paths: RLS, edge functions, cart state machine — verified findings by severity | ✅ fixes shipped — hardening Phases 1–3 all complete (Phase 3 LOW items to staging+prod 2026-07-26) |
+| [money-story-ux](specs/2026-07-04-money-story-ux.md) | The O1 "money story": one authoritative price from cart through checkout, via a side-effect-free `mode:'preview'` on `create-checkout-session` | ✅ shipped |
 | [event-management-v2-requirements](specs/2026-07-06-event-management-v2-requirements.md) | Julia's full event-management requirements (7/06) digested + gap-mapped: host dashboard, refunds, capacity/waitlists, add-ons v2, nationals ops, finance dashboards — phasing V2-P0…P6 | ✅ **shipped in full** (P0–P6 all live; P6 finance dashboards closed it 2026-07-16). Deliberate residuals (§L.2 session-assignment tool, server-PDF receipts, camp-popup simplification, payout formula) tracked in [whats-next](whats-next.md) §4 |
 | [ucg-rebrand](specs/2026-07-08-ucg-rebrand.md) | 2026 brand toolkit application: palette/tokens, approved fg/bg pairings, licensed fonts, logos/icons | ✅ applied (authoritative brand rules — 📘 ongoing reference) |
+| [session-queue-e2e-ci-tests-freshness-recon-export-seasons](specs/2026-07-18-session-queue-e2e-ci-tests-freshness-recon-export-seasons.md) | Batch design: session queue, E2E in CI, data freshness, payments reconciliation (F4), person export/delete (F5), seasons | ✅ shipped |
+| [season-card-ucg-events-and-cleanups](specs/2026-07-20-season-card-ucg-events-and-cleanups.md) | Season card, UCG-hosted events, and the P3 retirement of the automatic July-1 `current` rollover (season state now derives from dates) | ✅ shipped |
+| [data-layer-scale](specs/2026-07-24-data-layer-scale.md) | The Tier 1/2/3 hydration model and the slice layer: Phases 0–5 moving `scores`/`registrations`/`people` off global hydration + the localStorage allowlist + Tier-2 query scoping | ✅ shipped (Phases 0–5); 📘 authoritative reference for the slice CONTRACT. Residual: `payments` still unscoped ([whats-next](whats-next.md) §7) |
 | [context-and-steering-refactor](specs/2026-07-29-context-and-steering-refactor.md) | Split the 667-line `CLAUDE.md` into a lean core + path-scoped `.claude/rules/` + `.claude/skills/`; converted three prose "always do X" rules into enforcement hooks; defined the reviewer-tier model indirection; scoped the advisor tool | ✅ shipped (📘 rationale reference for how steering is organized) |
+| [review-and-cleanup-findings](specs/2026-07-31-review-and-cleanup-findings.md) | General review + security pass over everything shipped since the 7/19 reconciliation: environment/migration reconciliation, `npm audit` triage, the anonymous write surfaces, a live exercise of the anon paths, and a next-features recommendation | 📘 findings — 2 open (Results hides null-session scores; `judge-entry` unlock unthrottled), tracked in [whats-next](whats-next.md) §3 |
 
 ## Plans (`plans/`) — step-by-step implementation records
 
