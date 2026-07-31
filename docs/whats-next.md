@@ -1,7 +1,9 @@
 # What's next — the authoritative open-work list
 
 **This is the single source of truth for open work.** Reconciled with the codebase
-**2026-07-19**. It replaces the
+**2026-07-31** (review + security pass:
+[specs/2026-07-31-review-and-cleanup-findings.md](specs/2026-07-31-review-and-cleanup-findings.md)).
+It replaces the
 "What's next" section that used to live in [`README.md`](README.md) — update THIS file
 when priorities change, not rival copies. [`production-readiness.md`](production-readiness.md)
 is the per-dimension gap analysis; [`../CLAUDE.md`](../CLAUDE.md) keeps only a pointer here.
@@ -34,33 +36,20 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
 
 ## 2. Launch blockers (🤖 buildable now)
 
-0. ✅ **Security hardening Phase 3 — COMPLETE 2026-07-26** ([plan](plans/2026-07-02-security-hardening.md)).
-   Every item applied to staging AND prod and verified live. ✅ M2 (`cart_member_clubpush` now membership-only),
-   ✅ M4 (`people` self-insert-by-email branch dropped, + the companion `auth.ts`
-   fix it needed), ✅ **invoice write lockdown** (not originally in the plan — any
-   member could forge a paid invoice via PostgREST; writes on `invoices`/
-   `invoice_items` are now admin-only). **Applied to staging AND prod 2026-07-24**,
-   live-probed 7/7 as a non-admin against both.
-   ✅ **M1 (coupon reservation at session-create) — APPLIED staging + prod
-   2026-07-26**, migration `20260726130005`. Concurrent checkout sessions could
-   each collect the same single-use discount, because the code was only validated
-   at session-create and `used_count` was only bumped at fulfillment. Now a
-   time-bounded row in `coupon_reservations` is claimed inside `reserve_coupon`,
-   which takes `SELECT ... FOR UPDATE` on the coupon row (the lock IS the fix) and
-   counts `used_count + live reservations`. Deliberately NOT a decrement-on-failure
-   scheme: a release that never runs would burn a use permanently, whereas an
-   expired reservation simply stops counting. Released on
-   `checkout.session.expired`/`async_payment_failed`, converted to a redemption by
-   `redeem_coupon`, and — critically — never claimed on the `mode: 'preview'` path.
-   **Proven on staging:** 10 concurrent `reserve_coupon` calls against a
-   `max_uses: 1` coupon → exactly 1 winner; release frees the slot; an expired
-   reservation stops blocking. Prod smoke after deploy: cart preview still reprices
-   ($1 → $45) and created 0 reservations. `create-checkout-session` +
-   `stripe-webhook` redeployed to both projects, `verify_jwt` trio re-verified.
-   ✅ **LOW items shipped 2026-07-26** (staging + prod): `club_managers`/`app_settings`
-   SELECT scoped to `authenticated`; `error_logs` rate-limited to 20 inserts/minute per
-   caller (verified live: 20 accepted, rest rejected, on both envs); 256-bit tokens in
-   the 3 no-login token generators (redeployed both envs). **Phase 3 is complete.**
+0. ✅ **Security hardening Phase 3 — COMPLETE 2026-07-26**
+   ([plan](plans/2026-07-02-security-hardening.md) has the per-item detail and evidence).
+   Every item applied to staging AND prod and verified live: **M1** coupon reservation at
+   session-create (`20260726130005` — the `SELECT … FOR UPDATE` on the coupon row *is* the fix;
+   proven with 10 concurrent claims → exactly 1 winner), **M2** `cart_member_clubpush` now
+   membership-only, **M4** `people` self-insert-by-email branch dropped, the **invoice write
+   lockdown** (not originally in the plan — any member could forge a paid invoice via
+   PostgREST), and the **LOW** items (`club_managers`/`app_settings` SELECT scoped to
+   `authenticated`, `error_logs` rate-limited to 20 inserts/min per caller, 256-bit tokens in
+   the 3 no-login generators).
+
+   Re-verified 2026-07-31: `verify_jwt = false` on exactly `stripe-webhook` / `sms-webhook` /
+   `notify-manager-access-denied` on **both** projects; all 105 migrations applied to prod with
+   zero drift.
 
 ## 3. Quality passes (pre- or just post-launch)
 
@@ -79,8 +68,12 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
   Residuals deliberately left open:
    - **Invoice numbering** (O1 spec §3) — two formats coexist; deferred to the
      pre-launch data sweep per Nate, since all current rows are test data. The
-     generators derive the sequence from a row COUNT, which is not concurrency-safe;
-     revisit when real invoices exist.
+     generators derive the sequence from a row COUNT, which is not concurrency-safe.
+     💬 **Recommend reclassifying this as a Stripe go-live gate rather than a quality pass**
+     ([findings §6.4](specs/2026-07-31-review-and-cleanup-findings.md)): the trigger for the
+     concurrency bug isn't a data sweep, it's the first two people checking out at the same
+     time. Duplicate numbers on real financial records are painful to unwind and trivial to
+     prevent beforehand — the fix is a DB sequence.
    - **Pre-existing 375px overflow on the admin Communicate compose-editor card** —
      found during H5–H7, proven pre-existing via `git stash`, out of scope there.
    - **Keyboard verification of the H7 toggles was click+DOM-based**, not real key
@@ -93,10 +86,51 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
 3. **New-club-request email** to `newclubinquiries@naigc.org` (transport exists, not wired).
 4. **PWA production update path** — verify deploys reach users promptly; add a "new
   version available, reload" prompt if not.
-5. **`npm audit` + Dependabot** in CI.
+5. **`npm audit` + Dependabot** in CI. **Audited 2026-07-31 — nothing that ships to a user is
+  vulnerable today**, so this is now about automation, not a backlog of fixes. 22 findings
+  (18 high), and the triage is what matters:
+   - The only **runtime** dependency implicated is `react-router-dom`. Installed 7.17.0;
+     advisory range `6.0.0–8.2.0`; npm `latest` is **7.18.2, also in range** — there is nothing
+     to upgrade to. 3 of its 5 advisories are RSC/SSR-only and can't apply to a static SPA;
+     the open-redirect one **was checked for reachability and is not reachable**
+     ([findings §3.1](specs/2026-07-31-review-and-cleanup-findings.md)). Watch, don't chase.
+   - The other 17 highs are **build-time only** (`vite-plugin-pwa`→`workbox-build`→`ejs`/`jake`;
+     `exceljs`→`archiver`/`glob`/`minimatch`). npm's "fix" for both is a **downgrade**
+     (`vite-plugin-pwa@1.2.0`, `exceljs@3.4.0`, both semver-major) — a worse trade than leaving
+     them. `postcss`/`rimraf`/`fast-uri` do have clean fixes via a plain `npm audit fix`.
+  ⚠️ When wiring this into CI, **fail on runtime deps only** — a blanket `npm audit --audit-level=high`
+  gate would red-light every build today for dev-only transitive advisories with no upgrade path.
 6. **Fix the `record-waiver-signature` stale-hold wart** — it can re-assert a
   club-payment hold if the club paid before the guardian signed (documented in
   CLAUDE.md; small, known fix).
+7. 🔴 **Public Results page hides posted scores when registrations have no session**
+  (found 2026-07-31, live in prod —
+  [findings §4.4](specs/2026-07-31-review-and-cleanup-findings.md)). All 35 anon-visible prod
+  registrations have `session_id = null`; `sessionResults()` filters strictly on session, so the
+  3 scores that exist on `test-meet` are unreachable and every event reads *"No scores posted
+  yet."* Two fixes: **(a)** assign sessions to the scored registrations via the host roster
+  editor's per-row dropdown (`Events.tsx:1541`) — 👤 data fix, no code; **(b)** 🤖 make the empty
+  state truthful — when `eventScores.length > 0` but the session filter yields none, say *"N
+  scores are posted but not assigned to a session"* instead of `NO_SCORES_MSG`. (b) converts a
+  silent meet-day failure into a self-diagnosing one and is a one-conditional change.
+  Note `pushEvent` never backfills `session_id`, so a session whose **id** changes on an edit
+  orphans its registrations the same way.
+8. 🔴 **`judge-entry` unlock has no real rate limit** (found 2026-07-31 —
+  [findings §3.3](specs/2026-07-31-review-and-cleanup-findings.md)). The 6-digit code path's
+  only defense is a per-request `sleep(300)`, which parallelism erases: 40 concurrent invalid
+  codes against staging all returned 401, none throttled. A guess yields score-write access to a
+  live event. Compounding: failed attempts log to `error_logs` via the **service role**, which
+  deliberately bypasses the 20/min limit — so the one anonymous endpoint that invites a million
+  guesses is exempt from the anti-spam limit added for exactly this. And a validity **oracle**
+  (401 for no-match vs 403 for "event not live") lets codes be harvested weeks ahead.
+  Fix = same-401 for not-live + a real per-caller counter + capped failure logging.
+  ⚠️ **Reviewer-tier design review before shipping** — a limit that's wrong in the
+  "locks out a real judge mid-meet" direction is worse than today's state.
+9. ✅ **`report-problem` + `admin-reset-mfa` deployed to staging — DONE 2026-07-31.** They
+  existed in the repo and prod but not in staging, so neither the in-app problem reporter nor
+  the MFA break-glass could be smoke-tested before a prod change. Staging is now at 25
+  functions, matching prod exactly; `verify_jwt` trio re-verified by hand
+  ([findings §1.3](specs/2026-07-31-review-and-cleanup-findings.md)).
 
 ## 4. Event-management v2 residuals (deferred by design)
 
@@ -106,6 +140,11 @@ these were explicitly deferred, not dropped:
 - **§L.2 session-assignment tool** + the per-team session-timed finals reminders that
   depend on it ("5 min after session ends" / Fri-10am) — Julia marked her section
   incomplete; only the admin-set `finals_lineup_deadline_at` nag + 10pm lock shipped.
+  ⚠️ **The assignment half is no longer just a convenience** — §3.7 above shows an unassigned
+  `session_id` silently hides that registration's scores from the public Results page. The
+  detect + bulk-assign subset is now correctness work and is recommended as next-up
+  ([findings §6.1](specs/2026-07-31-review-and-cleanup-findings.md)); the *reminders* half is
+  what Julia deferred and can stay deferred.
 - **Server-rendered receipt PDF attached** to the confirmation email (§I/§N4) —
   receipts today are client-side jsPDF on demand.
 - **Camp registration popup simplification** (§G) — camp events still reuse the full
@@ -125,8 +164,27 @@ panels with averaged execution + calculator-vs-simple default entry mode).
 Residual 👤: happy-path smoke of D on staging (generate a code on a live
 event, unlock on a second device, enter a score).
 
-**Further out:**
-- PDF certificates, external API.
+**Next major additions — recommendation 2026-07-31, 💬 Nate to triage.** Full reasoning in
+[findings §6](specs/2026-07-31-review-and-cleanup-findings.md). The short version: the *feature*
+surface is essentially complete for a first season; what's thin is **running a real meet day**
+and **knowing when something is wrong**, and both of this review's live findings are instances
+of that rather than coincidences.
+
+1. **Session assignment — detect orphans + bulk assign** (the §L.2 subset above). Now
+   correctness-bearing, not convenience. Smallest of the three and unblocks the others.
+2. **Meet-day operations console** — one host screen for check-ins, sessions underway, scores
+   in vs. expected, and what's stuck. Mostly *composition of existing read models* (cheap
+   post-Phase-2/3), and meet day is when the product is judged by people who didn't choose it.
+3. **Operational alerting as ONE initiative** — the backup fails silently, a judge-code brute
+   force would be invisible, orphaned scores are invisible. `scheduled-dispatch`'s
+   `daily-digest` already exists and is the natural home; extend it into a real health check and
+   make failure of the check itself loud. Retires several separate open items at once, and is
+   the internal half of the analytics/Sentry idea in §6.2 below.
+
+**Further out (lower priority than they look):**
+- **PDF certificates** — real value, zero urgency; nothing depends on it.
+- **External API** — premature; no external consumer exists and it would freeze interfaces that
+  are still moving.
 
 **Residual from shipped work:**
 - ~~Enroll TOTP factors~~ ✅ **done 2026-07-19** — Nate + Julia both enrolled; admin
@@ -141,180 +199,61 @@ Suggested from a post-emv2 read of the platform; some have shipped, others are p
   links) reduce Julia-as-support and make fall-season onboarding of hosts cheaper.
 2. **Privacy-friendly analytics + Web Vitals** (Plausible/PostHog) once real users
   arrive; optional Sentry for stack traces with releases.
-3. ✅ **Data-layer scale path — Phases 0-5 ALL DONE**
-  ([spec](specs/2026-07-24-data-layer-scale.md)). Phase 0 fixed the silent
-  1000-row truncation (shipped). Phase 1 (2026-07-26) built the staging-only
-  `scripts/seed-scale.mjs` harness + boot instrumentation, then MEASURED: at 50k
-  registrations / 52k scores the app takes **21.1 s to cold-boot** and writes a
-  **28.95 MB** localStorage snapshot — and the localStorage quota error we were
-  relying on as the alarm **never fired** (Chromium accepted it). Phase 2
-  (merged 2026-07-26) moved `scores` off global hydration onto a new
-  scoped-slice layer (`src/lib/slice-cache.ts` + `src/lib/scores-slice.ts`) —
-  measured directly against scale-seeded staging, the full `scores` fetch this
-  removes from boot cost **14.46 s / ~21.7 MB**; the replacement per-event
-  fetch (nationals-scale, ~2,400 rows) costs **~0.78 s / ~695 KB** and is paid
-  only when that event's page is opened. Phase 3 (2026-07-27, branch
-  merged 2026-07-26) did the same for
-  `registrations` (`src/lib/registrations-slice.ts`, reusing Phase 2's
-  slice-cache.ts as-is, implementing all six CONTRACT shapes) across all ~61
-  consumers (Club.tsx's roster classification was the highest-risk read —
-  see the spec's COMPLETENESS section), then removed `registrations` from
-  `loadAll` entirely. Measured directly: the full `registrations` fetch this
-  removes cost **22.9 s / ~24.7 MB** at 50k rows; the replacement per-event
-  fetch (the largest scale-seeded event, 674 rows) costs **~0.4 s / ~200 KB**.
-  A full live before/after `loadAll()` boot comparison was blocked again, this
-  time by a genuinely NEW, pre-existing finding surfaced by scale-seeding:
-  `memberships`/`invoices`/`invoice_items` queries time out ("canceling
-  statement due to statement timeout") under the ANON/AUTHENTICATED role once
-  those tables hold 10k+ rows — confirmed NOT an RLS-grant gap (a
-  service-role client queries them fine), so this reads like an expensive RLS
-  policy (a per-row subquery/join) that was never exercised at scale before.
-  Untouched by the Phase 3 diff (Phase 3 doesn't read either table) — see §7
-  below, RESOLVED 2026-07-28 by scoping the query (not the RLS policy).
-  **Phase 4 (2026-07-28) was REWRITTEN from "slim the `people` projection"
-  to "scope which people load"** — a 2026-07-26 recon found the originally-
-  proposed slim/full field split wrong in both directions and its danger
-  list ran through membership pricing, synchro eligibility, and nationals
-  categorization; scoping which ROWS load (mirroring the Tier 2 pattern
-  above) sidesteps all of it, since every row returned is still complete.
-  loadAll's boot people read is now self + managed-club rosters only; five
-  on-demand shapes (arbitrary person, by-club, league-wide-admin, by-ids
-  full, by-ids thin via a newly-wired-up `public_competitors` view) cover
-  every other consumer across ~36 files. Building the thin by-ids shape
-  surfaced and fixed a real pre-existing bug: anonymous visitors to the
-  public, no-login Results page saw blank athlete names (verified live
-  against prod, then confirmed fixed against scale-seeded staging as a true
-  anon session). **Phase 5 (2026-07-28)** restricts localStorage persistence
-  to Tier 1 + small Tier 2 (`seasons/levels/clubs/events/coupons/
-  waiverDocuments/accountingCodes/regionOverrides/people/invoices/carts`) —
-  measured 28.95 MB → ~53 KB on 0.5×-scale staging, persisted `people` down
-  to 1 row (self) vs. 3,000 seeded. Full writeup, danger-list verification,
-  and measurements: `docs/specs/2026-07-24-data-layer-scale.md`'s Phase 4/5
-  sections.
+3. ✅ **Data-layer scale path — Phases 0–5 ALL DONE**
+  ([spec](specs/2026-07-24-data-layer-scale.md) — measurements, danger lists, and the
+  per-phase narrative live there, not here).
+
+  | phase | what moved | measured win |
+  |---|---|---|
+  | 0 | silent 1000-row truncation fixed | correctness |
+  | 1 | staging `scripts/seed-scale.mjs` + boot instrumentation | baseline: **21.1 s** cold boot, **28.95 MB** localStorage at 50k regs / 52k scores |
+  | 2 | `scores` → scoped slice (`slice-cache.ts`, `scores-slice.ts`) | −14.46 s / −21.7 MB from boot; per-event refetch ~0.78 s |
+  | 3 | `registrations` → scoped slice (~61 consumers) | −22.9 s / −24.7 MB from boot; per-event refetch ~0.4 s |
+  | 4 | `people` → scope which ROWS load (5 on-demand shapes + `public_competitors`) | boot read is self + managed-club rosters only |
+  | 5 | localStorage restricted to Tier 1 + small Tier 2 | 28.95 MB → **~53 KB** |
+
+  Two things worth remembering because they cost real time:
+  - **Phase 4 was rewritten mid-flight.** The original plan ("slim the `people` projection")
+    was found wrong in both directions by a 2026-07-26 recon, with a danger list running
+    through membership pricing, synchro eligibility, and nationals categorization. Scoping
+    which ROWS load sidesteps all of it — every row returned is still complete.
+  - **Phase 4 fixed a real pre-existing bug:** anonymous visitors to the public Results page
+    saw blank athlete names. Verified live against prod, then confirmed fixed. (Re-verified
+    still fixed 2026-07-31 — `public_competitors` serves 2,636 rows to anon.)
 
 ## 7. ✅ RESOLVED 2026-07-28 — expensive Tier-2 reads on `memberships` / `invoices` / `invoice_items`
 
-**Fixed by scoping the QUERY, not the policy.** `loadAll` now resolves the caller's
-person id + managed-club ids first, then reads these three tables filtered to that
-scope. Measured on 0.5×-scale staging as a real club-manager JWT:
+Scale-seeding surfaced these three Tier-2 tables timing out (`canceling statement due to
+statement timeout`) under ANON/AUTHENTICATED past ~10k rows. **Fixed by scoping the QUERY, not
+the policy:** `loadAll` resolves the caller's person id + managed-club ids first, then reads
+only what RLS already permitted that caller. Authorization is unchanged; anon skips these
+fetches entirely. League-wide consumers moved to on-demand admin slices that gate every
+computed total on `status === 'ready'`.
 
-| table | before (unfiltered) | after (caller-scoped) |
-|---|---|---|
-| `memberships` | ~5.3 s | **455 ms** |
-| `invoices` | ~5.5 s | **277 ms** |
-| `invoice_items` | ~7.4 s | **365 ms** |
+Measured on 0.5×-scale staging, real club-manager JWT: `memberships` ~5.3 s → **455 ms**,
+`invoices` ~5.5 s → **277 ms**, `invoice_items` ~7.4 s → **365 ms** (10–20×, clear of the
+timeout). Merged to `main`.
 
-10–20×, comfortably clear of the statement timeout. Authorization is unchanged: every
-predicate is a strict subset of what RLS already permitted that caller, and anon skips
-these fetches entirely. League-wide consumers (Finance, RefundReview, AdminClubs,
-Communicate's audience, Home's admin dashboard, AdminMembers' merge, Club's roster for
-admins, the GDPR export) moved to on-demand admin slices that gate every computed total
-on `status === 'ready'`.
+⚠️ **A policy-shape rewrite was tried first and MEASURED-REJECTED — do not retry it.** Wrapping
+the cross-table RLS subqueries in SECURITY DEFINER helpers made `invoice_items` *worse*
+(7.4 s → 11.4 s): Postgres hash-materializes a raw correlated `EXISTS` into one semi-join scan,
+but a function call is opaque to the planner and pays ~0.9 ms per outer row. Migration
+`20260728015930` kept only the hygiene win (one SELECT policy instead of two identical ones;
+explicit insert/update/delete replacing a `for all` that silently granted DELETE) — justified
+as correctness, **not** performance. Second time an "obviously correct" RLS-predicate theory
+lost to measurement here (see `20260711023234`).
 
-**A policy-shape rewrite was tried first and REJECTED — do not retry it.** Wrapping the
-cross-table RLS subqueries in SECURITY DEFINER helpers made `invoice_items` *worse*
-(7.4 s → 11.4 s): Postgres can hash-materialize a raw correlated `EXISTS` into a single
-semi-join scan, whereas a function call is opaque to the planner and pays ~0.9 ms per
-outer row. The apparent `memberships` gain was inside measurement noise. Migration
-`20260728015930` kept only the unambiguous hygiene win (one SELECT policy instead of two
-identical ones, and explicit insert/update/delete replacing a `for all` that silently
-granted DELETE) — shipped staging + prod, justified as correctness, NOT performance.
+Full narrative, both attempts' data, and the exact query shapes:
+[`specs/2026-07-24-data-layer-scale.md`](specs/2026-07-24-data-layer-scale.md) (Tier 2 section)
+and `supabase/README.md`'s entry for `20260728015930_tier2_rls_policy_cost.sql`.
 
-Original finding, kept for context:
-
-Surfaced by 6.3's scale-seeding, and **architecturally more significant than it first
-reads**. Under the ANON/AUTHENTICATED role these three tables start failing with
-`canceling statement due to statement timeout` once they hold ~10k+ rows. A
-service-role client queries them fine, so it is not a grant gap — it reads like an
-expensive RLS policy (a per-row subquery/join) that nothing has ever exercised at
-volume.
-
-**Why it matters beyond a slow query:** these are **Tier 2** tables in the
-[data-layer scale spec](specs/2026-07-24-data-layer-scale.md) — the tier that
-deliberately STAYS globally hydrated because it's "bounded per user". Phases 2 and 3
-moved `scores` and `registrations` off global hydration; Phases 4–5 address `people`
-and localStorage. **None of them touch these three.** So this is a hole in the tiering
-assumption, not something the remaining phases will incidentally fix: the projection
-has ~18k invoices / ~25k invoice_items / ~11k memberships within two years, which is
-past where the timeout was observed.
-
-**2026-07-28 (branch `perf/tier2-rls-policy-cost`, staging only, NOT prod) — policy-shape
-fix tried and MEASURED-REJECTED; controller made the call.** First attempt wrapped
-`memberships_write`'s and `invoice_items_read`'s raw cross-table subqueries in
-SECURITY DEFINER helpers (`manages_club_of_person`/`invoice_owner_or_manager`). At
-0.5×-scale that made `memberships` statistically unchanged (~5.0–5.3s either way,
-inside the measurement's own noise band) and `invoice_items` measurably **worse**
-(7.4s → 11.4s) — a fresh anon `loadAll`-shaped read at that scale still hit
-`statement timeout` on all three tables, i.e. signed-out boot was still broken. Root
-cause: Postgres can hash-materialize a raw correlated `EXISTS` subquery into a single
-semi-join pass over the referenced table (one scan total, confirmed via a
-`hashed SubPlan` plan node) — a SECURITY DEFINER function call is opaque to the
-planner and can never be hashed that way, so it pays its own per-call cost (~0.9ms
-measured) on every row of `loadAll`'s unfiltered scan, which loses to the
-hashed-subquery plan once the referenced table's own policy stack isn't already the
-dominant cost. **The controller rejected shipping that trade** (an 11.4s regression on
-`invoice_items` in exchange for architectural tidiness) and this is the second time in
-this repo a "clearly correct" RLS-predicate-shape theory didn't pan out on measurement
-(see `20260711023234`) — **don't retry a policy-rewrite fix for this without a fresh
-measurement; the planner-hashing behavior above is why it's a dead end.**
-
-What shipped instead, kept because it's a scale-independent correctness/hygiene win
-and does NOT claim a performance improvement: `memberships_read` and `memberships_write`
-(a `for all` policy) carried byte-identical predicates, evaluated and OR'd on every
-SELECT for zero semantic difference — collapsed to one `memberships_read` SELECT
-policy plus explicit `memberships_insert`/`memberships_update`/`memberships_delete`
-policies (retiring the `for all`, which silently granted DELETE too — the trap
-CLAUDE.md calls out, and the same shape already retired from `invoices`/`invoice_items`
-in the 2026-07-24 write lockdown). `invoice_items_read` and the two SECURITY DEFINER
-functions from the rejected attempt were fully reverted. Semantics re-verified via a
-rolled-back-transaction A/B against the true pristine original policies — byte-identical
-row sets for a club manager and an athlete — and anon boot re-confirmed clean at
-baseline volume. Full narrative + both attempts' data: `supabase/README.md`'s entry for
-`20260728015930_tier2_rls_policy_cost.sql`.
-
-**BUILT (branch `perf/tier2-scoped-loadall`, drafted 2026-07-28) — Tier-2 QUERY scoping
-in `loadAll`.** `loadAll` now resolves the caller's person id + managed-club ids first,
-then scopes memberships/invoices/invoice_items to exactly what RLS already permits that
-caller (self rows + managed-club rosters/invoices) instead of an unfiltered `select('*')`
-— no authorization change, only the query narrows. Privileged league-wide consumers
-(Finance, RefundReview, AdminClubs, Communicate's audience filter, Home's admin
-dashboard, AdminMembers' merge modal, Profile's adminView, Club.tsx's roster/event-reg
-grid, person-data.ts's export) were converted to on-demand fetches (new
-`invoices-admin-slice.ts` / `memberships-admin-slice.ts`, routed through the existing
-slice-cache infra) so they still see everything they need without that data riding along
-on every boot. Money surfaces gate every computed total on `status === 'ready'`.
-**Measured** (scale-seeded staging at 0.5×, real club-manager JWT, non-trivial result
-set — 188 memberships / 95 invoices / 115 invoice_items): `memberships` 455ms,
-`invoices` 277ms, `invoice_items` 365ms, vs. this section's own ~5.3s/~5.5s/~7.4s
-baseline for the old unfiltered read at the same table sizes — a 10–20× improvement,
-comfortably clear of the `statement timeout` the unfiltered reads hit at this scale.
-Full narrative + the exact query shapes: `docs/specs/2026-07-24-data-layer-scale.md`'s
-Tier 2 section. Controller still owns reviewing/merging the branch.
-
-Not urgent at current prod volume (invoices 43, invoice_items 69, memberships 39), but
-the fix is done rather than deferred.
-
-**Addendum (2026-07-28, Phase 5 boot measurement): `payments` likely carries the same
-risk, unscoped.** Cold-boot `syncFromSupabase()` against 0.5×-scale staging (9,000
-payments, alongside the now-fast-scoped memberships/invoices/invoice_items) took
-2.4–7.9 s — `payments` is fetched via a plain unscoped `fetchAllRows` in `loadAll`, the
-same shape memberships/invoices/invoice_items had before this section's fix. Not
-re-measured in isolation (out of scope for the Phase 4/5 session that found it), but
-worth the same query-scoping treatment (self + managed-club, mirroring §7's fix) before
-a real season pushes it past 10k rows.
-
-**Also 2026-07-28 — a reported "staging fixtures are missing" alarm, CHECKED AND FALSE.**
-The Phase 4/5 run reported that staging's scaled tables read 0 rows before seeding and
-concluded the Playwright E2E fixture baseline was gone, raising a 👤 action for Nate to
-reseed. Verified directly after the run: staging is **at the documented baseline
-exactly** — memberships 70, invoices 14, invoice_items 14, people 84, registrations 130,
-scores 248, events 4, clubs 9, with **zero `scale-` tagged rows** remaining. **No action
-needed.** The most likely explanation is that the harness's pre-seed count was taken
-against the `scale-`-prefixed rows specifically (which correctly read 0 before seeding),
-not against total row counts. Recorded because this is the second false environment
-alarm this week — the other was the "missing `GRANT SELECT` on registrations" that turned
-out to be the column-revoke trap — and both cost a spurious action item. **Re-verify an
-environment claim against the environment before acting on it.**
+**Residual — `payments` still carries the same risk, unscoped.** It is fetched via a plain
+unscoped `fetchAllRows` in `loadAll` — the exact shape the three tables above had before this
+fix. Cold-boot `syncFromSupabase()` at 0.5×-scale (9,000 payments) took 2.4–7.9 s; not
+re-measured in isolation. **Give it the same self + managed-club query scoping before a real
+season pushes it past 10k rows.** Current prod volume is small (invoices 43, invoice_items 69,
+memberships 39), so this is not urgent — but it is the one known remaining hole in the tiering
+assumption.
 
 ## Architecture watch-list
 
