@@ -22,18 +22,21 @@ audit → static read of the highest-risk surfaces → live exercise of the app 
 
 So the repo is healthy on its own terms. Everything below is what those gates do not cover.
 
-### What this review could NOT cover — read §0's green row narrowly
+### Coverage
 
-**No signed-in path was exercised live.** Prod credentials are Nate's and must not be handled;
-staging's dev-auth vars are blank. So every authenticated surface — Cart, Finance,
-RefundReview, Club rosters, AdminMembers, Home's admin dashboard — was reviewed **statically
-only**. In particular the money surfaces' `status === 'ready'` gates (§4.5) are verified by
-reading code, not by watching a total render. Anonymous paths *were* exercised live and are
-where §4.1–4.4 come from.
+Anonymous paths were exercised live against **prod** (§4.1–4.4). Signed-in paths were exercised
+live against **staging** via the dev-auth switcher (§4.6).
 
-The gap that matters most: a slice that resolves to `error` rather than `loading` on a
-signed-in money page would render a wrong total, and only a live session with real data would
-show it.
+*Corrected mid-review:* this section originally said no signed-in path could be exercised,
+because a stale note claimed staging's dev-auth vars were blank. **They are not** —
+`.env.staging.local` carries a full athlete/manager/admin credential set, and
+`npm run dev -- --mode staging` (the `ucg-staging` launch config, port 5177) auto-logs in with a
+real JWT. The check that would have caught this is one grep of the env file, which is now what
+§4.6 documents.
+
+Still uncovered: a real **paid** money path. Staging has 60 payments, all `failed`/`pending`,
+so no revenue figure anywhere is non-zero. Totals are proven to *gate* correctly (§4.6) but
+have not been proven to *add up* against real paid rows.
 
 ---
 
@@ -336,6 +339,39 @@ gates before computing:
 A first pass grepping for the literal `status === 'ready'` found only 3 sites and looked
 alarming — the real gates are mostly bound to intermediate variables (`peopleReady`,
 `invoicesStatus`). Recording that so the next audit doesn't re-raise the false alarm.
+
+### 4.6 ✅ Money surfaces verified SIGNED-IN and live (staging, dev-auth admin)
+
+The gap §0 originally flagged is now closed. Run against staging on `ucg-staging` (port 5177),
+auto-logged-in as the seeded league admin with a real JWT — so RLS, roles, and the slice layer
+all behaved as they do for a real admin.
+
+The question that mattered: **is a `$0` on a money page a real zero, or an unready slice
+rendering as zero?** Statically indistinguishable; live it is decidable.
+
+| surface | result |
+| --- | --- |
+| **Finance** | Renders. **Export button ENABLED** — and it is `disabled={… \|\| invoicesStatus !== 'ready'}` (`Finance.tsx:243`), so this is direct proof the slice reached `ready`. Totals $0. |
+| **AdminClubs** | Roster counts render as **real numbers** (10, 9, 11, 12, …), not the `…` placeholder shown while not ready — so `peopleReady && membershipsReady` both resolved. Active = 0. |
+| **AdminMembers** | **84 people** — matches the documented staging baseline exactly. All memberships `NONE`. |
+| **RefundReview** | Renders; 0 pending, empty history. |
+| **Home admin dashboard** | 0 active members · **9 clubs** · 0 clubs-with-members · 4 events. |
+| **Console** | **Zero errors** across every page above. |
+
+**And the zeros are genuine, not swallowed failures.** Queried staging's money tables directly
+with the same admin JWT: 14 invoices, 14 invoice_items, 70 memberships, and **60 payments of
+which every single one is `failed` or `pending` — none `paid`**. `buildFinanceTxns`
+(`finance.ts:135`) skips any payment that isn't `paid`/`refunded`. So $0 is arithmetically
+correct, and every cross-surface number agrees (0 active memberships ⇒ 0 clubs-with-members ⇒
+all `NONE` on Members).
+
+Both halves had to hold to call this verified: the slice reaching `ready` **and** the total
+being right given the data. A ready slice with a wrong total, or a correct-looking zero from an
+unready slice, would each have looked fine in isolation.
+
+**What this does not prove:** no revenue figure on staging is non-zero, so the totals are
+proven to *gate* correctly but not to *add up*. That needs either a paid payment on staging or
+the same sweep against prod after Stripe go-live.
 
 ---
 
