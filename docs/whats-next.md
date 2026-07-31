@@ -162,7 +162,10 @@ these were explicitly deferred, not dropped:
   receipts today are client-side jsPDF on demand.
 - **Camp registration popup simplification** (§G) — camp events still reuse the full
   per-discipline `RegistrationEditor`; spec wants no discipline/level/apparatus step.
-- **Host-payout formula** — see Nate item 1.3.
+- **Host-payout formula** — 💬 needs a business decision (what a host club is paid out of an
+  event's entry fees, and when). No implementation is blocked on anything technical. *The old
+  "see Nate item 1.3" pointer here was dangling — §1.3 is Stripe go-live; there has been no
+  host-payout item in §1 for some time.*
 
 ## 5. Feature roadmap
 

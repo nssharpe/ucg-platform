@@ -1,9 +1,16 @@
 # Third-party security review — options & recommendation
 
 > Research note, 2026-07-17. Answers the open decision "security-review budget
-> before live keys" (production-readiness §2 / whats-next §1.7). Decision is
-> Nate's; this brief lays out the market, what we actually need, and a
+> before live keys" (production-readiness §2 / whats-next **§1.6** — renumbered
+> 2026-07-31; §1.7 is now the separate `security-guidance` plugin decision).
+> Decision is Nate's; this brief lays out the market, what we actually need, and a
 > recommendation.
+>
+> **Addendum 2026-07-31:** two cheaper first passes worth weighing before paying for a
+> human audit — Anthropic's **Claude Security plugin** (multi-agent whole-repo scan with
+> independently reviewed findings) and one `/code-review ultra` run against the money paths
+> during the planned Max month. See
+> [`../specs/2026-07-31-review-and-cleanup-findings.md`](../specs/2026-07-31-review-and-cleanup-findings.md) §7.
 
 ## What we're buying and why
 
