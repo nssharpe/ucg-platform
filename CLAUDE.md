@@ -182,9 +182,12 @@ The single authoritative list is `docs/whats-next.md`.
   2026-07-26). Plan: `docs/plans/2026-07-02-security-hardening.md`.
 - **Data-layer scale (6.3) COMPLETE**, Phases 0–5. Known remaining gap: `payments` is still an
   unscoped `fetchAllRows` in `loadAll` (`docs/whats-next.md` §7).
-- **UI/UX review fixes** not started (`docs/plans/2026-07-04-uiux-review-fixes.md`) — money-story
-  task O1 first; ⚠️-marked tasks need the reviewer-tier money review.
+- **UI/UX review fixes COMPLETE** 2026-07-26 — all 14 tasks
+  (`docs/plans/2026-07-04-uiux-review-fixes.md`). Residuals: invoice numbering (two formats;
+  the generators derive the sequence from a row COUNT, which is not concurrency-safe), a
+  pre-existing 375px overflow on admin Communicate's compose card.
+- **Two live findings from the 2026-07-31 review** (`docs/specs/2026-07-31-review-and-cleanup-findings.md`):
+  the public Results page hides posted scores when registrations carry no `session_id`, and
+  `judge-entry`'s 6-digit unlock has no real rate limit. Both in `docs/whats-next.md` §3.
 - 👤 **Nate's actions:** grant `finance_admin` (Julia/bookkeeper); verify the P3 prereqs landed
-  ("UCG - Main" `is_league_host` + `refund_manager` grants); reseed staging scale fixtures before
-  relying on `npm run test:e2e`; `request-refund` may still need a redeploy to prod+staging
-  (function deploys were classifier-blocked 2026-07-22).
+  ("UCG - Main" `is_league_host` + `refund_manager` grants).
