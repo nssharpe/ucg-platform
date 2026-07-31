@@ -458,3 +458,82 @@ Stripe go-live gates, and the fix (a DB sequence) is small.
   that are still moving.
 - **In-app help / host guides** (`whats-next` §6.1) — real, but 6.2's console removes more
   support load per unit effort by making the product self-evident rather than documented.
+
+---
+
+## 7. Current Anthropic guidance, and the tooling actually worth adopting here
+
+Researched against Anthropic's own docs rather than answered from memory. Most published
+"Claude Code security" advice is about securing *the agent* (permissions, sandboxing, deny
+rules, MCP allowlisting) — largely already satisfied here by the destructive-command-guard
+PreToolUse hook and this repo's permission setup. The genuinely new and applicable thing is
+one plugin.
+
+### 7.1 The `security-guidance` plugin — recommended, with a real cost caveat
+
+Anthropic shipped a free first-party plugin (2026-05-26) that reviews Claude's *own* code
+changes for vulnerabilities in-session. It fits this repo unusually well because it is built
+entirely on **hooks** — the same "enforcement, not reminders" model `CLAUDE.md` already commits
+to — and because it takes **repo-specific rules**.
+
+Three layers:
+
+| layer | when | cost |
+| --- | --- | --- |
+| per-edit pattern match (~25 patterns: `eval`, `innerHTML`, `dangerouslySetInnerHTML`, unsafe deserialization, `.github/workflows/` edits) | every `Edit`/`Write` | **free** — no model call |
+| end-of-turn diff review (authz bypass, IDOR, injection, SSRF, weak crypto) | every turn that changes files | a model call |
+| agentic commit/push review (reads callers and sanitizers to kill false positives) | every `git commit`/`git push` Claude runs | several model turns |
+
+**⚠️ The cost caveat is the decision, not the capability.** Both model-backed layers default to
+**Opus 4.7**, and they fire on *every* file-changing turn and *every* commit. On a Pro plan
+with an explicitly usage-optimized workflow, that is a material standing tax on all work, not
+just security work. Three ways to take the value without the full bill:
+
+- `ENABLE_PATTERN_RULES` only (`ENABLE_CODE_SECURITY_REVIEW=0`) — keeps the **free** layer,
+  drops both model layers. **This is the recommended starting point.**
+- `SECURITY_REVIEW_MODEL` / `SG_AGENTIC_MODEL` to route the reviews to a cheaper tier.
+- `ENABLE_STOP_REVIEW=0`, keeping only the commit review — reviews once per commit instead of
+  once per turn, which matches this repo's existing "verify before commit" gate.
+
+Not enabled in this session: it costs usage on every future turn, which is Nate's call, and
+`CLAUDE.md`'s routing rules are emphatic about not spending tokens by default.
+
+```bash
+/plugin install security-guidance@claude-plugins-official
+```
+
+Project-scoped enablement (so it applies to cloud sessions and anyone who clones) is
+`enabledPlugins` in `.claude/settings.json`; user scope is per-machine and does **not** carry
+into Claude Code on the web.
+
+### 7.2 Repo-specific rules are written and checked in — `.claude/claude-security-guidance.md`
+
+The plugin's extension points are the reason it's worth more here than a generic scanner:
+
+- `.claude/claude-security-guidance.md` — prose threat model fed to the model-backed reviews.
+- `.claude/security-patterns.yaml|.json` — deterministic regex/substring rules on the free
+  per-edit layer. *(YAML needs PyYAML importable; JSON always works.)*
+
+**Written this session and checked in.** It encodes the traps this repo has actually hit rather
+than a generic OWASP list — `for all` silently granting DELETE, the RLS upsert trap, the
+`coalesce(is_admin(), false)` fail-closed rule, the column-revoke no-op, the "don't wrap a slow
+RLS subquery in SECURITY DEFINER" dead end, `--no-verify-jwt` not being sticky, never trusting
+caller identity from a payload, `mode:'preview'` staying side-effect-free, the AAL guard, the
+256-bit token rule, and the dev-auth firewall.
+
+The file is **inert without the plugin**, so checking it in costs nothing and means the rules
+exist and are reviewable independently of the enable/don't-enable decision. It also doubles as
+a security checklist a human or a reviewer-tier subagent can read directly.
+
+### 7.3 The rest of the stack, for completeness
+
+- **`/security-review`** — built-in, covers only *changes on the current branch*. It had nothing
+  to operate on here (clean tree on `main`), which is why this review used its methodology
+  against standing surface instead of invoking it.
+- **`/code-review ultra`** — user-triggered and billed; I can't launch it. Worth Nate spending
+  one run on the money paths during the planned Max month.
+- **Claude Security plugin** — multi-agent whole-repo scan. This is the closest match to the
+  "deep external security review" option in
+  `research/2026-07-17-security-review-options.md` (`whats-next` §1.6) and is worth adding to
+  that brief as a cheaper first pass before paying for a human audit.
+- **CI** — `npm audit` (see §2, and the fail-on-runtime-deps-only caveat).
