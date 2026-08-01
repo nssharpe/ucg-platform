@@ -36,16 +36,16 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
    brief ([findings §7](specs/2026-07-31-review-and-cleanup-findings.md)): the **Claude Security
    plugin**'s multi-agent whole-repo scan is a cheaper first pass before paying for a human
    audit, and one `/code-review ultra` run on the money paths during the planned Max month.
-7. 💬 **Decide on the `security-guidance` plugin** ([findings §7](specs/2026-07-31-review-and-cleanup-findings.md)).
-   Anthropic's free first-party plugin reviews Claude's own diffs in-session; it's hooks-based,
-   matching this repo's enforcement model, and takes repo-specific rules —
-   **`.claude/claude-security-guidance.md` is already written and checked in** (encoding our
-   real traps: `for all` granting DELETE, the upsert trap, column-revoke, `verify_jwt`
-   stickiness, `mode:'preview'` purity, AAL, dev-auth firewall). It is inert until the plugin is
-   installed. ⚠️ **The catch is usage, not capability:** both model-backed layers default to
-   Opus 4.7 and fire on *every* file-changing turn and *every* commit — a standing tax on a Pro
-   plan. Recommended start: install with `ENABLE_CODE_SECURITY_REVIEW=0`, keeping only the
-   **free** per-edit pattern layer.
+7. ✅ **`security-guidance` plugin — INSTALLED + CONFIGURED 2026-07-31.** Enabled at
+   PROJECT scope (so it covers cloud sessions and clones — user scope covers neither).
+   The decision was cost, not capability: both model-backed layers default to Opus 4.7 and fire
+   on every file-changing turn and every commit. Configured as **free pattern layer ON**,
+   **per-turn Stop review OFF**, **commit review ON** (matching the existing verify-before-commit
+   gate — review at the gate that matters, once per commit), both model layers routed to Sonnet.
+   Repo-specific rules live in `.claude/claude-security-guidance.md` (prose, for the model
+   layers) + `.claude/security-patterns.json` (14 deterministic rules on the free layer);
+   verified 14 declared / 14 loaded / 0 skipped through the plugin's own loader. 💬 If you want
+   the per-turn review back, drop `ENABLE_STOP_REVIEW` from `.claude/settings.json`.
 
 ## 2. Launch blockers (🤖 buildable now)
 
@@ -116,21 +116,6 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
 6. **Fix the `record-waiver-signature` stale-hold wart** — it can re-assert a
   club-payment hold if the club paid before the guardian signed (documented in
   CLAUDE.md; small, known fix).
-10. 🟠 **Concurrent refund approvals can exceed the cap and refund part of the service fee**
-  (money-path review 2026-07-31 —
-  [findings §8.1](specs/2026-07-31-review-and-cleanup-findings.md)). `process-refund`'s atomic
-  claim is keyed on the **request's own id**, so it stops one request being processed twice but
-  does not serialize two *different* pending requests against the *same payment* — both read
-  `priorRefundedCents` before either writes. Stripe's own cumulative ceiling stops a large
-  over-refund, but that ceiling is the **charge** (`subtotal + fee`) while our cap is
-  `subtotal`, so a concurrent pair landing in that gap refunds part of the service fee — which
-  is never supposed to be refunded. Worked example in the findings.
-  **Low severity** (needs two distinct pending requests on one payment approved within a
-  sub-second window by a refund manager; ceiling on the leak is 3% + $0.30; not
-  attacker-reachable) — but a real invariant violation with a known-good fix shape: a SECURITY
-  DEFINER RPC that `SELECT … FOR UPDATE`s the `payments` row and does sum + cap + claim in one
-  transaction, exactly as `reserve_coupon` solved the identical race.
-  ⚠️ `money-invariants.md` requires a reviewer-tier adversarial read before this ships.
 7. ✅ **Public Results page hid posted scores — FIXED 2026-07-31.** The root cause was deeper
   than first recorded: `sessionResults()` scoped scores by `score.sessionId`, a snapshot taken
   at write time that does **not** follow a registration's session reassignment. So assigning
@@ -163,6 +148,17 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
   the MFA break-glass could be smoke-tested before a prod change. Staging is now at 25
   functions, matching prod exactly; `verify_jwt` trio re-verified by hand
   ([findings §1.3](specs/2026-07-31-review-and-cleanup-findings.md)).
+
+10. ✅ **Concurrent refund approvals could exceed the cap — FIXED 2026-07-31** (staging + prod,
+  migration `20260731210000`, `process-refund` prod v6). `claim_refund_approval` now takes
+  `select … for update` on the `payments` row and does the sum + cap + claim in one
+  transaction — the same idiom `reserve_coupon` used. **Proven on staging:** the exact failure
+  scenario (two concurrent $51 approvals against a $100 subtotal) now grants $51 + $49 = exactly
+  $100, with the second call reading the first's committed total instead of a stale zero;
+  sequential over-requests cap to the remainder rather than being refused; single-request
+  idempotency intact; missing payment fails closed; anon cannot execute the RPC on either
+  project. Full detail: `supabase/README.md`'s `20260731210000` row and
+  [findings §8.1](specs/2026-07-31-review-and-cleanup-findings.md).
 
 ## 4. Event-management v2 residuals (deferred by design)
 
