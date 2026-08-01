@@ -154,8 +154,15 @@ export function buildEntries(db: DB, event: Event, allEventRegs: Registration[],
   const regs = allEventRegs.filter(
     (r) => r.eventId === event.id && r.sessionId && sessionIds.has(r.sessionId) && !r.refunded,
   );
+  // Same reasoning as `sessionResults` (scoring.ts, 2026-07-31): scope scores by
+  // the REGISTRATION set, not by `score.sessionId`. The score's session is a
+  // snapshot from write time and does not follow a registration reassignment;
+  // filtering on it drops real scores. Here the stakes are higher than a missing
+  // row — this feeds rank/award/qualification math, so a dropped score is a
+  // plausible-but-WRONG placement.
+  const regIds = new Set(regs.map((r) => r.id));
   const scoreMap = new Map<string, Score>();
-  for (const s of scores) if (sessionIds.has(s.sessionId)) scoreMap.set(`${s.regId}|${s.apparatus}`, s);
+  for (const s of scores) if (regIds.has(s.regId)) scoreMap.set(`${s.regId}|${s.apparatus}`, s);
 
   const peopleById = new Map(people.map((p) => [p.id, p]));
   const clubsById = new Map(db.clubs.map((c) => [c.id, c]));

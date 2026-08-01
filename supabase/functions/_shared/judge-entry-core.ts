@@ -166,3 +166,44 @@ export function isValidAccessCode(code: unknown): code is string {
 export function isValidAccessToken(token: unknown): token is string {
   return typeof token === 'string' && token.length >= 16 && /^[a-f0-9]+$/i.test(token);
 }
+
+// ---------------------------------------------------------------------------
+// Unlock rate limiting (2026-07-31 review finding §3.3)
+// ---------------------------------------------------------------------------
+
+/** Failed 6-digit unlock attempts allowed per caller per window. A legitimate
+ *  judge has ONE code and mistypes it a handful of times at worst; 15 is far
+ *  above real fumbling and far below useful brute force. */
+export const UNLOCK_FAILURE_LIMIT = 15;
+/** Rolling window for the limit. Also the lockout duration — it expires on its
+ *  own, so a locked-out judge waits minutes rather than needing an admin. */
+export const UNLOCK_WINDOW_MINUTES = 5;
+
+/** Caller identity for the limit: first hop of `x-forwarded-for`, else a shared
+ *  'unidentified' bucket. Mirrors `guard_error_logs_rate_limit()`'s identity so
+ *  there is one notion of "who" across both mechanisms.
+ *
+ *  Taking the FIRST hop is what makes this hard to spoof here: Supabase's edge
+ *  gateway prepends the true client IP, so a caller-supplied value lands after it
+ *  and is ignored (measured 2026-07-31 — 40 requests with 40 different fake IPs
+ *  all recorded under the tester's real address). Treat that as a useful property
+ *  of the platform, not a guarantee this code enforces; it is a cost-raiser on an
+ *  endpoint that is anonymous by design, not an authentication boundary. The
+ *  alternative is making judges hold accounts, which is the exact thing codeless
+ *  judge access exists to avoid. */
+export function unlockAttemptKey(headers: { get(name: string): string | null }): string {
+  const fwd = headers.get('x-forwarded-for');
+  const first = fwd?.split(',')[0]?.trim();
+  return first && first.length > 0 && first.length <= 64 ? first : 'unidentified';
+}
+
+/** Whether this caller is currently locked out. Pure so the threshold is
+ *  testable without a database or a clock. */
+export function isUnlockRateLimited(recentFailures: number): boolean {
+  return recentFailures >= UNLOCK_FAILURE_LIMIT;
+}
+
+/** ISO cutoff for the rolling window, given "now". Pure for the same reason. */
+export function unlockWindowStart(nowMs: number): string {
+  return new Date(nowMs - UNLOCK_WINDOW_MINUTES * 60_000).toISOString();
+}
