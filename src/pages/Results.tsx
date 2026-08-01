@@ -5,7 +5,7 @@ import { useCapabilities } from '../lib/capabilities';
 import { Tabs, Badge } from '../components/ui';
 import { useFmtDate, useToast } from '../components/ui-hooks';
 import { EventStatusBadge } from './Home';
-import { sessionResults, fmtScore } from '../lib/scoring';
+import { sessionResults, fmtScore, unplacedScoreCount } from '../lib/scoring';
 import { scoreDetailPath } from '../lib/calculators';
 import { APPARATUS } from '../lib/types';
 import type { Registration, Score } from '../lib/types';
@@ -21,8 +21,20 @@ import { appBaseUrl, copyToClipboard } from '../lib/url';
 // registered…").
 const NO_MATCH_MSG = 'No athletes match your search.';
 const NO_SCORES_MSG = 'No scores posted yet — results appear here live as judges enter them.';
-function ResultsEmpty({ hasFilter }: { hasFilter: boolean }) {
-  return <p style={{ color: 'var(--ink-soft)', fontSize: 14 }}>{hasFilter ? NO_MATCH_MSG : NO_SCORES_MSG}</p>;
+/** Truthful empty state (2026-07-31): when scores exist for this event but their
+ *  registrations carry no session, they can't appear under any session tab. Saying
+ *  "No scores posted yet" there is actively wrong — it reads as "judging hasn't
+ *  started" when judging has, which on meet day sends a host debugging the tablets
+ *  instead of the roster. `unplaced` comes from `unplacedScoreCount` (scoring.ts). */
+const unplacedMsg = (n: number) =>
+  `${n} ${n === 1 ? 'score is' : 'scores are'} posted but not assigned to a session — `
+  + 'assign each athlete a session on the event roster and they will appear here.';
+function emptyMsg(hasFilter: boolean, unplaced: number): string {
+  if (hasFilter) return NO_MATCH_MSG;
+  return unplaced > 0 ? unplacedMsg(unplaced) : NO_SCORES_MSG;
+}
+function ResultsEmpty({ hasFilter, unplaced = 0 }: { hasFilter: boolean; unplaced?: number }) {
+  return <p style={{ color: 'var(--ink-soft)', fontSize: 14 }}>{emptyMsg(hasFilter, unplaced)}</p>;
 }
 
 export function ResultsIndex() {
@@ -94,6 +106,17 @@ export function EventResults() {
   const computed = useMemo(
     () => (event && session ? sessionResults(event, session.id, eventScores, eventRegs) : null),
     [event, session, eventScores, eventRegs],
+  );
+
+  // Scores that can't surface under ANY session tab because their registration
+  // has no session — drives the truthful empty state instead of NO_SCORES_MSG.
+  // Only meaningful once both slices are ready; a mid-load partial read would
+  // otherwise report a scary count that resolves to 0 a moment later.
+  const unplaced = useMemo(
+    () => (scoresStatus === 'ready' && regsStatus === 'ready'
+      ? unplacedScoreCount(eventScores, eventRegs)
+      : 0),
+    [scoresStatus, regsStatus, eventScores, eventRegs],
   );
 
   // Tie-aware places (1,2,2,4) per (level, category) group — the viewer's
@@ -231,7 +254,7 @@ export function EventResults() {
           {(() => {
             const groupsWithShown = levelEntries.map(([levelId, rows]) => [levelId, sortRows(rows.filter(matchesFilters))] as const);
             const totalShown = groupsWithShown.reduce((n, [, shown]) => n + shown.length, 0);
-            if (totalShown === 0) return <ResultsEmpty hasFilter={hasActiveFilter} />;
+            if (totalShown === 0) return <ResultsEmpty hasFilter={hasActiveFilter} unplaced={unplaced} />;
             return groupsWithShown.map(([levelId, shown]) => {
               if (shown.length === 0) return null;
               const isCollapsed = collapsed.has(levelId);
@@ -298,7 +321,7 @@ export function EventResults() {
                     </tr>
                   ))}
                   {er.rows.length === 0 && (
-                    <tr><td style={{ color: 'var(--ink-soft)', fontSize: 13 }}>{hasActiveFilter ? NO_MATCH_MSG : NO_SCORES_MSG}</td></tr>
+                    <tr><td style={{ color: 'var(--ink-soft)', fontSize: 13 }}>{emptyMsg(hasActiveFilter, unplaced)}</td></tr>
                   )}
                 </tbody>
               </table>
@@ -310,7 +333,7 @@ export function EventResults() {
       {view === 'team' && (
         teamScores.length === 0 ? (
           <div className="card card-pad">
-            <ResultsEmpty hasFilter={hasActiveFilter} />
+            <ResultsEmpty hasFilter={hasActiveFilter} unplaced={unplaced} />
           </div>
         ) : (
           <div className="card" style={{ overflowX: 'auto' }}>

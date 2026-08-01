@@ -116,29 +116,33 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
 6. **Fix the `record-waiver-signature` stale-hold wart** — it can re-assert a
   club-payment hold if the club paid before the guardian signed (documented in
   CLAUDE.md; small, known fix).
-7. 🔴 **Public Results page hides posted scores when registrations have no session**
-  (found 2026-07-31, live in prod —
-  [findings §4.4](specs/2026-07-31-review-and-cleanup-findings.md)). All 35 anon-visible prod
-  registrations have `session_id = null`; `sessionResults()` filters strictly on session, so the
-  3 scores that exist on `test-meet` are unreachable and every event reads *"No scores posted
-  yet."* Two fixes: **(a)** assign sessions to the scored registrations via the host roster
-  editor's per-row dropdown (`Events.tsx:1541`) — 👤 data fix, no code; **(b)** 🤖 make the empty
-  state truthful — when `eventScores.length > 0` but the session filter yields none, say *"N
-  scores are posted but not assigned to a session"* instead of `NO_SCORES_MSG`. (b) converts a
-  silent meet-day failure into a self-diagnosing one and is a one-conditional change.
-  Note `pushEvent` never backfills `session_id`, so a session whose **id** changes on an edit
-  orphans its registrations the same way.
-8. 🔴 **`judge-entry` unlock has no real rate limit** (found 2026-07-31 —
-  [findings §3.3](specs/2026-07-31-review-and-cleanup-findings.md)). The 6-digit code path's
-  only defense is a per-request `sleep(300)`, which parallelism erases: 40 concurrent invalid
-  codes against staging all returned 401, none throttled. A guess yields score-write access to a
-  live event. Compounding: failed attempts log to `error_logs` via the **service role**, which
-  deliberately bypasses the 20/min limit — so the one anonymous endpoint that invites a million
-  guesses is exempt from the anti-spam limit added for exactly this. And a validity **oracle**
-  (401 for no-match vs 403 for "event not live") lets codes be harvested weeks ahead.
-  Fix = same-401 for not-live + a real per-caller counter + capped failure logging.
-  ⚠️ **Reviewer-tier design review before shipping** — a limit that's wrong in the
-  "locks out a real judge mid-meet" direction is worse than today's state.
+7. ✅ **Public Results page hid posted scores — FIXED 2026-07-31.** The root cause was deeper
+  than first recorded: `sessionResults()` scoped scores by `score.sessionId`, a snapshot taken
+  at write time that does **not** follow a registration's session reassignment. So assigning
+  sessions (the data fix) made the athletes appear but their scores still didn't — the score
+  rows still carried `session_id = null`. Scores are now scoped by the **registration set**,
+  which can't drift. `nationals-adapter.ts` had the identical pattern and got the identical fix
+  (higher stakes there — it feeds rank/award math, so a dropped score is a wrong placement, not
+  a missing row). The empty state is now truthful too (`unplacedScoreCount`). Verified live:
+  all 3 prod scores render across 2 sessions with correct ranks.
+  ⚠️ **Still true and worth designing around:** nothing back-fills `session_id`, and
+  `pushEvent` deletes/reinserts `event_sessions`, so a session whose **id** changes on an edit
+  still orphans its registrations — see §4's §L.2 note.
+8. ✅ **`judge-entry` unlock rate limit — SHIPPED 2026-07-31** (staging + prod, migration
+  `20260731180000`, `judge-entry` prod v3). The 6-digit code path's only defense was a
+  per-request `sleep(300)`, which parallelism erases — 40 concurrent invalid codes all returned
+  401, none throttled. Now capped at **15 failures per 5 min per caller** via
+  `judge_unlock_attempts`. Design points, all proven live on staging: the **token/QR path is
+  deliberately exempt** (160-bit, unguessable) so a locked-out judge always has a way in; a
+  **successful unlock clears the counter**, which is what stops a shared-NAT venue locking
+  itself out on its own judges' fumbles; a rate-limited request **writes nothing**, so refused
+  traffic can't become the write amplifier this closes; and the count **fails open**, because
+  locking a whole meet out over a hiccuped query is the worse failure. Also collapsed the
+  **validity oracle** — no-match / code-collision / event-not-live all return the same 401 and
+  message now, so codes can't be confirmed ahead of an event going live. Proven: 20 sequential
+  bad codes → exactly 15×401 then 5×429; **40 concurrent → 40/40 blocked**; token path from the
+  same locked-out caller still 401 not 429; a different key at 20 rows didn't block an unrelated
+  caller. Full narrative: `supabase/README.md`'s `20260731180000` row.
 9. ✅ **`report-problem` + `admin-reset-mfa` deployed to staging — DONE 2026-07-31.** They
   existed in the repo and prod but not in staging, so neither the in-app problem reporter nor
   the MFA break-glass could be smoke-tested before a prod change. Staging is now at 25

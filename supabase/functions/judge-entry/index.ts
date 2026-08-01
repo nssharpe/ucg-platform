@@ -7,12 +7,24 @@
 //   - unlock: `{ code }` (6 digits) or `{ token }` (from the /judge/access/:token
 //     link or a scanned QR). Resolves an ACTIVE (revoked_at null)
 //     judge_access_codes row and returns `{ eventId, token }` — the device
-//     always stores the long token, never the short code. A code that
-//     matches more than one active row (cross-event collision — codes are
-//     NOT globally unique, only tokens are) is rejected rather than guessed;
-//     the caller is told to use the link/QR instead. Failed attempts are
-//     logged to error_logs (kind 'judge-unlock-failed') as a brute-force
-//     audit trail, plus a soft ~300ms brake.
+//     always stores the long token, never the short code.
+//
+//     Rate limited (2026-07-31, review finding §3.3): the 6-digit CODE path is
+//     capped at UNLOCK_FAILURE_LIMIT failures per caller per
+//     UNLOCK_WINDOW_MINUTES, counted in `judge_unlock_attempts`. The prior
+//     defense was a 300ms sleep, which does not throttle concurrent callers at
+//     all — 40 simultaneous invalid codes were measured all returning 401,
+//     unthrottled. The TOKEN path is deliberately NOT limited (160 bits of
+//     CSPRNG — unguessable), so a locked-out judge always has a working way in
+//     via the link/QR. A successful unlock CLEARS the caller's counter, which
+//     is what keeps a shared-NAT venue from accumulating its judges' fumbles.
+//
+//     Every failure — no match, cross-event code collision, or event not live —
+//     returns the SAME 401 and the same message. Distinguishing them (401 vs
+//     403 vs 409, as before) was a validity oracle: it let an attacker confirm
+//     which codes were real weeks ahead of an event going live, then use them
+//     on meet day. The specific reason is kept server-side in error_logs
+//     ('judge-unlock-failed') as the brute-force audit trail.
 //   - submit: `{ token, regId, apparatus, sv, deductions, eScore, final,
 //     source, calc, calcState, flashed, scratched }`. Validates the token is
 //     active, recomputes the score id server-side (never trusts a client
@@ -31,7 +43,10 @@
 // Secrets: auto-provided SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY only.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { validateJudgeSubmit, isValidAccessCode, isValidAccessToken, type JudgeSubmitPayload } from '../_shared/judge-entry-core.ts';
+import {
+  validateJudgeSubmit, isValidAccessCode, isValidAccessToken, type JudgeSubmitPayload,
+  unlockAttemptKey, isUnlockRateLimited, unlockWindowStart, UNLOCK_WINDOW_MINUTES,
+} from '../_shared/judge-entry-core.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -63,17 +78,56 @@ interface Payload {
   scratched?: boolean;
 }
 
+// One message and one status for EVERY unlock failure (2026-07-31, review §3.3).
+// Previously "no match" returned 401 while "matched, but the event isn't live"
+// returned 403 — a validity oracle that let an attacker confirm codes at leisure
+// weeks before an event went live, then use them on meet day. The guidance about
+// the link/QR is folded in here so the cross-event-collision case (which used to
+// get its own 409, and also confirmed validity) still tells a real judge what to
+// do without telling an attacker anything.
+const UNLOCK_FAILED_MSG =
+  'Invalid or expired access code. If your host sent you a link or QR code, use that instead.';
+
 async function logFailedUnlock(
   db: ReturnType<typeof createClient>,
+  attemptKey: string,
   detail: Record<string, unknown>,
 ): Promise<void> {
+  // Audit trail (unbounded by design — service_role bypasses the error_logs
+  // rate limit) AND the rate-limit counter (bounded, its own table). Kept
+  // separate so a log-retention change can never widen the limit.
   await db.from('error_logs').insert({
     context: 'judge-unlock-failed',
     message: 'Judge unlock attempt failed',
-    detail,
+    detail: { ...detail, attemptKey },
   }).then(() => {}, () => {});
-  // Soft brake against code-guessing — 6 digits is only 1e6 combinations.
+  await db.from('judge_unlock_attempts').insert({ attempt_key: attemptKey })
+    .then(() => {}, () => {});
+  // Opportunistic prune of this key's expired rows, so the table stays
+  // proportional to ACTIVE callers rather than growing forever. Scoped to the
+  // one key (indexed) rather than a table-wide sweep, so it stays cheap on a
+  // path that runs per failed attempt.
+  await db.from('judge_unlock_attempts').delete()
+    .eq('attempt_key', attemptKey)
+    .lt('created_at', unlockWindowStart(Date.now()))
+    .then(() => {}, () => {});
+  // Retained per-request latency. It is NOT the rate limit (concurrency erases
+  // it — that was the finding); it just makes serial guessing tedious too.
   await sleep(300);
+}
+
+/** Clears a caller's failure counter after a successful unlock.
+ *
+ *  Load-bearing for shared-NAT venues: a gym where every judge shares one public
+ *  IP would otherwise accumulate other people's fumbles toward a common limit.
+ *  Because a success wipes the slate, the limit only ever bites a caller who is
+ *  failing repeatedly and succeeding never — which is the attacker, not the gym. */
+async function clearUnlockFailures(
+  db: ReturnType<typeof createClient>,
+  attemptKey: string,
+): Promise<void> {
+  await db.from('judge_unlock_attempts').delete().eq('attempt_key', attemptKey)
+    .then(() => {}, () => {});
 }
 
 Deno.serve(async (req) => {
@@ -90,9 +144,42 @@ Deno.serve(async (req) => {
   if (a.op === 'unlock') {
     const byToken = isValidAccessToken(a.token);
     const byCode = !byToken && isValidAccessCode(a.code);
+    const attemptKey = unlockAttemptKey(req.headers);
+
     if (!byToken && !byCode) {
-      await logFailedUnlock(db, { reason: 'malformed input' });
+      await logFailedUnlock(db, attemptKey, { reason: 'malformed input' });
       return json({ ok: false, error: 'Enter a valid 6-digit code.' }, 400);
+    }
+
+    // Rate limit the CODE path only. A token is 160 bits of CSPRNG output — it
+    // cannot be guessed, so throttling it would add no security while making the
+    // link/QR (the path a locked-out judge is told to use) fail too. That
+    // asymmetry is deliberate: the limit always leaves a working way in for
+    // someone holding real credentials.
+    if (byCode) {
+      const { count, error: countErr } = await db
+        .from('judge_unlock_attempts')
+        .select('id', { count: 'exact', head: true })
+        .eq('attempt_key', attemptKey)
+        .gt('created_at', unlockWindowStart(Date.now()));
+      // Fail OPEN on a counting error, deliberately: this is availability-vs-
+      // brute-force, and locking every judge out of a live meet because a count
+      // query hiccuped is the worse failure. The 300ms brake and the audit trail
+      // both still apply in that case.
+      if (!countErr && isUnlockRateLimited(count ?? 0)) {
+        // Write NOTHING here. Once the limit is reached the counter has already
+        // made its point, and the audit trail already holds the burst that got
+        // us here — appending a row per rejected request would turn the very
+        // requests we are refusing back into the unbounded write amplifier this
+        // change exists to close. Caps writes at ~UNLOCK_FAILURE_LIMIT per key
+        // per window no matter how hard the endpoint is hammered.
+        await sleep(300);
+        return json({
+          ok: false,
+          error: `Too many incorrect codes. Wait ${UNLOCK_WINDOW_MINUTES} minutes and try again, `
+            + 'or use the link or QR code from your host.',
+        }, 429);
+      }
     }
 
     const query = db.from('judge_access_codes').select('id, event_id, code, token').is('revoked_at', null);
@@ -101,27 +188,32 @@ Deno.serve(async (req) => {
       : await query.eq('code', a.code as string);
 
     if (error) {
-      await logFailedUnlock(db, { reason: 'query error', message: error.message });
+      await logFailedUnlock(db, attemptKey, { reason: 'query error', message: error.message });
       return json({ ok: false, error: 'Could not check that code right now.' }, 500);
     }
+    // Every failure below returns the SAME status and message. The reason is
+    // recorded server-side for the audit trail; the caller learns only "that
+    // didn't work", never whether the code exists.
     if (!rows || rows.length === 0) {
-      await logFailedUnlock(db, { reason: 'no match', byToken });
-      return json({ ok: false, error: 'Invalid or expired access code.' }, 401);
+      await logFailedUnlock(db, attemptKey, { reason: 'no match', byToken });
+      return json({ ok: false, error: UNLOCK_FAILED_MSG }, 401);
     }
     if (rows.length > 1) {
       // Only possible on the code path — codes are not globally unique.
-      // Never guess which event the judge means; make them use the link/QR.
-      await logFailedUnlock(db, { reason: 'ambiguous code', matches: rows.length });
-      return json({ ok: false, error: 'This code matches more than one event. Use the link or QR code from the event host instead.' }, 409);
+      // Never guess which event the judge means.
+      await logFailedUnlock(db, attemptKey, { reason: 'ambiguous code', matches: rows.length });
+      return json({ ok: false, error: UNLOCK_FAILED_MSG }, 401);
     }
 
     const row = rows[0] as { id: string; event_id: string; code: string; token: string };
     const { data: event } = await db.from('events').select('id, status').eq('id', row.event_id).maybeSingle();
     if (!event || event.status !== 'live') {
-      await logFailedUnlock(db, { reason: 'event not live', eventId: row.event_id });
-      return json({ ok: false, error: 'This event is not open for scoring.' }, 403);
+      await logFailedUnlock(db, attemptKey, { reason: 'event not live', eventId: row.event_id });
+      return json({ ok: false, error: UNLOCK_FAILED_MSG }, 401);
     }
 
+    // Success wipes this caller's failure counter — see clearUnlockFailures.
+    await clearUnlockFailures(db, attemptKey);
     return json({ ok: true, eventId: row.event_id, token: row.token });
   }
 

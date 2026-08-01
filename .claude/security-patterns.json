@@ -1,0 +1,102 @@
+{
+  "_comment": [
+    "Repo-specific deterministic security rules for the security-guidance plugin's FREE",
+    "per-edit pattern layer (no model call). Companion to .claude/claude-security-guidance.md,",
+    "which is prose fed to the model-backed reviews.",
+    "",
+    "These encode traps THIS repo has actually hit and paid for — not a generic OWASP list.",
+    "Every rule below traces to a real incident or a rule in .claude/rules/*.md. Keep it that",
+    "way: a noisy rule trains everyone to ignore the whole layer. Cap is 50 rules; we are well",
+    "under it deliberately.",
+    "",
+    "JSON rather than YAML on purpose — the loader needs PyYAML importable for .yaml, but JSON",
+    "always works. Schema: patterns[] of { rule_name, reminder, regex|substrings, paths?,",
+    "exclude_paths? }. Built-in patterns still run; these are additive."
+  ],
+  "patterns": [
+    {
+      "rule_name": "rls-for-all-grants-delete",
+      "reminder": "`for all` on an RLS policy SILENTLY GRANTS DELETE. This repo has retired this shape three times (invoices/invoice_items in the 2026-07-24 write lockdown, memberships in 20260728015930). Write explicit insert/update/delete policies instead. Note an upsert must ALSO pass the INSERT policy's WITH CHECK on the conflict path, so a manager-editable table needs BOTH insert and update policies.",
+      "regex": "create\\s+policy[\\s\\S]{0,200}?for\\s+all",
+      "paths": ["supabase/migrations/*.sql"]
+    },
+    {
+      "rule_name": "security-definer-fail-open",
+      "reminder": "In a SECURITY DEFINER function, wrap auth predicates in coalesce(..., false). For an anon caller an OR-chain over NULL evaluates to NULL, and `if not NULL` does NOT raise — the guard silently passes. This bit us live in 20260704133502. Also revoke the default PUBLIC execute grant on any new function, and revoke from anon explicitly.",
+      "regex": "security\\s+definer",
+      "paths": ["supabase/migrations/*.sql"]
+    },
+    {
+      "rule_name": "new-table-needs-rls",
+      "reminder": "A new table needs `alter table <t> enable row level security`. If it is server-only (written solely by an edge function via the service role), enable RLS and create ZERO policies — that is the payments / refund_requests / coupon_reservations / judge_unlock_attempts model — and remember `revoke all` on the table does NOT cover its backing sequence.",
+      "substrings": ["create table "],
+      "paths": ["supabase/migrations/*.sql"]
+    },
+    {
+      "rule_name": "column-revoke-breaks-upserts",
+      "reminder": "A column-scoped SELECT lockdown (`revoke select on <t>` + `grant select (<cols>)`) breaks EVERY whole-row upsert that writes a revoked column — PostgREST compiles upserts to ON CONFLICT DO UPDATE SET col = EXCLUDED.col, which needs SELECT on those columns. This broke prod for six days (2026-07-17 → 23). The error names the TABLE, not the column, so it reads like a missing base grant. A revoked column must never appear in a *ToRow upsert mapping — write it via a targeted column UPDATE (pushCampSurvey is the pattern). Live-probe the WRITE path as a non-admin afterward.",
+      "regex": "revoke\\s+select\\s+on",
+      "paths": ["supabase/migrations/*.sql"]
+    },
+    {
+      "rule_name": "select-star-on-column-revoked-table",
+      "reminder": "`registrations` has SELECT revoked at table level and re-granted per column (camp_survey excluded, 20260717205348). `select('*')` on it returns 42501 permission denied. Use REGISTRATION_COLUMNS_NO_SURVEY — it must stay byte-identical to the migration's grant list.",
+      "regex": "from\\s*\\(\\s*['\"]registrations['\"]\\s*\\)\\s*\\.\\s*select\\s*\\(\\s*['\"]\\*['\"]",
+      "paths": ["src/**/*.ts", "src/**/*.tsx", "supabase/functions/**/*.ts"]
+    },
+    {
+      "rule_name": "unpaginated-table-read",
+      "reminder": "A bare .select() silently truncates at PostgREST's 1000-row cap — fixed repo-wide 2026-07-24, do not reintroduce. Read tables via fetchAllRows/fetchScopedRows. If the table has no `id` column, register its sort key in COMPOSITE_SORT_KEYS (src/lib/pagination.ts) — pagination without a deterministic ORDER BY duplicates AND skips rows.",
+      "substrings": [".select()"],
+      "paths": ["src/**/*.ts", "src/**/*.tsx", "supabase/functions/**/*.ts"]
+    },
+    {
+      "rule_name": "verify-jwt-not-sticky",
+      "reminder": "`--no-verify-jwt` is NOT sticky: a bare redeploy silently resets verify_jwt=true and the gateway then rejects callers BEFORE the function runs — no logs, invisible failure. A real customer charge sat unfulfilled 2026-07-02. Exactly three functions need it false: stripe-webhook, sms-webhook, notify-manager-access-denied. Re-verify with `supabase functions list` after ANY deploy.",
+      "substrings": ["no-verify-jwt", "verify_jwt"],
+      "paths": ["supabase/functions/**/*.ts", "scripts/**", "*.md"]
+    },
+    {
+      "rule_name": "caller-identity-from-payload",
+      "reminder": "Never trust caller identity from the request body. Resolve the person/role SERVER-side from the JWT (report-problem and send-event-email are the patterns: reporter identity and recipient lists are both derived server-side, never accepted from the client). A client-supplied personId/email/role is an authorization bypass.",
+      "regex": "(body|payload|args|a)\\s*\\.\\s*(personId|person_id|userId|user_id|authUserId|role|isAdmin)\\b",
+      "paths": ["supabase/functions/**/*.ts"]
+    },
+    {
+      "rule_name": "weak-randomness-for-tokens",
+      "reminder": "Math.random() is not a CSPRNG. No-login tokens and access codes must use crypto.getRandomValues (randomToken() in _shared/token.ts is 256-bit; judge access codes use crypto.getRandomValues too). Phase 3 replaced the 122-bit UUID-derived tokens for exactly this reason.",
+      "regex": "Math\\.random\\(\\)",
+      "paths": ["supabase/functions/**/*.ts"]
+    },
+    {
+      "rule_name": "unsanitized-html-injection",
+      "reminder": "dangerouslySetInnerHTML must be fed DOMPurify-sanitized HTML (dompurify is already a dependency). Event confirmation-email bodies and admin free-text broadcasts are author-controlled strings that reach rendered HTML.",
+      "substrings": ["dangerouslySetInnerHTML"],
+      "paths": ["src/**/*.tsx"]
+    },
+    {
+      "rule_name": "checkout-preview-must-stay-side-effect-free",
+      "reminder": "create-checkout-session's `mode: 'preview'` MUST remain side-effect-free — it is what makes the cart show the server's own prices. It must never create a Stripe session, claim a coupon reservation, or write a payments row. The coupon reservation is deliberately taken AFTER the PREVIEW BRANCH POINT.",
+      "substrings": ["'preview'", "\"preview\""],
+      "paths": ["supabase/functions/create-checkout-session/*.ts", "src/pages/Cart.tsx"]
+    },
+    {
+      "rule_name": "service-role-key-must-stay-server-side",
+      "reminder": "SUPABASE_SERVICE_ROLE_KEY bypasses RLS entirely and must never appear in src/ — anything under src/ is bundled and shipped to the browser. Edge functions only. Same for any Stripe secret key (sk_...).",
+      "regex": "(SERVICE_ROLE_KEY|sk_live_|sk_test_)",
+      "paths": ["src/**/*.ts", "src/**/*.tsx"]
+    },
+    {
+      "rule_name": "money-is-cents",
+      "reminder": "Money columns on `payments` are CENTS (integers). Mixing dollars and cents is a silent 100x money bug. Ids are app-generated TEXT, not uuids — `payments.id` is the lone uuid PK in the schema.",
+      "regex": "(amount|total|subtotal|refund)_?(cents)?\\s*[*/]\\s*100",
+      "paths": ["src/**/*.ts", "supabase/functions/**/*.ts"]
+    },
+    {
+      "rule_name": "rls-cross-table-subquery-recursion",
+      "reminder": "A policy on table A whose subquery reads table B recurses (42P17) and breaks ALL reads of A for EVERY caller when any of B's policies read back into A — this broke every invoice_items read until hotfixed (20260710230000 → 20260711023234). Use SECURITY DEFINER helpers (my_person_id() / manages_club()). BUT do NOT wrap a slow correlated EXISTS in SECURITY DEFINER to make it faster — that was measured and REJECTED (invoice_items got worse, 7.4s → 11.4s): Postgres can hash-materialize a raw EXISTS, and a function call is opaque to the planner.",
+      "regex": "using\\s*\\([\\s\\S]{0,120}?exists\\s*\\(\\s*select",
+      "paths": ["supabase/migrations/*.sql"]
+    }
+  ]
+}

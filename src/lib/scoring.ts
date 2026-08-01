@@ -13,6 +13,28 @@ export interface ApparatusRanking {
   rows: { reg: Registration; score: Score; rank: number }[];
 }
 
+/** How many of an event's scores can never appear under ANY session tab.
+ *
+ *  A score is reachable only if its registration carries a `sessionId` (the
+ *  results page always has one session selected, so a null-session registration
+ *  matches nothing). Scores whose registration is missing entirely, or whose
+ *  registration has no session, are "unplaced": real, stored, and invisible.
+ *
+ *  Exists so the results page can tell the truth instead of rendering
+ *  "No scores posted yet" over the top of posted scores — the exact failure
+ *  seen live in prod 2026-07-31, where every event read as empty while three
+ *  scores sat in the database. Pure so it is testable without a DB.
+ *
+ *  Refunded registrations are excluded: `sessionResults` drops them by design,
+ *  so their scores being unreachable is correct, not a defect to report. */
+export function unplacedScoreCount(scores: Score[], allEventRegs: Registration[]): number {
+  const placedRegIds = new Set(
+    allEventRegs.filter((r) => r.sessionId && !r.refunded).map((r) => r.id),
+  );
+  const refundedRegIds = new Set(allEventRegs.filter((r) => r.refunded).map((r) => r.id));
+  return scores.filter((s) => !placedRegIds.has(s.regId) && !refundedRegIds.has(s.regId)).length;
+}
+
 /** Pure. `scores` and `allEventRegs` are caller-supplied parameters (Phase 2/3,
  *  docs/specs/2026-07-24-data-layer-scale.md) rather than read off
  *  `db.scores`/`db.registrations` — neither is globally hydrated any more, so
@@ -27,7 +49,16 @@ export function sessionResults(event: Event, sessionId: string, scores: Score[],
 } {
   const session = event.sessions.find((s) => s.id === sessionId)!;
   const regs = allEventRegs.filter((r) => r.eventId === event.id && r.sessionId === sessionId && !r.refunded);
-  const scopedScores = scores.filter((s) => s.eventId === event.id && s.sessionId === sessionId);
+  // Scope scores by the REGISTRATION set, never by `score.sessionId` (2026-07-31).
+  // A score's own session is a denormalized snapshot taken when it was written;
+  // the registration is the authority, and reassigning a registration's session
+  // does NOT rewrite its scores. Filtering on the snapshot silently dropped every
+  // score whose registration was assigned a session after the score was entered —
+  // observed live in prod, where 3 posted scores rendered as "No scores posted yet"
+  // on the public page. Keying off regIds cannot drift: a registration belongs to
+  // exactly one session, and only regs in `regs` are ever looked up below.
+  const regIds = new Set(regs.map((r) => r.id));
+  const scopedScores = scores.filter((s) => s.eventId === event.id && regIds.has(s.regId));
   const scoreMap = new Map<string, Score>();
   for (const s of scopedScores) scoreMap.set(`${s.regId}|${s.apparatus}`, s);
 
