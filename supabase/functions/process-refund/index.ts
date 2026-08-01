@@ -243,30 +243,47 @@ async function handleApprove(
   const onTime = !event.last_date_to_edit || new Date(reviewedAt).getTime() <= new Date(event.last_date_to_edit).getTime();
   const computedRefundCents = onTime ? baseAmountCents : Math.round(baseAmountCents * 0.75);
 
-  // --- d. Cap at what's actually left on the payment (mirrors
-  //     src/lib/pricing.ts capRefundCents — availableCents = amount_subtotal
-  //     minus refund_amount_cents already approved against this SAME payment). ---
-  const { data: priorApprovedRows, error: priorErr } = await db
-    .from('refund_requests')
-    .select('refund_amount_cents')
-    .eq('payment_id', payment.id)
-    .eq('status', 'approved');
-  if (priorErr) return json({ error: 'Could not compute the available refund amount.' }, 500);
-  const priorRefundedCents = ((priorApprovedRows ?? []) as { refund_amount_cents: number | null }[])
-    .reduce((s, r) => s + (r.refund_amount_cents ?? 0), 0);
-  const availableCents = (payment.amount_subtotal ?? 0) - priorRefundedCents;
-  const refundCents = Math.min(computedRefundCents, Math.max(0, availableCents));
-
-  // --- e. Atomic claim BEFORE Stripe. ---
-  const { data: claimed, error: claimErr } = await db
-    .from('refund_requests')
-    .update({ status: 'approved', reviewed_by: caller.id, reviewed_at: reviewedAt, refund_amount_cents: refundCents })
-    .eq('id', request.id)
-    .eq('status', 'pending')
-    .select('id')
-    .maybeSingle();
+  // --- d+e. Cap AND claim, atomically, BEFORE Stripe (2026-07-31 review §8.1).
+  //     These were two separate steps — read the prior-approved sum, then claim
+  //     this request — and that gap was a real race: two DIFFERENT pending
+  //     requests against the SAME payment could both read the same stale
+  //     `available` before either claimed. The per-request claim never covered
+  //     that, because it keys on this request's own id.
+  //
+  //     Stripe's cumulative per-charge ceiling stopped a big over-refund, but
+  //     that ceiling is the CHARGE (`amount_subtotal + service_fee`) while our
+  //     cap is `amount_subtotal` alone — the service fee is never refunded — so
+  //     a concurrent pair landing in that gap slipped through and refunded part
+  //     of the fee.
+  //
+  //     `claim_refund_approval` (20260731210000) now does the sum, the cap and
+  //     the claim inside ONE transaction that holds `select ... for update` on
+  //     the payments row — the same idiom `reserve_coupon` uses, where the lock
+  //     IS the fix. Concurrent approvals against one payment serialize; against
+  //     different payments they don't.
+  //
+  //     Do NOT re-add a client-side availability read here: recomputing the cap
+  //     outside the lock is exactly the bug this replaced. ---
+  const { data: claimRes, error: claimErr } = await db.rpc('claim_refund_approval', {
+    p_request_id: request.id,
+    p_payment_id: payment.id,
+    p_computed_cents: computedRefundCents,
+    p_reviewed_by: caller.id,
+    p_reviewed_at: reviewedAt,
+  });
   if (claimErr) return json({ error: 'Could not record the decision.' }, 500);
-  if (!claimed) return json({ error: 'This request has already been reviewed.' }, 409);
+  const claim = claimRes as
+    | { ok: true; refund_cents: number; available_cents: number; prior_refunded_cents: number }
+    | { ok: false; reason: string }
+    | null;
+  if (!claim) return json({ error: 'Could not record the decision.' }, 500);
+  if (!claim.ok) {
+    if (claim.reason === 'payment_not_found') {
+      return json({ error: 'The payment behind this request no longer exists — cannot auto-process.' }, 400);
+    }
+    return json({ error: 'This request has already been reviewed.' }, 409);
+  }
+  const refundCents = claim.refund_cents;
 
   let stripeRefundId: string | null = null;
   if (refundCents > 0) {
@@ -364,6 +381,20 @@ async function handleApprove(
 
 /** Best-effort revert of an approve claim back to 'pending' so it can be
  *  retried. Returns whether the revert itself succeeded (for error_logs). */
+/** Puts a claimed request back to `pending` when Stripe never moved the money.
+ *
+ *  Deliberately OUTSIDE the `claim_refund_approval` lock: by the time this runs
+ *  the claim has committed, and re-entering the lock would buy nothing — the
+ *  money demonstrably did not move.
+ *
+ *  Known, accepted interaction (2026-07-31): between the claim committing and a
+ *  Stripe failure reverting it, a concurrent approval against the same payment
+ *  counts this not-yet-reverted amount in its `prior_refunded_cents`. That
+ *  caller is therefore capped as if this refund had happened, and can be
+ *  UNDER-refunded. It resolves itself — the reverted request goes back to
+ *  `pending` and can be re-approved against the restored balance — and it errs
+ *  toward refunding too little rather than too much, which is the correct
+ *  direction for a money invariant to fail in. */
 async function revertClaim(db: DB, requestId: string): Promise<boolean> {
   const { error } = await db.from('refund_requests').update({
     status: 'pending', reviewed_by: null, reviewed_at: null, refund_amount_cents: null,

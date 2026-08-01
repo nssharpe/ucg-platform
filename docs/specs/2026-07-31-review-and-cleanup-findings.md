@@ -582,7 +582,36 @@ Adversarial read of the ~4,400 lines under the `money-invariants` rule: checkout
 webhook fulfillment, the shared fulfillment core, both refund functions, the Stripe helpers,
 and `pricing.ts`. Attacked the stated invariants rather than reading for style.
 
-### 8.1 🟠 FINDING (low severity, real invariant violation) — concurrent refund approvals can exceed the cap, and can refund part of the service fee
+### 8.1 ✅ FIXED 2026-07-31 (staging + prod) — concurrent refund approvals could exceed the cap and refund part of the service fee
+
+**Fixed by `20260731210000_refund_claim_atomic_cap.sql`** — a `claim_refund_approval` RPC that
+takes `select … for update` on the `payments` row FIRST, then does the sum, the cap and the
+claim inside that one transaction. *The lock is the fix*, the same idiom `reserve_coupon` used
+for the identical race. `process-refund` calls it in place of the old read-then-claim pair;
+serialization is per-payment, so unrelated refunds never block each other.
+
+**Proven on staging** with a synthetic payment + request harness (created and fully cleaned up):
+
+| test | result |
+| --- | --- |
+| **the exact scenario below** — two CONCURRENT $51 approvals, $100 subtotal | $51 + **$49** = exactly **$100** ✅ (second call reported `prior_refunded_cents: 5100` — it blocked on the lock and read the first's committed value; pre-fix it read 0 and granted $51) |
+| sequential $80 then $80 | second **capped to $20**, not refused ✅ |
+| same request claimed twice | `already_reviewed` — original guarantee intact ✅ |
+| payment row absent | `payment_not_found`, nothing granted (fail-closed) ✅ |
+| anon executes the RPC | `42501 permission denied`, staging **and** prod ✅ |
+
+Two decisions worth carrying forward, both documented in the migration: it is deliberately
+**`SECURITY INVOKER`** (a considered deviation from `reserve_coupon`'s DEFINER — service_role
+bypasses RLS anyway, so DEFINER buys nothing, while INVOKER means the function cannot write for
+a non-service_role caller even if the grant were later widened by mistake), and **authorization
+is not duplicated inside it** (`process-refund` already gates on `refund_manager`/`admin` + AAL;
+a second copy in SQL would be drift waiting to happen — re-verified live, a non-manager still
+gets 403 before any claim). `revertClaim` stays outside the lock; the resulting interaction is
+documented at that function and errs toward under-refunding, the safe direction.
+
+The original finding, kept because the reasoning is the useful part:
+
+#### Original finding (low severity, real invariant violation)
 
 `process-refund`'s `handleApprove` runs, in order:
 
