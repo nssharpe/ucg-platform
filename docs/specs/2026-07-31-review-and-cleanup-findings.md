@@ -573,3 +573,89 @@ a security checklist a human or a reviewer-tier subagent can read directly.
   `research/2026-07-17-security-review-options.md` (`whats-next` §1.6) and is worth adding to
   that brief as a cheaper first pass before paying for a human audit.
 - **CI** — `npm audit` (see §2, and the fail-on-runtime-deps-only caveat).
+
+---
+
+## 8. Money-path security review (requested 2026-07-31)
+
+Adversarial read of the ~4,400 lines under the `money-invariants` rule: checkout,
+webhook fulfillment, the shared fulfillment core, both refund functions, the Stripe helpers,
+and `pricing.ts`. Attacked the stated invariants rather than reading for style.
+
+### 8.1 🟠 FINDING (low severity, real invariant violation) — concurrent refund approvals can exceed the cap, and can refund part of the service fee
+
+`process-refund`'s `handleApprove` runs, in order:
+
+1. read every **approved** `refund_requests.refund_amount_cents` for this payment → `priorRefundedCents`
+2. `availableCents = payment.amount_subtotal − priorRefundedCents`
+3. `refundCents = min(computed, max(0, availableCents))`
+4. **atomic claim** — `update … where id = <thisRequest> and status = 'pending'`
+5. `stripe.refunds.create(...)`
+
+The claim at step 4 is keyed on **this request's own id**. It correctly prevents the *same*
+request being processed twice. It does **not** serialize two *different* pending requests
+against the *same payment*: both can complete step 1 before either reaches step 4, so both
+compute `availableCents` from the same stale baseline.
+
+**Why it doesn't become a large over-refund:** Stripe enforces its own cumulative ceiling per
+charge, so a genuinely excessive second refund fails and `revertClaim` puts the request back to
+`pending`. The money is protected — **by Stripe, not by this code.**
+
+**Where it does leak.** Stripe's ceiling is the *charge*, which per M5 is
+`amount_subtotal + service_fee`. Our cap is `amount_subtotal` alone, because
+**the service fee is never refunded**. Stripe's ceiling is therefore strictly *higher* than
+ours, and the gap is exactly the fee — so a concurrent pair whose total lands in that gap
+succeeds at Stripe while violating our invariant.
+
+Concrete: subtotal **$100**, fee **$3.30**, charge **$103.30**. Two pending requests of **$51**
+each, approved concurrently. Both read `priorRefunded = 0` → both compute `available = $100` →
+both pass the cap → both claim (different rows) → Stripe sees $102 ≤ $103.30 and allows both.
+Net: **$102 refunded against a $100 subtotal — $2 of service fee refunded.**
+
+**Severity is genuinely low** and I want to be accurate about why: it needs two *distinct*
+pending requests against one payment, approved inside a sub-second read-then-write window, by a
+`refund_manager`/`admin` — a manually reviewed queue, not an attacker-reachable path. A
+double-click on one request is already blocked by the claim. The ceiling on the leak is the
+service fee (3% + $0.30). Nothing here lets an outsider extract money.
+
+**Suggested fix — the repo already has the right idiom.** `reserve_coupon` solved the identical
+shape (concurrent claims against one shared budget) with `SELECT … FOR UPDATE` — *the lock is
+the fix*. Do the same: a SECURITY DEFINER RPC that locks the `payments` row, sums approved
+refunds, computes the cap, and claims the request **in one transaction**. That makes the
+DB the authority instead of leaning on Stripe's ceiling as an accidental backstop.
+
+⚠️ Per `money-invariants.md`, that change needs a reviewer-tier adversarial read before it
+ships — it is not a mechanical edit.
+
+### 8.2 ✅ Verified sound — the invariants that matter most
+
+Checked by attacking them, not by reading comments:
+
+- **C4 (entry priced as change).** `isChange = refRegs.every(r => r.paid || r.updated_pending)` —
+  one brand-new reg in the line forces full entry pricing. I probed the obvious bypass, padding
+  `ref_reg_ids` with unresolvable ids so the `every()` sees only paid regs: **closed**, because
+  an explicit `missingRef` check rejects any id that doesn't resolve *before* pricing runs.
+- **H4 (cross-account registration flip).** Every `ref_reg_ids` entry is checked against
+  `athlete_id === personId` (self cart) or `club_id === clubId` (club cart), and membership/
+  banquet targets get the equivalent check. A crafted line cannot make the webhook flip a
+  victim's registration to paid.
+- **Service-fee mirror.** `processingFee` is byte-identical in `pricing.ts` and
+  `_shared/stripe.ts` (`Math.ceil(subtotal * 0.03) + 30`). No drift.
+- **Preview stays side-effect-free.** The `PREVIEW BRANCH POINT` returns above every write; the
+  single write above it (capacity hold-refresh) is individually `if (!isPreview)` guarded, and
+  coupon reservation sits strictly below it.
+- **Refund base and cap** use post-coupon `paid_cents` from `lines_snapshot`, and the service
+  fee is excluded from `availableCents` — correct, and the reason §8.1's gap exists at all.
+- **Stripe-failure handling** reverts the claim and, if the revert *also* fails, logs an
+  explicitly-worded stuck-state entry to `error_logs` rather than failing silently.
+
+### 8.3 Not covered by this review
+
+Static analysis only — no live money moved. A real paid payment has never existed on staging
+(§4.6: all 60 payments are `failed`/`pending`), so the fulfillment path, the M5 assertion, and
+the refund math have not been exercised end-to-end against real Stripe state. **The $1 smoke +
+refund in the [go-live checklist](../stripe-go-live-checklist.md) is what closes that**, and it
+should be treated as a verification step this review depends on, not a formality.
+
+---
+

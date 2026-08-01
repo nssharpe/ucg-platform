@@ -116,6 +116,21 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
 6. **Fix the `record-waiver-signature` stale-hold wart** — it can re-assert a
   club-payment hold if the club paid before the guardian signed (documented in
   CLAUDE.md; small, known fix).
+10. 🟠 **Concurrent refund approvals can exceed the cap and refund part of the service fee**
+  (money-path review 2026-07-31 —
+  [findings §8.1](specs/2026-07-31-review-and-cleanup-findings.md)). `process-refund`'s atomic
+  claim is keyed on the **request's own id**, so it stops one request being processed twice but
+  does not serialize two *different* pending requests against the *same payment* — both read
+  `priorRefundedCents` before either writes. Stripe's own cumulative ceiling stops a large
+  over-refund, but that ceiling is the **charge** (`subtotal + fee`) while our cap is
+  `subtotal`, so a concurrent pair landing in that gap refunds part of the service fee — which
+  is never supposed to be refunded. Worked example in the findings.
+  **Low severity** (needs two distinct pending requests on one payment approved within a
+  sub-second window by a refund manager; ceiling on the leak is 3% + $0.30; not
+  attacker-reachable) — but a real invariant violation with a known-good fix shape: a SECURITY
+  DEFINER RPC that `SELECT … FOR UPDATE`s the `payments` row and does sum + cap + claim in one
+  transaction, exactly as `reserve_coupon` solved the identical race.
+  ⚠️ `money-invariants.md` requires a reviewer-tier adversarial read before this ships.
 7. ✅ **Public Results page hid posted scores — FIXED 2026-07-31.** The root cause was deeper
   than first recorded: `sessionResults()` scoped scores by `score.sessionId`, a snapshot taken
   at write time that does **not** follow a registration's session reassignment. So assigning
