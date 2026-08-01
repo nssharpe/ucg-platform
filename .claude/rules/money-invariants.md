@@ -130,6 +130,17 @@ invoice_item list price). 100% at-or-before `lastDateToEdit`, else 75%, capped a
 remaining subtotal minus prior approved refunds (`refundAmountCents`/`capRefundCents`,
 `pricing.ts`). **The service fee is never refunded.** $0-capped approvals skip Stripe.
 
+**The cap and the claim are ONE atomic step — `claim_refund_approval` (`20260731210000`).**
+It takes `SELECT … FOR UPDATE` on the `payments` row, then sums approved refunds, caps, and
+claims the request inside that transaction. **Never recompute availability in TS and then
+claim** — that two-step shape was the actual 2026-07-31 bug: the per-request claim keys on the
+request's own id, so two DIFFERENT pending requests on the SAME payment both read the same
+stale baseline. Stripe's ceiling hid it, because Stripe's ceiling is the CHARGE
+(`subtotal + fee`) while ours is `subtotal` — so a concurrent pair landing in that gap refunded
+part of the service fee. Serialization is per-payment. `revertClaim` deliberately stays outside
+the lock; a concurrent caller counting a not-yet-reverted claim gets UNDER-refunded, which
+self-resolves and errs in the safe direction.
+
 On-time approval deletes the registration; post-deadline keeps it `refunded` + `keep_listed`
 with apparatus blanked. A Dashboard-issued refund (bypassing this flow) does NOT reflect back
 into `payments.status`.
