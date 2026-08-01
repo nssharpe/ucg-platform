@@ -17,7 +17,7 @@ Supabase backend (env-gated). Deploys via GitHub Actions on push to `main`.
 | Constraints for a specific area of the code | `.claude/rules/*.md` — path-scoped, load when you read a matching file |
 | Multi-step procedures | `.claude/skills/*/SKILL.md` — invoke by name |
 | Enforcement that must not depend on memory | hooks (`.claude/settings.json` + `scripts/`) |
-| The security traps this repo has actually hit | `.claude/claude-security-guidance.md` — a standalone checklist; also auto-loaded IF the `security-guidance` plugin is ever installed (not currently) |
+| The security traps this repo has actually hit | `.claude/claude-security-guidance.md` + `.claude/security-patterns.json` — fed to the `security-guidance` plugin (**installed + enabled 2026-07-31**); also readable standalone |
 | Backend schema, RLS model, migration table, runbooks | `supabase/README.md` |
 | Open work | `docs/whats-next.md` (authoritative) |
 | Design specs / implementation plans | `docs/specs/`, `docs/plans/` |
