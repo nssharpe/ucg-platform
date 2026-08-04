@@ -53,6 +53,13 @@
                            get LIGHTER, not darker: every darker ramp step fails AA against navy
                            (coral-600 3.84:1, coral-700 2.41:1). navy-800 on this = 5.41:1. */
   --coral-600: #e2553b;
+  --coral-text: #bd3f27; /* Coral for TEXT ON LIGHT surfaces (a11y audit 2026-08-04, A3).
+                            --coral-600 on --surface/--white is only 3.66:1 — it fails AA for
+                            body text, and it was being used for validation copy, the text a
+                            user most needs to read. This darkened step is 5.24:1 on #fcfcfc.
+                            Do NOT darken --coral-600 itself: it is an approved FILL (badges,
+                            accents) where the ramp step matters. Use this token for coral
+                            TEXT on light only; on coral FILLS the text stays --navy-800. */
   --coral-700: #b23a1f; /* AA-compliant text (~4.9:1) on --coral-100 */
   --coral-100: #fde4dd;
   --white: #fcfcfc;
@@ -154,7 +161,9 @@ option { color: var(--ink); background: #fff; }
   font-size: 10px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: rgba(219, 235, 237, 0.45);
+  /* a11y audit 2026-08-04 (A2): 0.45 alpha gave 3.58:1 on --navy-800 — under AA for
+     10px text, on every page. 0.60 = 5.21:1 and still reads as a muted group label. */
+  color: rgba(219, 235, 237, 0.6);
   padding: 0 12px 6px;
 }
 .nav-link {
@@ -776,7 +785,14 @@ option { color: var(--ink); background: #fff; }
   -moz-appearance: textfield; appearance: textfield;
 }
 .sp-stepper input::-webkit-outer-spin-button, .sp-stepper input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-.sp-stepper input:focus { outline: none; }
+/* a11y audit 2026-08-04 (A5): this used to be a bare `outline: none`, removing the
+   focus ring from judge score entry with nothing in its place (WCAG 2.4.7). The other
+   two outline:none rules in this file at least swap in a coral border + glow; this one
+   didn't. Keyboard-only, so mouse users see no change. */
+.sp-stepper input:focus-visible {
+  outline: 2px solid var(--coral-500);
+  outline-offset: -2px;
+}
 .sp-stepper.disabled { opacity: 0.4; pointer-events: none; }
 
 .sp-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 0; }
@@ -909,8 +925,25 @@ option { color: var(--ink); background: #fff; }
 .res-tbl td.res-qual { background: var(--leaf); }
 .res-tbl td.res-qual a { color: var(--teal-900); }
 
+/* Two-column pane layout that actually reflows (a11y audit 2026-08-04, A6).
+   Replaces inline `style={{display:'grid',gridTemplateColumns:'1fr 1fr'}}`, which a
+   media query CANNOT override — that inline rule kept admin Communicate two-up at
+   375px and pushed the compose card off-screen (WCAG 1.4.10 Reflow).
+   `minmax(0,1fr)` matters as much as the breakpoint: a bare `1fr` defaults to
+   `min-width:auto`, so columns refuse to shrink below their content and overflow
+   even when they "fit". */
+.pane-2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.pane-2 > * { min-width: 0; }
+
 /* mobile */
 @media (max-width: 860px) {
+  .pane-2 { grid-template-columns: minmax(0, 1fr); }
+
   /* sidebar becomes an off-canvas drawer above the topbar */
   .sidebar {
     position: fixed;

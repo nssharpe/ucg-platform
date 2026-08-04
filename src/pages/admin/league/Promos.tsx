@@ -217,7 +217,9 @@ export function Promos() {
           </Field>
         )}
         {/* W14 task 9: start/end dates and max uses on creation */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        {/* minmax(0,…) not 1fr: a bare 1fr keeps min-width:auto, so these columns
+            would refuse to shrink below their inputs' intrinsic width (a11y A6). */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 8 }}>
           <Field label="Active from (optional)">
             <input
               className="input"

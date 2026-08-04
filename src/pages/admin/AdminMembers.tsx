@@ -261,7 +261,7 @@ function MergeAthletesModal({ onClose }: { onClose: () => void }) {
       </Field>
 
       {primary && dup && primary.id === dup.id && (
-        <p style={{ color: 'var(--coral-600)', fontSize: 13 }}>Cannot merge a person into themselves.</p>
+        <p style={{ color: 'var(--coral-text)', fontSize: 13 }}>Cannot merge a person into themselves.</p>
       )}
 
       {canConfirm && !confirming && (
@@ -551,7 +551,8 @@ To activate it, sign up using <strong>this email address</strong> (${escapeHtml(
       <p className="page-sub">Every athlete and coach. Each member has a unique URL — click through to view/edit details, waiver history, and toggle membership for any season.</p>
       <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
         <input className="input" style={{ maxWidth: 320 }} placeholder="Search name, email, club…" value={q} onChange={(e) => setQ(e.target.value)} />
-        <select className="input" style={{ maxWidth: 220 }} value={filter} onChange={(e) => setFilter(e.target.value as typeof filter)}>
+        {/* Standalone filter — no <Field>, so it needs its own accessible name (a11y A1). */}
+        <select aria-label="Filter by membership status" className="input" style={{ maxWidth: 220 }} value={filter} onChange={(e) => setFilter(e.target.value as typeof filter)}>
           <option value="all">All statuses ({season.name})</option>
           <option value="active">Active members</option>
           <option value="pending">Pending club payment</option>

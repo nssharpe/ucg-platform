@@ -608,7 +608,7 @@ function MembershipInner({ me }: { me: Athlete }) {
                     <input type="text" value={waiverSig} onChange={(e) => setWaiverSig(e.target.value)} placeholder={expectedSig} />
                   </Field>
                   {waiverSig.trim().length > 0 && !sigMatchesName && (
-                    <p style={{ color: 'var(--coral-600)', fontSize: 13, marginTop: -8, marginBottom: 10 }}>
+                    <p style={{ color: 'var(--coral-text)', fontSize: 13, marginTop: -8, marginBottom: 10 }}>
                       Your signature must match your name on file: <strong>{expectedSig}</strong>.
                     </p>
                   )}
@@ -694,7 +694,7 @@ function MembershipInner({ me }: { me: Athlete }) {
                 {club?.allowClubPay && (
                   <button
                     className="btn ghost"
-                    style={{ borderColor: 'var(--coral-400)', color: 'var(--coral-600)' }}
+                    style={{ borderColor: 'var(--coral-400)', color: 'var(--coral-text)' }}
                     onClick={() => complete('club')}
                     title={`Add this membership fee to ${club.name}'s club cart instead of paying now. Your membership stays pending until a club manager pays.`}
                   >

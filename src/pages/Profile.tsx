@@ -481,8 +481,8 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
               <Field label="Last name"><input type="text" value={p.lastName} onChange={(e) => set({ lastName: e.target.value })} style={missingStyle('lastName')} /></Field>
               <Field label="Date of birth" hint={isAthlete ? 'Athletes must be 15+, coaches 18+.' : 'Coaches must be 18+.'}>
                 <input type="date" value={p.dob} onChange={(e) => set({ dob: e.target.value })} style={missingStyle('dob')} />
-                {ageError && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>{ageError}</div>}
-                {missingFieldKeys.has('dob') && !p.dob && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Required</div>}
+                {ageError && <div style={{ fontSize: 12, color: 'var(--coral-text)', marginTop: 4 }}>{ageError}</div>}
+                {missingFieldKeys.has('dob') && !p.dob && <div style={{ fontSize: 12, color: 'var(--coral-text)', marginTop: 4 }}>Required</div>}
               </Field>
               <Field label="Gender">
                 <select className="input" value={p.gender ?? ''} onChange={(e) => set({ gender: (e.target.value || null) as Gender })}>
@@ -514,7 +514,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                       N/A
                     </label>
                   </div>
-                  {missingFieldKeys.has('gradYear') && !p.gradYear && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Enter a year or check N/A.</div>}
+                  {missingFieldKeys.has('gradYear') && !p.gradYear && <div style={{ fontSize: 12, color: 'var(--coral-text)', marginTop: 4 }}>Enter a year or check N/A.</div>}
                 </Field>
               )}
               {!coachOnly && (
@@ -523,7 +523,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                     <option value="" disabled>Select a student status…</option>
                     <option value="Student">Student</option><option value="Non-Student">Non-Student</option>
                   </select>
-                  {missingFieldKeys.has('studentStatus') && !p.studentStatus && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Required</div>}
+                  {missingFieldKeys.has('studentStatus') && !p.studentStatus && <div style={{ fontSize: 12, color: 'var(--coral-text)', marginTop: 4 }}>Required</div>}
                 </Field>
               )}
               <Field label="T-shirt size">
@@ -531,7 +531,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                   <option value="">Select a size…</option>
                   {SHIRT_SIZES.map((s) => <option key={s}>{s}</option>)}
                 </select>
-                {missingFieldKeys.has('shirt') && !p.shirt && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Required</div>}
+                {missingFieldKeys.has('shirt') && !p.shirt && <div style={{ fontSize: 12, color: 'var(--coral-text)', marginTop: 4 }}>Required</div>}
               </Field>
               <Field label={stateLabel}>
                 {outsideUs ? (
@@ -546,7 +546,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                     onChange={(e) => set(e.target.checked ? { outsideUs: true, state: '' } : { outsideUs: false })} />
                   {coachOnly ? 'Coaching outside the US' : 'Training outside the US'}
                 </label>
-                {!outsideUs && missingFieldKeys.has('state') && !p.state && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Required</div>}
+                {!outsideUs && missingFieldKeys.has('state') && !p.state && <div style={{ fontSize: 12, color: 'var(--coral-text)', marginTop: 4 }}>Required</div>}
               </Field>
               <Field label="Phone">
                 <input
@@ -556,8 +556,8 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                   placeholder="(555) 123-4567"
                   style={missingStyle('phone')}
                 />
-                {mainPhoneInvalid && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Must be a 10-digit US phone number.</div>}
-                {missingFieldKeys.has('phone') && !p.phone && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Required</div>}
+                {mainPhoneInvalid && <div style={{ fontSize: 12, color: 'var(--coral-text)', marginTop: 4 }}>Must be a 10-digit US phone number.</div>}
+                {missingFieldKeys.has('phone') && !p.phone && <div style={{ fontSize: 12, color: 'var(--coral-text)', marginTop: 4 }}>Required</div>}
               </Field>
             </div>
             <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginTop: 8, marginBottom: 0 }}>
@@ -590,7 +590,7 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                   </label>
                 )}
                 {missingFieldKeys.has('mainClubId') && (
-                  <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Pick a club, or check "No club".</div>
+                  <div style={{ fontSize: 12, color: 'var(--coral-text)', marginTop: 4 }}>Pick a club, or check "No club".</div>
                 )}
               </Field>
               <Field label="Region" hint={outsideUs ? 'Set because you train outside the US.' : `Derived from ${stateLabel.toLowerCase()}.`}>
@@ -655,8 +655,8 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
                   placeholder="(555) 123-4567"
                   style={missingStyle('emergency.phone')}
                 />
-                {emergPhoneInvalid && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Must be a 10-digit US phone number.</div>}
-                {missingFieldKeys.has('emergency.phone') && !p.emergency.phone && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Required</div>}
+                {emergPhoneInvalid && <div style={{ fontSize: 12, color: 'var(--coral-text)', marginTop: 4 }}>Must be a 10-digit US phone number.</div>}
+                {missingFieldKeys.has('emergency.phone') && !p.emergency.phone && <div style={{ fontSize: 12, color: 'var(--coral-text)', marginTop: 4 }}>Required</div>}
               </Field>
             </div>
             <Field label="Dietary restrictions">
@@ -1445,7 +1445,7 @@ waiver is signed. No login is required.</p>
         </div>
       )}
       {error ? (
-        <p style={{ color: 'var(--coral-600)', fontSize: 14 }}>{error}</p>
+        <p style={{ color: 'var(--coral-text)', fontSize: 14 }}>{error}</p>
       ) : !link ? (
         <p style={{ fontSize: 14, color: 'var(--ink-soft)' }}>Generating signing link…</p>
       ) : (

@@ -147,7 +147,7 @@ function HoldCountdown({ expiresAtMs }: { expiresAtMs: number }) {
   const msLeft = expiresAtMs - now;
   if (msLeft <= 0) {
     return (
-      <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--coral-600)' }}>
+      <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--coral-text)' }}>
         Hold expired — spots are no longer guaranteed; they're re-checked at checkout.
       </p>
     );
@@ -184,7 +184,7 @@ function CartCard({ title, items, preview, returnTo, returnLabel, onCheckout, on
       </div>
       {holdExpiresAtMs != null && <HoldCountdown expiresAtMs={holdExpiresAtMs} />}
       {surveyBlocked && (
-        <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--coral-600)' }}>
+        <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--coral-text)' }}>
           Answer the nationals session-planning survey for {surveyGate!.map((g) => g.eventName).join(', ')}{' '}
           before checking out{surveyReturnTo ? <> — <Link to={surveyReturnTo}>answer it here</Link></> : null}.
         </p>
@@ -508,7 +508,7 @@ function CartScope({
             {checkoutAllButton}
           </div>
           {everythingSurveyBlocked && (
-            <p style={{ margin: '-6px 0 14px', fontSize: 13, color: 'var(--coral-600)' }}>
+            <p style={{ margin: '-6px 0 14px', fontSize: 13, color: 'var(--coral-text)' }}>
               "Check out everything" is blocked: answer the nationals session-planning survey for{' '}
               {everythingSurveyGate.map((g) => g.eventName).join(', ')} — <Link to={surveyReturnTo}>answer it here</Link>.
               Individual sections not affected by that event can still be checked out separately.

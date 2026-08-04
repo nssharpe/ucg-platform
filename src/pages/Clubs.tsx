@@ -90,7 +90,9 @@ export function Clubs() {
           />
         </div>
         <div style={{ flex: '0 0 180px' }}>
+          {/* Standalone filter — no <Field>, so it needs its own accessible name (a11y A1). */}
           <select
+            aria-label="Filter clubs by region"
             className="input"
             value={regionFilter}
             onChange={(e) => setRegionFilter(e.target.value as Region | '')}

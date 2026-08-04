@@ -257,7 +257,7 @@ export function CartCheckout({
         {stage.couponCode && (
           summary.discount > 0
             ? <p style={{ color: 'var(--teal-900)', fontSize: 13, margin: '6px 0 0' }}>Code {stage.couponCode} applied.</p>
-            : <p style={{ color: 'var(--coral-600)', fontSize: 13, margin: '6px 0 0' }}>Code {stage.couponCode} didn’t apply — it may be invalid, expired, or not valid for these items.</p>
+            : <p style={{ color: 'var(--coral-text)', fontSize: 13, margin: '6px 0 0' }}>Code {stage.couponCode} didn’t apply — it may be invalid, expired, or not valid for these items.</p>
         )}
         <div style={{ borderTop: '1px solid var(--line)', margin: '10px 0 0', paddingTop: 10, fontSize: 14 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>

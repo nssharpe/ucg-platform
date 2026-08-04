@@ -2896,7 +2896,7 @@ function SquadBuilder({ event, session }: { event: Event; session: EventSession 
           <div className="card card-pad" key={q.id}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
               <h3 className="card-title" style={{ marginBottom: 4 }}>{q.name} ({q.athleteRegIds.length})</h3>
-              <span style={{ fontSize: 12, color: 'var(--coral-600)', fontWeight: 700 }}>starts on {events[q.startEvent]?.name ?? events[0].name}</span>
+              <span style={{ fontSize: 12, color: 'var(--coral-text)', fontWeight: 700 }}>starts on {events[q.startEvent]?.name ?? events[0].name}</span>
             </div>
             {q.athleteRegIds.map((regId) => (
               <div key={regId} style={{ display: 'flex', justifyContent: 'space-between', gap: 6, padding: '5px 0', borderBottom: '1px solid var(--line)', fontSize: 13.5 }}>

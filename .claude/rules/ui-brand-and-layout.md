@@ -45,6 +45,35 @@ and abandoned — **do NOT reintroduce it.** Stacked pinning is coach-left / ath
 With dev auto-login active the badges render normally, so verify directly. Only when
 `VITE_DEV_AUTH_*` are blank should you inject a worst-case topbar via `preview_eval`.
 
+## Accessibility invariants (a11y audit 2026-08-04 — don't regress these)
+
+Full report + method: `docs/specs/2026-08-04-accessibility-audit-wcag-aa.md`.
+
+- **`Field` owns label association.** It generates a `useId()` and wires `htmlFor` → the first
+  labelable child (native `input`/`select`/`textarea`, or `Combo`, which forwards `id`), including
+  when `children` is an ARRAY (control + conditional "Required" divs). **A control NOT rendered
+  through `Field` needs its own `aria-label`** — that's the only remaining gap class.
+- **`Modal` is a real dialog:** `role="dialog"`, `aria-modal`, labelled by its own title, moves
+  focus in, traps Tab at both ends, closes on Escape, restores focus to the opener. Don't
+  hand-roll a veil+card; use `Modal`.
+- **`--coral-text` (#bd3f27) is for coral TEXT on light surfaces** (5.24:1). `--coral-600` is
+  3.66:1 there and must stay a **fill** — do not "unify" the two. On coral *fills*, text is
+  `--navy-800`.
+- **Never set `gridTemplateColumns` inline for a page layout.** A media query cannot override an
+  inline style, which is exactly how admin Communicate stayed two-up at 375px. Use `.pane-2`, and
+  prefer `minmax(0, 1fr)` over `1fr` — a bare `1fr` keeps `min-width:auto`, so columns refuse to
+  shrink below their content and overflow anyway.
+- **Removing a focus ring requires a replacement.** `outline: none` is only acceptable alongside a
+  visible substitute (the coral border+glow on `.input:focus`), never bare.
+- **Loading text still needs a live region** (open item A7) — 35 hand-rolled `Loading…` sites
+  announce nothing. Toasts already handle this correctly via `role="alert"`/`"status"`.
+
+Auditing: `axe-core` is a devDependency. Two traps that make a naive sweep lie — wait ~3s for
+async page data (1.2s reported "0 violations" on a page that actually had 13), and disable
+transitions first (`*{transition:none!important}`) or you'll measure mid-animation colors and
+invent contrast failures. `eslint-plugin-jsx-a11y` is NOT installed: no release supports
+eslint 10.
+
 ## ESLint traps
 
 - No component defined inside another component's render — extract to module scope.

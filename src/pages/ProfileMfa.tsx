@@ -124,7 +124,7 @@ export function MfaSection() {
     <div className="card card-pad" style={{ marginBottom: 16 }}>
       <h3 className="card-title">Two-factor authentication</h3>
 
-      {loadErr && <p style={{ fontSize: 13, color: 'var(--coral-600)' }}>{loadErr}</p>}
+      {loadErr && <p style={{ fontSize: 13, color: 'var(--coral-text)' }}>{loadErr}</p>}
 
       {verifiedFactors.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>

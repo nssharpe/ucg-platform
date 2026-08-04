@@ -243,7 +243,7 @@ function Readout({ label, value }: { label: string; value: number | null }) {
   return (
     <div style={{ textAlign: 'center', marginBottom: 14 }}>
       <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--ink-soft)', fontWeight: 700 }}>{label}</div>
-      <div style={{ fontFamily: 'var(--font-display)', fontSize: 30, color: 'var(--coral-600)' }}>{fmtScore(value)}</div>
+      <div style={{ fontFamily: 'var(--font-display)', fontSize: 30, color: 'var(--coral-text)' }}>{fmtScore(value)}</div>
     </div>
   );
 }

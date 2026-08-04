@@ -414,7 +414,7 @@ function ResultRow({ r, events, name, club, showCat, aaPlace, evPlace, linkScore
         );
       })}
       <td className={`num score${medalClass(aaPlace)}${reg.quals?.AA ? ' res-qual' : ''}`} style={{ fontSize: 15 }}>
-        {r.aa > 0 ? r.aa.toFixed(3) : '—'}{!r.aaComplete && r.aa > 0 && <span style={{ color: 'var(--coral-600)' }} title="Events still to come">*</span>}
+        {r.aa > 0 ? r.aa.toFixed(3) : '—'}{!r.aaComplete && r.aa > 0 && <span style={{ color: 'var(--coral-text)' }} title="Events still to come">*</span>}
         {aaPlace != null && aaPlace <= 3 && <span className="res-place"> {aaPlace}</span>}
       </td>
     </tr>

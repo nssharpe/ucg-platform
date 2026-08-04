@@ -43,7 +43,7 @@ export function WriteStatus() {
             : 'You appear to be offline. Changes are queued and will retry automatically when you reconnect.'}
         </div>
         {state.failedErrors.length > 0 && (
-          <div className="writestatus-detail" style={{ marginTop: 4, color: 'var(--coral-600)', wordBreak: 'break-word' }}>
+          <div className="writestatus-detail" style={{ marginTop: 4, color: 'var(--coral-text)', wordBreak: 'break-word' }}>
             {state.failedErrors.join(' · ')}
           </div>
         )}

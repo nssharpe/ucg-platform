@@ -102,7 +102,7 @@ export function PasskeysSection() {
         Sign in without your password using Face ID, Touch ID, or Windows Hello.
       </p>
 
-      {loadErr && <p style={{ fontSize: 13, color: 'var(--coral-600)' }}>{loadErr}</p>}
+      {loadErr && <p style={{ fontSize: 13, color: 'var(--coral-text)' }}>{loadErr}</p>}
 
       {passkeys && passkeys.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>

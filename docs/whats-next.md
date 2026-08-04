@@ -93,9 +93,34 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
      events: the Browser pane could not deliver OS-level keystrokes this session.
      They are real `<button>`s with default `tabIndex`, so Enter/Space is spec-
      guaranteed, but a manual tab-through is worth doing once.
+     **Partly resolved 2026-08-04** (a11y audit §6.3): the Browser pane *does* now deliver
+     **trusted** key events — Tab moves focus and `:focus-visible` applies, so focus order IS
+     testable. Activation still is not: the synthesized keys don't trigger default button
+     activation (a "Return" press arrived with an empty `key`). So the manual tab-through is
+     still the only way to confirm Enter/Space.
 
-2. **Accessibility audit** to WCAG 2.1 AA (axe + manual keyboard/focus/ARIA pass) +
-  loading/empty/error-state consistency across pages.
+2. 🟡 **Accessibility audit to WCAG 2.1 AA — AUDIT DONE + 6 of 8 findings FIXED 2026-08-04.**
+  Full report: [`specs/2026-08-04-accessibility-audit-wcag-aa.md`](specs/2026-08-04-accessibility-audit-wcag-aa.md)
+  (axe-core 4.12.1 over 12 routes as athlete AND admin, plus manual keyboard/focus/ARIA and a
+  375px reflow pass). Fixed and re-verified: **A1** `Field` rendered a visible label that was
+  programmatically inert — 19 of 33 controls on `/me` had NO accessible name; fixing the one
+  shared component wired all ~248 `<Field>` call sites and took `/me` from 13 critical axe
+  violations to **0**. **A2** nav group labels 3.58:1 → 5.21:1 (every page). **A3** validation
+  text 3.66:1 → 5.24:1 via a new `--coral-text` token (`--coral-600` stays put — it's an approved
+  *fill*). **A4** `Modal` had no `role="dialog"`, no Esc, and no focus trap — proven by tabbing to
+  the nav *behind* an open modal; now traps, labels, and restores focus (33 call sites).
+  **A5** judge score stepper had `outline:none` with no replacement. **A6** the 375px Communicate
+  overflow — root-caused to an **inline** `1fr 1fr` grid a media query can't override (and `1fr`'s
+  `min-width:auto`); scrollWidth 536 → 375.
+  **Still open:** **A7** loading states aren't announced (35 hand-rolled `Loading…` sites, no live
+  region — WCAG 4.1.3) and the **loading/empty/error-state consistency** half: there is no shared
+  `EmptyState`/`LoadingState` at all, ~30 inconsistent empty-state phrasings. Deliberately
+  deferred as cleanup — see the report's §3 for the recommended components.
+  ⚠️ Two things the report records that will otherwise be re-learned the hard way: a naive axe
+  sweep **under-reports** (1.2 s settle = "0 violations" on `/me`; 3 s = 13), and sampling during
+  CSS transitions **invents** contrast failures. It also lists 3 rejected non-findings.
+  ⚠️ `eslint-plugin-jsx-a11y` **could not be installed** — no release supports eslint 10 (repo is
+  on 10.8.0). Re-check later; it's the cheapest way to stop A1-class regressions at the source.
 3. **New-club-request email** to `newclubinquiries@naigc.org` (transport exists, not wired).
 4. **PWA production update path** — verify deploys reach users promptly; add a "new
   version available, reload" prompt if not.
