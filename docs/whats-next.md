@@ -175,8 +175,19 @@ these were explicitly deferred, not dropped:
   what Julia deferred and can stay deferred.
 - **Server-rendered receipt PDF attached** to the confirmation email (§I/§N4) —
   receipts today are client-side jsPDF on demand.
-- **Camp registration popup simplification** (§G) — camp events still reuse the full
-  per-discipline `RegistrationEditor`; spec wants no discipline/level/apparatus step.
+- ✅ **Camp registration popup simplification (§G) — SHIPPED 2026-07-23**, commit `4e05fb8`;
+  this list and the spec were simply never updated (verified against the code 2026-08-04).
+  `RegistrationEditor` is still shared, but it branches on `eventType === 'camp'`: no
+  discipline/level/apparatus step, just a single confirmation line, and a new camp reg saves
+  ONE row with a placeholder `discipline` (NOT NULL enum), empty `levelId`/`apparatus`, null
+  `sessionId`. The branch lives *inside* the shared editor, so all three callers
+  (`SelfRegModal`, `EditRegistrationModal`, `Club.tsx`) get it.
+  ⚠️ **Residual, genuinely still open:** §G also says camps are *individual self-registration
+  only*, and that half is intent rather than enforcement — `Club.tsx`'s `openEvents` list
+  doesn't filter camps, so a club manager can still register athletes for one. Nothing renders
+  wrong (the editor shows camp mode, the club-membership gate is correctly waived), so this is a
+  policy gap, not a bug. **Needs Julia**: should manager-side camp registration be blocked
+  outright, or is it a convenience worth keeping?
 - **Host-payout formula** — 💬 needs a business decision (what a host club is paid out of an
   event's entry fees, and when). No implementation is blocked on anything technical. *The old
   "see Nate item 1.3" pointer here was dangling — §1.3 is Stripe go-live; there has been no
