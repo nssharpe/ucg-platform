@@ -55,7 +55,14 @@ Full report + method: `docs/specs/2026-08-04-accessibility-audit-wcag-aa.md`.
   through `Field` needs its own `aria-label`** — that's the only remaining gap class.
 - **`Modal` is a real dialog:** `role="dialog"`, `aria-modal`, labelled by its own title, moves
   focus in, traps Tab at both ends, closes on Escape, restores focus to the opener. Don't
-  hand-roll a veil+card; use `Modal`.
+  hand-roll a veil+card; use `Modal`. Three behaviours in it are deliberate — **don't
+  "simplify" them away**: (1) Escape confirms *"Discard your changes?"* when any control changed
+  since open, and closes silently otherwise — several of these dialogs are multi-step
+  registration/refund flows and Escape is the easiest discard to hit by accident; ✕/veil-click
+  keep their existing no-confirm behaviour. (2) Only the **topmost** `[role="dialog"]` handles
+  Escape/Tab — every mounted Modal listens on `document`, so without it one Escape would collapse
+  a nested stack. (3) Focus restore checks focus is still *inside* the closing dialog, so an app
+  that moves focus on close isn't overridden.
 - **`--coral-text` (#bd3f27) is for coral TEXT on light surfaces** (5.24:1). `--coral-600` is
   3.66:1 there and must stay a **fill** — do not "unify" the two. On coral *fills*, text is
   `--navy-800`.

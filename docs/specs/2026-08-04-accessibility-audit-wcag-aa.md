@@ -28,6 +28,41 @@ are still unnamed by strict checking. axe passes them because their `placeholder
 name. They sit inside an extra wrapper `<div>` so `Field` cannot see a labelable child — they need
 an explicit `aria-label` at the call site.
 
+### 0.1 Follow-up review — three behaviour issues found in the A4 fix, all closed
+
+Adding Escape-to-close was not a free a11y win, and a review pass caught it:
+
+- **Escape became a third way to discard work** (alongside ✕ and a veil click) on 33 dialogs,
+  several of them multi-step registration/refund flows. `Modal` already carried a mousedown guard
+  on the veil for exactly this reason. Escape now matches that intent: it closes **silently when
+  nothing has been entered**, and **prompts "Discard your changes?" once anything has**, by
+  snapshotting control values on open. ✕ and veil-click behaviour is deliberately unchanged.
+  Proven live on `PersonForm`: clean Escape closed with 0 confirms; after typing, Escape prompted
+  and **Cancel kept the dialog open**; OK closed it.
+- **Nested dialogs would collapse the whole stack** — each mounted `Modal` installs a `document`
+  capture listener, so one Escape fired every `onClose`. Only the **topmost** `[role="dialog"]`
+  now handles Escape/Tab. Proven by stacking a second dialog: the modal correctly ignored Escape
+  while covered, and responded again once it was topmost. (No nested pair ships today —
+  `PersonForm`/`ClubForm` render their own `Modal` at page level — so this is a latent-bug fix.)
+- **Focus restore could steal focus.** The cleanup only checked that the opener still existed; it
+  now also checks focus is still inside the closing dialog, so an app that deliberately moves
+  focus on close isn't overridden.
+
+**Dark-surface check for A3.** The 46-site token swap was audited against every dark container in
+`index.css` (`.sidebar`, `.toast`, `.gate`, `.errboundary-page`, `.role-card`, `.flash-score`,
+`.res-group-header`, `.tab.active`): **no coral text renders on any of them** — the swap only
+touched `color:` (the toast's coral is a `border-left`), and the light-surface sites gain contrast.
+Three more ternary sites the first pass's pattern missed were migrated. One deliberate exception:
+`Judge.tsx:531` keeps `--coral-600` because at 34px it is **large text**, where 3.66:1 already
+passes AA.
+
+**Coverage limit, stated plainly.** `PersonForm` (22 Fields) was opened and re-audited — **0
+violations, 33 of 34 controls named** — which matters because a route-only sweep never reaches it.
+`EventWizard` (44 Fields) and `Sanction.tsx` (39 Fields) are **still unverified**: the wizard's
+manage page errored on this fixture and `/sanction` is club-manager-scoped, so neither rendered
+for an admin. They use the same `Field`, so the fix applies structurally — what is unconfirmed is
+whether their children shapes are the wire-able kind. Check them next time either surface is up.
+
 ---
 
 ## 1. Method notes that change how you read these numbers

@@ -1067,7 +1067,7 @@ export function SanctionVotePage() {
             <div style={{ fontSize: 14 }}>
               <strong>Status: </strong>
               {tally.decided ? (
-                <span style={{ color: tally.outcome === 'approved' ? 'var(--teal-900)' : 'var(--coral-600)' }}>
+                <span style={{ color: tally.outcome === 'approved' ? 'var(--teal-900)' : 'var(--coral-text)' }}>
                   {tally.outcome.charAt(0).toUpperCase() + tally.outcome.slice(1)}
                 </span>
               ) : (

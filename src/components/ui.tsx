@@ -81,6 +81,19 @@ export function Modal({ title, onClose, children }: { title: string; onClose: ()
     // Remember what to hand focus back to, so closing doesn't dump the user at
     // the top of the document.
     const opener = document.activeElement as HTMLElement | null;
+    const controls = () => Array.from(
+      dialogRef.current?.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(
+        'input,select,textarea',
+      ) ?? [],
+    );
+    const readValues = () => controls().map((el) => (
+      el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio')
+        ? String(el.checked) : el.value
+    ));
+    // Snapshot what the user started with, so Escape can tell "nothing typed yet"
+    // (close silently) from "work in progress" (confirm first). See onKey.
+    const initialValues = readValues();
+
     const focusables = () => Array.from(
       dialogRef.current?.querySelectorAll<HTMLElement>(
         'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])',
@@ -91,8 +104,30 @@ export function Modal({ title, onClose, children }: { title: string; onClose: ()
     // (it carries tabIndex={-1}) so focus is never left outside the modal.
     (focusables()[0] ?? dialogRef.current)?.focus();
 
+    // Nested dialogs: every mounted Modal installs this handler on `document`, so
+    // without a depth check one Escape would collapse the whole stack and one Tab
+    // would be trapped by the wrong dialog. Only the LAST [role=dialog] in the DOM
+    // — the topmost — handles keys.
+    const isTopmost = () => {
+      const all = document.querySelectorAll('[role="dialog"]');
+      return all.length === 0 || all[all.length - 1] === dialogRef.current;
+    };
+
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.stopPropagation(); onCloseRef.current(); return; }
+      if (!isTopmost()) return;
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        // Escape is a THIRD way to discard, alongside ✕ and a veil click — and the
+        // easiest to hit by accident, which matters because several of these dialogs
+        // are multi-step registration/refund flows. The veil already carries a
+        // mousedown guard for exactly this reason (see above), so Escape gets the
+        // equivalent: silent close when nothing has been entered, an explicit
+        // confirm once there is work to lose. ✕/veil behaviour is unchanged.
+        const dirty = readValues().some((v, i) => v !== initialValues[i]);
+        if (dirty && !window.confirm('Discard your changes?')) return;
+        onCloseRef.current();
+        return;
+      }
       if (e.key !== 'Tab') return;
       // Focus trap: wrap at both ends rather than escaping to the page behind.
       const els = focusables();
@@ -104,11 +139,15 @@ export function Modal({ title, onClose, children }: { title: string; onClose: ()
       else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
     };
     document.addEventListener('keydown', onKey, true);
+    const dialogEl = dialogRef.current;
     return () => {
       document.removeEventListener('keydown', onKey, true);
-      // Only restore if focus is still somewhere in the (now unmounting) dialog —
-      // otherwise the app has deliberately moved it elsewhere and we'd be stealing it.
-      if (opener?.isConnected) opener.focus();
+      // Restore focus to the opener ONLY if focus is still inside this (now
+      // closing) dialog. If the app deliberately moved focus elsewhere on close,
+      // yanking it back to a stale opener would be the bug, not the fix.
+      const active = document.activeElement;
+      const focusStillHere = !active || active === document.body || dialogEl?.contains(active);
+      if (focusStillHere && opener?.isConnected) opener.focus();
     };
   }, []);
 
