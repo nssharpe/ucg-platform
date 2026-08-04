@@ -131,9 +131,9 @@ fails checkout by design. (3) Standalone add-on purchase shipped: event page
 (self cart, post-registration) + club Add-ons card (§E3), both live until each
 type's window closes, including past regCloses. (4) The camp confirmation's
 "receipt attached" is DEFERRED to P3's server-side receipt rendering — the P2
-camp email carries survey + add-on summary + an edit link instead. Known
-carry-over gap: camp registration still reuses the full per-discipline editor
-(§G's simplified no-discipline camp popup remains unbuilt).
+camp email carries survey + add-on summary + an edit link instead. (5) The
+carry-over gap recorded here — camp registration reusing the full
+per-discipline editor — was **closed 2026-07-23** by commit `4e05fb8`; see §G.
 
 ## D. Registration page & flow deltas (EXTENDS existing)
 
@@ -252,10 +252,25 @@ editor. Deltas:
   registration entry point. **Individual membership IS required** (for the
   season the camp occurs in) — answered by Julia 2026-07-06, unchanged
   (`caps.canRegister` already applies regardless of event type).
-- No discipline/level/apparatus in camp registration — simpler popup. **Still
-  open** — the camp registration popup (`SelfRegModal`) reuses the full
-  per-discipline `RegistrationEditor` unchanged; a future task should build
-  the simplified camp-only reg step.
+- No discipline/level/apparatus in camp registration — simpler popup.
+  **SHIPPED 2026-07-23** (commit `4e05fb8`). `RegistrationEditor` is still the
+  shared component, but it now branches on `event.eventType === 'camp'`: the
+  per-discipline checkbox sections are replaced by a single confirmation line
+  ("*X* will be registered for *event*"), and a brand-new camp registration
+  saves exactly ONE row — `discipline: event.disciplines[0]` (fallback `'MAG'`),
+  `levelId: ''`, `apparatus: []`, `sessionId: null`. The discipline value exists
+  only to satisfy the NOT NULL enum column; it is never shown or asked about.
+  The requirement (no discipline/level/apparatus step) is therefore met at every
+  caller — `SelfRegModal`, `MyRegistrations`'s `EditRegistrationModal`, and
+  `Club.tsx` — since the branch lives inside the shared editor. Legacy
+  multi-row camp registrations (pre-2026-07-23) are edited in place without
+  delete/re-add churn. Constraints for future work:
+  `.claude/rules/registrations-and-camps.md`.
+  ⚠️ Separately still true: the **club-manager path is not blocked** for camps.
+  `Club.tsx`'s `openEvents` selector does not filter `eventType === 'camp'`, so a
+  manager can pick a camp and register athletes; the club-membership gate is
+  correctly waived there, and the editor renders camp mode, so nothing is
+  *broken* — but "individual self-registration only" is intent, not enforcement.
 - **Overnight-accommodations survey UI** (bedtime / noise level / cabin gender
   pref / roommate free-text) asked per athlete at checkout when enabled —
   **shipped emv2 P2 T5**: asked LAST in `SelfRegModal`, after add-ons;
