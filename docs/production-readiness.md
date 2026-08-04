@@ -227,8 +227,11 @@ possibly state-privacy) obligations once real payments flow.
   `syncFromSupabase()`/reload. Expect "my change disappeared" reports once clubs
   have multiple active managers; consider realtime or refetch-on-focus for
   `registrations`/`cart_items` then.
-- **Known wart:** `record-waiver-signature` can re-assert a stale club-payment
-  hold if the club paid before the guardian signed (see CLAUDE.md).
+- ~~**Known wart:** `record-waiver-signature` can re-assert a stale club-payment
+  hold if the club paid before the guardian signed.~~ **FIXED 2026-08-04** — both
+  update arms key on `club_cart_pending` instead of `paid_via`. It was worse than
+  a stale badge: the row could never reach `active` at all. See
+  `.claude/rules/registrations-and-camps.md`.
 
 ---
 
