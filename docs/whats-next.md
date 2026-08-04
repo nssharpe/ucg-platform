@@ -113,9 +113,26 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
      them. `postcss`/`rimraf`/`fast-uri` do have clean fixes via a plain `npm audit fix`.
   ⚠️ When wiring this into CI, **fail on runtime deps only** — a blanket `npm audit --audit-level=high`
   gate would red-light every build today for dev-only transitive advisories with no upgrade path.
-6. **Fix the `record-waiver-signature` stale-hold wart** — it can re-assert a
-  club-payment hold if the club paid before the guardian signed (documented in
-  CLAUDE.md; small, known fix).
+6. ✅ **`record-waiver-signature` stale-hold wart — FIXED 2026-08-04** (staging + prod v13, no
+  migration needed). **It was bigger than "small, known fix" implied.** Recorded as a stale
+  *badge*; it was actually a stale badge **plus a dead end**. The function split its two UPDATEs
+  on `paid_via='club'`, and the activate arm carried `.neq('paid_via','club')` — so a membership
+  the club had already paid for could never reach `active` through the only pending-waiver →
+  active transition that exists. A guard on the second UPDATE alone (the obvious reading of the
+  old note) would have left those rows stuck in `pending-waiver` forever.
+  Both arms now key on **`club_cart_pending`** — "is a payment outstanding?" rather than "who was
+  going to pay?" — which is the same fact `membershipHolds` derives client-side. This also closed
+  a latent hole: `paid_via` is nullable and `<> 'club'` evaluates to NULL, not true, so a row with
+  an unset `paid_via` matched *neither* arm and stranded permanently.
+  **Proven on staging against the deployed function**, not just unit-tested: the exact failure
+  state (club paid, `club_cart_pending=false`, waiver still open) now lands `active` with
+  `pendingPayment:false`, while the genuinely-unpaid case still lands `pending-club-payment` with
+  `pendingPayment:true` — 6/6 assertions, fixtures cleaned up to zero rows. Column nullability was
+  checked against **both live databases** rather than trusted from the migration text
+  (`add column if not exists` is a no-op if the column already existed): `club_cart_pending` is
+  `not null default false` on prod and staging, 0 NULL rows, and 0 rows are currently stranded, so
+  no backfill is needed. User-visible: WaiverSign told such a guardian the membership "activates
+  once their club pays" — a false statement — and now correctly says it is active.
 7. ✅ **Public Results page hid posted scores — FIXED 2026-07-31.** The root cause was deeper
   than first recorded: `sessionResults()` scoped scores by `score.sessionId`, a snapshot taken
   at write time that does **not** follow a registration's session reassignment. So assigning
@@ -301,5 +318,5 @@ assumption.
 
 Not gaps yet — trigger conditions live in
 [`production-readiness.md`](production-readiness.md#architecture-watch-list-not-gaps-yet--written-down-so-they-dont-surprise-us):
-`loadAll` scaling cliff, realtime-only-on-scores staleness (→ proposal 6.1 above),
-the `record-waiver-signature` stale-hold wart (→ quality pass 3.7).
+`loadAll` scaling cliff, realtime-only-on-scores staleness (→ proposal 6.1 above).
+(The `record-waiver-signature` stale-hold wart left this list 2026-08-04 — fixed, §3.6.)

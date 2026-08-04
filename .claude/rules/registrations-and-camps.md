@@ -64,9 +64,16 @@ Waiver and club-payment holds can co-exist. Derive via `membershipHolds(m)`
 `membershipHolds`, never the raw enum.** `clubCartPending` is set on club-cart push and cleared
 server-side by `stripe-webhook` fulfillment.
 
-KNOWN WART: `record-waiver-signature` still flips club-pay rows to `pending-club-payment` on
-signing without touching `clubCartPending` — if the club paid before the guardian signed, a
-stale hold can be re-asserted.
+**`record-waiver-signature` splits on `club_cart_pending`, NEVER on `paid_via`** (fixed
+2026-08-04; prod v13). `paid_via` says who was *going* to pay; `club_cart_pending` says whether a
+payment is still *outstanding*. They come apart whenever a club pays before the guardian signs —
+`fulfill.ts` writes that as `status:'pending-waiver', paid_via:'club', club_cart_pending:false`.
+Keying on `paid_via` re-asserted a payment hold on an already-paid membership, and — because the
+activate arm carried `.neq('paid_via','club')` — left that row unable to reach `active` at all.
+Note `paid_via` is NULLABLE, so `<> 'club'` is NULL (not true) for an unset value: such a row
+matched neither arm and stuck at `pending-waiver` permanently. `club_cart_pending` is
+`not null default false` (verified on prod AND staging), so it has no such trap.
+Decision logic: `_shared/membership-signing.ts` — **keep in lockstep with `membershipHolds`**.
 
 ## Camps are session-less, level-less, and discipline-less
 
