@@ -149,7 +149,7 @@ function AwardsView({ event, db, bundle }: { event: Event; db: ReturnType<typeof
               <div key={i} className="card card-pad">
                 <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--ink-soft)', marginBottom: 6 }}>
                   {levelName(db, t.level)} · {t.scope === 'AA' ? 'All-Around' : t.scope === 'Team' ? 'Team' : t.scope} · {t.category}
-                  {t.fromFinals && <span style={{ color: 'var(--coral-600)' }}> · finals</span>}
+                  {t.fromFinals && <span style={{ color: 'var(--coral-text)' }}> · finals</span>}
                 </div>
                 <table className="res-tbl" style={{ fontSize: 13 }}>
                   <tbody>

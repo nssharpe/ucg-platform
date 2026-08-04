@@ -1486,7 +1486,7 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
         </>
       )}
 
-      {error && <p style={{ color: 'var(--coral-600)', fontSize: 13.5, fontWeight: 600, margin: '8px 0 0' }}>{error}</p>}
+      {error && <p style={{ color: 'var(--coral-text)', fontSize: 13.5, fontWeight: 600, margin: '8px 0 0' }}>{error}</p>}
       <div style={{ display: 'flex', justifyContent: 'end', gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
         <button className="btn ghost" onClick={onClose}>Cancel</button>
         {isNationalsUcgWizard ? (

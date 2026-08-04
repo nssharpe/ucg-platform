@@ -306,7 +306,7 @@ export function Communicate() {
       <h1 className="page-title display">Communicate</h1>
       <p className="page-sub">HTML email to filtered groups — built to handle 2,000+ recipients, with event/session targeting.</p>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'start' }}>
+      <div className="pane-2">
         {/* ---- Left: Audience ---- */}
         <div className="card card-pad">
           <h3 className="card-title">Audience</h3>
@@ -554,7 +554,7 @@ export function Communicate() {
 
       {/* ---- Send card (separate from Audience/Message so it's clear this is the
               real send, not the test) — with the last-send summary at the bottom ---- */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'start', marginTop: 16 }}>
+      <div className="pane-2" style={{ marginTop: 16 }}>
         <div className="card card-pad">
           <h3 className="card-title">Send to selected audience</h3>
           <p style={{ fontSize: 13.5, color: 'var(--ink-soft)', marginTop: 0 }}>
@@ -701,7 +701,7 @@ export function Communicate() {
                             {c.costEstimate != null ? ` · est. $${c.costEstimate.toFixed(c.costEstimate < 1 ? 4 : 2)}` : ''}
                           </div>
                         )}
-                        {c.error && <div style={{ color: 'var(--coral-600)', marginBottom: 4 }}>Error: {c.error}</div>}
+                        {c.error && <div style={{ color: 'var(--coral-text)', marginBottom: 4 }}>Error: {c.error}</div>}
                         <details style={{ marginBottom: 6 }}>
                           <summary style={{ cursor: 'pointer', color: 'var(--ink-soft)' }}>Message</summary>
                           <div style={{ whiteSpace: 'pre-wrap', maxHeight: 200, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 4, padding: 8, marginTop: 4, fontSize: 12.5 }}>{c.body}</div>
@@ -788,7 +788,7 @@ export function Communicate() {
                           <span style={{ fontSize: 12, color: 'var(--ink-soft)' }}>
                             {new Date(m.updatedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                           </span>
-                          {m.error && <span style={{ fontSize: 12, color: 'var(--coral-600)' }}>{m.error}</span>}
+                          {m.error && <span style={{ fontSize: 12, color: 'var(--coral-text)' }}>{m.error}</span>}
                         </div>
                       );
                     })}

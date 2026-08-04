@@ -394,7 +394,7 @@ export function SanctionRequestForm() {
             </span>
           </label>
           {!accessibleAccepted && (
-            <p style={{ fontSize: 13, color: 'var(--coral-600)', marginTop: 6 }}>
+            <p style={{ fontSize: 13, color: 'var(--coral-text)', marginTop: 6 }}>
               Events must be accessible to all divisions to be sanctioned. If your event cannot meet this requirement, please contact{' '}
               <a href="mailto:info@naigc.org">info@naigc.org</a> to discuss alternatives.
             </p>
@@ -615,7 +615,7 @@ export function SanctionRequestForm() {
           <input className="input" value={certTypedName} onChange={(e) => setCertTypedName(e.target.value)} placeholder="Your full name" />
         </Field>
 
-        {error && <p style={{ color: 'var(--coral-600)', fontWeight: 600, marginTop: 8 }}>{error}</p>}
+        {error && <p style={{ color: 'var(--coral-text)', fontWeight: 600, marginTop: 8 }}>{error}</p>}
 
         <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
           <button className="btn primary" onClick={submit} disabled={!accessibleAccepted}>Submit Sanction Request</button>
@@ -1052,7 +1052,7 @@ export function SanctionVotePage() {
                 <div style={{ fontSize: 12, color: 'var(--ink-soft)' }}>Approve</div>
               </div>
               <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--coral-600)' }}>{tally.rejections}</div>
+                <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--coral-text)' }}>{tally.rejections}</div>
                 <div style={{ fontSize: 12, color: 'var(--ink-soft)' }}>Reject</div>
               </div>
               <div style={{ textAlign: 'center' }}>

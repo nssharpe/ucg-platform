@@ -233,7 +233,7 @@ export function CapacityConflictDialog({
             </span>
           </div>
           {splitBlocked.length > 0 && (
-            <div style={{ fontSize: 13, color: 'var(--coral-600)' }}>
+            <div style={{ fontSize: 13, color: 'var(--coral-text)' }}>
               {splitBlocked.map((r) => nameOf(r.athleteId)).join(', ')}
               {splitBlocked.length === 1 ? "'s updated registration can't" : "' updated registrations can't"} be
               waitlisted — they already hold a purchased spot. To undo the change, remove the change line
@@ -260,7 +260,7 @@ export function CapacityConflictDialog({
         Choose how to proceed — nothing has changed yet.
       </p>
       {blockedAffected.length > 0 && (
-        <p style={{ fontSize: 13, color: 'var(--coral-600)', marginBottom: 14 }}>
+        <p style={{ fontSize: 13, color: 'var(--coral-text)', marginBottom: 14 }}>
           {blockedAffected.map((r) => nameOf(r.athleteId)).join(', ')}
           {blockedAffected.length === 1 ? "'s updated registration can't" : "' updated registrations can't"} be
           waitlisted — they already hold a purchased spot for this event. To undo the change, remove the

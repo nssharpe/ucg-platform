@@ -84,7 +84,7 @@ export default function WaiverSign() {
         <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={isSelf ? expectedSig : undefined} />
       </label>
       {isSelf && name.trim().length > 0 && !sigMatchesName && (
-        <p style={{ color: 'var(--coral-600)', fontSize: 13, marginTop: -4, marginBottom: 10 }}>
+        <p style={{ color: 'var(--coral-text)', fontSize: 13, marginTop: -4, marginBottom: 10 }}>
           Your signature must match your name on file: <strong>{expectedSig}</strong>.
         </p>
       )}
@@ -99,7 +99,7 @@ export default function WaiverSign() {
           ? 'I am the athlete and I agree to sign this waiver electronically. Timestamp and IP are recorded.'
           : 'I am the parent/guardian and agree to sign this waiver electronically. Timestamp and IP are recorded.'}</span>
       </label>
-      {err && <p style={{ color: 'var(--coral-600)', fontSize: 13 }}>{err}</p>}
+      {err && <p style={{ color: 'var(--coral-text)', fontSize: 13 }}>{err}</p>}
       <button className="btn primary" disabled={busy || consent === false || name.trim().length < 2 || (isSelf && !sigMatchesName)} onClick={submit}>
         {busy ? 'Signing…' : 'Sign waiver'}
       </button>

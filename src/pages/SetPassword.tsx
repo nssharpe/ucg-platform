@@ -85,8 +85,8 @@ export default function SetPassword() {
       <p style={{ fontSize: 12, color: tooShort ? 'var(--coral-600)' : 'var(--ink-soft)', margin: '4px 0 0' }}>
         At least {MIN_LEN} characters.
       </p>
-      {mismatch && <p style={{ fontSize: 13, color: 'var(--coral-600)', margin: '6px 0 0' }}>Passwords don’t match.</p>}
-      {err && <p style={{ fontSize: 13, color: 'var(--coral-600)', margin: '6px 0 0' }}>{err}</p>}
+      {mismatch && <p style={{ fontSize: 13, color: 'var(--coral-text)', margin: '6px 0 0' }}>Passwords don’t match.</p>}
+      {err && <p style={{ fontSize: 13, color: 'var(--coral-text)', margin: '6px 0 0' }}>{err}</p>}
       <button className="btn primary" type="submit" disabled={!canSubmit} style={{ marginTop: 14 }}>
         {busy ? 'Saving…' : 'Set password & continue →'}
       </button>

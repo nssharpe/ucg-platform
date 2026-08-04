@@ -172,7 +172,7 @@ export function EventCommunicate() {
         <Link className="btn ghost small" to={`/events/${event.slug}/host`}>← Host dashboard</Link>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'start' }}>
+      <div className="pane-2">
         {/* ---- Left: Audience filters ---- */}
         <div className="card card-pad">
           <h3 className="card-title">Audience</h3>
@@ -307,7 +307,7 @@ export function EventCommunicate() {
       </div>
 
       {channel === 'email' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'start', marginTop: 16 }}>
+        <div className="pane-2" style={{ marginTop: 16 }}>
           <div className="card card-pad">
             <h3 className="card-title">Send to selected audience</h3>
             <p style={{ fontSize: 13.5, color: 'var(--ink-soft)', marginTop: 0 }}>

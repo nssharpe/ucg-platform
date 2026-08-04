@@ -297,7 +297,7 @@ export function Judge() {
               </button>
             </div>
           </Field>
-          {codeError && <p style={{ color: 'var(--coral-600)', fontSize: 13, marginTop: 6 }}>{codeError}</p>}
+          {codeError && <p style={{ color: 'var(--coral-text)', fontSize: 13, marginTop: 6 }}>{codeError}</p>}
         </div>
       </div>
     );

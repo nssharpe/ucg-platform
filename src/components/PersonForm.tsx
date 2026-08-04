@@ -95,7 +95,7 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
   return (
     <Modal title={person ? `Edit ${person.firstName} ${person.lastName}` : 'New person'} onClose={onClose}>
       <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '0 0 12px' }}>
-        Fields marked <span style={{ color: 'var(--coral-600)' }}>*</span> are required.
+        Fields marked <span style={{ color: 'var(--coral-text)' }}>*</span> are required.
       </p>
       <div className="grid cols-2">
         <Field label="Type" required>
@@ -137,7 +137,7 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
                 N/A
               </label>
             </div>
-            {gradYearMissing && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Enter a year or check N/A.</div>}
+            {gradYearMissing && <div style={{ fontSize: 12, color: 'var(--coral-text)', marginTop: 4 }}>Enter a year or check N/A.</div>}
           </Field>
         )}
         {!coachOnly && (
@@ -148,7 +148,7 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
               <option value="" disabled>Select a student status…</option>
               <option value="Student">Student</option><option value="Non-Student">Non-Student</option>
             </select>
-            {studentStatusMissing && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Select a student status.</div>}
+            {studentStatusMissing && <div style={{ fontSize: 12, color: 'var(--coral-text)', marginTop: 4 }}>Select a student status.</div>}
           </Field>
         )}
         <Field label="T-shirt size" required>
@@ -158,7 +158,7 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
             <option value="" disabled>Select a t-shirt size…</option>
             {SHIRT_SIZES.map((s) => <option key={s}>{s}</option>)}
           </select>
-          {shirtMissing && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Select a t-shirt size.</div>}
+          {shirtMissing && <div style={{ fontSize: 12, color: 'var(--coral-text)', marginTop: 4 }}>Select a t-shirt size.</div>}
         </Field>
         <Field label="Country"><input type="text" value={draft.country} onChange={(e) => set({ country: e.target.value })} /></Field>
         <Field label={stateLabel} required={!outsideUs}>
@@ -180,7 +180,7 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
             onChange={(e) => set({ phone: formatPhone(e.target.value) })}
             placeholder="(555) 123-4567"
           />
-          {mainPhoneInvalid && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Must be a 10-digit US phone number.</div>}
+          {mainPhoneInvalid && <div style={{ fontSize: 12, color: 'var(--coral-text)', marginTop: 4 }}>Must be a 10-digit US phone number.</div>}
         </Field>
       </div>
 
@@ -250,7 +250,7 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
             onChange={(e) => set({ emergency: { ...draft.emergency, phone: formatPhone(e.target.value) } })}
             placeholder="(555) 123-4567"
           />
-          {emergPhoneInvalid && <div style={{ fontSize: 12, color: 'var(--coral-600)', marginTop: 4 }}>Must be a 10-digit US phone number.</div>}
+          {emergPhoneInvalid && <div style={{ fontSize: 12, color: 'var(--coral-text)', marginTop: 4 }}>Must be a 10-digit US phone number.</div>}
         </Field>
       </div>
       <Field label="Dietary restrictions">
