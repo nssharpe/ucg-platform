@@ -8,6 +8,7 @@
 //    own link, 'guardian' for a parent signing for a minor) — we stamp THAT on
 //    the signature rather than trusting the role in the request body.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { statusAfterSigning, welcomeEligible } from '../_shared/membership-signing.ts';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -102,22 +103,29 @@ Deno.serve(async (req) => {
   // --- Activate the membership(s) + set convenience pointers ---
   // A single waiver covers ALL of a person's memberships for the season, so this
   // clears every pending-waiver row for (person, season) — not just one type.
-  // MEMBERSHIP STATUS NUANCE: club-pay rows go to 'pending-club-payment' (the club
-  // still owes the fee); everything else becomes 'active'. (On the self path the
-  // membership rows don't exist yet — the wizard creates them at the pay step — so
-  // these updates match 0 rows and are a harmless no-op.)
+  //
+  // MEMBERSHIP STATUS NUANCE: the split is on `club_cart_pending` — "is a payment
+  // still OUTSTANDING?" — NOT on `paid_via`, which only says who was going to pay.
+  // Those come apart whenever a club pays before the guardian signs, and keying on
+  // `paid_via` re-asserted a payment hold on an already-paid membership (and left
+  // it permanently unable to reach 'active'). Full reasoning, including the
+  // `paid_via IS NULL` three-valued-logic hole this also closes:
+  // `_shared/membership-signing.ts`, which owns the decision.
+  //
+  // (On the self path the membership rows don't exist yet — the wizard creates them
+  // at the pay step — so these updates match 0 rows and are a harmless no-op.)
   const now = new Date().toISOString();
   const ptrs = { waiver_signed_at: now, waiver_signed_by: a.signerName };
   const { data: activeRows, error: upErr } = await db.from('memberships')
-    .update({ status: 'active', ...ptrs })
+    .update({ status: statusAfterSigning({ clubCartPending: false }), ...ptrs })
     .eq('person_id', a.personId).eq('season_id', a.seasonId).eq('status', 'pending-waiver')
-    .neq('paid_via', 'club')
-    .select('id');
+    .eq('club_cart_pending', false)
+    .select('id, paid_via');
   if (upErr) return json({ ok: false, error: upErr.message }, 500);
   const { data: clubRows, error: upClubErr } = await db.from('memberships')
-    .update({ status: 'pending-club-payment', ...ptrs })
+    .update({ status: statusAfterSigning({ clubCartPending: true }), ...ptrs })
     .eq('person_id', a.personId).eq('season_id', a.seasonId).eq('status', 'pending-waiver')
-    .eq('paid_via', 'club')
+    .eq('club_cart_pending', true)
     .select('id');
   if (upClubErr) return json({ ok: false, error: upClubErr.message }, 500);
 
@@ -128,7 +136,13 @@ Deno.serve(async (req) => {
   }
 
   // --- Trigger welcome email if they just became active ---
-  if (hadNoActiveBefore && activeRows && activeRows.length > 0) {
+  // Club-paid rows now reach 'active' through the update above (they previously
+  // couldn't reach it at all), so they'd newly qualify here. Exclude them, keeping
+  // this email's audience exactly what it was and mirroring `fulfill.ts`'s own
+  // `if (signed && !clubId)` gate — see `welcomeEligible`.
+  const welcomeRows = (activeRows ?? []).filter((r) =>
+    welcomeEligible({ paidVia: (r as { paid_via: string | null }).paid_via }));
+  if (hadNoActiveBefore && welcomeRows.length > 0) {
     try {
       const welcomeUrl = `${url}/functions/v1/send-membership-welcome`;
       await fetch(welcomeUrl, {
