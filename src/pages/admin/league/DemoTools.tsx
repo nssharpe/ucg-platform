@@ -57,7 +57,7 @@ export function DemoTools() {
             >
               Push local DB → Supabase
             </button>
-            {pushStatus && <span style={{ fontSize: 13, color: pushStatus === 'Error' ? 'var(--coral-600)' : 'var(--ink-soft)' }}>
+            {pushStatus && <span style={{ fontSize: 13, color: pushStatus === 'Error' ? 'var(--coral-text)' : 'var(--ink-soft)' }}>
               {pushStatus === 'Done' ? '✓ Done' : pushStatus === 'Error' ? '✕ Failed — see console' : `Pushing: ${pushStatus}…`}
             </span>}
           </div>

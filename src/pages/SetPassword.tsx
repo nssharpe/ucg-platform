@@ -82,7 +82,7 @@ export default function SetPassword() {
         <input className="input" type="password" autoComplete="new-password" value={pw2}
           onChange={(e) => { setPw2(e.target.value); setErr(null); }} />
       </label>
-      <p style={{ fontSize: 12, color: tooShort ? 'var(--coral-600)' : 'var(--ink-soft)', margin: '4px 0 0' }}>
+      <p style={{ fontSize: 12, color: tooShort ? 'var(--coral-text)' : 'var(--ink-soft)', margin: '4px 0 0' }}>
         At least {MIN_LEN} characters.
       </p>
       {mismatch && <p style={{ fontSize: 13, color: 'var(--coral-text)', margin: '6px 0 0' }}>Passwords don’t match.</p>}
