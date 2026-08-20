@@ -92,6 +92,12 @@ stays chargeable.
 
 **Don't add code that assumes a reg has a level or apparatus without a camp branch.**
 
+**Camps are individual self-registration ONLY** (spec §G; Julia confirmed "block it outright"
+2026-08-19): `Club.tsx`'s `openEvents` picker filters `eventType === 'camp'`, so a club manager
+cannot register athletes for a camp — or see camp registrations from the club page (athletes
+edit their own via MyRegistrations; admins via admin surfaces). New manager-side registration
+entry points must keep this filter.
+
 Roster tools and "Competition setup" are removed entirely from the camp host dashboard; only the
 registration-workbook export remains (it still carries the overnight-survey roster).
 

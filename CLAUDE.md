@@ -190,5 +190,6 @@ The single authoritative list is `docs/whats-next.md`.
 - **Two live findings from the 2026-07-31 review** (`docs/specs/2026-07-31-review-and-cleanup-findings.md`):
   the public Results page hides posted scores when registrations carry no `session_id`, and
   `judge-entry`'s 6-digit unlock has no real rate limit. Both in `docs/whats-next.md` §3.
-- 👤 **Nate's actions:** grant `finance_admin` (Julia/bookkeeper); verify the P3 prereqs landed
-  ("UCG - Main" `is_league_host` + `refund_manager` grants).
+- 👤 **Nate's actions:** grant `refund_manager` to whoever reviews refunds. (Done 2026-08-19:
+  Julia's `finance_admin` ✅; "UCG - Main" `is_league_host` ✅ — and that club is now hidden
+  from the member-facing Club Directory/Profile pickers.)

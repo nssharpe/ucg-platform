@@ -64,14 +64,14 @@ Nate-only items from `docs/whats-next.md` §1.
 
 | # | Item | Why it blocks | ☐ |
 |---|------|---------------|---|
-| S-01 | Grant Julia the **`finance_admin`** role (`#/admin/league` → User Roles) | Lane **F** is entirely untestable by Julia without it (whats-next §1) | ☐ |
+| S-01 | ✅ **DONE 2026-08-19** — Julia already holds `finance_admin` | Lane **F** is unblocked | ✅ |
 | S-02 | Grant Julia — or a second account — **`refund_manager`** | Lane **R** needs a reviewer who is *not* the requester, to prove the two-party flow | ☐ |
-| S-03 | Verify **"UCG - Main"** has `clubs.is_league_host = true` | Refund eligibility keys off this flag. If false, every refund request correctly refuses and lane **R** looks broken when it isn't | ☐ |
+| S-03 | ✅ **DONE 2026-08-19** — flag verified by Nate. Side effect fixed the same day: UCG - Main no longer appears in the member-facing Club Directory or the Profile club pickers (it isn't a real club; admin surfaces still show it) | Lane **R** eligibility works | ✅ |
 | S-04 | Confirm the **`sanctioning`** role exists on at least one account | Lane **H** needs a voter | ☐ |
 | S-05 | Create a **third, role-less athlete account** (`ZZTEST-` named) | Half of lane **G** is about what a *plain member* sees. Testing as an admin silently hides every permission bug | ☐ |
 | S-06 | Confirm email will actually deliver to the addresses you'll check | Lane **E** is worthless if mail lands somewhere neither of you reads. Check spam folders once up front | ☐ |
 | S-07 | Have a **second physical device** ready (phone or tablet — not a resized window) | Lanes **J**, **D**, **Z** need it | ☐ |
-| S-08 | Note today's **build SHA** (visible in the "Report a problem" payload) | So findings can be pinned to a build | ☐ |
+| S-08 | ✅ **Nothing to do** — the build stamp (`v<sha> · date`, the small line at the bottom of the nav) identifies the build, and every in-app report attaches it automatically. Glance at it only if you're curious | Findings pin to builds by themselves | ✅ |
 
 ### Stripe test cards — use more than 4242
 
@@ -127,17 +127,21 @@ before navigating away.
 - Then add **one row** in your spreadsheet with the same ID and `Reported in-app? = Y`. Don't
   retype the description — the email already has it.
 
-### Channel 2 — Your spreadsheet (for EVERYTHING, including passes)
+### Channel 2 — The shared Google Sheet (for EVERYTHING, including passes)
 
-The workbook is the coverage record. Its job is to answer *"did anyone actually try this?"* —
-which the in-app reports cannot. Fill a row for **every step**, including the ones that pass; a
+The Sheet is the coverage record. Its job is to answer *"did anyone actually try this?"* —
+which the in-app reports cannot. Work only in **your own Findings tab**. Fill a Result for **every step**, including the ones that pass; a
 `PASS` row takes two seconds and is what makes the untested gaps visible.
 
-Use the spreadsheet as the **only** channel for: UX and wording feedback, "this works but it's
+Use the Sheet as the **only** channel for: UX and wording feedback, "this works but it's
 wrong," design opinions, requirement disagreements, and questions.
 
-**One workbook each** — `feedback-nate.xlsx` and `feedback-julia.xlsx`. Don't share a single
-file; parallel edits will conflict and rows get lost.
+**One shared Google Sheet — "UCG Preflight Feedback"** — with a Findings tab per tester
+(**Julia Findings** / **Nate Findings**), a README, and the answered Decisions tab. Google
+Sheets handles simultaneous editing natively, so one file is fine as long as each of you stays
+in your own tab. *(The repo keeps the generated template at
+`docs/uat/ucg-preflight-feedback.xlsx` — built by `docs/uat/build-feedback-workbook.py` from
+this plan's markdown; the live copy is the Sheet.)*
 
 ### The ID scheme
 
@@ -333,14 +337,14 @@ phone**, not just desktop.
 
 | ID | Do this | Expected |
 |---|---|---|
-| G-01 | As a **non-member**, open an event and try to register | Blocked with a message telling you a season membership is needed, plus a link to buy it — and that link should be **pre-set to the event's season, even if that isn't the current season** (spec §D) |
+| G-01 | As a **non-member**, open an event and try to register | Blocked with a message that a season membership is needed, plus a link to buy it. ⚠️ The spec §D "pre-set to the event's season" half is a **known gap** (Appendix A) — test the gate + link, and note where the link actually lands |
 | G-02 | Buy the membership through that link, return, register | Works, and lands you back where you were |
 | G-03 | Register while **signed out** | You're asked to sign in and **returned to the event page** afterwards, not dumped on Home (spec §D) |
 | G-04 | Registration popup: choose disciplines, level, apparatus, all-around | Matches what you'd expect from the paper form. Only apparatus valid for the discipline are offered |
 | G-05 | **T&T**: register for multiple disciplines with per-apparatus levels | Per-discipline default level works; per-apparatus overrides work |
 | G-06 | **T&T**: try to remove your *last* remaining discipline | Blocked with an explanatory message; removing a non-last one works |
 | G-07 | **Synchro**: pick a partner from the member list | Picker searches all active members; the pairing is recorded |
-| G-08 | Have your partner pick **someone else** | Your field reverts to "unknown" and you're emailed with an edit link and the deadline (spec §D) |
+| G-08 | Have your partner pick **someone else** | ⚠️ The spec §D automation (revert your field to "unknown" + email you an edit link) is **not built** — verified in code, Appendix A. Observe what actually happens to your registration and log it; the mutual partner auto-link/level-sync is the only partner automation that exists |
 | G-09 | Add-ons in the popup (banquet / t-shirt / leo / banner) | Sizes required where applicable; quantities work; the banner has an exact-text box |
 | G-10 | **Banquet tickets**: buy 2 for yourself | At most **one** may be assigned to you; extras must be unassigned/EXTRA (spec §E3). Confirm the rule is enforced, not just documented |
 | G-11 | Survey questions (where enabled) | Asked **last**, after add-ons (spec §D) |
@@ -348,8 +352,8 @@ phone**, not just desktop.
 | G-13 | **Edit a competition detail** after paying | A change fee applies, per the event's change-fee config |
 | G-14 | **Edit an add-on or a survey answer** after paying | **No change fee** (spec §D) — but the change deadline is still respected |
 | G-15 | Try to edit **after** the change deadline | Blocked, with a message that says when the deadline was |
-| G-16 | Register with a **private/late-registration code** | Accepted during the window; the entry fee shows the **late fee added on top** (spec §A) |
-| G-17 | Use that same code **after** `lastDateToEdit` | It stops working; only league admins can still register (spec §D) |
+| G-16 | Register during the **late-registration window** (at or after the event's late-reg start time) | The **late fee is added on top** of the entry fee automatically — it's date-triggered, no code involved (spec §A) |
+| G-17 | Look for the **private registration code** path (spec §D) | ⚠️ Known gap (Appendix A) — the field exists in the data model but nothing consumes it, and the "Private reg link" button on the manage page is a demo stub. Confirm and move on |
 | G-18 | Copy the event link with the **copy-link** button, open it in incognito | Goes to the right event |
 | G-19 | Register for an event in a **different timezone** than yours | Dates/times displayed unambiguously. Note whether it's clear *whose* timezone is shown |
 | G-20 | Request a **refund** on one of your registrations (self-serve popup) | Confirm dialog warns about removal; reason dropdown offers Injury / Illness / Bereavement / Other+explain; you get a "request received" email (spec §H). *Approval is lane R* |
@@ -389,7 +393,7 @@ phone**, not just desktop.
 | K-06 | Camp add-ons (leo/shirt) | A size must be chosen; $0 price is allowed; explicit "no shirt / no leo" options exist |
 | K-07 | Camp confirmation email | Survey answers + add-on summary + an edit link, formatted readably |
 | K-08 | Camp export (admin/host) | One line per athlete: name, club, birthday, gender, profile shirt size, purchased shirt/leo size, all survey answers, date registered (spec §G) |
-| K-09 | **As a club manager**, look at the event list — can you pick a camp and register athletes for it? | ⚠️ **This is a question for you, Julia, not a bug report.** §G says camps are "individual self-registration only," but the club-manager path is not blocked. Nothing renders wrong. **Should it be blocked outright, or is manager-side camp registration a convenience worth keeping?** Answer in the `D` column |
+| K-09 | **As a club manager**, look at the club page's event picker | Camps no longer appear at all — Julia decided "block it outright" (2026-08-19) and it shipped the same day. Managers can't register athletes for camps or see camp registrations from the club page; athletes use My Registrations |
 | K-10 | Edit a camp registration made **before 2026-07-23** if any exist | Edits in place, no duplicate rows |
 
 ---
@@ -427,7 +431,7 @@ phone**, not just desktop.
 | P-03 | Set a **per-discipline cap** (T&T); fill it | Blocks |
 | P-04 | **Partial fit**: cap has 2 spots, try to register 3 athletes at one level | Checkout blocks with an error **naming the level and the overage** ("Level 5 is 1 over capacity") and offers: waitlist the whole group, a different session, or an explicit split. Never silently partial (spec §F) |
 | P-05 | Choose "waitlist the group" | The whole level group is waitlisted together |
-| P-06 | **Free up space** (refund/withdraw/raise the cap) | Waitlisted group is auto-notified by email when enough space exists **for the whole group** (spec §F) |
+| P-06 | **Free up space** (refund/withdraw/raise the cap) | Waitlisted group is auto-notified by email when enough space exists **for the whole group** (spec §F). Allow up to ~15 min — promotion runs on a scheduled sweep, not instantly |
 | P-07 | Admin **overrides** a cap for one case | Allowed for league admins |
 | P-08 | Switch the event to **by-session** mode; create sessions with per-apparatus routine caps | Athletes/clubs pick a session at registration |
 | P-09 | Try to register into a **full session** | Unselectable, but a **waitlist** is offered |
@@ -446,7 +450,7 @@ phone**, not just desktop.
 | H-02 | Vote on it from the **sanctioning queue** | Vote records; the tally rule (⅔, or majority at the deadline) behaves |
 | H-03 | Approve it | Event is auto-created; `YYYY_ST_###` sanction ID assigned; approval email to the requester |
 | H-04 | **Reject** a different request | Rejection email; no event created |
-| H-05 | Check for **voting reminder emails** to non-voters at 3 days and 1 day before the deadline (spec §B1) | If absent, mark `MISSING` |
+| H-05 | Check for **voting reminder emails** to non-voters at 3 days and 1 day before the deadline | These **are implemented** (a 15-minutely scheduled job) — expect them, with ±15 min timing tolerance (spec §B1) |
 | H-06 | Assign an **event owner** to an approved event | Field at the top of the page; **unassigned events are red-highlighted** in the list (spec §B3) |
 | H-07 | Walk the **event-owner checklist**: contact, hotel link, medals ordered → tracking, insurance cert, onsite rep, pay host | All 7 items present with sane due dates (spec §B4) |
 | H-08 | Let a checklist item go **overdue** | Escalating reminder emails: 1 week before due, 1 day before, then daily while overdue (spec §B4). If absent, mark `MISSING` |
@@ -504,9 +508,9 @@ different people (that's the point).*
 | R-05 | Request another **after** `lastDateToEdit`, and approve | **75% of funds before processing fees.** Check the arithmetic by hand |
 | R-06 | Look at the athlete after an after-deadline refund | All apparatus unchecked and **un-recheckable** except by league admins, who get a "refunded, cannot participate" warning. The **name still appears in meet materials** (spec §H) |
 | R-07 | **Reject** a request | "Invalid reason" email to requester, refund admins cc'd, **no registration change** |
-| R-08 | Refund a **single banquet ticket** | Just that ticket refunds; other lines untouched |
+| R-08 | Refund a **single banquet ticket** | Just that ticket refunds; other lines untouched. ⚠️ Policy note (Julia 2026-08-19): add-ons should refund **in full until that add-on's order deadline, not at all after** — but the code currently applies the registration 100%/75% `lastDateToEdit` rule to add-ons too. Test what's built; the policy change is tracked in whats-next |
 | R-09 | **Move** a banquet ticket to another athlete / mark it EXTRA | Works without a refund |
-| R-10 | Refund one add-on out of a multi-item order | Only that item. **Open the original receipt afterward — it must be undisturbed** (spec §H) |
+| R-10 | Refund one add-on out of a multi-item order | Only that item. **Open the original receipt afterward — it must be undisturbed** (spec §H). Same D-5 policy note as R-08 applies to the amount |
 | R-11 | Refund a **club-paid** registration | Refunds **to the club**, not the athlete (spec §H) |
 | R-12 | Refund an order that a coupon covered **100%** | Processes as a $0 no-op through the same flow, with a receipt |
 | R-13 | Request more than remains refundable | Capped at the remainder, not refused outright |
@@ -644,7 +648,10 @@ useful. Just don't file it as a bug.
 | **Schedule-file attachment** on an event (pdf/jpg/png) | Not built — needs file storage |
 | **PWA update path unverified** | That's exactly what **D-09** is for — please do run it |
 | **Nationals session-timed finals reminders** ("5 min after session ends") | Deliberately deferred; only the admin-set deadline nag + 10pm lock shipped |
-| **Camps: club managers aren't blocked** from registering athletes | Known policy gap — **K-09 asks you to decide**, don't file it |
+| ~~Camps: club managers aren't blocked~~ | ✅ **Resolved + shipped 2026-08-19** — Julia chose "block it outright"; camps are filtered from the club-page event picker (**K-09** now verifies the block) |
+| **Synchro partner automations** — the "partner unknown" reminder email and the jilted-athlete revert + email (spec §D) | Not built (verified in code 2026-08-19). The mutual partner auto-link/level-sync IS built. **G-08** asks you to observe actual behavior |
+| **Private registration code** — the field exists but nothing validates it; the "Private reg link" button is a demo stub | Not built. Late registration works by date window + automatic late fee instead (**G-16**) |
+| **Season-preset on the membership gate link** (spec §D) | Not built — gate links go to the membership page generically. The page supports `?season=` but nothing passes it (**G-01**) |
 
 ---
 
@@ -662,32 +669,27 @@ because each was a case where the obvious reading of the bug was wrong.
 
 ---
 
-# Appendix C — Questions for Julia (answer in the `D` column, no testing needed)
+# Appendix C — Questions for Julia — ✅ ALL ANSWERED 2026-08-19
 
-1. **K-09 — camps and club managers.** §G says camps are individual self-registration only,
-   but a club manager can still register athletes for one. Block it outright, or keep it as a
-   convenience?
-2. **Host payout timing.** The "owed" formula is settled (gross before fees, refunds not
-   deducted). *When* payout happens is still just wording on the host page. Is "1 week after
-   the event" the actual policy?
-3. **Hosts and SMS.** Hosts currently get **email only** from the event Communicate page; SMS
-   stays league-admin-only because each text bills UCG. Still right?
-4. **Invoice numbering format.** Two formats exist. Which one do you want on real financial
-   records?
-5. **Refund policy edges.** After-deadline is 75% before processing fees. Should add-ons follow
-   the same 75% rule, or refund in full?
-6. **Anything in Appendix A you think shouldn't wait.**
+| # | Question | Julia's answer | Follow-up |
+|---|---|---|---|
+| D-1 | Camps and club managers | **Block it outright** | ✅ Shipped same day — camps filtered from the club-page event picker (K-09 verifies) |
+| D-2 | Host payout timing | **Yes — 1 week after the event is the policy** | None; the host-page wording is correct |
+| D-3 | Hosts and SMS | **Yes — email only for hosts stays right** | None |
+| D-4 | Invoice numbering format | **All current rows are test data; wipe the record before go-live. Use the latest format, `UCG-YYYY-XXXX`** | Recorded in whats-next. The Z-01 concurrency test still matters — the sequence fix remains a go-live gate |
+| D-5 | Add-on refund policy | **Full refund until each add-on's order deadline; no refunds after** | ⚠️ NOT what's built (code applies the 100%/75% `lastDateToEdit` rule to add-ons). New open item in whats-next §3; R-08/R-10 annotated |
+| D-6 | Anything in Appendix A that shouldn't wait | **Nothing at this time** | None |
 
 ---
 
 # Appendix D — Where to send it all
 
-When you're done with a block (don't wait until the very end):
+Findings live in the shared Google Sheet — nothing to send there. After each block (don't
+wait until the very end):
 
-1. Save your workbook.
-2. Zip your screenshots folder.
-3. Send both over, with a one-line note on which lanes are covered and anything that felt
-   wrong but that you couldn't pin to a step.
+1. Zip your screenshots folder (or drop it in a Drive folder next to the Sheet).
+2. Send it over with a one-line note on which lanes are covered and anything that felt wrong
+   but that you couldn't pin to a step.
 
 Partial is fine and genuinely useful — a completed lane A + M is worth more than four
 half-finished lanes. And **anything that made you say "huh?" is worth writing down even if you

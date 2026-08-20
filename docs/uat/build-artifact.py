@@ -96,14 +96,14 @@ chips = "".join(
 lanes_html = "".join(lane_html(l) for l in lanes)
 
 SETUP = [
-    ("S-01", "Grant Julia <b>finance_admin</b>", "Lane F is untestable by Julia without it"),
+    ("S-01", "✅ Done — Julia already holds <b>finance_admin</b> (2026-08-19)", "Lane F is unblocked"),
     ("S-02", "Grant a <b>refund_manager</b> who isn’t the requester", "Lane R needs two parties"),
-    ("S-03", "Verify “UCG - Main” has <b>is_league_host = true</b>", "Otherwise every refund correctly refuses and R looks broken"),
+    ("S-03", "✅ Done — flag verified 2026-08-19; UCG - Main is also now hidden from the member-facing Club Directory", "Lane R eligibility works"),
     ("S-04", "Confirm a <b>sanctioning</b> role exists somewhere", "Lane H needs a voter"),
     ("S-05", "Create a third, <b>role-less athlete</b> account", "Testing as admin hides every permission bug"),
     ("S-06", "Confirm email delivers to addresses you’ll actually read", "Lane E is worthless otherwise"),
     ("S-07", "Have a <b>second physical device</b> ready", "Lanes J, D and Z need it"),
-    ("S-08", "Note today’s <b>build SHA</b>", "So findings pin to a build"),
+    ("S-08", "✅ Nothing to do — the build stamp (v‹sha› · date) sits at the bottom of the nav, and in-app reports attach it automatically", "Findings pin to builds by themselves"),
 ]
 setup_html = "".join(
     f'<li><span class="sid">{i}</span><div><p class="do">{t}</p>'
@@ -146,7 +146,10 @@ KNOWN = [
     ("Schedule-file attachment on an event", "Not built — needs file storage"),
     ("PWA update path unverified", "That’s what <b>D-09</b> is for — please run it"),
     ("Nationals session-timed finals reminders", "Deliberately deferred"),
-    ("Camps: club managers aren’t blocked", "<b>K-09</b> asks you to decide"),
+    ("Camps: club managers aren’t blocked — RESOLVED", "Julia chose “block it outright” (D-1); shipped 2026-08-19. <b>K-09</b> now verifies the block"),
+    ("Synchro partner automations (reminder + jilted-revert emails)", "Not built — verified in code. Mutual auto-link IS built; <b>G-08</b> observes actual behavior"),
+    ("Private registration code", "Not built — the field exists but nothing consumes it; the “Private reg link” button is a demo stub. Late reg = date window + auto fee (<b>G-16</b>)"),
+    ("Season-preset on the membership gate link", "Not built — the page supports ?season= but nothing passes it (<b>G-01</b>)"),
 ]
 known_html = "".join(
     f'<li><p class="do">{k}</p><p class="exp"><span class="exp-label">Status</span>{v}</p></li>'
@@ -166,18 +169,17 @@ confirm_html = "".join(
     for s, t, d in CONFIRM)
 
 DECISIONS = [
-    ("Camps and club managers",
-     "§G says camps are individual self-registration only, but a club manager can still register athletes for one. Block it outright, or keep it as a convenience?"),
-    ("Host payout timing",
-     "The “owed” formula is settled. <em>When</em> payout happens is still just wording on the host page. Is “1 week after the event” the actual policy?"),
-    ("Hosts and SMS",
-     "Hosts get email only from the event Communicate page; SMS stays league-admin-only because each text bills UCG. Still right?"),
-    ("Invoice numbering format",
-     "Two formats exist. Which one do you want on real financial records?"),
-    ("Refund policy edges",
-     "After-deadline is 75% before processing fees. Should add-ons follow the same rule, or refund in full?"),
-    ("Anything in Known gaps that shouldn’t wait",
-     "Say so — that’s useful. Just don’t file it as a bug."),
+    ("D-1 · Camps and club managers — <b>Block it outright</b>",
+     "Answered 2026-08-19 and shipped the same day: camps no longer appear in the club-page event picker. K-09 verifies."),
+    ("D-2 · Host payout timing — <b>Yes, 1 week after the event</b>",
+     "The host-page wording is the policy."),
+    ("D-3 · Hosts and SMS — <b>Email-only for hosts stays right</b>",
+     "SMS remains league-admin-only."),
+    ("D-4 · Invoice numbering — <b>Wipe before go-live; keep UCG-YYYY-XXXX</b>",
+     "All current rows are test data. The Z-01 concurrency test still matters — the sequence fix stays a go-live gate."),
+    ("D-5 · Add-on refunds — <b>Full refund until the add-on’s order deadline, none after</b>",
+     "Not what’s built (code applies the 100%/75% registration rule to add-ons). Now an open item in whats-next; R-08/R-10 are annotated."),
+    ("D-6 · Known gaps to prioritize — <b>Nothing at this time</b>", ""),
 ]
 dec_html = "".join(
     f'<li><p class="do">{t}</p><p class="exp">{d}</p></li>' for t, d in DECISIONS)
@@ -541,9 +543,9 @@ ul.cards span {{ color: var(--soft); font-size: .9rem; }}
   <h3>Channel 1 — in-app “Report a problem”, for anything broken</h3>
   <p>Start the description with the finding ID and your initials, blank line, then prose. Paste screenshots straight into the box (Win+Shift+S then Ctrl+V, or Cmd+Shift+4 then Cmd+V). Then add <em>one</em> row in your sheet with the same ID — don’t retype the description.</p>
 
-  <h3>Channel 2 — your spreadsheet, for everything including passes</h3>
-  <p>The workbook is the coverage record — it answers “did anyone actually try this?”, which the in-app reports can’t. Fill a Result for <strong>every</strong> step; a PASS takes two seconds and is what makes the untested gaps visible. It’s also the only channel for UX feedback, wording, “works but wrong”, and requirement disagreements.</p>
-  <div class="callout"><p><strong>One workbook each.</strong> <code>feedback-nate.xlsx</code> and <code>feedback-julia.xlsx</code> — all 240 steps are pre-filled with dropdowns. Don’t share a single file; parallel edits conflict and rows get lost.</p></div>
+  <h3>Channel 2 — the shared Google Sheet, for everything including passes</h3>
+  <p>The Sheet is the coverage record — it answers “did anyone actually try this?”, which the in-app reports can’t. Fill a Result for <strong>every</strong> step; a PASS takes two seconds and is what makes the untested gaps visible. It’s also the only channel for UX feedback, wording, “works but wrong”, and requirement disagreements.</p>
+  <div class="callout"><p><strong>One shared Google Sheet — “UCG Preflight Feedback”.</strong> A Findings tab per tester (Julia&nbsp;Findings / Nate&nbsp;Findings), all 240 steps pre-filled with dropdowns, plus README and the answered Decisions tab. Work only in your own tab.</p></div>
 
   <h3>IDs and screenshots</h3>
   <p>Step ID is <code>LANE-NN</code> (<code>M-07</code>). Finding ID adds a sequence — <code>M-07-01</code>. Something not tied to a step uses <code>X</code>: <code>M-X-01</code>.</p>
@@ -580,12 +582,12 @@ ul.cards span {{ color: var(--soft); font-size: .9rem; }}
 </section>
 
 <section class="block" id="decisions">
-  <h2>Questions for Julia</h2>
-  <p class="lede">No testing needed — these are business decisions. There’s a Decisions tab in your workbook.</p>
+  <h2>Decisions — all answered</h2>
+  <p class="lede">Julia answered all six on 2026-08-19. Recorded here and in the Sheet’s Decisions tab; follow-ups are tracked in whats-next.</p>
   <ul class="stack">{dec_html}</ul>
 </section>
 
-<p class="foot">Send a workbook and a zipped screenshot folder after each block — partial is genuinely useful.<br>
+<p class="foot">Findings go straight into the shared Sheet; send a zipped screenshot folder after each block — partial is genuinely useful.<br>
 A completed lane A + M beats four half-finished lanes.</p>
 </div>
 
