@@ -1058,7 +1058,11 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   const caps = useCapabilities();
   const toast = useToast();
   const navigate = useNavigate();
-  const openEvents = db.events.filter((m) => eventIsInPhase(m, 'reg-open') || eventIsInPhase(m, 'reg-closed'));
+  // Camps are individual self-registration ONLY (spec §G; Julia confirmed
+  // 2026-08-19 "block it outright") — managers cannot register athletes for
+  // them, so they never appear in this picker. Competitions unchanged.
+  const openEvents = db.events.filter((m) =>
+    m.eventType !== 'camp' && (eventIsInPhase(m, 'reg-open') || eventIsInPhase(m, 'reg-closed')));
   const [eventId, setEventId] = useState(openEvents.find((m) => eventIsInPhase(m, 'reg-open'))?.id ?? openEvents[0]?.id);
   const event = db.events.find((m) => m.id === eventId);
   // Phase 3 (data-layer-scale): the by-event slice, replacing db.registrations

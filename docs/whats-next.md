@@ -14,8 +14,10 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
 
 ## 1. Nate-only action items (👤 — quick, unblock others)
 
-1. **Verify the P3 refund prerequisites landed:** "UCG - Main" flagged
-   `clubs.is_league_host` + `refund_manager` granted to whoever reviews refunds.
+1. 🟡 **P3 refund prerequisites:** "UCG - Main" `is_league_host` ✅ verified by Nate
+   2026-08-19 (and the flagged club is now hidden from the member-facing Club Directory /
+   Profile pickers — it isn't a real club). Still open: grant `refund_manager` to whoever
+   reviews refunds. (`finance_admin` for Julia ✅ confirmed 2026-08-19.)
 2. **Supabase Pro upgrade** (backups/PITR) — deliberately deferred 2026-07-04; a hard
    pre-flight gate in the [go-live checklist](stripe-go-live-checklist.md). Interim
    insurance: daily dumps via `scripts/backup-db.mjs` (runbook in
@@ -82,6 +84,9 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
    - **Invoice numbering** (O1 spec §3) — two formats coexist; deferred to the
      pre-launch data sweep per Nate, since all current rows are test data. The
      generators derive the sequence from a row COUNT, which is not concurrency-safe.
+     **Julia decided 2026-08-19 (UAT D-4):** wipe the whole record before go-live and keep
+     the latest format, `UCG-YYYY-XXXX`. The format question is closed; the DB-sequence
+     concurrency fix below is unchanged.
      💬 **Recommend reclassifying this as a Stripe go-live gate rather than a quality pass**
      ([findings §6.4](specs/2026-07-31-review-and-cleanup-findings.md)): the trigger for the
      concurrency bug isn't a data sweep, it's the first two people checking out at the same
@@ -122,9 +127,17 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
   ⚠️ `eslint-plugin-jsx-a11y` **could not be installed** — no release supports eslint 10 (repo is
   on 10.8.0). Re-check later; it's the cheapest way to stop A1-class regressions at the source.
 3. **New-club-request email** to `newclubinquiries@naigc.org` (transport exists, not wired).
-4. **PWA production update path** — verify deploys reach users promptly; add a "new
+4. 🤖 **Add-on refund policy per Julia (UAT D-5, 2026-08-19) — code diverges from policy.**
+  Policy: an add-on refunds **in full until that add-on type's order deadline
+  (`lastPurchaseAt`), and not at all after it**. Today `process-refund` applies the
+  registration rule (100% at-or-before `last_date_to_edit`, else 75%) to `kind:'addon'`
+  requests too (index.ts §"computedRefundCents"). Needs: per-add-on deadline lookup in
+  `process-refund`, matching request-dialog messaging, and a refusal path for
+  past-deadline add-on requests. **Money path — sonnet drafts, reviewer-tier reviews the
+  diff before merge** per the CLAUDE.md routing rule.
+5. **PWA production update path** — verify deploys reach users promptly; add a "new
   version available, reload" prompt if not.
-5. **`npm audit` + Dependabot** in CI. **Audited 2026-07-31 — nothing that ships to a user is
+6. **`npm audit` + Dependabot** in CI. **Audited 2026-07-31 — nothing that ships to a user is
   vulnerable today**, so this is now about automation, not a backlog of fixes. 22 findings
   (18 high), and the triage is what matters:
    - The only **runtime** dependency implicated is `react-router-dom`. Installed 7.17.0;
@@ -138,7 +151,7 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
      them. `postcss`/`rimraf`/`fast-uri` do have clean fixes via a plain `npm audit fix`.
   ⚠️ When wiring this into CI, **fail on runtime deps only** — a blanket `npm audit --audit-level=high`
   gate would red-light every build today for dev-only transitive advisories with no upgrade path.
-6. ✅ **`record-waiver-signature` stale-hold wart — FIXED 2026-08-04** (staging + prod v13, no
+7. ✅ **`record-waiver-signature` stale-hold wart — FIXED 2026-08-04** (staging + prod v13, no
   migration needed). **It was bigger than "small, known fix" implied.** Recorded as a stale
   *badge*; it was actually a stale badge **plus a dead end**. The function split its two UPDATEs
   on `paid_via='club'`, and the activate arm carried `.neq('paid_via','club')` — so a membership
@@ -158,7 +171,7 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
   `not null default false` on prod and staging, 0 NULL rows, and 0 rows are currently stranded, so
   no backfill is needed. User-visible: WaiverSign told such a guardian the membership "activates
   once their club pays" — a false statement — and now correctly says it is active.
-7. ✅ **Public Results page hid posted scores — FIXED 2026-07-31.** The root cause was deeper
+8. ✅ **Public Results page hid posted scores — FIXED 2026-07-31.** The root cause was deeper
   than first recorded: `sessionResults()` scoped scores by `score.sessionId`, a snapshot taken
   at write time that does **not** follow a registration's session reassignment. So assigning
   sessions (the data fix) made the athletes appear but their scores still didn't — the score
@@ -170,7 +183,7 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
   ⚠️ **Still true and worth designing around:** nothing back-fills `session_id`, and
   `pushEvent` deletes/reinserts `event_sessions`, so a session whose **id** changes on an edit
   still orphans its registrations — see §4's §L.2 note.
-8. ✅ **`judge-entry` unlock rate limit — SHIPPED 2026-07-31** (staging + prod, migration
+9. ✅ **`judge-entry` unlock rate limit — SHIPPED 2026-07-31** (staging + prod, migration
   `20260731180000`, `judge-entry` prod v3). The 6-digit code path's only defense was a
   per-request `sleep(300)`, which parallelism erases — 40 concurrent invalid codes all returned
   401, none throttled. Now capped at **15 failures per 5 min per caller** via
@@ -185,13 +198,13 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
   bad codes → exactly 15×401 then 5×429; **40 concurrent → 40/40 blocked**; token path from the
   same locked-out caller still 401 not 429; a different key at 20 rows didn't block an unrelated
   caller. Full narrative: `supabase/README.md`'s `20260731180000` row.
-9. ✅ **`report-problem` + `admin-reset-mfa` deployed to staging — DONE 2026-07-31.** They
+10. ✅ **`report-problem` + `admin-reset-mfa` deployed to staging — DONE 2026-07-31.** They
   existed in the repo and prod but not in staging, so neither the in-app problem reporter nor
   the MFA break-glass could be smoke-tested before a prod change. Staging is now at 25
   functions, matching prod exactly; `verify_jwt` trio re-verified by hand
   ([findings §1.3](specs/2026-07-31-review-and-cleanup-findings.md)).
 
-10. ✅ **Concurrent refund approvals could exceed the cap — FIXED 2026-07-31** (staging + prod,
+11. ✅ **Concurrent refund approvals could exceed the cap — FIXED 2026-07-31** (staging + prod,
   migration `20260731210000`, `process-refund` prod v6). `claim_refund_approval` now takes
   `select … for update` on the `payments` row and does the sum + cap + claim in one
   transaction — the same idiom `reserve_coupon` used. **Proven on staging:** the exact failure
@@ -210,7 +223,7 @@ these were explicitly deferred, not dropped:
 - **§L.2 session-assignment tool** + the per-team session-timed finals reminders that
   depend on it ("5 min after session ends" / Fri-10am) — Julia marked her section
   incomplete; only the admin-set `finals_lineup_deadline_at` nag + 10pm lock shipped.
-  ⚠️ **The assignment half is no longer just a convenience** — §3.7 above shows an unassigned
+  ⚠️ **The assignment half is no longer just a convenience** — §3.8 above shows an unassigned
   `session_id` silently hides that registration's scores from the public Results page. The
   detect + bulk-assign subset is now correctness work and is recommended as next-up
   ([findings §6.1](specs/2026-07-31-review-and-cleanup-findings.md)); the *reminders* half is
@@ -224,12 +237,11 @@ these were explicitly deferred, not dropped:
   ONE row with a placeholder `discipline` (NOT NULL enum), empty `levelId`/`apparatus`, null
   `sessionId`. The branch lives *inside* the shared editor, so all three callers
   (`SelfRegModal`, `EditRegistrationModal`, `Club.tsx`) get it.
-  ⚠️ **Residual, genuinely still open:** §G also says camps are *individual self-registration
-  only*, and that half is intent rather than enforcement — `Club.tsx`'s `openEvents` list
-  doesn't filter camps, so a club manager can still register athletes for one. Nothing renders
-  wrong (the editor shows camp mode, the club-membership gate is correctly waived), so this is a
-  policy gap, not a bug. **Needs Julia**: should manager-side camp registration be blocked
-  outright, or is it a convenience worth keeping?
+  ✅ **Residual CLOSED 2026-08-19:** Julia answered the open question (UAT Decisions D-1):
+  camps are individual self-registration only — **"block it outright."** Shipped same day:
+  `Club.tsx`'s `openEvents` picker now filters `eventType === 'camp'`, so managers can't
+  register athletes for camps (or see camp regs from the club page). Rule recorded in
+  `.claude/rules/registrations-and-camps.md`.
 - **Host-payout formula** — 💬 needs a business decision (what a host club is paid out of an
   event's entry fees, and when). No implementation is blocked on anything technical. *The old
   "see Nate item 1.3" pointer here was dangling — §1.3 is Stripe go-live; there has been no
@@ -344,4 +356,4 @@ assumption.
 Not gaps yet — trigger conditions live in
 [`production-readiness.md`](production-readiness.md#architecture-watch-list-not-gaps-yet--written-down-so-they-dont-surprise-us):
 `loadAll` scaling cliff, realtime-only-on-scores staleness (→ proposal 6.1 above).
-(The `record-waiver-signature` stale-hold wart left this list 2026-08-04 — fixed, §3.6.)
+(The `record-waiver-signature` stale-hold wart left this list 2026-08-04 — fixed, §3.7.)

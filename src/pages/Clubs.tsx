@@ -25,9 +25,15 @@ export function Clubs() {
   const [search, setSearch] = useState('');
   const [regionFilter, setRegionFilter] = useState<Region | ''>('');
 
+  // The league's own host club ("UCG - Main", `is_league_host`) exists only so
+  // UCG-hosted events (Nationals/FlipFest) and the refund-eligibility check have
+  // a host row — it isn't a real member club, so the directory hides it
+  // (PM decision 2026-08-19). Admin surfaces (/admin/clubs) still show it.
+  const directoryClubs = useMemo(() => db.clubs.filter((c) => !c.isLeagueHost), [db.clubs]);
+
   const clubs = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return db.clubs
+    return directoryClubs
       .filter((c) => {
         const matchesSearch =
           !q ||
@@ -39,7 +45,7 @@ export function Clubs() {
       })
       .slice()
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [db.clubs, search, regionFilter]);
+  }, [directoryClubs, search, regionFilter]);
 
   // Phase 4 (data-layer-scale.md): db.people at boot no longer covers the
   // whole league, and this directory is reachable by ANY signed-in account
@@ -65,8 +71,8 @@ export function Clubs() {
     <div>
       <h1 className="page-title display">Club Directory</h1>
       <p className="page-sub">
-        All {db.clubs.length} registered club{db.clubs.length !== 1 ? 's' : ''} in the league.
-        {clubs.length !== db.clubs.length && ` Showing ${clubs.length} matching.`}
+        All {directoryClubs.length} registered club{directoryClubs.length !== 1 ? 's' : ''} in the league.
+        {clubs.length !== directoryClubs.length && ` Showing ${clubs.length} matching.`}
       </p>
 
       {/* Filters */}

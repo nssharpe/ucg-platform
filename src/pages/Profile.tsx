@@ -277,7 +277,13 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
   const pid: string = person.id;
   const p = draft ?? person;
   const set = (patch: Partial<Athlete>) => setDraft({ ...p, ...patch });
-  const clubOptions = db.clubs.map((c) => ({ value: c.id, label: c.name, sub: `${c.state} · ${c.region}` }));
+  // Hide the league's own host club (`is_league_host`) from the member-facing
+  // pickers — it isn't a real club to belong to. Keep it in the options only
+  // if this person is somehow already attached to it, so the Select/badges
+  // never silently drop an existing value.
+  const clubOptions = db.clubs
+    .filter((c) => !c.isLeagueHost || c.id === p.mainClubId || p.altClubIds.includes(c.id))
+    .map((c) => ({ value: c.id, label: c.name, sub: `${c.state} · ${c.region}` }));
   const states = Object.keys(STATE_REGIONS);
 
   const roles = effectiveRoles(p);
