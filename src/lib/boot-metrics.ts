@@ -11,8 +11,13 @@
  *  broken", so there's runway to act before the quota error does. */
 export const BOOT_PAYLOAD_BYTES_THRESHOLD = 2 * 1024 * 1024; // ~2 MB
 
-/** Hydration-duration threshold (ms), per the same spec section. */
-export const BOOT_HYDRATION_MS_THRESHOLD = 3000; // ~3 s
+/** Hydration-duration threshold (ms), per the same spec section. The timed
+ *  span is the whole `loadAll()` network fetch — a 4–5-round-trip waterfall
+ *  whose normal signed-in baseline measured ~3.1–3.5s in prod (error_logs,
+ *  Aug 2026) — so the threshold must sit well above that floor or it fires on
+ *  every ordinary boot. 10s keeps genuine tail events reportable (observed
+ *  10.2s / 34.2s boots would still log) without the everyday noise. */
+export const BOOT_HYDRATION_MS_THRESHOLD = 10_000; // ~10 s
 
 /** Pure. True when either documented trigger has fired for this hydration. */
 export function shouldReportBootMetrics(payloadBytes: number, hydrationMs: number): boolean {

@@ -722,6 +722,16 @@ seed->clean cycle
 
 ## Status: Phases 0–5 all shipped (2026-07-28)
 
+**Addendum 2026-08-20 — hydration threshold recalibrated 3s → 10s.** The original 3s
+trigger ("mid-tier mobile" figure above) predates the Phase 2–5 slimming and gates a span
+that is mostly *network*: `loadAll()`'s 4–5-round-trip waterfall, whose normal signed-in
+prod baseline measured ~3.1–3.5s (11 once-per-session `store:boot-metrics-threshold`
+rows in error_logs, Aug 5–20, payload steady at ~129 KB — nowhere near the 2 MB payload
+trigger). At 3s the alarm fired on essentially every ordinary boot and carried no signal.
+`BOOT_HYDRATION_MS_THRESHOLD` is now 10s, which still catches genuine tail events
+(observed 10.2s and 34.2s boots would still log). The 2 MB payload trigger — the one
+guarding the actual localStorage-quota risk — is unchanged.
+
 The core data-layer-scale work described in this spec is complete: the silent-truncation
 bug is fixed (Phase 0), `scores`/`registrations`/`people` all moved off unconditional
 global hydration onto scoped boot reads + on-demand fetches (Phases 2–4), and
