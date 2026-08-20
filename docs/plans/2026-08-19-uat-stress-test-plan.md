@@ -136,7 +136,7 @@ which the in-app reports cannot. Work only in **your own Findings tab**. Fill a 
 Use the Sheet as the **only** channel for: UX and wording feedback, "this works but it's
 wrong," design opinions, requirement disagreements, and questions.
 
-**One shared Google Sheet — "UCG Preflight Feedback"** — with a Findings tab per tester
+**One shared Google Sheet — [UCG Preflight Feedback](https://docs.google.com/spreadsheets/d/1tBHmut8OCmJXrcH3zaY0g0_GcHvj0T44DDfu1YAIcq0/edit)** — with a Findings tab per tester
 (**Julia Findings** / **Nate Findings**), a README, and the answered Decisions tab. Google
 Sheets handles simultaneous editing natively, so one file is fine as long as each of you stays
 in your own tab. *(The repo keeps the generated template at
