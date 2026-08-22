@@ -46,12 +46,6 @@ function ClubIndexRedirect() {
   return <Navigate to={`/club/${clubId}/roster`} replace />;
 }
 
-/** Retired route (unified-cart-b2): the per-club cart + receipts page was
- *  merged into the single `/cart` page (a section per managed club there). */
-function ClubCartRedirect() {
-  return <Navigate to="/cart" replace />;
-}
-
 /** Legacy /meets* → /events* redirects (the Meet→Event rename keeps old links
  *  alive). Each preserves the `:slug` param. */
 function MeetsRedirect() {
@@ -115,6 +109,8 @@ const Finance = lazy(() => import('./pages/admin/league/Finance').then((m) => ({
 const UcgEvent = lazy(() => import('./pages/admin/UcgEvent').then((m) => ({ default: m.UcgEvent })));
 const Cart = lazy(() => import('./pages/Cart').then((m) => ({ default: m.Cart })));
 const MembershipsCheckout = lazy(() => import('./pages/Cart').then((m) => ({ default: m.MembershipsCheckout })));
+const ClubCartPage = lazy(() => import('./pages/ClubCart').then((m) => ({ default: m.ClubCartPage })));
+const ClubPurchaseHistoryPage = lazy(() => import('./pages/ClubPurchaseHistory').then((m) => ({ default: m.ClubPurchaseHistoryPage })));
 
 /** Prefetch all route chunks once the browser is idle after first paint. */
 function usePrefetchRoutes() {
@@ -362,7 +358,8 @@ export default function App() {
               <Route path="/club/:clubId" element={<RequireAccount><ClubIndexRedirect /></RequireAccount>} />
               <Route path="/club/:clubId/roster" element={<RequireAccount><ClubRoster /></RequireAccount>} />
               <Route path="/club/:clubId/registrations" element={<RequireAccount><ClubRegistrations /></RequireAccount>} />
-              <Route path="/club/:clubId/cart" element={<ClubCartRedirect />} />
+              <Route path="/club/:clubId/cart" element={<RequireAccount><ClubCartPage /></RequireAccount>} />
+              <Route path="/club/:clubId/purchases" element={<RequireAccount><ClubPurchaseHistoryPage /></RequireAccount>} />
               <Route path="/events/:slug/manage" element={<RequireAccount><EventManage /></RequireAccount>} />
               <Route path="/events/:slug/host" element={<RequireAccount><EventHostPage /></RequireAccount>} />
               <Route path="/events/:slug/communicate" element={<RequireAccount><EventCommunicate /></RequireAccount>} />

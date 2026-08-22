@@ -1431,3 +1431,179 @@ change `ui-brand-and-layout.md` says needs a `responsive-sweep` pass (375/768/12
 open/close, topbar wrap) — not done here since this session had no Browser pane. Do that, plus a
 live click-through of the new page (both tabs, the Resolve/Reopen flow, and Load More), before
 calling this UAT-closed.**
+
+## Z-01-02 + M-01-04 + M-19-01 + M-20-01 + M-02-02 + M-03-01 + M-08-01 + M-01-02 + M-01-01 (2026-08-22): separate cart + purchase-history pages
+
+**What changed.**
+- **Routes:** `/club/:id/cart` is a REAL page now (`src/pages/ClubCart.tsx`, `ClubCartPage`) —
+  was a bare `<Navigate to="/cart" replace>` redirect (`App.tsx`'s `ClubCartRedirect`, deleted).
+  New `/club/:id/purchases` (`src/pages/ClubPurchaseHistory.tsx`, `ClubPurchaseHistoryPage`).
+  `/cart` (`Cart.tsx`) is now PERSONAL-ONLY — the `managedClubs.map(ManagedClubSection)` loop
+  that used to bundle every managed club's cart underneath the viewer's own personal cart is
+  gone; `ManagedClubSection` itself is deleted (superseded by `ClubCart.tsx`, which inlines the
+  same cross-club-cleanup effect + `CartScope`/`ReceiptsSection` composition, plus the new
+  switcher/gate/removed-notices pieces below). `/me/purchases` (`PurchaseHistory.tsx`) is now
+  filtered to `isPersonalInvoice` (excludes any invoice with a `clubId`, even one the viewer
+  personally paid) instead of the old "athleteId===me OR any item.refUserId===me" filter with
+  no club exclusion at all.
+- **`src/lib/current-club.ts`** (new): `currentClubId(managed, stored)` (pure, tested) + a
+  `useCurrentClubId`/`setCurrentClubId` pair backed by `localStorage` + a tiny pub-sub
+  (`useSyncExternalStore`, mirroring `registrations-slice.ts`'s own slice idiom) — deliberately
+  NOT threaded through the big `db`/`mutate()`/`PERSISTED_KEYS` machinery (data-layer.md): this
+  is a per-browser UI preference, not server-synced app data, same class of thing as
+  `sessionStorage['ucg-dev-role']`. `Layout.tsx`'s `navFor` now takes a `currentClub` param
+  instead of hardcoding `caps.managedClubIds[0]`; `ClubPage` (Club.tsx), `ClubCartPage`, and
+  `ClubPurchaseHistoryPage` all call `setCurrentClubId` on mount when the viewer manages (or is
+  admin for) the club they're looking at, so the nav / topbar button follow wherever they
+  actually are.
+- **`src/lib/purchases.ts`** (new, pure, tested): `isPersonalInvoice(inv, personId)`,
+  `payerLabel(inv, payments, people)`, `clubCartBadgeCount(carts, managedClubIds)`,
+  `matchesClubPurchaseSearch(inv, query, payerName)`.
+- **`src/components/InvoiceLineTable.tsx`** (new): the receipt detail table, extracted once and
+  reused by Cart.tsx's `ReceiptsSection` modal (personal AND club), `PurchaseHistory.tsx`, and
+  `ClubPurchaseHistory.tsx` — always renders the WHOLE invoice, never filtered to "just the
+  viewer's own athlete." `PurchaseHistory.tsx`'s old modal DID filter that way
+  (`detail.athleteId===personId ? detail.items : detail.items.filter(refUserId===personId)`) —
+  harmless once the page is personal-only (the viewer IS the only athlete on those invoices) but
+  it was the actual M-20-01 bug for a shared club invoice before this split (it hid other
+  athletes' lines AND the `refUserId`-less discount/fee rows). Removed outright rather than kept
+  dead; `ClubPurchaseHistory.tsx`'s detail modal is unfiltered from day one.
+- **Nav (`Layout.tsx`):** My UCG gained "My Cart" (`/cart`, was topbar-only before); My Club's
+  "Club Cart & Receipts" split into "Club Cart" + "Club Purchases", both pointed at
+  `currentClub` instead of `managedClubIds[0]`, and the group only renders when a current club
+  actually resolves. Topbar gained a second chip next to Cart: "Club Cart"/"Club Carts"
+  (plural when `managedClubIds.length > 1 || isAdmin`) linking to `/club/${currentClub}/cart`,
+  badge = `clubCartBadgeCount` across every managed club (independent of the personal badge).
+  Only rendered when a current club exists — an admin who manages zero clubs directly sees no
+  topbar chip (can still reach any club's cart via `Club.tsx`'s own links/switcher). Added
+  `.topbar-cart-label` (index.css) collapsing both cart chips' text at the same <=600px
+  breakpoint the profile name already collapses at, proactively, since a THIRD topbar chip at
+  narrow widths is a real overflow risk this session couldn't verify without a Browser pane —
+  flagged for the controller's responsive-sweep below.
+- **`Club.tsx`:** added the `setCurrentClubId` sync effect (above); moved "Club cart & receipts
+  ->" (unconditional, went to `/cart`) into the `canManage &&` block as two separate links
+  ("Club cart ->" / "Club purchases ->", both to the real per-club routes) — a non-manager
+  browsing another club's page no longer sees a link to a page they can't use (`ClubCartPage`/
+  `ClubPurchaseHistoryPage` both gate their own content on `canManage` too, defense-in-depth,
+  matching the existing Club.tsx `canManage` idiom for edit-only sections).
+- **M-01-04 ("Jurassic's cart vanished"):** `cleanupCrossClubCart` (`cart-sync.ts`)'s toast now
+  names the EVENT, not just the other club (`Removed <athlete> - already registered for <event>
+  with <club>.`, was `<athlete> was removed from the cart - they're now registered with
+  <club>.` with no event name) — a toast alone is transient/easy-to-miss, which is exactly the
+  reported bug's mechanism. `ClubCartPage` additionally appends every such message to a
+  persistent on-page "Some cart lines were removed automatically" banner (dismissible, not
+  auto-hiding) by wrapping the toast callback passed into `cleanupCrossClubCart`, rather than
+  changing that shared function's signature (it's also called from `Club.tsx`'s
+  `EventRegGrid`, which keeps its toast-only behavior unchanged).
+- **M-01-01 (fee/total on every card):** `CartCard` (Cart.tsx) now always shows Subtotal +
+  Service fee + Total, not just inside the >=2-section "everything" bar. The per-card fee is
+  `processingFee` (the exact mirrored pure formula the server applies, money-invariants.md) run
+  on that card's OWN server-priced subtotal (`pricedSum` against the existing scope-wide
+  `mode:'preview'` data, filtered implicitly since each card only sums its own items) — this
+  is NOT a new client money computation, and it matches exactly what `CartCheckout`'s own
+  per-card preview would show if the member clicks "Check out {title}" on just that card
+  (checkout is already per-section). No new network call.
+- **M-02-02/M-03-01 (open behavior + post-payment panel):** `CartInner`/`ClubCartPage`/
+  `ClubPurchaseHistoryPage` all `window.scrollTo(0, 0)` on mount. `CartScope`'s `onPaid` now
+  also sets a `paidNotice` flag; a "Payment complete" card (same markup as the pre-existing
+  `MembershipsCheckoutInner` success panel, so no new contrast pair) renders at the top of
+  BOTH the empty-cart and normal-cart return branches (paying off the last section in a
+  multi-section cart leaves that exact scope's `cart.length === 0`, so both branches need it).
+  "View receipt" scrolls to a `receiptsRef` div wrapping the page's `ReceiptsSection` (passed
+  down from the parent, which is the only component that renders both) — a user-initiated
+  click, not the autofocus-on-load anti-pattern M-02-02 flags. Receipts were already sorted
+  newest-first (`ReceiptsSection`'s existing `.sort((a,b)=>b.createdAt.localeCompare(...))`) —
+  no change needed there.
+- **M-08-01 (stale hold timer):** `CartScope` gained a `visibilitychange`/`focus` effect that
+  calls the EXISTING `invalidateClubRegistrations`/`invalidateMyRegistrations`
+  (`registrations-slice.ts`, already built for UAT M-12-02) whenever the tab regains focus —
+  no new polling/refetch mechanism, just an added trigger point for one that already existed.
+- **M-01-02 (toast "View cart" action):** `ToastOptions` (`toast-bus.ts`) gained
+  `action?: { label, to }`. `ui.tsx`'s `ToastProvider` renders it as an underlined button in
+  `--ice-200` (the toast's own existing text color — already ~11.8:1 on the `--navy-800`
+  background, so no new contrast pair) that navigates via `window.location.hash = to` rather
+  than `<Link>`/`useNavigate`, because `ToastProvider` is mounted OUTSIDE `HashRouter` in
+  `App.tsx` (its own imperative escape-hatch subscribers — the write-queue, the offline gate —
+  need to be able to toast with no Router in scope at all). Wired at the three named call
+  sites: `Club.tsx` `saveRegs` (-> `/club/${clubId}/cart`), `Events.tsx`'s `SelfRegModal` save
+  (-> `/cart`; the very next line already `navigate('/cart')`s, so this is honest-but-redundant
+  there, kept for consistency with the spec), `MyRegistrations.tsx` `saveRegs` (-> `/cart`).
+  `Events.tsx`'s `SelfRegModalProps.toast` prop type had to widen from a hand-rolled
+  `{ variant? }`-only shape (shared verbatim by ~10 other prop-typed `toast` callbacks in that
+  file) to the real `ToastOptions` — only that one interface, not the other nine, since only
+  this one needed the new field.
+- **M-20-01 "Paid by":** `ReceiptsSection`'s club-scoped cards/modal and
+  `ClubPurchaseHistory.tsx`'s cards/modal all show "Paid by `payerLabel(...)`" — omitted on
+  personal receipts (the payer is self-evident there). Search/filter on the new Club Purchase
+  History page matches the payer name too (`matchesClubPurchaseSearch`), not just
+  number/item/amount like the plain `ReceiptsSection` search.
+- Bonus fix noticed in passing: `MembershipsCheckoutInner`'s post-payment panel linked
+  "Purchase history" to `/profile` (not a registered route — falls through to `NotFound`);
+  changed to `/me/purchases`.
+
+**Deviations from the brief.**
+- **`payerLabel`'s signature is `(inv, payments, people)`, not the brief's literal
+  `(inv, people)`.** An invoice alone cannot say who paid a CLUB invoice —
+  `invoices.athlete_id` is always `null` there (`fulfillPayment`:
+  `athlete_id: clubId ? null : personId`) — the payer is the `person_id` on the ONE `payments`
+  row that fulfilled into it (`payment.invoice_id === inv.id`; one payment mints one dedicated
+  invoice, confirmed by reading `_shared/fulfill.ts`'s `invoiceId = payment.invoice_id ??
+  'inv-'+payment.id`). Documented in the function's own doc comment.
+- **KNOWN RLS LIMIT, flagged not fixed:** `payments` is self-read-or-admin only
+  (`payments_self_read`, `20260625231808`: `is_admin() or person_id = my_person_id()`). A
+  non-admin club manager can only ever see the `personId` on payments THEY THEMSELVES made —
+  for a club invoice paid by a DIFFERENT manager of the same club, that payment row simply
+  never loads into this viewer's `db.payments`, so `payerLabel` falls through to "A club
+  manager" rather than a guessed/wrong name. In practice this covers the common case fine (one
+  primary manager who always does the checkout sees their own name on every club receipt); it
+  under-resolves only for genuinely multi-manager clubs. Widening this would need a new RLS
+  policy (e.g. `manages_club(...)` on `payments`) — money-adjacent, reviewer-tier territory
+  (money-invariants.md), explicitly out of scope for this task (no `supabase` CLI commands, no
+  migrations authored). `payerLabel` is unit-tested for both the resolved-name and
+  RLS-invisible-fallback cases.
+- **`ManagedClubSection` was DELETED, not deprecated-in-place** — nothing else referenced it
+  (grepped after removal); keeping an unused, unexported function around would have been dead
+  weight the linter might not even catch (top-level function declarations aren't always
+  flagged). `CartScope`/`ReceiptsSection` are now `export`ed from `Cart.tsx` instead, and
+  `ClubCart.tsx` imports them directly rather than re-deriving the composition.
+- **`/club/:id/purchases` and `/club/:id/cart` are gated by `RequireAccount` at the router
+  level only** (any signed-in account), with `canManage` (admin or `managedClubIds.includes`)
+  checked INSIDE each page component — mirrors `Club.tsx`'s existing pattern for
+  edit-only/manager-only sections on the roster/registrations pages (there is no
+  `RequireClubManager` wrapper anywhere in this codebase to reuse). Did not add one for this
+  task; a non-manager hitting either URL directly sees a "You don't manage this club" panel,
+  not a silent redirect or blank page.
+
+**Noticed but NOT touched / needs the controller's attention:**
+- **No Browser pane this session** — every layout/nav/topbar change here (a new topbar chip, a
+  restructured My Club nav group, per-card fee/total rows, the removed-notices banner, the
+  Payment-complete panel) needs the `responsive-sweep` skill before this is called done, per
+  `ui-brand-and-layout.md`. Routes to check: `/cart` (My Cart, incl. an empty cart and a
+  multi-section cart to see the fee rows + everything-bar together), `/club/:id/cart` (both the
+  empty state and a populated one; the club switcher when the signed-in dev persona manages
+  >=2 clubs or is admin), `/club/:id/purchases` (search/filter row wrapping, the "Paid by" line),
+  `/me/purchases` (confirm nothing regressed from the `isPersonalInvoice` filter change), and
+  the topbar at 375/768/1280px specifically for the new second cart chip (`.topbar-cart-label`
+  was added proactively at <=600px but never visually confirmed).
+- **`index-*.js` main chunk grew from ~82 KB to ~495 KB** between the pre-task build and the
+  post-task build (`npm run build` output) — `jspdf.es.min` no longer appears as its own
+  separate chunk (it was ~399 KB standalone before). Both builds succeed with zero errors and
+  the same "chunks larger than 500 kB" warning already existed pre-task (for `exceljs.min`), so
+  this reads as a rolldown-vite auto-chunking heuristic shift (more lazy routes now import
+  `receipt.ts`/jsPDF — `ClubPurchaseHistory.tsx` and `PurchaseHistory.tsx` both call
+  `downloadReceipt`) rather than a functional bug, but it wasn't root-caused further — flagging
+  in case bundle size becomes a real concern later.
+- **Camp events' `event.name` matching in `groupCartItems`** and every other pre-existing
+  cart-grouping/pricing helper were NOT touched by this task — only the page/route/nav
+  structure around them changed.
+
+**Verification.** `npm run build` — succeeded, zero TypeScript errors. `npx eslint
+src/pages/Cart.tsx src/pages/ClubCart.tsx src/pages/ClubPurchaseHistory.tsx
+src/pages/PurchaseHistory.tsx src/components/InvoiceLineTable.tsx src/components/Layout.tsx
+src/components/ui.tsx src/lib/toast-bus.ts src/lib/current-club.ts src/lib/purchases.ts
+src/lib/cart-sync.ts src/lib/navHistory.ts src/pages/Club.tsx src/pages/Events.tsx
+src/pages/MyRegistrations.tsx src/App.tsx tests/lib/current-club.test.ts
+tests/lib/purchases.test.ts` — zero errors/warnings. `npx vitest run` — 1256/1256 passed across
+81 files (+22 from this task: 5 `currentClubId` cases in `tests/lib/current-club.test.ts`, 17
+`isPersonalInvoice`/`payerLabel`/`clubCartBadgeCount`/`matchesClubPurchaseSearch` cases in
+`tests/lib/purchases.test.ts`).

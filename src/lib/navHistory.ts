@@ -27,6 +27,8 @@ export function labelFor(pathname: string): string {
   if (pathname === '/meets') return 'Events'; // legacy path (redirects to /events)
   if (pathname === '/me') return 'Profile';
   if (pathname === '/membership') return 'Membership';
+  if (pathname === '/cart') return 'My Cart';
+  if (pathname === '/me/purchases') return 'Purchase History';
   if (pathname === '/admin/members') return 'Members';
   if (pathname === '/admin/clubs') return 'Clubs';
   if (pathname === '/admin/league') return 'League Controls';
@@ -34,7 +36,8 @@ export function labelFor(pathname: string): string {
   if (/^\/club\/[^/]+\/roster$/.test(pathname)) return 'Club Roster';
   if (/^\/club\/[^/]+\/registrations$/.test(pathname)) return 'Club Registrations';
   if (/^\/club\/[^/]+$/.test(pathname)) return 'Club Roster';
-  if (/^\/club\/[^/]+\/cart$/.test(pathname)) return 'Club Cart & Receipts';
+  if (/^\/club\/[^/]+\/cart$/.test(pathname)) return 'Club Cart';
+  if (/^\/club\/[^/]+\/purchases$/.test(pathname)) return 'Club Purchases';
   if (/^\/events\//.test(pathname)) return 'Event';
   if (/^\/meets\//.test(pathname)) return 'Event'; // legacy path (redirects to /events/)
   if (/^\/members\//.test(pathname)) return 'Member';

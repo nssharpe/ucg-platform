@@ -213,6 +213,12 @@ export function cleanupCrossClubCart(
     // Offline read-only gate: nothing was removed (and every further item
     // would hit the same gate) — stop without toasting a removal.
     if (action === 'blocked-offline') return;
-    toast(`${name} was removed from the cart — they're now registered with ${otherShort}.`, { variant: 'info' });
+    // UAT M-01-04 ("Jurassic's cart vanished"): name the EVENT too, not just
+    // the other club — a toast alone (auto-dismissable, easy to miss) wasn't
+    // enough for a manager to understand why a line disappeared; the Club
+    // Cart page also surfaces this same message as a persistent on-page
+    // notice (ManagedClubSection/ClubCartPage in Cart.tsx/ClubCart.tsx).
+    const eventName = eventId ? db.events.find((e) => e.id === eventId)?.name : null;
+    toast(`Removed ${name} — already registered for ${eventName ?? 'this event'} with ${otherShort}.`, { variant: 'info' });
   }
 }

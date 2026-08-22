@@ -602,7 +602,11 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
             : `Registration updated. A ${fmtMoney(chargedFee)} change fee was added to your cart — pay it to finalize.`
           : addedEntryFee > 0
             ? `Registration updated. ${fmtMoney(addedEntryFee)} entry fee was added to your cart — pay it to finalize.`
-            : 'Registration updated.');
+            : 'Registration updated.',
+      // UAT M-01-02: this edit routes through the athlete's own personal cart
+      // (`d.carts[personId]` above).
+      { action: { label: 'View cart', to: '/cart' } },
+    );
     setEditingEventId(null);
   };
 

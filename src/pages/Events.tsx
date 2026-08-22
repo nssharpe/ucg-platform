@@ -9,7 +9,7 @@ import { eventIsInPhase } from '../lib/events-core';
 import { normalizeExternalUrl, appBaseUrl, copyToClipboard } from '../lib/url';
 import { tzAbbrev } from '../lib/timezone';
 import { Badge, Field, Modal, Tabs } from '../components/ui';
-import { useToast, useFmtDate } from '../components/ui-hooks';
+import { useToast, useFmtDate, type ToastOptions } from '../components/ui-hooks';
 import { EventWizard } from '../components/EventWizard';
 import { RegistrationEditor } from '../components/RegistrationEditor';
 import { EventCheckinAdminCard } from '../components/EventCheckinCard';
@@ -2165,7 +2165,10 @@ interface SelfRegModalProps {
   event: Event;
   athlete: Athlete;
   onClose: () => void;
-  toast: (msg: string, opts?: { variant?: 'info' | 'error' }) => void;
+  // UAT M-01-02: widened from the narrow `{ variant? }`-only shape shared by
+  // most of this file's toast props — this component's save toast carries a
+  // "View cart" action.
+  toast: (msg: string, opts?: ToastOptions) => void;
 }
 
 function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
@@ -2465,6 +2468,10 @@ function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
         : changeFeeApplies
           ? 'Registration updated. Change fee added to your cart.'
           : 'Registration saved! Check your cart to complete payment.',
+      // UAT M-01-02: this is a self-registration (personal cart, pushed under
+      // `athlete.id` above) — the very next line already navigates to /cart,
+      // but the action still gives the toast an honest, clickable target.
+      { action: { label: 'View cart', to: '/cart' } },
     );
     onClose();
     // Always land on the cart so the member can complete payment (both the add-on

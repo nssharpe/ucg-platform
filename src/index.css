@@ -1000,6 +1000,11 @@ option { color: var(--ink); background: #fff; }
 @media (max-width: 600px) {
   .topbar { gap: 8px; }
   .topbar-user-name { display: none; }
+  /* UAT round-1 (Z-01-02): the topbar can now carry TWO cart chips (personal
+     + club) alongside the profile chip — collapse both to just their emoji
+     + count at the same breakpoint the profile name collapses, so line 1
+     never overflows. */
+  .topbar-cart-label { display: none; }
   /* name hidden — collapse the chip to a concentric circle around the avatar */
   .topbar-user { padding: 4px; }
 }

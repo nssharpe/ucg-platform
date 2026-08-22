@@ -1,22 +1,25 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { RefObject } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useDB, syncFromSupabase } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { useToast, useFmtDate } from '../components/ui-hooks';
 import { Badge, Modal } from '../components/ui';
 import { fmtMoney } from '../lib/scoring';
-import { removeCartItemWithSync, cleanupCrossClubCart, CART_REMOVAL_MESSAGE } from '../lib/cart-sync';
+import { removeCartItemWithSync, CART_REMOVAL_MESSAGE } from '../lib/cart-sync';
 import { downloadCartInvoice, downloadReceipt, invoiceTotal } from '../lib/receipt';
 import { CartCheckout } from '../components/CartCheckout';
 import { CapacityConflictDialog } from '../components/CapacityConflictDialog';
+import { InvoiceLineTable } from '../components/InvoiceLineTable';
 import { hasCapacityConfig } from '../lib/capacity';
-import { missingNationalsSurveyEvents, diffCartLinePrices, cartSectionCount, type SessionRequestGateReg } from '../lib/pricing';
+import { missingNationalsSurveyEvents, diffCartLinePrices, cartSectionCount, processingFee, type SessionRequestGateReg } from '../lib/pricing';
 import { previewCartTotal, type CheckoutCapacityError, type CartPreviewLine } from '../lib/supabase';
+import { payerLabel } from '../lib/purchases';
 import {
   useMyRegistrations, useClubRegistrations,
   invalidateMyRegistrations, invalidateClubRegistrations, invalidateEventRegistrations,
 } from '../lib/registrations-slice';
-import type { CartItem, Club, DB, Invoice, Registration } from '../lib/types';
+import type { CartItem, DB, Invoice, Registration } from '../lib/types';
 
 const sum = (items: CartItem[]) => items.reduce((s, i) => s + i.amount, 0);
 
@@ -179,6 +182,18 @@ function CartCard({ title, items, preview, returnTo, returnLabel, onCheckout, on
 }) {
   const surveyBlocked = !!surveyGate && surveyGate.length > 0;
   const estimated = preview.status !== 'loaded';
+  // UAT M-01-01: every card shows its own service fee + total before
+  // checkout, not only when 2+ sections trigger the "everything" bar below.
+  // Subtotal is server-priced once the preview lands (`pricedSum`); the fee
+  // is `processingFee` (the SAME mirrored pure formula the server applies,
+  // money-invariants.md) run on THAT subtotal — this matches exactly what
+  // `CartCheckout`'s own scoped preview will show if the member clicks
+  // "Check out {title}" on just this card (checkout is per-card/per-section,
+  // so the fee really is computed on this card's subtotal alone, not the
+  // whole cart's).
+  const cardSubtotal = pricedSum(items, preview);
+  const cardFee = cardSubtotal > 0 ? processingFee(Math.round(cardSubtotal * 100)) / 100 : 0;
+  const cardTotal = cardSubtotal + cardFee;
   return (
     <div className="card card-pad">
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
@@ -213,10 +228,14 @@ function CartCard({ title, items, preview, returnTo, returnLabel, onCheckout, on
         ))}
       </ul>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <strong style={{ marginRight: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span>Subtotal: {fmtMoney(pricedSum(items, preview))}</span>
-          {estimated && <Badge tone="info">Estimated</Badge>}
-        </strong>
+        <div style={{ marginRight: 'auto', fontSize: 13.5 }}>
+          <div style={{ color: 'var(--ink-soft)' }}>Subtotal: {fmtMoney(cardSubtotal)}</div>
+          <div style={{ color: 'var(--ink-soft)' }}>Service fee (card processing): {fmtMoney(cardFee)}</div>
+          <strong style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 15 }}>
+            <span>Total: {fmtMoney(cardTotal)}</span>
+            {estimated && <Badge tone="info">Estimated</Badge>}
+          </strong>
+        </div>
         <button className="btn ghost small" onClick={onPrintInvoice} disabled={items.length === 0}>
           Print Invoice
         </button>
@@ -233,8 +252,8 @@ function CartCard({ title, items, preview, returnTo, returnLabel, onCheckout, on
  *  button at both the top and bottom, and Print Invoice on every card. Shared
  *  by the personal cart and every managed-club section so the two surfaces
  *  can't drift apart. */
-function CartScope({
-  cart, ownerKey, isClub, name, registrationsReturnTo, otherReturnTo, membershipsReturnTo, onRemoved,
+export function CartScope({
+  cart, ownerKey, isClub, name, registrationsReturnTo, otherReturnTo, membershipsReturnTo, onRemoved, receiptsRef,
 }: {
   cart: CartItem[];
   ownerKey: string;
@@ -249,6 +268,11 @@ function CartScope({
   /** Where the Memberships card's return link points. */
   membershipsReturnTo: string;
   onRemoved: (message: string, isError: boolean) => void;
+  /** UAT M-02-02/M-03-01: the page's ReceiptsSection DOM node, so the
+   *  post-payment success panel's "View receipt" button can scroll to it —
+   *  a user-initiated click, not the autofocus-into-receipts anti-pattern
+   *  M-02-02 flags for page LOAD. */
+  receiptsRef?: RefObject<HTMLDivElement | null>;
 }) {
   const db = useDB();
   const toast = useToast();
@@ -256,6 +280,10 @@ function CartScope({
   const [checkout, setCheckout] = useState<{ items: CartItem[]; title: string } | null>(null);
   const [capacityConflict, setCapacityConflict] = useState<CheckoutCapacityError | null>(null);
   const [preview, setPreview] = useState<CartPreviewState>({ status: 'loading' });
+  // UAT M-02-02/M-03-01: set once a checkout in THIS scope completes; shown as
+  // a persistent success panel until dismissed (never auto-hides — matches
+  // the toast system's own "persists until dismissed" convention).
+  const [paidNotice, setPaidNotice] = useState(false);
 
   // Phase 3 (data-layer-scale): this scope's cross-event registration set —
   // shape #2 ("mine", synchronous) for the personal cart, shape #5 (by-club,
@@ -309,6 +337,30 @@ function CartScope({
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cartIdsKey]);
+
+  // UAT M-08-01 (stale hold timer): the "cart expires in mm:ss" countdown
+  // (`HoldCountdown` below) reads `holdExpiresAtMs`, derived from `regs` —
+  // this scope's registration slice — which only refreshes on mount/write,
+  // NOT on the passage of time. A member who leaves the cart tab open past
+  // the hold's real server-side expiry (or has it extended by re-adding the
+  // item elsewhere) sees a stale countdown until something else happens to
+  // refetch. Reusing the EXISTING invalidate-on-write idiom (data-layer.md)
+  // rather than inventing a new polling mechanism: refetch this scope's
+  // registrations whenever the tab regains focus/visibility, same trigger
+  // point a user re-checking a stale countdown would naturally cause.
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === 'hidden') return;
+      if (isClub) invalidateClubRegistrations(ownerKey);
+      else invalidateMyRegistrations();
+    };
+    document.addEventListener('visibilitychange', refresh);
+    window.addEventListener('focus', refresh);
+    return () => {
+      document.removeEventListener('visibilitychange', refresh);
+      window.removeEventListener('focus', refresh);
+    };
+  }, [isClub, ownerKey]);
 
   // "We updated these prices to today's rates" (spec §1): which lines'
   // server price differs from what's currently displayed, once the preview
@@ -422,14 +474,35 @@ function CartScope({
     paidEventIds.forEach((eventId) => invalidateEventRegistrations(eventId));
     void syncFromSupabase().finally(() => {
       setCheckout(null);
+      setPaidNotice(true);
       toast('Payment complete. Receipt emailed and saved to your Purchase History.');
     });
   };
 
+  // UAT M-02-02/M-03-01: the "Payment complete" success panel, rendered at
+  // the top of this scope's cart body (both the empty-cart branch below and
+  // the normal branch) — never only in one of them, since paying off the
+  // LAST section in a multi-section cart leaves this exact scope empty.
+  const paidBanner = paidNotice && (
+    <div className="card card-pad" style={{ marginBottom: 14, maxWidth: 520 }}>
+      <h3 className="card-title" style={{ marginTop: 0, color: 'var(--ink)' }}>Payment complete</h3>
+      <p style={{ color: 'var(--ink-soft)' }}>Receipt emailed and saved to your Purchase History.</p>
+      <div style={{ display: 'flex', gap: 10 }}>
+        <button
+          className="btn primary small"
+          onClick={() => receiptsRef?.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+        >
+          View receipt
+        </button>
+        <button className="btn ghost small" onClick={() => setPaidNotice(false)}>Dismiss</button>
+      </div>
+    </div>
+  );
+
   if (checkout) {
     return (
       <div style={{ maxWidth: 620 }}>
-        {/* H5: the page-level subtitle (CartInner / ManagedClubSection) already
+        {/* H5: the page-level subtitle (CartInner / ClubCart.tsx) already
             states "Billed to {name}." above this — don't repeat it here. */}
         <div style={{ marginBottom: 14 }}>
           <button className="btn ghost small" onClick={() => setCheckout(null)}>← Back to cart</button>
@@ -466,7 +539,7 @@ function CartScope({
   );
 
   if (cart.length === 0) {
-    return <>{conflictDialog}<p style={{ color: 'var(--ink-soft)' }}>Cart is empty.</p></>;
+    return <>{conflictDialog}{paidBanner}<p style={{ color: 'var(--ink-soft)' }}>Cart is empty.</p></>;
   }
 
   // event-mgmt v2 Phase 5 A3: gate every checkout entry point (everything +
@@ -498,6 +571,7 @@ function CartScope({
   return (
     <div>
       {conflictDialog}
+      {paidBanner}
       {/* S4: the price-agreement notice/fallback sits ABOVE the totals bar —
           "above the totals" per spec §1 — so it's the first thing explaining
           why a number moved, before the number itself. */}
@@ -581,7 +655,7 @@ function CartScope({
 /** Receipts/invoices history for one billing scope (a club, or `null` for the
  *  signed-in person's own individual invoices) — search + date filter +
  *  detail modal + PDF download. Adapted from Club.tsx's retired `ClubCart`. */
-function ReceiptsSection({ clubId, forName }: { clubId: string | null; forName: string }) {
+export function ReceiptsSection({ clubId, forName }: { clubId: string | null; forName: string }) {
   const db = useDB();
   const fmtDate = useFmtDate();
   const [detail, setDetail] = useState<Invoice | null>(null);
@@ -647,9 +721,14 @@ function ReceiptsSection({ clubId, forName }: { clubId: string | null; forName: 
                 <Badge tone="ok">Paid</Badge>
                 <strong style={{ marginLeft: 'auto' }}>{fmtMoney(invoiceTotal(inv))}</strong>
               </div>
-              <p style={{ margin: '8px 0 10px', fontSize: 14, color: 'var(--ink-soft)' }}>
+              <p style={{ margin: '8px 0 4px', fontSize: 14, color: 'var(--ink-soft)' }}>
                 {inv.items.filter((i) => i.kind !== 'discount').map((i) => i.label).join('; ')}
               </p>
+              {clubId && (
+                <p style={{ margin: '0 0 10px', fontSize: 13, color: 'var(--ink-soft)' }}>
+                  Paid by <strong style={{ color: 'var(--ink)' }}>{payerLabel(inv, db.payments ?? [], db.people)}</strong>
+                </p>
+              )}
               <button className="btn small ghost" onClick={() => setDetail(inv)}>View details →</button>
             </div>
           ))}
@@ -660,41 +739,12 @@ function ReceiptsSection({ clubId, forName }: { clubId: string | null; forName: 
         <Modal title={`Receipt ${detail.number}`} onClose={() => setDetail(null)}>
           <div style={{ fontSize: 13.5, color: 'var(--ink-soft)', marginBottom: 12 }}>
             {fmtDate(detail.createdAt.slice(0, 10))} · Paid · Billed to {forName}
+            {/* UAT M-20-01: "Paid by" on a CLUB receipt only — a personal
+                receipt's payer is the viewer themselves, already implied by
+                "Billed to {forName}" above. */}
+            {clubId && <> · Paid by {payerLabel(detail, db.payments ?? [], db.people)}</>}
           </div>
-          {(() => {
-            const lineItems = detail.items.filter((i) => i.kind !== 'discount');
-            const subtotal = lineItems.reduce((s, i) => s + (i.refunded ? 0 : i.amount), 0);
-            const discount = -detail.items.filter((i) => i.kind === 'discount').reduce((s, i) => s + (i.refunded ? 0 : i.amount), 0);
-            const total = subtotal - discount;
-            return (
-              <table className="tbl" style={{ marginBottom: 12 }}>
-                <tbody>
-                  {lineItems.map((i) => (
-                    <tr key={i.id}>
-                      <td>{i.label}{i.refunded ? ' (refunded)' : ''}</td>
-                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtMoney(i.refunded ? 0 : i.amount)}</td>
-                    </tr>
-                  ))}
-                  {discount > 0 && (
-                    <>
-                      <tr style={{ borderTop: '1px solid var(--line)' }}>
-                        <td style={{ color: 'var(--ink-soft)' }}>Subtotal</td>
-                        <td style={{ textAlign: 'right', color: 'var(--ink-soft)' }}>{fmtMoney(subtotal)}</td>
-                      </tr>
-                      <tr>
-                        <td style={{ color: 'var(--ink-soft)' }}>Promo code{detail.couponCode ? ` (${detail.couponCode})` : ''}</td>
-                        <td style={{ textAlign: 'right', color: 'var(--ink-soft)' }}>−{fmtMoney(discount)}</td>
-                      </tr>
-                    </>
-                  )}
-                  <tr style={{ borderTop: '2px solid var(--navy-800)', fontWeight: 700 }}>
-                    <td>Total{discount > 0 ? ' paid' : ''}</td>
-                    <td style={{ textAlign: 'right' }}>{fmtMoney(total)}</td>
-                  </tr>
-                </tbody>
-              </table>
-            );
-          })()}
+          <InvoiceLineTable invoice={detail} />
           <div style={{ display: 'flex', gap: 10 }}>
             <button className="btn primary" onClick={() => downloadReceipt(detail, forName)}>Download receipt (PDF)</button>
             <button className="btn ghost" onClick={() => setDetail(null)}>Close</button>
@@ -705,74 +755,18 @@ function ReceiptsSection({ clubId, forName }: { clubId: string | null; forName: 
   );
 }
 
-/** One managed club's cart section: heading with the club's name, its own
- *  CartScope (grouping/checkout/print/edit-link/delete), and its own Receipts
- *  section filtered to that club's invoices. */
-function ManagedClubSection({ club }: { club: Club }) {
-  const db = useDB();
-  const toast = useToast();
-  const cart = db.carts[club.id] ?? [];
-
-  // Cross-club cart cleanup (3d): run whenever this section renders so a
-  // manager visiting /cart also gets the moot-pending-line cleanup that used
-  // to only fire on the old dedicated ClubCart page / the registrations view.
-  // M6 audit note (same as Club.tsx's EventRegGrid copy of this effect): `db`
-  // is a stable reference across in-place mutate() calls, so this only
-  // re-fires on mount/`club.id` change or a full resync — judged safe for the
-  // same reason (idempotent, no-op when clean, and the staleness it targets
-  // is a cross-manager/cross-tab condition that surfaces via resync anyway).
-  //
-  // Phase 3: needs this club's cross-event registrations (CONTRACT shape #5)
-  // — a club cart can hold pending lines for multiple events. Gated on
-  // 'ready' (mirrors Club.tsx's EventRegGrid copy of this effect).
-  const clubRegsAllEvents = useClubRegistrations(club.id);
-  useEffect(() => {
-    if (clubRegsAllEvents.status !== 'ready') return;
-    cleanupCrossClubCart(db, clubRegsAllEvents.rows, club.id, toast);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [db, club.id, clubRegsAllEvents.status]);
-
-  return (
-    <section style={{ marginTop: 32 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
-        <h2 className="page-title display" style={{ fontSize: 22, margin: 0 }}>{club.shortName || club.name} cart</h2>
-        <Link to={`/club/${club.id}/roster`} style={{ fontSize: 13 }}>← Back to club page</Link>
-      </div>
-      <p className="page-sub" style={{ marginTop: 2 }}>
-        Memberships pushed to the club, event entries, and add-ons. Billed to {club.shortName || club.name}.
-      </p>
-
-      <CartScope
-        cart={cart}
-        ownerKey={club.id}
-        isClub
-        name={club.shortName || club.name}
-        registrationsReturnTo={() => `/club/${club.id}/registrations`}
-        otherReturnTo={`/club/${club.id}/registrations`}
-        membershipsReturnTo={`/club/${club.id}/registrations`}
-        onRemoved={(message, isError) => toast(message, isError ? { variant: 'error' } : undefined)}
-      />
-
-      <div style={{ marginTop: 20 }}>
-        <ReceiptsSection clubId={club.id} forName={club.shortName || club.name} />
-      </div>
-    </section>
-  );
-}
-
-/** View Cart (topbar): the signed-in person's cart, grouped into a card per event
- *  plus a Memberships card, each with a "return to registration" link and its own
- *  checkout — or check out everything at once — PLUS, for every club this person
- *  manages, a separate section below showing that club's cart the same way, with
- *  its own receipts history. Every group pays via Stripe Embedded Checkout
- *  (`CartCheckout`); the verified webhook does all fulfillment (invoice,
- *  registrations, cart clearing, receipt) server-side. Cross-entity "checkout
- *  everything" spanning personal + multiple clubs in one Stripe session is out of
- *  scope — the billing model assumes one payer per session, so each scope keeps
- *  its own checkout-all button. */
+/** View Cart (topbar): the signed-in person's OWN cart (grouped into a card
+ *  per event plus a Memberships card, each with a "return to registration"
+ *  link and its own checkout — or check out everything at once) PLUS their
+ *  own personal receipts history. UAT round-1 (Z-01-02): managed-club
+ *  sections used to render here too — they're now their own dedicated page,
+ *  `/club/:id/cart` (`ClubCart.tsx`), so a manager's personal cart/receipts
+ *  can no longer be mistaken for their club's. Every group pays via Stripe
+ *  Embedded Checkout (`CartCheckout`); the verified webhook does all
+ *  fulfillment (invoice, registrations, cart clearing, receipt)
+ *  server-side. */
 export function Cart() {
   const caps = useCapabilities();
-  const db = useDB();
   if (!caps.person) {
     return (
       <div className="card card-pad" style={{ maxWidth: 520 }}>
@@ -780,21 +774,18 @@ export function Cart() {
       </div>
     );
   }
-  const managedClubs = caps.managedClubIds
-    .map((id) => db.clubs.find((c) => c.id === id))
-    .filter((c): c is Club => !!c);
   return (
     <CartInner
       personId={caps.person.id}
       name={`${caps.person.firstName} ${caps.person.lastName}`}
-      managedClubs={managedClubs}
     />
   );
 }
 
-function CartInner({ personId, name, managedClubs }: { personId: string; name: string; managedClubs: Club[] }) {
+function CartInner({ personId, name }: { personId: string; name: string }) {
   const db = useDB();
   const toast = useToast();
+  const receiptsRef = useRef<HTMLDivElement>(null);
   // NOT memoized: `mutate()` mutates the shared db object in place rather than
   // replacing it, so `db.carts` never gets a new reference for useMemo to key
   // off — a memo here would silently go stale after any local cart mutation
@@ -803,9 +794,13 @@ function CartInner({ personId, name, managedClubs }: { personId: string; name: s
   // and cheap (a plain property lookup, not a real computation).
   const cart = db.carts[personId] ?? [];
 
+  // UAT M-02-02: land at the top of the page on open — no anchor/autofocus
+  // into the receipts list below.
+  useEffect(() => { window.scrollTo(0, 0); }, []);
+
   return (
     <div style={{ maxWidth: 820 }}>
-      <h1 className="page-title display">Your Cart</h1>
+      <h1 className="page-title display">My Cart</h1>
       <p className="page-sub">Billed to {name}. Check out one section, or everything at once.</p>
 
       <CartScope
@@ -817,11 +812,12 @@ function CartInner({ personId, name, managedClubs }: { personId: string; name: s
         otherReturnTo="/events"
         membershipsReturnTo="/cart/memberships"
         onRemoved={(message, isError) => toast(message, isError ? { variant: 'error' } : undefined)}
+        receiptsRef={receiptsRef}
       />
 
-      {managedClubs.map((club) => (
-        <ManagedClubSection key={club.id} club={club} />
-      ))}
+      <div ref={receiptsRef} style={{ marginTop: 32 }}>
+        <ReceiptsSection clubId={null} forName={name} />
+      </div>
     </div>
   );
 }
@@ -887,7 +883,7 @@ function MembershipsCheckoutInner({ personId, name }: { personId: string; name: 
           </p>
           <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
             <Link className="btn primary small" to="/membership">View membership</Link>
-            <Link className="btn ghost small" to="/profile">Purchase history</Link>
+            <Link className="btn ghost small" to="/me/purchases">Purchase history</Link>
           </div>
         </div>
       ) : items.length === 0 ? (

@@ -26,6 +26,7 @@ import {
   syncSynchroPartnerLevelRemote, cancelWaitlistGroup,
 } from '../lib/supabase';
 import { cleanupCrossClubCart } from '../lib/cart-sync';
+import { setCurrentClubId } from '../lib/current-club';
 import { useEventRegistrations, useClubRegistrations, applyLocalRegistrationUpsert, applyLocalRegistrationRemove, mergeUpsertedRegs } from '../lib/registrations-slice';
 import { useClubRosterMemberships, groupAdminMembershipsByPerson } from '../lib/memberships-admin-slice';
 import { usePeopleForClub } from '../lib/people-admin-slice';
@@ -88,6 +89,17 @@ export function ClubPage({ view }: { view: ClubView }) {
   const [editingClub, setEditingClub] = useState(false);
   const [addingAthlete, setAddingAthlete] = useState(false);
   const [addingCoach, setAddingCoach] = useState(false);
+  // UAT round-1 (Z-01-02): keep the "current club" the nav's My Club links
+  // (and the topbar Club Cart button) point at in sync with whichever club
+  // this manager/admin is actually browsing — see current-club.ts. Only for
+  // a viewer who actually manages this club (or is admin); a rank-and-file
+  // member browsing another club's roster shouldn't redirect their OWN
+  // manager links elsewhere. Placed above the `if (!club) return` below
+  // (Rules of Hooks) using the raw `clubId` param rather than the resolved
+  // `club`/`canManage` locals, which aren't computed until after that guard.
+  useEffect(() => {
+    if (clubId && (caps.isAdmin || caps.managedClubIds.includes(clubId))) setCurrentClubId(clubId);
+  }, [clubId, caps.isAdmin, caps.managedClubIds]);
   // Phase 4 (data-layer-scale.md): `db.people` at boot is now scoped to self +
   // managed-club rosters, so a viewer who ISN'T this club's own manager (any
   // signed-in member browsing another club's page, or an admin, whose
@@ -163,9 +175,13 @@ export function ClubPage({ view }: { view: ClubView }) {
       )}
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
-        <Link className="btn ghost small" to="/cart">Club cart & receipts →</Link>
         {canManage && (
           <>
+            {/* UAT round-1 (Z-01-02): this used to link to the personal /cart
+                page (which bundled every managed club's cart underneath the
+                viewer's own) — now a real per-club page. */}
+            <Link className="btn ghost small" to={`/club/${club.id}/cart`}>Club cart →</Link>
+            <Link className="btn ghost small" to={`/club/${club.id}/purchases`}>Club purchases →</Link>
             <button className="btn ghost small" onClick={() => setEditingClub(true)}>Edit club details</button>
             <button className="btn ghost small" data-tip="Ask UCG to sanction an event hosted by your club" onClick={() => alert('Sanction request form — wires to league admin approval queue (post-MVP).')}>Request event sanction</button>
             <button className="btn ghost small" data-tip="Create an account for an athlete and email them a set-password link" onClick={() => setAddingAthlete(true)}>Add athlete</button>
@@ -1683,6 +1699,9 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
           : addedEntryFee > 0
             ? `Registration updated. ${fmtMoney(addedEntryFee)} entry fee added to club cart.`
             : 'Registration saved.',
+      // UAT M-01-02: point at THIS club's cart, not the personal one — this
+      // save routes through `d.carts[clubId]` above.
+      { action: { label: 'View cart', to: `/club/${clubId}/cart` } },
     );
   };
 

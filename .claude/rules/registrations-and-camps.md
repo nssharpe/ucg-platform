@@ -20,8 +20,15 @@ Naming: "Meet" → **Event** everywhere; gymnastics apparatus → **apparatus**.
 renamed: `'meet-entry'` invoice_item_kind, `meet-host` app_role, `meet_kind` enum, the persisted
 `NationalsConfig.cutoffs.event` jsonb key, opaque id-value prefixes (`meet-…` seed ids,
 `scores.id` composite), DOM/realtime `event`s. Retired routes use slug-preserving
-`<Navigate replace>` redirects (`/meets*` → `/events*`; `/club/:id/cart` → `/cart`). Older
-docs predate the rename: `docs/specs/2026-06-26-events-rename-and-registration-flow.md`.
+`<Navigate replace>` redirects (`/meets*` → `/events*`). Older docs predate the rename:
+`docs/specs/2026-06-26-events-rename-and-registration-flow.md`.
+
+**`/club/:id/cart` is NOT retired** (UAT round-1, Z-01-02, `2026-08-22`): it was a
+`<Navigate to="/cart" replace>` redirect from unified-cart-b2 until this date, when it became a
+real page (`ClubCart.tsx`) — a club's cart/receipts are no longer bundled onto the manager's
+personal `/cart` page. `/club/:id/purchases` (`ClubPurchaseHistory.tsx`) is new alongside it.
+Both use the "current club" idiom (`src/lib/current-club.ts`) rather than
+`caps.managedClubIds[0]` — see `Layout.tsx`'s `navFor`.
 
 ## Club-membership gate is ON
 
