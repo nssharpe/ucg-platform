@@ -1607,3 +1607,100 @@ tests/lib/purchases.test.ts` — zero errors/warnings. `npx vitest run` — 1256
 81 files (+22 from this task: 5 `currentClubId` cases in `tests/lib/current-club.test.ts`, 17
 `isPersonalInvoice`/`payerLabel`/`clubCartBadgeCount`/`matchesClubPurchaseSearch` cases in
 `tests/lib/purchases.test.ts`).
+
+## M-01-03 (S3): Events-list register/edit entry points + owner-checklist reorder
+
+**What changed.**
+- New pure helper `eventRowActions({event, viewer, hasReg, isManager, isCamp})` (`src/lib/events-core.ts`)
+  → `('self'|'club'|'edit')[]`, order = display order. `viewer.canRegister` gates 'self'/'edit'
+  (flips to 'edit' when `hasReg`); `isManager && !isCamp` gates the independent 'club' action
+  (a manager registers OTHER athletes, so it's unaffected by the viewer's own `hasReg`). Tests:
+  `tests/lib/events-core.test.ts`, 8 new cases covering every combination including the camp
+  suppression.
+- `src/pages/Events.tsx` `Events()` (the list): new "Register" column, left of "Details" — stacked
+  small buttons, rendered only when `!ev.listingOnly && eventIsInPhase(ev, 'reg-open')` (the exact
+  gate the detail page's own registration card uses, not re-derived). "Register yourself" opens
+  the existing `SelfRegModal` (now exported, keyed per-row by `selfRegEventId` state — one shared
+  modal instance). "Register your club" navigates to `/club/${currentClubId}/registrations?event=${slug}`
+  (`useCurrentClubId(caps.managedClubIds)` — current-club.ts, NOT `managedClubIds[0]`). "Edit
+  registration" links to `/me/registrations?event=${slug}`. `hasReg` is read from `useMyRegistrations()`
+  ("mine," Tier 2 — COMPLETENESS rule) filtered to `athleteId === myAthlete.id && eventId === ev.id
+  && !refunded`.
+- Discipline icons in the same list: wrapped each `<DisciplineIcon>` in `<span className="disc-icon">`;
+  `src/index.css` hides `.disc-icon` inside the EXISTING `@media (max-width: 860px)` block (the
+  `Layout.tsx`/sidebar breakpoint) rather than adding a new one — icons stay in the DOM (never
+  removed), just hidden, freeing width for the new Register column's buttons. This is a DIFFERENT
+  mechanism from the table's own `@container (max-width: 820px)` stack-to-cards reflow just above
+  it in index.css — that one was already there and untouched.
+- `src/pages/Events.tsx` `EventDetail`: moved the `OwnerAssignBlock`/`OwnerChecklistCard` block
+  (event-owner assignment + checklist) from directly after the wizard-open block to AFTER the
+  Competition-Order-Lock card — i.e. after Event Admins / Waitlist / Camp-survey-responses /
+  Competition-Order-Lock, before the Nationals-summary/check-in-admin cards. Non-admin view
+  (nothing in this whole `caps.isSanctioning`/`canManage` chain) is visually unchanged — it never
+  rendered any of these cards to begin with.
+- `src/pages/Club.tsx` `EventRegGrid`: reads `?event=<slug>` via `useSearchParams()` once, in the
+  existing `eventId` state's lazy initializer (`useState(() => ...)`) — a preselected event that
+  isn't currently open falls through to the normal default (`reg-open` first, else the first
+  `openEvents` entry). This is the wiring the Events-list "Register your club" button targets.
+- `src/pages/MyRegistrations.tsx`:
+  - `?event=<slug>` deep link (from the Events-list "Edit registration" button) is read the same
+    lazy-initializer way — NOT a `useEffect` that calls `setState` (tried first; ESLint's
+    `react-hooks/set-state-in-effect` rule, documented as a hard trap in `ui-brand-and-layout.md`,
+    rejected it). Sets the initial `tab` (upcoming/past by the event's `endDate`), `q` (the event's
+    name — reuses the list's own existing search-filter, which both "filters" and effectively
+    "scrolls" it into view since it becomes the only/top result) and `expanded` (auto-opens its
+    card) once at mount.
+  - New "Register for another event" section below the existing list: every event with
+    `eventIsInPhase(ev,'reg-open')`, `!listingOnly`, not already registered for
+    (`myRegs`-filtered), gated on `caps.canRegister` (same gate as the Events detail page's
+    "Register yourself" button — a coach-only member sees nothing here, not a dead end). Sorted
+    soonest-first. A search box appears only when the list exceeds 8 events. Each row's "Register"
+    button opens the SAME `SelfRegModal` component (imported from `./Events`, now exported) — not
+    a re-derived modal — via its own `registerEventId` state, independent of the deep-link state
+    above. Empty states: "No other events are open for registration right now." (zero eligible
+    events) vs. a "No events match" message (search yields nothing).
+- `SelfRegModal` is now `export function` in `Events.tsx` (was module-private) so
+  `MyRegistrations.tsx` can import and reuse it verbatim — cart/add-ons/camp-survey steps and all.
+
+**Deviations / judgment calls.**
+- The brief's `eventRowActions` signature includes an `event` field alongside `isCamp` — kept both
+  in the type for documentation value (a caller with the full `Event` on hand doesn't need to
+  separately compute `isCamp`), but the function body only reads `isCamp`; `event`'s type is
+  `{ eventType?: Event['eventType'] }` and is otherwise unused. No lint issue (it's a destructured
+  object field, not a bound variable).
+- The existing EventDetail page's own "Register your club" button (pre-existing, in the
+  Registration card) still targets `/club/${caps.managedClubIds[0]}` (bare, redirects to
+  `/roster`) — left UNTOUCHED. It predates this task and isn't one of the two "new registration
+  entry points" named in the brief; the NEW Events-list button instead targets
+  `/club/${currentClubId}/registrations?event=...` directly (skips the roster-redirect hop and
+  preselects the event) per the explicit instruction to use current-club.ts and wire the event
+  picker. Flagging the inconsistency between the two buttons' targets in case Nate wants the
+  detail-page one updated to match in a follow-up — not done here since it's out of this ticket's
+  stated scope (Item A is additive: new column + new section + the explicit reorder, not an audit
+  of the pre-existing button).
+- `MyRegistrations.tsx`'s "Register for another event" list does NOT pre-filter on the
+  club-membership gate (`clubHasActiveMembershipForEvent`) — an athlete whose only affiliated
+  club lacks an active club membership for the event's season will still see the event listed,
+  and only hit the (existing, unchanged) error toast inside `SelfRegModal.handleRegSave` on save.
+  Chose not to duplicate that check in the list (it's club-selection-dependent — the modal doesn't
+  even know which club is selected until it opens) rather than risk the list and the modal's gate
+  drifting apart.
+
+**Verification.** `npm run build` — succeeded; main `index-*.js` chunk stayed at 90.19 kB (gzip
+26.26 kB) and `jspdf.es.min-*.js` stayed a separate 399.58 kB (gzip 129.72 kB) chunk — both
+unaffected by this ticket (confirms the prior ticket's bundle-split fix held). `npx eslint
+src/pages/Events.tsx src/pages/MyRegistrations.tsx src/pages/Club.tsx src/lib/events-core.ts
+tests/lib/events-core.test.ts` — zero errors/warnings (one intermediate
+react-hooks/set-state-in-effect error was caught and fixed — see the deep-link deviation above —
+before this became the final diff). `npx vitest run` — 1264/1264 passed across 81 files (+8 from
+this ticket's `eventRowActions` describe block in `tests/lib/events-core.test.ts`, on top of the
+1256/81 baseline this notes file already recorded above).
+
+**Noticed but NOT touched / needs the controller's attention (no Browser pane this session):**
+routes to responsive-sweep before this is fully "done" per `ui-brand-and-layout.md`: `/events`
+(the new Register column at 375px — stacked buttons + hidden discipline icons below 860px,
+confirm the table's own `.events-table-wrap`/container-query reflow still has room), `/events/:slug`
+(admin view — confirm the moved owner-checklist block renders correctly in its new position for a
+sanctioning-team viewer), `/me/registrations` (the new "Register for another event" section at
+375px, and the `?event=` deep-link landing state), `/club/:clubId/registrations` (the `?event=`
+preselect via a direct URL, e.g. from clicking "Register your club" on the Events list).

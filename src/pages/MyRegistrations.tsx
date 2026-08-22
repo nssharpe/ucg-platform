@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { Badge, Combo, Field, Modal, Tabs } from '../components/ui';
@@ -16,11 +16,15 @@ import type { RegChangeState } from '../lib/pricing';
 import { holdStamp, waitlistPosition } from '../lib/capacity';
 import { fmtMoney } from '../lib/scoring';
 import type { Athlete, Club, Level, Event, Registration, Season, WaitlistGroup } from '../lib/types';
-import { canStillEditRegistration, eventIsRefundEligible } from '../lib/events-core';
+import { canStillEditRegistration, eventIsInPhase, eventIsRefundEligible } from '../lib/events-core';
 import { RefundRequestDialog, type RefundRequestItem } from '../components/RefundRequestDialog';
 import { SessionRequestSurveyCard } from '../components/SessionRequestSurvey';
 import { NationalsDashboard } from '../components/NationalsDashboard';
 import { EventCheckinCard } from '../components/EventCheckinCard';
+// UAT M-01-03: reuse the exact same self-registration flow the Events pages
+// use — never re-derive a second registration modal for "Register for
+// another event" below.
+import { SelfRegModal } from './Events';
 import { currentSeason } from '../lib/season-lifecycle';
 import { regGroupPaymentStatusInfo } from '../lib/registration-status';
 
@@ -47,11 +51,32 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   const toast = useToast();
   const fmtDate = useFmtDate();
   const navigate = useNavigate();
-  const [tab, setTab] = useState<'upcoming' | 'past'>('upcoming');
-  const [q, setQ] = useState('');
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [searchParams] = useSearchParams();
+  // UAT M-01-03: the Events list's "Edit registration" entry point deep-links
+  // here via `?event=<slug>` — read once (lazy initializer, same idiom as
+  // Club.tsx's EventRegGrid event-picker preselect) rather than an effect that
+  // calls setState (the react-hooks/set-state-in-effect ESLint trap
+  // documented in ui-brand-and-layout.md): land on the right tab, filter the
+  // list down to just that event (the search box's own filtering does the
+  // "scrolled to" work, since a single-result list needs no further scroll),
+  // and expand its card. A slug that doesn't match any registered event is a
+  // silent no-op (falls through to the normal defaults).
+  const deepLinkedEvent = (() => {
+    const slug = searchParams.get('event');
+    return slug ? db.events.find((e) => e.slug === slug) : undefined;
+  })();
+  const [tab, setTab] = useState<'upcoming' | 'past'>(
+    () => (deepLinkedEvent ? (deepLinkedEvent.endDate >= today() ? 'upcoming' : 'past') : 'upcoming'),
+  );
+  const [q, setQ] = useState(() => deepLinkedEvent?.name ?? '');
+  const [expanded, setExpanded] = useState<string | null>(() => deepLinkedEvent?.id ?? null);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [refundTarget, setRefundTarget] = useState<{ event: Event; item: RefundRequestItem } | null>(null);
+  // "Register for another event" (UAT M-01-03): the event currently opened in
+  // the self-registration modal, and a separate search box for that section
+  // (independent of the main list's `q` above).
+  const [registerEventId, setRegisterEventId] = useState<string | null>(null);
+  const [registerQ, setRegisterQ] = useState('');
 
   // Phase 3 (data-layer-scale): "mine" (Tier 2, synchronous — CONTRACT §2) is
   // the primary source throughout this page, since every registration here
@@ -127,6 +152,22 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   const me = db.people.find((p) => p.id === personId);
   const affiliatedClubIds = me ? [me.mainClubId, ...(me.altClubIds ?? [])].filter((x): x is string => !!x) : [];
   const affiliatedClubs = db.clubs.filter((c) => affiliatedClubIds.includes(c.id));
+
+  // "Register for another event" (UAT M-01-03): every event this athlete is
+  // eligible for (canRegister — active athlete membership, the same gate the
+  // Events detail page's "Register yourself" button uses) with registration
+  // currently open, that they don't already have a registration for. Sorted
+  // soonest-first so the nearer deadline surfaces at the top.
+  const registerableEvents = caps.canRegister
+    ? db.events
+      .filter((ev) => !ev.listingOnly && eventIsInPhase(ev, 'reg-open'))
+      .filter((ev) => !myRegs.some((r) => r.eventId === ev.id && r.athleteId === personId && !r.refunded))
+      .sort((a, b) => a.startDate.localeCompare(b.startDate))
+    : [];
+  const registerLq = registerQ.trim().toLowerCase();
+  const registerRows = registerLq
+    ? registerableEvents.filter((ev) => `${ev.name} ${ev.city}, ${ev.state}`.toLowerCase().includes(registerLq))
+    : registerableEvents;
 
   // A event's change fee is live once its start date has passed.
   const changeFeeApplies = (event: Event) => !!(event.changeFee && new Date() >= new Date(event.changeFee.startsAt));
@@ -832,6 +873,66 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
           })}
         </div>
       )}
+
+      {/* "Register for another event" (UAT M-01-03): only shown to an athlete
+          eligible to register at all (caps.canRegister) — a coach-only member
+          gets no dead-end section here, same gate as the Events detail page's
+          "Register yourself" button. */}
+      {caps.canRegister && me && (
+        <div style={{ marginTop: 28 }}>
+          <h2 className="display" style={{ fontSize: 18, marginBottom: 10 }}>Register for another event</h2>
+          {registerableEvents.length > 8 && (
+            <input
+              type="search" className="input" placeholder="Search by event or city…"
+              value={registerQ} onChange={(e) => setRegisterQ(e.target.value)}
+              style={{ maxWidth: 300, marginBottom: 10 }}
+            />
+          )}
+          {registerableEvents.length === 0 ? (
+            <p style={{ color: 'var(--ink-soft)' }}>No other events are open for registration right now.</p>
+          ) : registerRows.length === 0 ? (
+            <p style={{ color: 'var(--ink-soft)' }}>No events match "{registerQ}".</p>
+          ) : (
+            <div className="card" style={{ overflow: 'hidden' }}>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                {registerRows.map((ev, i) => (
+                  <div
+                    key={ev.id}
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+                      padding: '10px 14px', flexWrap: 'wrap',
+                      borderTop: i > 0 ? '1px solid var(--line)' : undefined,
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 14 }}>{ev.name}</div>
+                      <div style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
+                        {ev.startDate}{ev.endDate !== ev.startDate ? `–${ev.endDate}` : ''} · {ev.city}, {ev.state}
+                      </div>
+                    </div>
+                    <button className="btn small primary" onClick={() => setRegisterEventId(ev.id)}>Register →</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Self-registration modal for the section above — reuses the exact
+          Events.tsx flow (cart, add-ons, camp survey all included). */}
+      {registerEventId && me && (() => {
+        const ev = db.events.find((e) => e.id === registerEventId);
+        if (!ev) return null;
+        return (
+          <SelfRegModal
+            event={ev}
+            athlete={me}
+            onClose={() => setRegisterEventId(null)}
+            toast={toast}
+          />
+        );
+      })()}
 
       {editingEventId && me && (() => {
         const event = db.events.find((m) => m.id === editingEventId);

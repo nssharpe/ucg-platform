@@ -5,7 +5,8 @@ import { useCapabilities } from '../lib/capabilities';
 import { useRolesLoaded } from '../lib/auth';
 import { seasonForDate, clubHasActiveMembershipForEvent, paidRegistrationClub } from '../lib/capabilities-core';
 import { currentSeason } from '../lib/season-lifecycle';
-import { eventIsInPhase } from '../lib/events-core';
+import { eventIsInPhase, eventRowActions } from '../lib/events-core';
+import { useCurrentClubId } from '../lib/current-club';
 import { normalizeExternalUrl, appBaseUrl, copyToClipboard } from '../lib/url';
 import { tzAbbrev } from '../lib/timezone';
 import { Badge, Field, Modal, Tabs } from '../components/ui';
@@ -86,6 +87,9 @@ const COLUMNS: { key: SortKey; label: string }[] = [
  *  MyRegistrations.tsx. Admins can sanction a new event via the wizard. */
 export function Events() {
   const db = useDB();
+  const caps = useCapabilities();
+  const toast = useToast();
+  const navigate = useNavigate();
   const fmtDate = useFmtDate();
   const [tab, setTab] = useState<'upcoming' | 'past'>('upcoming');
   const [q, setQ] = useState('');
@@ -93,6 +97,20 @@ export function Events() {
   // Upcoming, date desc for Past). A user click sets an explicit key + direction.
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  // UAT M-01-03: which event's self-registration modal (if any) is open, keyed
+  // by event id rather than a bare boolean — one shared modal instance for the
+  // whole table (mirrors EventDetail's selfRegOpen, just row-addressable here).
+  const [selfRegEventId, setSelfRegEventId] = useState<string | null>(null);
+
+  // Phase 3 (data-layer-scale): "mine" (Tier 2, synchronous, always complete) —
+  // whether the viewer already has a registration for a given event is a
+  // COMPLETENESS-rule read (see capabilities.ts docs), never a by-event slice.
+  const myRegsAll = useMyRegistrations();
+  const myAthlete = caps.personId ? db.people.find((p) => p.id === caps.personId) : undefined;
+  // "Register your club" targets the CURRENT club (current-club.ts), not
+  // caps.managedClubIds[0] — a manager of multiple clubs (or a league admin)
+  // gets the club they're actually looking at, same idiom as Layout.tsx's nav.
+  const currentClubId = useCurrentClubId(caps.managedClubIds);
 
   const t = today();
   const lq = q.trim().toLowerCase();
@@ -163,6 +181,7 @@ export function Events() {
                       {effKey === c.key && <span style={{ marginLeft: 4 }}>{effDir === 'asc' ? '▲' : '▼'}</span>}
                     </th>
                   ))}
+                  <th>Register</th>
                   <th>Details</th>
                 </tr>
               </thead>
@@ -187,7 +206,10 @@ export function Events() {
                           {(ev.disciplines as Discipline[]).map((d, i) => (
                             <span key={d} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                               {i > 0 && <span style={{ color: 'var(--line)' }}>·</span>}
-                              <DisciplineIcon discipline={d} size={14} />
+                              {/* Hidden below 860px (index.css) to make room for the
+                                  Register column — icons are decorative alongside the
+                                  discipline code text, never removed from the DOM. */}
+                              <span className="disc-icon"><DisciplineIcon discipline={d} size={14} /></span>
                               {d}
                             </span>
                           ))}
@@ -207,6 +229,51 @@ export function Events() {
                           ? <span className="badge err">{fmtDate(ev.regCloses.slice(0, 10))}</span>
                           : <span style={{ color: 'var(--ink-soft)' }}>{fmtDate(ev.regCloses.slice(0, 10))}</span>}
                       </td>
+                      <td data-label="Register">
+                        {!ev.listingOnly && eventIsInPhase(ev, 'reg-open') && (() => {
+                          const isCamp = ev.eventType === 'camp';
+                          const hasReg = !!myAthlete && myRegsAll.some(
+                            (r) => r.eventId === ev.id && r.athleteId === myAthlete.id && !r.refunded,
+                          );
+                          const actions = eventRowActions({
+                            event: ev,
+                            viewer: { canRegister: caps.canRegister },
+                            hasReg,
+                            isManager: caps.managedClubIds.length > 0,
+                            isCamp,
+                          });
+                          if (actions.length === 0) return null;
+                          return (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
+                              {actions.map((action) => {
+                                if (action === 'self') {
+                                  return (
+                                    <button key="self" className="btn small primary" onClick={() => setSelfRegEventId(ev.id)}>
+                                      Register yourself
+                                    </button>
+                                  );
+                                }
+                                if (action === 'edit') {
+                                  return (
+                                    <Link key="edit" className="btn small ghost" to={`/me/registrations?event=${ev.slug}`}>
+                                      Edit registration
+                                    </Link>
+                                  );
+                                }
+                                return (
+                                  <button
+                                    key="club"
+                                    className="btn small ghost"
+                                    onClick={() => navigate(`/club/${currentClubId}/registrations?event=${ev.slug}`)}
+                                  >
+                                    Register your club
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          );
+                        })()}
+                      </td>
                       <td data-label="">
                         {!ev.listingOnly && <Link className="btn small" to={`/events/${ev.slug}`}>Details</Link>}
                       </td>
@@ -218,6 +285,21 @@ export function Events() {
           </div>
         </div>
       )}
+
+      {/* Self-registration modal, opened from the "Register yourself" entry point
+          above — one shared instance, keyed by which row opened it (UAT M-01-03). */}
+      {selfRegEventId && myAthlete && (() => {
+        const ev = db.events.find((e) => e.id === selfRegEventId);
+        if (!ev) return null;
+        return (
+          <SelfRegModal
+            event={ev}
+            athlete={myAthlete}
+            onClose={() => setSelfRegEventId(null)}
+            toast={toast}
+          />
+        );
+      })()}
     </div>
   );
 }
@@ -328,19 +410,6 @@ export function EventDetail() {
 
       {editWizardOpen && <EventWizard editEvent={event} onClose={() => setEditWizardOpen(false)} />}
 
-      {/* Event-owner assignment + task checklist (event-mgmt v2 §B3-4) — visible to
-          the Sanctioning Team (not just the event's host manager) for competitions,
-          which is what actually goes through the sanctioning workflow. Not
-          applicable to UCG-run events (FlipFest/Nationals) — there's no host
-          to own tasks for; the Director of Nationals tracks work elsewhere
-          (PM feedback-2 §1). */}
-      {caps.isSanctioning && event.eventType !== 'camp' && !isUcg && (
-        <>
-          <OwnerAssignBlock event={event} toast={toast} />
-          <OwnerChecklistCard event={event} fmtDate={fmtDate} toast={toast} />
-        </>
-      )}
-
       {/* Per-event admin grants (event-mgmt v2 §C) — visible to anyone with
           host-level access (host-club managers, league admins, and granted
           event admins themselves). Not applicable to UCG-run events — there's
@@ -369,6 +438,22 @@ export function EventDetail() {
           event. */}
       {caps.isAdmin && event.disciplines.some((d) => d === 'MAG' || d === 'WAG') && (
         <CompetitionOrderLockCard event={event} toast={toast} />
+      )}
+
+      {/* Event-owner assignment + task checklist (event-mgmt v2 §B3-4) — visible to
+          the Sanctioning Team (not just the event's host manager) for competitions,
+          which is what actually goes through the sanctioning workflow. Not
+          applicable to UCG-run events (FlipFest/Nationals) — there's no host
+          to own tasks for; the Director of Nationals tracks work elsewhere
+          (PM feedback-2 §1). Ordered LAST among the admin panels (UAT M-01-03,
+          owners' design) — event details/admins/waitlist/competition-order come
+          first, since those are the day-to-day surfaces; the owner checklist is
+          a periodic housekeeping task, not what an admin opens the page to do. */}
+      {caps.isSanctioning && event.eventType !== 'camp' && !isUcg && (
+        <>
+          <OwnerAssignBlock event={event} toast={toast} />
+          <OwnerChecklistCard event={event} fmtDate={fmtDate} toast={toast} />
+        </>
       )}
 
       {/* Nationals event summary (event-mgmt v2 Phase 5 D1, spec §L.3 —
@@ -2171,7 +2256,10 @@ interface SelfRegModalProps {
   toast: (msg: string, opts?: ToastOptions) => void;
 }
 
-function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
+// Exported (not just used locally by EventDetail/Events above) so
+// MyRegistrations.tsx's "Register for another event" section (UAT M-01-03)
+// reuses this exact flow rather than re-deriving a second registration modal.
+export function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalProps) {
   const db = useDB();
   const navigate = useNavigate();
   const fmtDate = useFmtDate();

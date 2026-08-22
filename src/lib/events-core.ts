@@ -1,6 +1,6 @@
 // Pure event-phase derivation (B4). Kept free of React/runtime deps for
 // Vitest coverage, mirroring capabilities-core.ts/pricing.ts.
-import type { Club, EventPhase, EventSession, ScoringConfig } from './types';
+import type { Club, Event, EventPhase, EventSession, ScoringConfig } from './types';
 
 /** Default scoring config for an event with no `scoringConfig` set: one judge
  *  panel, calculator entry (today's behavior before the 2026-07-19 per-event
@@ -181,4 +181,42 @@ export function assignSessionIds(
     return id;
   };
   return draftIds.map((id) => id ?? mint());
+}
+
+/** Registration entry-point action, for one row of a list of events (UAT M-01-03):
+ *  'self' → "Register yourself" (opens the self-registration modal for the viewer's
+ *  own athlete profile); 'club' → "Register your club" (a manager registering OTHER
+ *  athletes); 'edit' → "Edit registration" (the viewer already has one). */
+export type EventRowAction = 'self' | 'club' | 'edit';
+
+export interface EventRowActionsInput {
+  /** Only the field this pure check needs from the event — kept for callers that
+   *  already have the full `Event` on hand; `isCamp` below is what's actually read. */
+  event: { eventType?: Event['eventType'] };
+  /** Whether the viewer holds an active athlete membership — mirrors
+   *  `Capabilities.canRegister`, never re-derived here. */
+  viewer: { canRegister: boolean };
+  /** Whether the viewer already holds a non-refunded registration of their own for
+   *  this event — flips 'self' to 'edit' when true. */
+  hasReg: boolean;
+  /** Whether the viewer manages at least one club — gates the independent "Register
+   *  your club" entry point (a manager registers OTHER athletes, so this is unaffected
+   *  by `hasReg`, which is about the viewer's OWN registration). */
+  isManager: boolean;
+  /** Camps are individual self-registration ONLY (registrations-and-camps.md,
+   *  Julia-confirmed 2026-08-19) — a manager can never register athletes for one, so
+   *  'club' is suppressed regardless of `isManager`. */
+  isCamp: boolean;
+}
+
+/** Which registration entry-point button(s) to show for one Events-list row.
+ *  Pure — no store/caps re-derivation; callers pass in the already-resolved gates
+ *  (`viewer.canRegister`, `isManager`) exactly as computed elsewhere (capabilities.ts /
+ *  the detail page), per "reuse the exact gate logic, don't re-derive." Order in the
+ *  returned array is the intended display order. */
+export function eventRowActions({ viewer, hasReg, isManager, isCamp }: EventRowActionsInput): EventRowAction[] {
+  const actions: EventRowAction[] = [];
+  if (viewer.canRegister) actions.push(hasReg ? 'edit' : 'self');
+  if (isManager && !isCamp) actions.push('club');
+  return actions;
 }

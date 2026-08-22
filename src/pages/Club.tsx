@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { clubHasActiveMembership, clubHasActiveMembershipForEvent, seasonForDate, membershipHolds, membershipTypeOf, paidRegistrationClub } from '../lib/capabilities-core';
@@ -1074,12 +1074,22 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   const caps = useCapabilities();
   const toast = useToast();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   // Camps are individual self-registration ONLY (spec §G; Julia confirmed
   // 2026-08-19 "block it outright") — managers cannot register athletes for
   // them, so they never appear in this picker. Competitions unchanged.
   const openEvents = db.events.filter((m) =>
     m.eventType !== 'camp' && (eventIsInPhase(m, 'reg-open') || eventIsInPhase(m, 'reg-closed')));
-  const [eventId, setEventId] = useState(openEvents.find((m) => eventIsInPhase(m, 'reg-open'))?.id ?? openEvents[0]?.id);
+  // UAT M-01-03: the Events list's "Register your club" entry point preselects
+  // this club-registrations page's event picker via `?event=<slug>` — read
+  // once at mount (matches the picker's own uncontrolled-initial-state idiom
+  // below); a slug that doesn't match any open event falls through to the
+  // normal default.
+  const preselectSlug = searchParams.get('event');
+  const [eventId, setEventId] = useState(() => {
+    const preselected = preselectSlug ? openEvents.find((m) => m.slug === preselectSlug) : undefined;
+    return preselected?.id ?? openEvents.find((m) => eventIsInPhase(m, 'reg-open'))?.id ?? openEvents[0]?.id;
+  });
   const event = db.events.find((m) => m.id === eventId);
   // Phase 3 (data-layer-scale): the by-event slice, replacing db.registrations
   // throughout this component. Called unconditionally (Rules of Hooks) before

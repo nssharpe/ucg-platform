@@ -992,6 +992,12 @@ option { color: var(--ink); background: #fff; }
   .topbar-spacer { display: none; }
   .content { padding: 18px 14px 48px; }
   .topbar { padding: 10px 14px; }
+
+  /* Events list (UAT M-01-03): the Register column's stacked buttons need the
+     width the discipline icons were taking — hide the icons (decorative
+     alongside the discipline code text, which stays) rather than remove them
+     from the DOM, so a wider viewport still shows them. */
+  .disc-icon { display: none; }
 }
 
 /* Narrow screens: shrink the user chip to its avatar and tighten the topbar gap so
