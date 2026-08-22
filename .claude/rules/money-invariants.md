@@ -62,7 +62,37 @@ Auth'd; the caller must own the cart items or manage the club.
   (client-writable) `cart_items`. This closes the TOCTOU where a line's refs could be mutated
   post-create.
 - Coupons: the client sends only a code; the server validates and reduces eligible lines per
-  `appliesTo` scope (floor 0).
+  `appliesTo` scope (floor 0), via the pure `couponEligibleLine` (`_shared/stripe.ts`, mirrored
+  `src/lib/pricing.ts` — not wired into any client call site, see below). **`CouponScope` has
+  SIX values, not four (UAT M-11-01, `2026-08-22`):** `athlete-membership` / `club-membership` /
+  `coach-membership` / `meet-entry` / `change-fee` / `addon`. A pure change-fee line, an add-on
+  line, AND the MIXED added-discipline-plus-change line (see the three-way split above) are all
+  tagged `change-fee`/`addon` — **never `meet-entry`** — specifically so an `appliesTo:
+  'meet-entry'` coupon ("Event entries") discounts actual new registrations only. Before this
+  fix every non-membership line shared the `meet-entry` tag, so an "Event entries" coupon
+  silently discounted change fees and add-ons along with real entries. No admin-facing coupon
+  category exists for `change-fee`/`addon` today (`Coupon['appliesTo']` in `src/lib/types.ts`
+  has no such member) — those two scopes are reachable only by an `appliesTo: 'any'` code, by
+  design.
+- **The discount is a real, persisted `invoice_items` row (UAT M-11-02 / M-20-01,
+  `2026-08-22`), not just a checkout-time display number.** `fulfillPayment` (`_shared/fulfill.ts`)
+  upserts a `kind: 'discount'` line (negative `amount`, deterministic id
+  `ii-<paymentId>-discount`) whenever `Σ amount_cents > Σ paid_cents` across the snapshot —
+  computed as `paid_cents ?? amount_cents` so a legacy pre-T6/no-snapshot item (no discount info)
+  reads as undiscounted, never as "100% off". The confirmation email renders this same row
+  (negative, before the service fee). `invoiceSubtotal`/`invoiceDiscount`/`invoiceTotal`
+  (`src/lib/receipt.ts`) and the Cart.tsx/PurchaseHistory.tsx receipt modals already excluded/
+  netted `kind === 'discount'` correctly — that code was simply dead until this fix. **Finance:**
+  `buildFinanceTxns` (`src/lib/finance.ts`) prefers `lines_snapshot` (`paidCents`, already
+  post-discount) whenever present, so the discount row never double-counts there; the
+  `invoice.items`-fallback path (very old pre-snapshot payments) nets a discount row correctly
+  too (`itemKeyFor('discount', …)` was already wired). **Flagged, not fixed:** the discount row
+  has `ref_event_id: null` (a coupon can span multiple events/memberships in one cart), so an
+  event-scoped Finance summary — and therefore `hostPayoutOwedCents` for that event — excludes
+  it and shows the undiscounted entry-fee gross. Consistent with the existing "gross before
+  fees, refunds not deducted" host-payout policy, but worth Julia's explicit confirmation now
+  that a real discount can exist. `request-refund` never enumerates a `discount` item (its
+  queries filter `kind='meet-entry'`/`kind='addon'` explicitly).
 - **$0-total free-order path:** when a coupon fully covers the cart, skip Stripe entirely —
   insert the `payments` row with `stripe_session_id: null` and call the fulfillment core
   directly (inline retry-once + `error_logs` on failure, so a failure never strands the order
