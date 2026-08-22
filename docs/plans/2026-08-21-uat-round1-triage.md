@@ -86,8 +86,8 @@ until this ships. Z-03-01 (the actual concurrency test) runs after.
 | ID | Sev | Finding | Fix | Status |
 |---|---|---|---|---|
 | Z-06-01 (Nate, results) | S1 | Public Results said "1 score is posted but not assigned to a session" although the host dashboard shows the athlete assigned to that session | Looks like a relapse/variant of the 2026-07-31 fix. Investigate which session field the host assignment writes vs which Results reads | 🔧 investigate first |
-| Z-06-01 (Julia) | S1 | Second judge's score silently overwrote the first; wants a confirm showing the existing score | Optimistic concurrency: client sends the score it last saw; server rejects on mismatch; client shows "X is already posted — replace with Y?" | ☐ |
-| Z-06-01 (Nate, phone) | S3 | Judge entry in iPhone portrait: the score button sits off-screen right with no horizontal scroll; landscape works | Responsive fix + J-16 now tests portrait explicitly | ☐ |
+| Z-06-01 (Julia) | S1 | Second judge's score silently overwrote the first; wants a confirm showing the existing score | Optimistic concurrency: client sends the score it last saw; server rejects on mismatch; client shows "X is already posted — replace with Y?" | 🔧 drafted 2026-08-22 (`20260822020000_score_compare_and_set.sql` — `scores.updated_at` + `post_score` RPC; both `pushScore` and `judge-entry`'s `submit` now call it; `Judge.tsx` Modal-based Replace/Keep-existing dialog) — not yet applied/reviewed, see `docs/plans/notes/2026-08-21-uat-round1-notes.md` |
+| Z-06-01 (Nate, phone) | S3 | Judge entry in iPhone portrait: the score button sits off-screen right with no horizontal scroll; landscape works | Responsive fix + J-16 now tests portrait explicitly | 🔧 drafted 2026-08-22 — `.judge-roster-wrap` (overflow-x: auto) replaces the card's clipping `overflow:hidden`; needs a controller `responsive-sweep` pass at 375px that specifically taps the roster row's Score/Edit button (see notes — a plain page-overflow check would have passed even with the bug) |
 
 ## Batch 7 — Polish
 
