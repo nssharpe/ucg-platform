@@ -78,7 +78,9 @@ Invokers unwrap errors via `edgeErrorMessage(error)` (the real JSON message), **
   overwriting a concurrent judge's post; validation in `_shared/judge-entry-core.ts` including size
   caps on source/calc/calcState), `report-problem` (any signed-in caller; reporter identity resolved
   server-side from the JWT, never the client payload; routes bug/question/unsure to a hardcoded
-  recipient map at the top of the function).
+  recipient map at the top of the function; since `20260822030000` also inserts a `problem_reports`
+  row with the service role BEFORE the email send — insert failure logs to `error_logs` and never
+  blocks the email — powering the admin "Errors & Problems" page's Problem Reports tab).
 - **`scheduled-dispatch`** (pg_cron every 15 min): sanction-vote reminders, event-owner task
   escalations (`owner-task`), waitlist promotion sweep (FIFO promote/requeue/complete), season
   lifecycle nag (`season-launch-nag` — escalating admin emails to CREATE the next season row),
