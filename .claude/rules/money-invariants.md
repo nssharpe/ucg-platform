@@ -39,8 +39,13 @@ Auth'd; the caller must own the cart items or manage the club.
 
 - **Entry-vs-change is derived from the referenced registrations' STATE** (`paid` /
   `updated_pending`), **NOT** the client `ref_line_type` tag (C4 fix — otherwise a brand-new
-  reg can be tagged 'change' to pay a cheap change fee). A line is 'change' only when EVERY
-  referenced reg is already purchased or re-pended.
+  reg can be tagged 'change' to pay a cheap change fee). Three-way split (UAT M-10-01,
+  2026-08-21): a line is a pure **change** only when EVERY referenced reg is already
+  purchased/re-pended; a pure **entry** only when NONE are; a **MIXED** line (some purchased/
+  re-pended, some brand-new — e.g. adding a discipline to an already-paid registration) prices
+  as the added disciplines' entry-total PLUS the change fee, as one combined amount
+  (`addedDisciplineChangeTotal`/`addedDisciplineChangeTotalDollars`) — never the change fee
+  alone, which would undercharge exactly like the original C4 exploit.
 - **Ownership (H4):** every `ref_reg_ids` reg must belong to the payer (self cart) or the club
   (club cart); membership `ref_user_id` must be the payer or a club-affiliated person — else 403.
 - Inserts a `pending` `payments` row with **`lines_snapshot`**: the validated, server-priced
