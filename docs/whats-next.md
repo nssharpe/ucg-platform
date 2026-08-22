@@ -203,9 +203,20 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
   (higher stakes there — it feeds rank/award math, so a dropped score is a wrong placement, not
   a missing row). The empty state is now truthful too (`unplacedScoreCount`). Verified live:
   all 3 prod scores render across 2 sessions with correct ranks.
-  ⚠️ **Still true and worth designing around:** nothing back-fills `session_id`, and
-  `pushEvent` deletes/reinserts `event_sessions`, so a session whose **id** changes on an edit
-  still orphans its registrations — see §4's §L.2 note.
+  ⚠️ Still true: nothing back-fills a `session_id` that's already null — see §4's §L.2 note.
+  The other half — **`pushEvent` deleting/reinserting `event_sessions` on every save, orphaning
+  registrations pointing at the old id — FIXED 2026-08-22** on `fix/uat-round1` (UAT Z-06,
+  relapsed this exact symptom). The sessions editor now preserves each session's id across
+  reorders/adds/removes instead of reassigning ids by array index, and the write path
+  (`pushEvent`/`pushEventSessions`) upserts by id and deletes only genuinely-removed ones
+  (`diffSessions`, `events-core.ts`) instead of a blanket delete-then-insert — the delete was
+  what actually nulled `registrations.session_id`/`scores.session_id` via
+  `on delete set null`, even when the reinsert used the identical id. Removing a session with
+  live registrations is now blocked in the editor, and `sessionResults`/`unplacedScoreCount`
+  fall back to a score's own `sessionId` and render an explicit "Unassigned" group instead of
+  silently dropping anything still unresolved. Detail:
+  [findings §4.4](specs/2026-07-31-review-and-cleanup-findings.md),
+  `docs/plans/notes/2026-08-21-uat-round1-notes.md`.
 9. ✅ **`judge-entry` unlock rate limit — SHIPPED 2026-07-31** (staging + prod, migration
   `20260731180000`, `judge-entry` prod v3). The 6-digit code path's only defense was a
   per-request `sleep(300)`, which parallelism erases — 40 concurrent invalid codes all returned

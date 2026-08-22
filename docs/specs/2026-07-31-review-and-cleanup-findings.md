@@ -245,7 +245,42 @@ column-scoped re-grant (`20260717205348`) **exactly**, field for field, and the 
 returns 200. Worth stating plainly because a naive `select('*')` audit reads this as a broken
 grant — it is the documented trap, and the code is on the right side of it.
 
-### 4.4 🔴 FINDING (high, live in prod) — posted scores are invisible on the public Results page
+### 4.4 ✅ RESOLVED 2026-08-22 (was 🔴 FINDING, high, live in prod) — posted scores are invisible on the public Results page
+
+**Resolved on `fix/uat-round1`** (UAT Z-06, Nate/S1 — the same symptom relapsed after this
+finding was written, via a mechanism this section's root-cause paragraph had already flagged
+but that was left as future work: *"a session whose id changes on an edit silently orphans
+every registration pointing at the old id"*). Fix, three layers:
+
+1. **Stable session ids.** The sessions editor (`EventWizard.tsx`) used to reassign a session's
+   id by its CURRENT array index at save time — correct only when the session count/order never
+   changed. `SessionDraft` now carries the original `EventSession.id` and follows it through
+   reorders/adds/removes; a brand-new draft gets a freshly-minted id that can't collide with one
+   already in play. Squads are now looked up by that same stable id, not by array position.
+2. **Upsert + prune instead of delete-then-reinsert.** `pushEvent`/`pushEventSessions`
+   (`supabase.ts`) used `remoteReplace` on `event_sessions` — a DELETE of every row for the
+   event followed by a re-INSERT. Because `registrations.session_id`/`scores.session_id
+   references event_sessions(id) on delete set null`, that DELETE nulled every referencing row
+   **even when the very next statement reinserted a session with the identical id** — Postgres
+   FK actions fire on the delete regardless of what gets written afterward. Both functions now
+   call a shared `diffSessions(existing, next)` (`events-core.ts`, pure/unit-tested) and only
+   UPSERT what's there and DELETE ids that are genuinely gone — an unchanged session's row is
+   never touched at the DB level, so its dependents can't be nulled.
+3. **Editor-side guard + Results-side fallback.** Removing a session (or toggling off a whole
+   discipline) that still has live, non-refunded registrations is now blocked in the editor
+   ("N athletes are registered... move them first") rather than silently deleting and letting
+   the `on delete set null` cascade orphan them. As defense in depth for data already affected
+   (and any path this doesn't cover), `sessionResults`/`unplacedScoreCount`
+   (`src/lib/scoring.ts`) now resolve a score's session as the registration's `sessionId` **only
+   if it still names a real session**, else the score's own `sessionId` if that resolves; what
+   still doesn't resolve renders under an explicit "Unassigned" tab on Results instead of
+   vanishing, with this section's own truthful-empty-state message as that tab's caption.
+
+Tests: `tests/lib/unplaced-scores.test.ts` (extended) and the new `diffSessions` cases.
+
+The original finding, verification, and root-cause analysis are preserved below for the record.
+
+---
 
 **Every event's public Results page currently reads "No scores posted yet — results appear here
 live as judges enter them." Three scores exist.**

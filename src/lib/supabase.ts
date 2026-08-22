@@ -7,9 +7,10 @@
 // block the UI) and are no-ops when `isSupabaseConfigured` is false.
 import { createClient, type SupabaseClient, type RealtimePostgresChangesPayload, type PostgrestError } from '@supabase/supabase-js';
 import type {
-  AccountInvite, AccountingCode, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, EventAdmin, HostPayout, Invoice, JudgeAccessCode, Level, Event, Membership, MembershipType, Payment, PaymentSnapshotLine, Region, Registration, RefundRequest, SanctionRequest, SanctionVote, Score, Season,
+  AccountInvite, AccountingCode, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, EventAdmin, EventSession, HostPayout, Invoice, JudgeAccessCode, Level, Event, Membership, MembershipType, Payment, PaymentSnapshotLine, Region, Registration, RefundRequest, SanctionRequest, SanctionVote, Score, Season,
   WaiverDocument, WaiverSignature, WaitlistGroup, SessionRequest, CompetitionOrder, FinalsLineup, EventCheckin,
 } from './types';
+import { diffSessions } from './events-core';
 import { writeQueue, humanizeWriteError, type WriteOp, type ExecResult, type WriteQueueEntry } from './write-queue';
 import { pushToast } from './toast-bus';
 import type { Database } from './database.types';
@@ -1005,18 +1006,40 @@ export function deleteMembership(personId: string, seasonId: string, type: strin
   remoteDelete('memberships', `${personId}:${seasonId}:${type}`, 'id');
 }
 
-export function pushEvent(m: Event) {
+/** Upsert `event_sessions` rows and delete only the ones genuinely removed —
+ *  see `diffSessions` (events-core.ts) for why this replaced a blanket
+ *  `remoteReplace` (UAT Z-06: that delete-then-insert nulled every
+ *  registration's/score's `session_id` on EVERY session-list save, even a
+ *  same-id round trip, because `ON DELETE SET NULL` fires on the delete
+ *  regardless of what gets reinserted afterward). `previousSessions` is the
+ *  session list as it stood before this edit; defaulting it to `m.sessions`
+ *  makes every caller that never adds/removes a session (event-status
+ *  toggles, `NationalsConfigEditor`, `SquadBuilder`'s squad-only writes) a
+ *  no-op diff — upsert everything, delete nothing — without having to know
+ *  or care about this function's existence. Only EventWizard's session
+ *  editor passes a real previous snapshot (`editEvent.sessions`, captured
+ *  before the in-place `mutate()` reassigns the local copy). */
+function pushEventSessionRows(m: Event, previousSessions: EventSession[]) {
+  const { upsert, deleteIds } = diffSessions(previousSessions, m.sessions);
+  remoteUpsert('event_sessions', upsert.map((s) => sessionToRow(m.id, s)));
+  for (const id of deleteIds) remoteDelete('event_sessions', id);
+}
+
+export function pushEvent(m: Event, previousSessions: EventSession[] = m.sessions) {
   remoteUpsert('events', [eventToRow(m)]);
-  remoteReplace('event_sessions', { event_id: m.id }, m.sessions.map((s) => sessionToRow(m.id, s)));
+  pushEventSessionRows(m, previousSessions);
   for (const s of m.sessions) {
     remoteReplace('squads', { session_id: s.id }, s.squads.map((q, i) => squadToRow(s.id, q, i)));
   }
 }
 
 /** Push only an event's sessions/squads (status/fields unchanged), and the
- *  resulting squad_id placements for that event's registrations. */
-export function pushEventSessions(m: Event, registrations: Registration[]) {
-  remoteReplace('event_sessions', { event_id: m.id }, m.sessions.map((s) => sessionToRow(m.id, s)));
+ *  resulting squad_id placements for that event's registrations.
+ *  `previousSessions` defaults to `m.sessions` because every caller here
+ *  (SquadBuilder) only ever edits squads within an unchanged session list —
+ *  see `pushEventSessionRows` above. */
+export function pushEventSessions(m: Event, registrations: Registration[], previousSessions: EventSession[] = m.sessions) {
+  pushEventSessionRows(m, previousSessions);
   for (const s of m.sessions) {
     remoteReplace('squads', { session_id: s.id }, s.squads.map((q, i) => squadToRow(s.id, q, i)));
   }

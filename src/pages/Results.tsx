@@ -5,7 +5,7 @@ import { useCapabilities } from '../lib/capabilities';
 import { Tabs, Badge } from '../components/ui';
 import { useFmtDate, useToast } from '../components/ui-hooks';
 import { EventStatusBadge } from './Home';
-import { sessionResults, fmtScore, unplacedScoreCount } from '../lib/scoring';
+import { sessionResults, fmtScore, unplacedScoreCount, UNASSIGNED_SESSION_ID } from '../lib/scoring';
 import { scoreDetailPath } from '../lib/calculators';
 import { APPARATUS } from '../lib/types';
 import type { Registration, Score } from '../lib/types';
@@ -84,14 +84,36 @@ export function EventResults() {
   const [sort, setSort] = useState<SortSpec>({ key: '_aa', dir: -1 });
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
-  const session = event?.sessions.find((s) => s.id === sessionId) ?? event?.sessions[0];
-
   // Scores slice (Phase 2, docs/specs/2026-07-24-data-layer-scale.md) — the
   // per-event realtime channel that used to feed this page's own patch-map
   // overlay is now wired as the slice's own invalidation signal
   // (scores-slice.ts), so this is just a normal by-event read.
   const { rows: eventScores, status: scoresStatus } = useEventScores(event?.id);
   const { rows: eventRegs, status: regsStatus } = useEventRegistrations(event?.id);
+
+  // Scores that can't resolve to any REAL session tab (UAT Z-06) — they still
+  // render, under the "Unassigned" tab below, so this drives that tab's
+  // caption/count rather than a hidden/missing one. Only meaningful once
+  // both slices are ready; a mid-load partial read would otherwise report a
+  // scary count that resolves to 0 a moment later. Computed before
+  // `isUnassignedView` below on purpose — that derivation needs it.
+  const unplaced = useMemo(
+    () => (scoresStatus === 'ready' && regsStatus === 'ready' && event
+      ? unplacedScoreCount(eventScores, eventRegs, event.sessions.map((s) => s.id))
+      : 0),
+    [scoresStatus, regsStatus, eventScores, eventRegs, event],
+  );
+
+  // The explicit "Unassigned" group (UAT Z-06) is a pseudo-session, not a
+  // real one — never let the `?? event?.sessions[0]` default below silently
+  // redirect it back to a real session tab. Gated on `unplaced > 0` too: if
+  // the count drops to 0 while this tab is still selected (its own `<option>`
+  // disappears, but `sessionId` state doesn't reset on its own), falling
+  // through to a real session avoids reprinting the exact false "0 scores are
+  // posted but not assigned" statement the 2026-07-31 fix exists to prevent.
+  const isUnassignedView = sessionId === UNASSIGNED_SESSION_ID && unplaced > 0;
+  const session = isUnassignedView ? undefined : (event?.sessions.find((s) => s.id === sessionId) ?? event?.sessions[0]);
+
   // Phase 4 (data-layer-scale.md): db.people at boot no longer covers
   // cross-club competitors — this is a PUBLIC, no-login results page, so
   // names come from the thin public_competitors-backed shape (works for an
@@ -104,19 +126,10 @@ export function EventResults() {
   const competitorById = useMemo(() => new Map(competitorRefs.map((r) => [r.id, r])), [competitorRefs]);
 
   const computed = useMemo(
-    () => (event && session ? sessionResults(event, session.id, eventScores, eventRegs) : null),
-    [event, session, eventScores, eventRegs],
-  );
-
-  // Scores that can't surface under ANY session tab because their registration
-  // has no session — drives the truthful empty state instead of NO_SCORES_MSG.
-  // Only meaningful once both slices are ready; a mid-load partial read would
-  // otherwise report a scary count that resolves to 0 a moment later.
-  const unplaced = useMemo(
-    () => (scoresStatus === 'ready' && regsStatus === 'ready'
-      ? unplacedScoreCount(eventScores, eventRegs)
-      : 0),
-    [scoresStatus, regsStatus, eventScores, eventRegs],
+    () => (event && (session || isUnassignedView)
+      ? sessionResults(event, isUnassignedView ? UNASSIGNED_SESSION_ID : session!.id, eventScores, eventRegs)
+      : null),
+    [event, session, isUnassignedView, eventScores, eventRegs],
   );
 
   // Tie-aware places (1,2,2,4) per (level, category) group — the viewer's
@@ -126,8 +139,8 @@ export function EventResults() {
   const places = useMemo(() => {
     const aa = new Map<string, number>();
     const ev = new Map<string, number>(); // key `${regId}|${event}`
-    if (!computed || !session) return { aa, ev };
-    const sessionEvents = APPARATUS[session.discipline];
+    if (!computed || (!session && !isUnassignedView)) return { aa, ev };
+    const sessionEvents = APPARATUS[computed.discipline];
     for (const [levelId, rows] of computed.byLevel.entries()) {
       const cats = [...new Set(rows.map((r) => r.reg.category ?? ''))];
       for (const cat of cats) {
@@ -141,11 +154,11 @@ export function EventResults() {
       void levelId;
     }
     return { aa, ev };
-  }, [computed, session]);
+  }, [computed, session, isUnassignedView]);
 
-  if (!event || !session || !computed) return <p>Event not found.</p>;
+  if (!event || (!session && !isUnassignedView) || !computed) return <p>Event not found.</p>;
   const { byLevel, apparatusRankings, teamScores } = computed;
-  const events = APPARATUS[session.discipline];
+  const events = APPARATUS[computed.discipline];
   const clubName = (id: string) => db.clubs.find((c) => c.id === id)?.shortName ?? id;
   const athleteName = (athleteId: string) => athleteNameById.get(athleteId) ?? athleteId;
 
@@ -217,8 +230,12 @@ export function EventResults() {
       </div>
 
       <div className="grid cols-2" style={{ marginBottom: 14 }}>
-        <select className="input" value={session.id} onChange={(e) => { setSessionId(e.target.value); setLevelFilter(''); setCatFilter(''); }}>
+        <select className="input" value={isUnassignedView ? UNASSIGNED_SESSION_ID : session!.id} onChange={(e) => { setSessionId(e.target.value); setLevelFilter(''); setCatFilter(''); }}>
           {event.sessions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          {/* UAT Z-06: a real, separate tab (always last) for scores that can't
+              resolve to any session above — never hidden, per the honest-empty-
+              state fix from 2026-07-31. Only offered when there's something in it. */}
+          {unplaced > 0 && <option value={UNASSIGNED_SESSION_ID}>Unassigned ({unplaced})</option>}
         </select>
         <Tabs
           tabs={[{ id: 'aa' as const, label: 'All-Around' }, { id: 'events' as const, label: 'By apparatus' }, { id: 'team' as const, label: 'Team' }]}
@@ -226,6 +243,9 @@ export function EventResults() {
           onChange={setView}
         />
       </div>
+      {isUnassignedView && (
+        <p style={{ color: 'var(--ink-soft)', fontSize: 13.5, margin: '-8px 0 14px' }}>{unplacedMsg(unplaced)}</p>
+      )}
 
       {scoresStatus === 'loading' || regsStatus === 'loading' || peopleStatus === 'loading' ? (
         <p style={{ color: 'var(--ink-soft)', fontSize: 14 }}>Loading…</p>

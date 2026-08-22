@@ -42,6 +42,28 @@ An upsert must pass an INSERT policy's WITH CHECK even on the conflict-update pa
 manager-editable table needs BOTH insert and update policies. Prefer separate insert/update
 policies over `for all`, which silently grants DELETE.
 
+## `remoteReplace` × `on delete set null` trap (UAT Z-06, `fix/uat-round1` 2026-08-22)
+
+`remoteReplace` (`supabase.ts`) is a client-side DELETE-then-INSERT for a small child
+collection. It's wrong for any table whose id a dependent row references with
+`on delete set null` (or `cascade`) — the DELETE fires that FK action immediately, and
+reinserting a row with the **identical id right afterward does not undo it**: Postgres FK
+triggers run per-statement, so the dependent rows are already nulled/gone by the time the
+INSERT runs. `event_sessions` is exactly this shape
+(`registrations.session_id`/`scores.session_id references event_sessions(id) on delete set
+null`): `pushEvent`/`pushEventSessions` used to `remoteReplace` it on every save, so ANY
+sessions-editor save — even a pure rename that round-tripped the same ids — nulled every
+registration's/score's session, invisibly (the client's local optimistic state still showed
+the old value until a slice refetch), and the public Results page silently hid their scores.
+
+**Fixed by upserting instead of replacing:** `pushEventSessionRows` now diffs the session list
+(`diffSessions`, `events-core.ts`, pure/unit-tested) and only UPSERTs rows + DELETEs ids that
+are genuinely gone — an unchanged row is never touched at the DB level, so its dependents can
+never be nulled by this write. **Rule:** before reaching for `remoteReplace` on a table, check
+what references it and how (`grep 'references <table>' supabase/migrations`) — if anything is
+`on delete set null`/`cascade`, use the diff-and-upsert idiom instead, not a blanket replace,
+even when the ids you're about to reinsert are identical to what's there now.
+
 ## Column-revoke × whole-row-upsert trap (broke prod 2026-07-17 → 23)
 
 A column-scoped SELECT lockdown (`revoke select on <table>` + `grant select (<cols>)`) breaks

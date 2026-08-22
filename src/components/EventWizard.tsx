@@ -3,8 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { mutate, useDB } from '../lib/store';
 import { pushEvent } from '../lib/supabase';
 import { useCapabilities } from '../lib/capabilities';
+import { useEventRegistrations } from '../lib/registrations-slice';
 import { scaffoldNationalsConfig } from '../lib/nationals-adapter';
-import { toDatetimeLocalValue, scoringConfigOf } from '../lib/events-core';
+import { toDatetimeLocalValue, scoringConfigOf, assignSessionIds } from '../lib/events-core';
 import { eventCreationBlocked } from '../lib/season-lifecycle';
 import { buildNationalsSessions, singleLeagueHostClubId } from '../lib/ucg-event-templates';
 import { normalizeExternalUrl } from '../lib/url';
@@ -34,6 +35,13 @@ const addDays = (iso: string, days: number) => {
 // Session row being edited; numbered "Session N — {label}" on save (seed convention).
 interface SessionDraft {
   key: number;
+  /** The persisted `EventSession.id` this draft was loaded from — absent for
+   *  a brand-new session (added via "+ Add session" or a discipline toggle),
+   *  which gets a freshly-minted id at save time. MUST follow the draft
+   *  across reorders/adds/removes (never re-derived from the draft's
+   *  position in `sessions`) — see the save-time id assignment below and
+   *  `diffSessions` (events-core.ts) for why (UAT Z-06). */
+  id?: string;
   discipline: Discipline;
   label: string;
   date: string;
@@ -68,13 +76,29 @@ function defaultSessions(allLevels: Level[], d: Discipline, date: string, nextKe
  * assigned by index (1..N) rather than from the component's keyRef, so this can
  * run as initial state without reading a ref during render; the caller seeds the
  * key counter to N+1 so later nextKey() calls don't collide.
+ *
+ * `keepIds` carries the real `EventSession.id` over (UAT Z-06) — it is the
+ * ONLY thing that ties a draft back to its persisted row once the admin
+ * starts reordering/adding/removing; the array position can't be trusted
+ * (that was exactly the bug: the old save-time code used
+ * `editEvent.sessions[i]?.id`, matching by CURRENT index, which reassigns
+ * ids to the wrong session under any reorder or an add/remove that isn't at
+ * the end). Pass `false` — a CREATE seeded from a template's own `sessions`
+ * (not `editEvent`) — to load every OTHER field from the template but start
+ * every draft with no `id`, exactly like a brand-new session: an id from a
+ * template is either absent today or, if a future template ever populated
+ * one, could belong to some OTHER real event's session — saving under it
+ * verbatim would silently upsert onto (and steal) that event's row via
+ * `event_sessions`' primary key. `isEdit` is the caller's only signal for
+ * which case this is; sessionsTodrafts has no other way to tell.
  */
-function sessionsTodrafts(sessions: EventSession[]): SessionDraft[] {
+function sessionsTodrafts(sessions: EventSession[], keepIds: boolean): SessionDraft[] {
   return sessions.map((s, i) => {
     // Strip the "Session N — " prefix from the stored name
     const label = s.name.replace(/^Session \d+ — /, '');
     return {
       key: i + 1,
+      ...(keepIds ? { id: s.id } : {}),
       discipline: s.discipline,
       label,
       date: s.date,
@@ -228,7 +252,7 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
   const initialSessions: SessionDraft[] = seedEvt?.eventType === 'camp'
     ? []
     : seedEvt?.sessions?.length
-      ? sessionsTodrafts(seedEvt.sessions)
+      ? sessionsTodrafts(seedEvt.sessions, isEdit)
       : (() => {
           let key = 1;
           return (seedEvt?.disciplines ?? []).flatMap((d) => defaultSessions(db.levels, d, seedStartDate, () => key++));
@@ -339,6 +363,49 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
   // Disciplines & sessions
   const [disciplines, setDisciplines] = useState<Discipline[]>(seedEvt?.disciplines ?? []);
   const [sessions, setSessions] = useState<SessionDraft[]>(initialSessions);
+  // UAT Z-06: removing a session that still has live (non-refunded)
+  // registrations would delete its `event_sessions` row server-side, and
+  // `registrations.session_id references event_sessions(id) on delete set
+  // null` silently nulls every one of those registrations' session — the
+  // exact class of bug this whole fix targets, just triggered by an
+  // intentional removal instead of the id-churn one. Block it in the editor
+  // instead, where there's an easy count. `editEvent?.id` is undefined on
+  // create, so this is a no-op fetch (and an always-empty map) there — a
+  // brand-new event has no registrations yet regardless.
+  const { rows: wizardEventRegs, status: wizardRegsStatus } = useEventRegistrations(editEvent?.id);
+  const liveRegCountBySession = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of wizardEventRegs) {
+      if (r.refunded || !r.sessionId) continue;
+      m.set(r.sessionId, (m.get(r.sessionId) ?? 0) + 1);
+    }
+    return m;
+  }, [wizardEventRegs]);
+  /** Returns whether it's safe to drop `draft` from `sessions` right now —
+   *  toasts and returns false otherwise. A draft with no `id` was never
+   *  persisted (added this session), so it can never have a registration
+   *  pointing at it. */
+  const canRemoveSession = (draft: SessionDraft): boolean => {
+    if (!draft.id) return true;
+    // `isEdit` guard first: on a brand-new event `useEventRegistrations(undefined)`
+    // never fetches, so its status sits at 'loading' forever — without this,
+    // Remove would be permanently blocked on create. Belt-and-suspenders with
+    // the `!draft.id` check above (which already covers create-mode today,
+    // since sessionsTodrafts only keeps ids when `isEdit`): this doesn't rely
+    // on that staying true.
+    if (isEdit && wizardRegsStatus !== 'ready') {
+      // Data-layer rule: never treat "loading" as "empty" — a partial read
+      // here would wrongly clear a session that DOES have athletes on it.
+      toast('Registrations are still loading — try again in a moment.', { variant: 'error' });
+      return false;
+    }
+    const n = liveRegCountBySession.get(draft.id) ?? 0;
+    if (n > 0) {
+      toast(`${n} ${n === 1 ? 'athlete is' : 'athletes are'} registered for this session — move ${n === 1 ? 'them' : 'them all'} to another session first.`, { variant: 'error' });
+      return false;
+    }
+    return true;
+  };
   // Nationals create-mode "Sessions × Gyms" (PM feedback 2026-07-22 §C) —
   // replaces the per-discipline session cards entirely; disciplines[] and
   // sessions[] above stay populated (from the template) but unused in this
@@ -437,6 +504,14 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
 
   const toggleDiscipline = (d: Discipline) => {
     if (disciplines.includes(d)) {
+      // UAT Z-06: block dropping a whole discipline if ANY of its sessions
+      // still has live registrations — same guard as the per-session Remove
+      // button, applied to every session this would drop at once. `.find`
+      // (not `.filter`) so canRemoveSession's toast fires at most once.
+      if (!isCamp) {
+        const blocked = sessions.find((s) => s.discipline === d && !canRemoveSession(s));
+        if (blocked) return;
+      }
       setDisciplines(disciplines.filter((x) => x !== d));
       // Camps never carry sessions (PM feedback 2026-07-22) — nothing to prune.
       if (!isCamp) setSessions(sessions.filter((s) => s.discipline !== d));
@@ -458,7 +533,13 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
   /** Shared save/navigate tail for both publish modes. */
   const finishSave = (event: Event) => {
     if (isEdit) {
-      const applied = mutate((d) => { const idx = d.events.findIndex((m) => m.id === event.id); if (idx >= 0) d.events[idx] = event; pushEvent(event); });
+      // `editEvent.sessions` is the pre-edit snapshot (captured in this
+      // closure before `mutate()` reassigns the in-place `db.events[idx]`) —
+      // pushEvent needs it to tell an untouched session from a removed one
+      // (UAT Z-06); passing nothing would default to `event.sessions` (the
+      // NEW list) and silently never prune a removed session server-side.
+      const previousSessions = editEvent?.sessions ?? [];
+      const applied = mutate((d) => { const idx = d.events.findIndex((m) => m.id === event.id); if (idx >= 0) d.events[idx] = event; pushEvent(event, previousSessions); });
       if (!applied) return; // offline read-only gate — no false success toast
       toast(`${event.name} updated.`);
     } else {
@@ -642,26 +723,48 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
           nationalsGyms.map((g) => ({ name: g.name.trim(), discipline: g.discipline, levelIds: g.levelIds })),
           eventId,
         )
-      : sessions.map((s, i) => {
-          // Strip blank/invalid entries — never persist non-finite or null caps
-          // (the capacity engine treats those as "not configured," but a clean
-          // save shouldn't write garbage either).
-          const maxRoutines = Object.entries(s.maxRoutines).reduce<Record<string, number>>((acc, [code, v]) => {
-            if (v.trim()) {
-              const n = Number(v);
-              if (Number.isFinite(n)) acc[code] = n;
-            }
-            return acc;
-          }, {});
-          return {
-            id: editEvent?.sessions[i]?.id ?? `${eventId}-s${i + 1}`,
-            name: `Session ${i + 1} — ${s.label.trim()}`,
-            discipline: s.discipline, date: s.date, time: s.time, levelIds: s.levelIds,
-            squads: editEvent?.sessions[i]?.squads ?? [],
-            ...(nationals ? { phase: s.phase } : {}),
-            ...(Object.keys(maxRoutines).length > 0 ? { maxRoutines } : {}),
-          };
-        });
+      : (() => {
+          // Ids for brand-new session drafts (UAT Z-06) — an existing
+          // draft's own id is reused verbatim so the save is an UPSERT of
+          // the same row rather than a delete+reinsert under a new one;
+          // `pushEvent`'s stable-id write path relies on that. See
+          // `assignSessionIds` (events-core.ts) for why `editEvent.sessions`
+          // (not just the surviving drafts) has to seed the collision set —
+          // a mint that recycled a just-removed session's id in the same
+          // save would silently re-attach that old session's dependents to
+          // a session they never competed in.
+          const ids = assignSessionIds(
+            eventId,
+            sessions.map((s) => s.id),
+            (editEvent?.sessions ?? []).map((es) => es.id),
+          );
+          return sessions.map((s, i) => {
+            // Strip blank/invalid entries — never persist non-finite or null caps
+            // (the capacity engine treats those as "not configured," but a clean
+            // save shouldn't write garbage either).
+            const maxRoutines = Object.entries(s.maxRoutines).reduce<Record<string, number>>((acc, [code, v]) => {
+              if (v.trim()) {
+                const n = Number(v);
+                if (Number.isFinite(n)) acc[code] = n;
+              }
+              return acc;
+            }, {});
+            const id = ids[i];
+            // Squads belong to the SAME session id, not the same array
+            // position (that pairing broke identically to the id bug above
+            // under reorder — a reordered session used to inherit whatever
+            // squads/athlete placements sat at its new index).
+            const squads = s.id ? (editEvent?.sessions.find((es) => es.id === s.id)?.squads ?? []) : [];
+            return {
+              id,
+              name: `Session ${i + 1} — ${s.label.trim()}`,
+              discipline: s.discipline, date: s.date, time: s.time, levelIds: s.levelIds,
+              squads,
+              ...(nationals ? { phase: s.phase } : {}),
+              ...(Object.keys(maxRoutines).length > 0 ? { maxRoutines } : {}),
+            };
+          });
+        })();
     if (nationals && !eventSessions.some((s) => s.phase === 'prelim')) return setError('A Nationals event needs at least one prelim session.');
     const orderedDisciplines = DISCIPLINES.filter((d) => effectiveDisciplines.includes(d));
     const event: Event = {
@@ -1234,7 +1337,7 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
                             <option value="final">Finals</option>
                           </select>
                         )}
-                        <button className="btn small ghost" onClick={() => setSessions(sessions.filter((x) => x.key !== s.key))}>Remove</button>
+                        <button className="btn small ghost" onClick={() => { if (canRemoveSession(s)) setSessions(sessions.filter((x) => x.key !== s.key)); }}>Remove</button>
                       </div>
                     </div>
                     <Field label="Name" hint={`Saved as "Session ${i + 1} — ${s.label.trim() || '…'}"`}>

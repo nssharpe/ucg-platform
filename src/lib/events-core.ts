@@ -1,6 +1,6 @@
 // Pure event-phase derivation (B4). Kept free of React/runtime deps for
 // Vitest coverage, mirroring capabilities-core.ts/pricing.ts.
-import type { Club, EventPhase, ScoringConfig } from './types';
+import type { Club, EventPhase, EventSession, ScoringConfig } from './types';
 
 /** Default scoring config for an event with no `scoringConfig` set: one judge
  *  panel, calculator entry (today's behavior before the 2026-07-19 per-event
@@ -113,4 +113,72 @@ export function eventIsRefundEligible(
 ): boolean {
   if (event.ucgHosted) return true;
   return clubs.some((c) => c.id === event.hostClubId && c.isLeagueHost === true);
+}
+
+/**
+ * Session-list diff for a stable-id upsert+prune write (UAT Z-06 — Results
+ * "not assigned to a session" relapse). Compares the sessions on file BEFORE
+ * an edit to the ones about to be saved and returns exactly what changed:
+ * every session to upsert (each keeps whatever id it already carries — an
+ * existing session's id, or a freshly-minted one for a brand-new session)
+ * and the ids of any session that's genuinely gone.
+ *
+ * This exists because the previous write path (`remoteReplace`) DELETEd
+ * every `event_sessions` row for the event and re-INSERTed the whole set on
+ * every save. `registrations.session_id`/`scores.session_id` are
+ * `... references event_sessions(id) on delete set null` — so even
+ * reinserting a row with the SAME id afterward does not undo the delete's
+ * cascade: every registration/score that pointed at that session is already
+ * nulled by the time the insert runs. Upserting only what changed, and
+ * deleting only ids that are truly gone, avoids ever touching a row's FK
+ * unless that row was actually intended to be removed.
+ *
+ * Does NOT invent or reconcile ids itself — the caller (EventWizard, via
+ * `assignSessionIds` below) is responsible for keeping an existing session's
+ * id attached to its own row across reorders/edits and for minting a fresh
+ * id for a new one. Pure, so it's unit-testable without a store or Supabase.
+ */
+export function diffSessions(
+  existing: EventSession[],
+  next: EventSession[],
+): { upsert: EventSession[]; deleteIds: string[] } {
+  const nextIds = new Set(next.map((s) => s.id));
+  const deleteIds = existing.filter((s) => !nextIds.has(s.id)).map((s) => s.id);
+  return { upsert: next, deleteIds };
+}
+
+/**
+ * One session id per draft, in order — the id-assignment half of the UAT
+ * Z-06 fix, paired with `diffSessions` above. `draftIds[i]` is the existing
+ * `EventSession.id` a session-editor draft was loaded from (undefined for a
+ * brand-new draft: "+ Add session," a discipline just toggled on, or a
+ * template-seeded create with no real id to keep). An existing id is
+ * returned verbatim; a `${eventId}-sN` id is minted for each undefined slot.
+ *
+ * `previousIds` (the ids on the event BEFORE this edit, i.e.
+ * `editEvent.sessions.map(s => s.id)`) matters for exactly one case: a
+ * session removed in this same save. Without seeding the collision set from
+ * it, a freshly-minted id could land on the very id that session just
+ * vacated — `diffSessions` would then see that id present in both the
+ * before and after lists and UPSERT in place instead of deleting it,
+ * silently re-attaching anything still pointing at the old session (a
+ * refunded registration, a stale score snapshot) to a session it never
+ * actually competed in. Passing `[]` for `previousIds` (create mode, nothing
+ * to have removed) is safe — it just means every draft's own id is the only
+ * collision source, same as before this parameter existed.
+ */
+export function assignSessionIds(
+  eventId: string,
+  draftIds: (string | undefined)[],
+  previousIds: string[],
+): string[] {
+  const used = new Set<string>([...previousIds, ...draftIds.filter((id): id is string => !!id)]);
+  let seq = 1;
+  const mint = (): string => {
+    let id = `${eventId}-s${seq}`;
+    while (used.has(id)) { seq++; id = `${eventId}-s${seq}`; }
+    used.add(id);
+    return id;
+  };
+  return draftIds.map((id) => id ?? mint());
 }

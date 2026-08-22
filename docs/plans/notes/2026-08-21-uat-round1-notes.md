@@ -987,3 +987,181 @@ live conflict flow (the SQL is never executed by `npm run build`/eslint/vitest a
 migration is drafted and unapplied, so the RPC itself, and the anonymous 409→`edgeErrorBody`
 round-trip, are unverified against a real database; both were re-read line-by-line after the
 advisor's review instead).
+
+## Z-06-01 (Nate, results, S1, 2026-08-22): stable event_session ids + Results Unassigned fallback
+
+**Symptom.** Public Results said "1 score is posted but not assigned to a session" while the
+host dashboard showed that athlete assigned to a real session. Framed in the triage doc as
+"looks like a relapse/variant of the 2026-07-31 fix" — it is, but via a different mechanism than
+that fix addressed.
+
+**Root cause, fully verified (not inferred).** `pushEvent`/`pushEventSessions`
+(`src/lib/supabase.ts`) wrote `event_sessions` via `remoteReplace` — a client-side DELETE of
+every session row for the event, followed by re-INSERTing the current list. Schema:
+`registrations.session_id references event_sessions(id) on delete set null` (same for
+`scores.session_id`). Postgres fires that FK action on the DELETE statement itself, regardless
+of what a later INSERT in the same op does — so reinserting a session with the IDENTICAL id
+right afterward does **not** undo the null it already wrote to every referencing row. That means
+**every** sessions-editor save nulled every registration's session, not just ones that changed
+session count/order — a pure rename or cap-value edit triggered it too. The client's own
+optimistic `db.events` state still showed the pre-edit session assignment (only a registrations
+slice refetch would reveal the DB's now-null value), which is why the host dashboard looked
+right while the public page — reading the registrations slice — saw a `sessionId` that resolved
+to nothing.
+
+Independently, and compounding it: `EventWizard.tsx`'s session-editor save minted each session's
+id from `editEvent?.sessions[i]?.id ?? \`${eventId}-s${i+1}\`` — matching the ORIGINAL event's
+session by the draft's CURRENT array index, not by identity. Reordering, inserting a session
+before an existing one, or removing one from the middle reassigns ids across the remaining
+sessions (and, worse, can silently attach one session's squads/athlete placements to a
+DIFFERENT session that happens to now sit at the same index) — a second, independent way to
+sever the id a registration was already pointing at.
+
+**Fix, three layers (task brief's own framing, all implemented as specified):**
+
+1. **Stable ids end-to-end.**
+   - `SessionDraft` (`EventWizard.tsx`) gained an optional `id?: string`. `sessionsTodrafts`
+     now takes an explicit `keepIds` flag (= `isEdit`) rather than always carrying the source
+     session's id over: a real EDIT keeps every id verbatim, but a CREATE seeded from a
+     `template` (FlipFest/Nationals) strips ids even if `seedEvt.sessions` were ever populated
+     with them. Neither existing template does that today — `flipfestTemplate` is a camp (always
+     session-less) and `nationalsTemplate` has no `sessions` field at all, so this branch is
+     currently unreachable in practice — but it closes a real hazard rather than an incidental
+     one: `event_sessions.id` is the table's PRIMARY KEY, so a template id that happened to
+     match some OTHER existing event's session would `remoteUpsert` right onto that event's row,
+     silently stealing/rewriting its `event_id`. A brand-new draft (default-session template,
+     "+ Add session" button, a discipline just toggled on) always has no `id`.
+   - Id assignment at save time is extracted to a pure, unit-tested
+     `assignSessionIds(eventId, draftIds, previousIds)` (`events-core.ts`, next to
+     `diffSessions`) rather than an inline closure: an existing draft's id is reused as-is; a
+     fresh one is minted only for `undefined` slots. `previousIds` (`editEvent.sessions`' ids —
+     NOT just the surviving drafts) seeds the collision set specifically so a mint can't recycle
+     the id of a session removed in this same save — remove session s2 and add one new session
+     in the same edit, and without this the mint would happily hand the new session id `s2` right
+     back, which `diffSessions` would then read as "unchanged" and UPSERT-in-place instead of
+     deleting, silently re-attaching anything still pointing at the old s2 to a session it never
+     competed in. (Caught by the reviewer-tier pass, not the initial implementation — see the
+     dedicated test below.) Squads are now looked up by matching a session's assigned id against
+     `editEvent.sessions`, not by array position — the same reorder bug applied to squad/athlete
+     placement, not just the session id.
+   - `pushEvent`'s edit-mode caller in `finishSave` now passes `editEvent?.sessions ?? []` as an
+     explicit "previous sessions" snapshot (captured in the closure before `mutate()` reassigns
+     the in-place `db.events[idx]`) — needed so the write path below can tell "unchanged" from
+     "removed."
+2. **Upsert + prune instead of replace.** Extracted `diffSessions(existing, next) => { upsert,
+   deleteIds }` as a pure function in `src/lib/events-core.ts` (existing home for pure
+   event-logic, already used by `EventWizard.tsx`/`supabase.ts`). `pushEvent`/`pushEventSessions`
+   both now call a shared `pushEventSessionRows(m, previousSessions)` that upserts every session
+   in `m.sessions` and DELETEs only the ids `diffSessions` says are gone — an untouched session's
+   row is never DELETEd at the DB level, so `on delete set null` can never fire for it.
+   `previousSessions` defaults to `m.sessions` itself for every OTHER `pushEvent` caller
+   (`NationalsConfigEditor`, three call sites in `Events.tsx`, `Sanction.tsx`, and
+   `pushEventSessions`'s own callers in `SquadBuilder`) — none of those ever add/remove a
+   session, so that default makes the diff a no-op (upsert everything, delete nothing) without
+   any of those call sites needing to know this function exists. Squads themselves are left on
+   `remoteReplace` (unchanged) — `applyDefault`/`copyToOthers` intentionally rebuild a session's
+   whole squad set from scratch every time, so a full replace there is correct, not a bug; only
+   `event_sessions` had the "reinserting the same id doesn't undo the delete's FK action" trap.
+3. **Editor-side guard + Results-side defense in depth.**
+   - `EventWizard.tsx` now reads `useEventRegistrations(editEvent?.id)` and blocks removing a
+     session (the per-session "Remove" button, and `toggleDiscipline`'s whole-discipline
+     removal) when it still has live (non-refunded) registrations — toasts "N athletes are
+     registered for this session — move them first" instead of silently deleting (which, via the
+     FK, would have nulled those registrations' sessions). Also guards on `isEdit &&
+     wizardRegsStatus !== 'ready'` (loading, per the data-layer rule against treating "loading"
+     as "empty") — the `isEdit` half of that condition matters on its own: on a brand-new event
+     `useEventRegistrations(undefined)` never fetches, so its status sits at `'loading'` forever,
+     and without the `isEdit` guard Remove would be permanently blocked on every CREATE. (Also
+     caught in review — the `!draft.id` early-return above it happens to make this unreachable
+     today given `keepIds`/`isEdit` above, but the explicit guard doesn't depend on that staying
+     true.)
+   - `src/lib/scoring.ts`: `resolveRegSessionId(reg, scoresForReg, validSessionIds)` — the
+     registration's own `sessionId` wins IF it still names a session in the event's CURRENT
+     `sessions` array; otherwise falls back to any of that registration's own scores whose
+     `sessionId` still names a real one; otherwise `null`. `sessionResults` accepts a new
+     sentinel `UNASSIGNED_SESSION_ID` for `sessionId` and, when passed, returns exactly the
+     registrations/scores that resolve to `null` (and have at least one score — an unassigned
+     reg with zero scores has nothing to show). `unplacedScoreCount` gained a required third
+     parameter (`sessionIds: string[]`, the event's current session ids) and now uses the same
+     resolution instead of a bare `!!r.sessionId` truthiness check — the truthiness check is
+     exactly what let this bug hide silently: a registration whose `sessionId` pointed at a
+     deleted session still read as "placed" under the old check.
+   - `Results.tsx`: the session `<select>` gets one more `<option>`, always last, labeled
+     "Unassigned (N)", offered only when `unplaced > 0`; selecting it renders the same
+     level-grouped table using `sessionResults(event, UNASSIGNED_SESSION_ID, …)`, with the
+     existing `unplacedMsg(n)` copy shown as a caption directly under the selector instead of
+     only appearing inside an empty-state placeholder. `apparatusRankings`/`teamScores`/`events`
+     (apparatus list) now read `computed.discipline` rather than `session.discipline` throughout,
+     since there's no single fixed session object for the Unassigned pseudo-tab — best-effort
+     (whichever discipline the first resolved row has), which is acceptable for what is
+     fundamentally a rare data-recovery view, not a normal results tab. `isUnassignedView` is
+     gated on `unplaced > 0`, not just `sessionId === UNASSIGNED_SESSION_ID` — if the count drops
+     to 0 while that tab is still selected (its `<option>` vanishes but React state doesn't reset
+     itself), the view silently falls back to a real session instead of re-printing "0 scores are
+     posted but not assigned," which would have been the exact false statement the 2026-07-31 fix
+     exists to prevent. (Also caught in review.)
+
+**Deliberately not changed (flagged, not fixed):**
+- `squads.session_id references event_sessions(id) on delete cascade` — deleting a session
+  cascades to delete its squads, which in turn nulls
+  `registrations.squad_id` (also `on delete set null`). This is the SAME class of bug as the one
+  just fixed, but for squad/holding-squad placement rather than session assignment, and it fires
+  on `pushEvent`'s existing `remoteReplace('squads', …)` call for EVERY session on EVERY
+  `pushEvent`, even ones that never touch that event's sessions or squads (e.g. toggling event
+  status, editing `nationalsConfig`) — because that replace reinserts the identical squad ids
+  every time. Out of scope for this ticket (Results/scoring never key off `squad_id`, so it
+  doesn't affect score visibility), but worth a follow-up: the same `diffSessions`-style
+  upsert+prune idiom would fix it, scoped per-session instead of per-event.
+- Did not add a migration or touch RLS — `on delete set null` on both FKs already exists and is
+  the correct behavior for a genuine removal; the fix is entirely about not triggering it
+  spuriously, plus rendering honestly when it (or historical bad data) has already happened.
+- The `sessionsTodrafts(sessions, keepIds)` template-id hazard above (a future template that
+  populated `sessions[].id` colliding with another event's `event_sessions` PK) is closed as a
+  live invariant now (`keepIds = isEdit`, always), not left as "no current template does this."
+
+**SQL to find currently-orphaned registrations on prod** (for the controller to run against the
+existing ZZTEST/live data before this fix was live — a registration whose `session_id` no longer
+names a real session on its own event):
+
+```sql
+select r.id, r.event_id, r.session_id, r.athlete_id
+from registrations r
+left join event_sessions es
+  on es.id = r.session_id and es.event_id = r.event_id
+where r.session_id is not null
+  and es.id is null;
+```
+
+Add `and not r.refunded` to exclude refunded rows (irrelevant to Results either way).
+A parallel query against `scores.session_id` (`left join event_sessions on scores.session_id`)
+finds scores with a stale write-time session stamp — expected to have some hits even on healthy
+data, since `scores.session_id` is a snapshot that a registration's session change doesn't
+propagate to (2026-07-31 finding) and isn't itself a defect.
+
+**Reviewer-tier pass (before commit) caught three real defects in the first draft** — the mint
+recycling a removed session's id in the same save (§1 above), `canRemoveSession`'s loading-check
+permanently blocking Remove on CREATE, and the sticky Unassigned tab re-printing "0 scores…"
+after `unplaced` drops to 0 — plus the template-id hazard now closed as a standing invariant
+rather than an incidental one. All four are described inline above rather than as a separate
+changelog; this file is the only record of them since none left a trace in the final diff's
+"before" state.
+
+**Verification (final, after the reviewer-tier fixes above).** `npm run build` — tsc + vite, zero
+errors. `npx eslint src/lib/events-core.ts src/lib/supabase.ts src/components/EventWizard.tsx
+src/lib/scoring.ts src/pages/Results.tsx tests/lib/unplaced-scores.test.ts` — zero
+errors/warnings. `npx vitest run` — **1211/1211 passed** across 76 files. `tests/lib/
+unplaced-scores.test.ts` alone: 23 tests (was 8 before this ticket) —
+- `sessionResults`: 2 new cases (stale-reg/valid-score fallback; both-unresolved → Unassigned).
+- `unplacedScoreCount`: 3 new cases (mirrors those two, plus the truthy-but-stale-session-id gap
+  the old `!!r.sessionId` check missed).
+- `diffSessions`: 5 cases (preserves ids across a rename and a reorder, detects a genuinely
+  removed id, treats a new id as upsert-only, never deletes when `existing` is empty).
+- `assignSessionIds`: 5 cases, including the remove-one-add-one-in-the-same-save regression with
+  a paired **sanity check that fails without the fix** (drop `previousIds` from the seed and the
+  same test asserts the recycle DOES happen) — proof the positive case has teeth, not just that
+  it passes.
+
+No Browser-pane verification — this is a data-layer/pure-logic fix with no new visual surface
+beyond one extra `<option>` and one caption `<p>` in Results.tsx, both exercised by the existing
+render path; the EventWizard session-editor UI itself (Remove-button toast, discipline-toggle
+block) was not clicked through live in a browser, only read for correctness.
