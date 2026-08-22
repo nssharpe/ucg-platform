@@ -45,6 +45,14 @@ regs. `updatedPending` marks a paid reg edited back to pending by a change fee.
 - **Change eligibility:** `changeIsEligible(before, after)` (`pricing.ts`) gates "Add change to
   cart" — add discipline / change level / change club / swap athlete, NOT apparatus tweaks
   within a discipline.
+- **One live (non-refunded) row per (event, athlete, discipline) — UAT Z-02,
+  `20260822010000`.** Client-minted reg ids (`reg-<ms>-<athlete>-<disc>`,
+  `RegistrationEditor.tsx:585/618`) never collide, so two sessions registering the same
+  athlete+event+discipline at once used to both succeed silently — enforced now by the DB
+  partial unique index `registrations_live_slot_uniq`, with `create-checkout-session`/
+  `_shared/fulfill.ts` catching a pre-existing duplicate (see money-invariants.md). Not scoped
+  to `club_id` — a cross-club duplicate is the same bug the cross-club lock above already treats
+  as a conflict.
 
 ## Member self-edit divergence — CRITICAL
 

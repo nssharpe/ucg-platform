@@ -14,6 +14,8 @@ paths:
   - "supabase/functions/reconcile-payments/**"
   - "supabase/functions/_shared/stripe.ts"
   - "supabase/functions/_shared/fulfill.ts"
+  - "src/lib/registration-status.ts"
+  - "supabase/functions/_shared/registration-status.ts"
 ---
 
 # Money invariants
@@ -65,6 +67,25 @@ Auth'd; the caller must own the cart items or manage the club.
   insert the `payments` row with `stripe_session_id: null` and call the fulfillment core
   directly (inline retry-once + `error_logs` on failure, so a failure never strands the order
   pending forever). FE polls a `'free'` stage instead of mounting Stripe Embedded.
+- **One live slot per (event, athlete, discipline) — UAT Z-02, `20260822010000`.** Before
+  pricing a `meet-entry` line, every referenced reg is checked against `allEventRegs` via the
+  pure `findPaidSibling` (`src/lib/registration-status.ts` / mirrored
+  `_shared/registration-status.ts`): a sibling already `paid` 409s outright; an unpaid sibling
+  referenced by another `pending` payment within the last `CART_HOLD_MINUTES` also 409s
+  ("someone else is checking this out right now"). This is app-level defense in depth alongside
+  the DB-level partial unique index `registrations_live_slot_uniq` — the index is what actually
+  stops a second live row from being CREATED; this check catches a duplicate row that already
+  exists. The pending-sibling check depends on `payments.ref_reg_ids`, now actually populated at
+  insert (both the free and Stripe paths) — it previously existed in the schema but was always
+  null. `_shared/fulfill.ts` re-runs the same paid-sibling check right before flipping `paid`
+  (a payment created before the checkout-time guard existed, or racing a sibling payment's
+  fulfillment, isn't caught at checkout time) and refunds itself instead — see "Refunds" is NOT
+  where this lives; it's a system-detected duplicate, not a user refund request, so it bypasses
+  the "service fee never refunded" rule when the WHOLE payment was the duplicate (refunds the
+  full Stripe charge) and skips it (refunds only `paid_cents`) when the payment also covered
+  legitimate lines. Full design + a documented residual TOCTOU gap (two payments fulfilling two
+  pre-existing duplicate rows at the exact same instant) in
+  `docs/plans/notes/2026-08-21-uat-round1-notes.md`.
 
 ### `PREVIEW BRANCH POINT` — read this before adding any logic
 
