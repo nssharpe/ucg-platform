@@ -581,6 +581,10 @@ export const rowToScore = (r: Row<'scores'>): Score => ({
   ...(r.scratched ? { scratched: true } : {}),
   ...((r as { deductions2?: number | string | null }).deductions2 != null ? { deductions2: Number((r as { deductions2?: number | string | null }).deductions2) } : {}),
   ...((r as { e_score2?: number | string | null }).e_score2 != null ? { eScore2: Number((r as { e_score2?: number | string | null }).e_score2) } : {}),
+  // updated_at (UAT Z-06-01 compare-and-set, 20260822020000) — like
+  // deductions2/e_score2 above, not yet in the generated database.types.ts,
+  // hence the cast. READ-ONLY: never appears in scoreToRow's push mapping.
+  ...((r as { updated_at?: string | null }).updated_at ? { updatedAt: (r as { updated_at?: string | null }).updated_at! } : {}),
 });
 
 // cart_items: one row per item, owner = club_id or person_id
@@ -1082,7 +1086,43 @@ export function syncSynchroPartnerLevelRemote(myRegId: string, syLevel: string) 
   }, 'registrations');
 }
 
-export function pushScore(s: Score) { remoteUpsert('scores', [scoreToRow(s)]); }
+export interface PostScoreResult {
+  ok: boolean;
+  conflict?: boolean;
+  /** The row currently in the database — populated on both a conflict (the
+   *  OTHER post that won) and a success (this post's own freshly-stamped
+   *  `updated_at`, for the caller's NEXT expectation). `null`/absent only
+   *  when the RPC itself failed to run (see `error`). */
+  current?: Score | null;
+  error?: string;
+}
+
+/** Compare-and-set score post (UAT Z-06-01) — two judges (one signed in, one
+ *  anonymous via the judge-access unlock) posting the same athlete/apparatus
+ *  seconds apart used to silently overwrite each other: both write paths
+ *  upsert the same deterministic `scores.id` with no version check at all.
+ *  `expectedUpdatedAt` is the `updated_at` the caller last saw for this score
+ *  id — `null` means "I believe no score exists here yet". `post_score`
+ *  (SECURITY INVOKER, so `scores_write`/`event_host_scores_write` RLS still
+ *  applies to a signed-in caller exactly as it did for the old direct
+ *  upsert; a service-role caller — judge-entry — bypasses RLS at the role
+ *  level regardless) row-locks the existing row and returns a conflict
+ *  WITHOUT writing when the expectation is stale, including "a row now
+ *  exists but I expected none" (the two-judges race). judge-entry calls this
+ *  SAME RPC under service role for the anonymous path — one compare-and-set
+ *  implementation, not two. */
+export async function pushScore(s: Score, expectedUpdatedAt: string | null): Promise<PostScoreResult> {
+  if (!supabase) return { ok: false, error: 'Not configured.' };
+  const { data, error } = await supabase.rpc('post_score', {
+    p_score: scoreToRow(s), p_expected_updated_at: expectedUpdatedAt,
+  });
+  if (error) { console.error('[supabase] post_score failed:', error); return { ok: false, error: error.message }; }
+  const result = data as { ok: boolean; conflict?: boolean; current?: Row<'scores'> | null };
+  return {
+    ok: result.ok, conflict: result.conflict,
+    current: result.current ? rowToScore(result.current) : null,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Scores slice-layer reads (Phase 2, docs/specs/2026-07-24-data-layer-scale.md)
@@ -2497,18 +2537,40 @@ export async function judgeUnlock(args: { code?: string; token?: string }): Prom
 /** No-login score submission for a codeless-unlocked device — the server
  *  re-validates everything (token active, registration/apparatus match,
  *  numeric bounds) via judge-entry-core.ts and stamps `entered_by` itself;
- *  nothing here is trusted, this is just the wire shape. */
+ *  nothing here is trusted, this is just the wire shape.
+ *
+ *  Compare-and-set (UAT Z-06-01): `expectedUpdatedAt` is forwarded verbatim
+ *  to the same `post_score` RPC the signed-in path uses (judge-entry calls it
+ *  under service role). A stale/missing expectation against an existing row
+ *  comes back as `conflict: true` with the row that actually won, instead of
+ *  silently overwriting it — the phone UI shows the same Replace/Keep-
+ *  existing dialog as the signed-in page.
+ *
+ *  The conflict response is a 409 — supabase-js v2 routes any non-2xx
+ *  `functions.invoke` response into `error` with `data: null` (why
+ *  `edgeErrorMessage` exists at all), so the structured `{conflict, current}`
+ *  body has to be dug out of `error.context` via `edgeErrorBody`, the SAME
+ *  helper `parseCheckoutSessionError` uses for `create-checkout-session`'s
+ *  structured 4xx rejections (`capacity-exceeded`/`session-required`). */
 export async function judgeSubmitScore(args: {
   token: string; regId: string; apparatus: string;
   sv: number | null; deductions: number | null; eScore?: number | null; final: number | null;
   source?: string; calc?: string; calcState?: unknown; flashed?: boolean; scratched?: boolean;
   /** Second judge panel's raw execution inputs (2026-07-19 scoring config). */
   deductions2?: number | null; eScore2?: number | null;
-}): Promise<{ ok: boolean; error?: string }> {
+  /** The `updated_at` this device last saw for this score id; `null`/absent
+   *  means "I believe no score exists here yet". */
+  expectedUpdatedAt?: string | null;
+}): Promise<{ ok: boolean; conflict?: boolean; current?: Score | null; error?: string }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('judge-entry', { body: { op: 'submit', ...args } });
-  if (error) return { ok: false, error: await edgeErrorMessage(error) };
-  return data as { ok: boolean; error?: string };
+  if (error) {
+    const { message, body } = await edgeErrorBody(error);
+    if (body?.conflict) return { ok: false, conflict: true, current: (body.current as Score | null) ?? null, error: message };
+    return { ok: false, error: message };
+  }
+  const result = data as { ok: boolean; score?: Score };
+  return { ok: true, current: result.score ?? null };
 }
 
 /** Admin/club-manager mints a no-login waiver signing link for a member (tied to

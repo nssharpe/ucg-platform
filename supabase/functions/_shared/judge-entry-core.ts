@@ -30,6 +30,13 @@ export interface JudgeSubmitPayload {
    *  computes and sends the already-averaged `final`. */
   deductions2?: unknown;
   eScore2?: unknown;
+  /** Compare-and-set expectation (UAT Z-06-01) — the `updated_at` this
+   *  device last saw for this score id, or absent/null for "I believe no
+   *  score exists here yet". Passed straight through to `post_score`'s
+   *  `p_expected_updated_at`; validated here only for shape (a string or
+   *  nullish), never parsed — the RPC does the real compare against the DB
+   *  row under a row lock. */
+  expectedUpdatedAt?: unknown;
 }
 
 /** The minimal registration slice the validator needs, already scoped to the
@@ -60,6 +67,7 @@ export interface ValidatedJudgeScore {
   calcState: unknown;
   flashed: boolean;
   scratched: boolean;
+  expectedUpdatedAt: string | null;
 }
 
 export type JudgeSubmitResult =
@@ -77,6 +85,10 @@ const MAX_SCORE_FIELD = 50;
 const MAX_LABEL_LENGTH = 40;
 /** Cap on the serialized `calcState` jsonb an anonymous submit may store. */
 const MAX_CALC_STATE_CHARS = 20_000;
+/** Cap on `expectedUpdatedAt` — a real ISO timestamp is ~24-35 chars; this is
+ *  generous headroom, not a format check (the RPC compares it as a
+ *  timestamptz and simply fails to parse a garbage value). */
+const MAX_TIMESTAMP_LENGTH = 64;
 
 function isValidScoreNumber(n: unknown): n is number {
   return typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= MAX_SCORE_FIELD;
@@ -122,6 +134,9 @@ export function validateJudgeSubmit(
   if (!isValidNullableScoreNumber(payload.final)) return { ok: false, error: 'Invalid final score.' };
   if (payload.source != null && (typeof payload.source !== 'string' || payload.source.length > MAX_LABEL_LENGTH)) return { ok: false, error: 'Invalid source.' };
   if (payload.calc != null && (typeof payload.calc !== 'string' || payload.calc.length > MAX_LABEL_LENGTH)) return { ok: false, error: 'Invalid calc.' };
+  if (payload.expectedUpdatedAt != null && (typeof payload.expectedUpdatedAt !== 'string' || payload.expectedUpdatedAt.length > MAX_TIMESTAMP_LENGTH)) {
+    return { ok: false, error: 'Invalid expected-update timestamp.' };
+  }
   // calcState is stored verbatim (jsonb) on an anonymous submit — cap its
   // serialized size so a code holder can't bloat the scores table with
   // megabyte payloads. Real CalcStateV2 blobs are well under this.
@@ -153,6 +168,7 @@ export function validateJudgeSubmit(
       calcState: payload.calcState ?? null,
       flashed: payload.flashed !== false,
       scratched: payload.scratched === true,
+      expectedUpdatedAt: typeof payload.expectedUpdatedAt === 'string' ? payload.expectedUpdatedAt : null,
     },
   };
 }

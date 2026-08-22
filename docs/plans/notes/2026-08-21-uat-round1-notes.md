@@ -833,3 +833,157 @@ the exact call chains (`create-checkout-session/index.ts`'s preview branch point
 `slice-cache.ts`'s `invalidate`, `registrations-slice.ts`'s "mine" tier) rather than by clicking
 through the app — flagged for a manual click-through pass (100%-coupon checkout, confirm button,
 then check MyRegistrations/Club roster update without a reload) before this ships live.
+
+## Z-06-01 (2026-08-22): compare-and-set score posting (Task A) + portrait-safe judge entry row (Task B)
+
+**Task A — no silent score overwrite.** Two judges (one signed in, one anonymous via the
+judge-access unlock) posting different scores for the same athlete/apparatus seconds apart used
+to blindly overwrite each other: both write paths upsert the SAME deterministic `scores.id`
+(`${eventId}|${regId}|${apparatus}`) with no version check at all.
+
+**Migration** `20260822020000_score_compare_and_set.sql` (drafted on `fix/uat-round1`, **NOT YET
+applied to staging or prod** — no `supabase` CLI commands were run per this task's brief). Adds
+`scores.updated_at timestamptz not null default now()` (backfilled from `entered_at`, stamped on
+every UPDATE by a new `scores_set_updated_at` BEFORE UPDATE trigger — deliberately BEFORE UPDATE
+only, not BEFORE INSERT, so it doesn't hit the upsert-trigger trap in `supabase-migrations.md`:
+Postgres only fires the trigger for the row actually being updated, not the attempted-then-
+conflicting insert) and RPC `post_score(p_score jsonb, p_expected_updated_at timestamptz)` —
+`SECURITY INVOKER`, not DEFINER, since it authorizes nothing itself: the two pre-existing write
+policies (`scores_write`, role-gated; `event_host_scores_write`, `is_event_host(event_id)` from
+`20260710020303_host_post_close_edit.sql` — this is what actually lets a host-club manager or
+event-admin grantee score their own event, not `scores_write`) keep applying to a signed-in
+caller exactly as they did for the old direct upsert. `judge-entry`'s service-role client bypasses
+RLS at the ROLE level (service_role has BYPASSRLS) regardless of the function's own security mode,
+so the anonymous path is unaffected by INVOKER vs DEFINER. `SELECT … FOR UPDATE` row-locks the
+existing row (serializes two truly concurrent posts instead of racing); found-and-mismatched (or
+found-with-`p_expected_updated_at IS NULL`, deliberately — "a row exists but I expected none" is
+exactly the two-judges case) returns `{ok:false, conflict:true, current:<row>}` **without
+writing**; otherwise upserts and returns `{ok:true, current:<row>}`. Execute revoked from
+`public`/`anon`, granted to `authenticated`/`service_role`. Pre-push check once applied: confirm
+`select proacl from pg_proc where proname = 'post_score'` shows no `anon`/PUBLIC grant on either
+project, and that a quick `select post_score('{"id":"nonexistent"}'::jsonb, null)` as the
+service role returns `{"ok":true,...}` while the SAME call over PostgREST as an anon key 403s.
+
+**Client (signed-in path).** `pushScore` (`src/lib/supabase.ts`) is no longer a fire-and-forget
+`remoteUpsert` — it's now `async (score, expectedUpdatedAt) => Promise<PostScoreResult>` calling
+`supabase.rpc('post_score', …)` directly (bypassing the write-queue entirely, since a
+compare-and-set result has to reach the caller synchronously, not get swallowed into a retry
+queue). `writeScore` (`scores-slice.ts`) changed from a sync `boolean` return to
+`Promise<WriteScoreResult>` (`{ok:true,current} | {ok:false,reason:'offline'|'conflict'|'error', …}`)
+— its two call sites (`Judge.tsx`, `ScoreDetail.tsx`'s admin adjustment) both had to become
+`await`-aware. `Score.updatedAt` is a new optional field, read-only (never in `scoreToRow`'s push
+mapping — it's entirely server-controlled); `rowToScore` maps it via a type-assertion cast
+identical to the existing `deductions2`/`e_score2` precedent, since **`database.types.ts` is
+already stale for those two columns** (never regenerated after `20260719130000` added them — this
+task didn't fix that pre-existing drift, just followed its established pattern one column
+further; `post_score` itself WAS added to the `Functions` section since `.rpc()` call sites
+elsewhere in this file do have entries there).
+
+**Client (anonymous / judge-entry path) — advisor caught a real defect before commit: the
+conflict never would have reached the phone UI.** `judge-entry`'s `submit` op returns the
+conflict as an HTTP 409. supabase-js v2 routes ANY non-2xx `functions.invoke` response into
+`error` with `data: null` — that's the entire reason `edgeErrorMessage(error)` exists
+(`edge-functions.md`). My first draft of `judgeSubmitScore` checked `if (error) return {ok:false,
+error: await edgeErrorMessage(error)}`, which discards the structured `{conflict, current}` body
+entirely — `Judge.tsx`'s `if (res.conflict)` would always read `undefined` and fall through to
+the generic "Could not post the score" toast, with NO Replace option, on every single anonymous
+conflict. The signed-in path was fine (`.rpc()` returns 200 with the jsonb `{ok:false,...}` body,
+so `data.ok === false` reads correctly inline) — this was a silent asymmetry between the two
+paths despite the task explicitly asking for "the same `{conflict, current}` shape". **Fix:**
+followed the codebase's own established pattern for structured non-2xx edge-function rejections
+— `edgeErrorBody(error)` (already used by `parseCheckoutSessionError` for
+`create-checkout-session`'s `capacity-exceeded`/`session-required`), which digs the JSON body out
+of `error.context`. `judgeSubmitScore` now does `const {message, body} = await
+edgeErrorBody(error); if (body?.conflict) return {ok:false, conflict:true, current:
+body.current, error: message}`. Also added a human-readable `error` string to the edge
+function's 409 body (the first draft had none, so even the fallback toast would have printed
+nothing). Considered switching the conflict response to HTTP 200 with `ok:false` instead
+(simpler client code) but kept 409 to match the rest of this function's (and
+`create-checkout-session`'s) existing status-code conventions rather than introducing a second
+shape.
+
+`Judge.tsx`: `expectedUpdatedAt` state (set from `scoreFor(reg.id)?.updatedAt` in `openScoring`,
+cleared in `close`) plus a `conflict` state driving a `Modal` (not `window.confirm`, per the ui
+rule) with Replace/Keep-existing buttons — "A score of X is already posted for <athlete> on
+<apparatus> — replace it with Y?". The submit logic was refactored from one `submit()` into
+`postCurrent(expected)` (does the actual post/RPC call, opens the conflict dialog without closing
+the entry panel on a conflict) + `submit = () => postCurrent(expectedUpdatedAt)` +
+`replaceConflict` (re-posts the SAME judge-entered values with `expected =
+conflict.current.updatedAt`) + `keepExisting` (`applyLocalScoreUpdate(conflict.current)` — shows
+the winning row immediately rather than waiting on realtime — then closes the panel). Dismissing
+the Modal any other way (✕/veil/Escape) is wired to `onClose={keepExisting}`, since there's no
+"in-progress input" for `Modal`'s own dirty-check to protect (the modal has no form fields) — any
+dismissal is treated as accepting the existing score.
+
+`judge-entry-core.ts`: `JudgeSubmitPayload.expectedUpdatedAt?: unknown` (validated as a string ≤
+64 chars or nullish — NOT parsed as a real timestamp; the RPC does the actual compare against the
+DB row under a row lock, so this is shape validation only) threaded through to
+`ValidatedJudgeScore.expectedUpdatedAt: string | null`. `judge-entry/index.ts`'s `submit` branch
+now calls `post_score` via the service-role client instead of a bare `.upsert()`, mapping the
+RPC's jsonb `current` back to the client's camelCase `Score` shape via a new local
+`dbRowToClientScore` (mirrors `rowToScore`, duplicated rather than shared since this Edge
+Function has no access to browser-side `src/lib` modules).
+
+**Pure extraction + test:** `src/lib/scores-core.ts`'s `shouldConflict(existingUpdatedAt,
+expectedUpdatedAt)` mirrors the SQL predicate for unit-testing the invariant without a database —
+it is NOT a second enforcement point (the DB's row-locked check is the only place that's actually
+race-safe under concurrency; this is documentation-and-tests only). `tests/scores-core.test.ts`,
+4 cases matching the task's four scenarios exactly.
+
+**Not touched / flagged, not fixed:**
+- The one-time demo→Supabase bulk-seed tool (`pushAll`'s `Scores` step, `supabase.ts` ~line 3237)
+  still does a plain `.upsert()` with no CAS — confirmed via `grep -rn "from('scores')"` across
+  `src`+`supabase/functions` that this and the read-only `fetchScoreByIdRemote` are the ONLY other
+  `scores` table touchpoints; no other writer bypasses the new compare-and-set path. Left as-is
+  since a one-time admin bulk import has no concurrent-writer concern (and the trigger stamps
+  `updated_at` for it regardless).
+- `SELECT … FOR UPDATE` inside `post_score` is itself subject to the UPDATE policies' USING
+  clauses (not just `public_read`'s permissive SELECT) — an authenticated caller with neither
+  `scores_write` nor `event_host_scores_write` reach sees `FOUND = false` (RLS hides the row from
+  their lock attempt) and falls into the INSERT branch, which then fails with a plain RLS error
+  rather than a `conflict` response. Net authorization outcome is identical to the old direct
+  upsert (still rejected), but worth a reviewer's eye since it means "no access" and "no existing
+  row" are indistinguishable from inside this function for an unauthorized caller.
+- `ScoreDetail.tsx`'s admin-adjustment path now ALSO goes through the same compare-and-set (using
+  the loaded `score.updatedAt` as its expectation) as a side effect of `writeScore`'s signature
+  change, but has no Replace/Keep dialog — a conflict there just toasts "reload the page and try
+  again". The task scoped the dialog UX to the live judge-entry race specifically; this page's
+  conflict case (an admin adjusting a score while a judge or another admin tab touches the same
+  row) is rarer and lower-stakes, so a plain error was judged sufficient rather than building a
+  second dialog.
+
+**Task B — portrait phone score-entry row (Nate, S3).** The roster table's action button (Score/
+Edit) sat off the right edge in portrait with no way to reach it. Root cause: the wrapping
+`<div className="card" style={{overflow:'hidden'}}>` was CLIPPING the overflowing table instead
+of scrolling it. Fix: inserted a `<div className="judge-roster-wrap">` (new CSS,
+`overflow-x: auto`, matching the existing `.events-table-wrap`/`.reg-grid-wrap` pattern) between
+the card and the `<table>`. No `gridTemplateColumns` inline style involved (this is a plain
+`<table>`, not a CSS grid), so the "never set gridTemplateColumns inline" rule doesn't apply here.
+
+**Verification caveat the controller should know before running `responsive-sweep`:** a plain
+`scrollWidth ≤ clientWidth` check on the outer card would have passed BEFORE this fix too — the
+card's own `overflow:hidden` was already suppressing the page-level overflow signal that sweep
+usually catches (it hides the excess rather than showing it as scrollable width), which is
+exactly why this bug shipped unnoticed. The sweep at 375px needs to specifically confirm the
+Score/Edit button in the roster table's last column is reachable and tappable (scroll the
+`.judge-roster-wrap` container horizontally, or confirm the button is within the initial
+viewport at typical name/club-name lengths) — not just check for absent page-level horizontal
+scroll.
+
+**Functions to deploy:** `judge-entry` (new `expectedUpdatedAt` handling + `post_score` RPC call
+— requires the migration applied FIRST, since the function will error on every submit if
+`post_score` doesn't exist yet). No other functions touched.
+
+**Verification.** `npm run build` — succeeded, zero TypeScript errors, PWA precache + dev-auth
+firewall check both clean. `npx eslint src/pages/Judge.tsx src/pages/ScoreDetail.tsx
+src/lib/scores-slice.ts src/lib/supabase.ts src/lib/types.ts src/lib/scores-core.ts
+src/lib/database.types.ts supabase/functions/judge-entry/index.ts
+supabase/functions/_shared/judge-entry-core.ts tests/scores-core.test.ts
+tests/judge-entry-core.test.ts` — zero errors/warnings. `npx vitest run` — 1196/1196 passed across
+76 files (+8 from this ticket: 4 new `shouldConflict` cases in `tests/scores-core.test.ts`, 4 new
+`expectedUpdatedAt` validation cases in `tests/judge-entry-core.test.ts`). No Browser-pane
+verification for Task B (controller-only per the brief, see the caveat above) or for Task A's
+live conflict flow (the SQL is never executed by `npm run build`/eslint/vitest at all — the
+migration is drafted and unapplied, so the RPC itself, and the anonymous 409→`edgeErrorBody`
+round-trip, are unverified against a real database; both were re-read line-by-line after the
+advisor's review instead).

@@ -735,6 +735,10 @@ option { color: var(--ink); background: #fff; }
 
 /* ---------- scoring (judge tablet) ---------- */
 .judge-pad { max-width: 760px; margin: 0 auto; }
+/* UAT Z-06-01 (Nate, S3): lets the roster table scroll within its card on a
+   narrow phone in portrait instead of the action button clipping off the
+   right edge (matches .events-table-wrap / .reg-grid-wrap). */
+.judge-roster-wrap { overflow-x: auto; }
 .flash-score {
   background: var(--navy-800);
   color: var(--white);

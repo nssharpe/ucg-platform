@@ -205,22 +205,40 @@ function guardOnline(): boolean {
   return false;
 }
 
+export type WriteScoreResult =
+  | { ok: true; current: Score }
+  | { ok: false; reason: 'offline' }
+  | { ok: false; reason: 'conflict'; current: Score | null }
+  | { ok: false; reason: 'error'; error: string };
+
 /** Privileged score write (Judge.tsx's own-identity path, ScoreDetail.tsx
- *  admin adjustment): applies the optimistic local update AND enqueues the
- *  remote push. Returns false (without applying anything) when offline and
- *  Supabase-backed — mirrors store.ts's mutate() offline read-only gate, so
- *  callers can skip the "posted!" toast the same way they already do. */
-export function writeScore(score: Score): boolean {
+ *  admin adjustment) — compare-and-set (UAT Z-06-01): posts through
+ *  `post_score` via `pushScore`, which returns a conflict WITHOUT writing
+ *  when `expectedUpdatedAt` no longer matches the row's current
+ *  `updated_at` (including "a row now exists but the caller expected none"
+ *  — two judges posting the same athlete/apparatus seconds apart). On
+ *  success, applies the SERVER's returned row (carrying its fresh
+ *  `updated_at`) to the slice, so the caller's next post carries the right
+ *  expectation. `expectedUpdatedAt: null` means "I believe no score exists
+ *  here yet". Demo/unconfigured mode has no concurrent-writer concern (one
+ *  local `db`), so it keeps the old direct mutate with no CAS check. */
+export async function writeScore(score: Score, expectedUpdatedAt: string | null): Promise<WriteScoreResult> {
   if (!isSupabaseConfigured) {
-    return mutate((d) => {
+    const applied = mutate((d) => {
       d.scores = d.scores.filter((s) => s.id !== score.id);
       d.scores.push(score);
     });
+    return applied ? { ok: true, current: score } : { ok: false, reason: 'offline' };
   }
-  if (!guardOnline()) return false;
-  scoreSlice.applyLocalUpsert(score.eventId, score);
-  pushScore(score);
-  return true;
+  if (!guardOnline()) return { ok: false, reason: 'offline' };
+  const result = await pushScore(score, expectedUpdatedAt);
+  if (!result.ok) {
+    if (result.conflict) return { ok: false, reason: 'conflict', current: result.current ?? null };
+    return { ok: false, reason: 'error', error: result.error ?? 'Could not post the score.' };
+  }
+  const saved = result.current ?? score;
+  scoreSlice.applyLocalUpsert(saved.eventId, saved);
+  return { ok: true, current: saved };
 }
 
 /** Local-only optimistic update — for the codeless judge path, where the

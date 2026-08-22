@@ -118,9 +118,24 @@ function ScoreDetailInner({ score, applyOptimistic }: { score: Score; applyOptim
       adjustedAt: new Date().toISOString(),
       enteredBy: 'admin-verification',
     };
-    const applied = writeScore(updated);
-    if (!applied) return; // offline read-only gate — no false success toast
-    applyOptimistic(updated); // reflect immediately on this page (writeScore's slice upsert only reaches OTHER consumers of the event slice)
+    // Compare-and-set (UAT Z-06-01): `score` is the row this page loaded, so
+    // its own `updatedAt` is exactly what post_score expects. A conflict here
+    // means someone else (a judge, or another admin tab) posted to this same
+    // score since this page loaded it — surfaced as an error rather than a
+    // silent overwrite; the admin reloads to see the newer value and adjust
+    // from there. This page has no Replace/Keep dialog (Judge.tsx's UAT Z-06
+    // fix scoped that to the live judge-entry race).
+    const result = await writeScore(updated, score.updatedAt ?? null);
+    if (!result.ok) {
+      if (result.reason === 'offline') return; // offline read-only gate — no false success toast, already toasted
+      if (result.reason === 'conflict') {
+        toast('This score changed since you opened it — reload the page and try again.', { variant: 'error' });
+        return;
+      }
+      toast(result.error, { variant: 'error' });
+      return;
+    }
+    applyOptimistic(result.current); // reflect immediately on this page (writeScore's slice upsert only reaches OTHER consumers of the event slice)
     toast(`Score adjusted to ${fmtScore(liveFinal)} — change is live on results.`);
   };
 
