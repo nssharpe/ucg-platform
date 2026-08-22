@@ -311,6 +311,8 @@ export function EventDetail() {
   const { slug } = useParams();
   const db = useDB();
   const caps = useCapabilities();
+  // Same current-club resolution as the Events list (never managedClubIds[0]).
+  const detailClubId = useCurrentClubId(caps.managedClubIds);
   const toast = useToast();
   const fmtDate = useFmtDate();
   const navigate = useNavigate();
@@ -492,8 +494,8 @@ export function EventDetail() {
             <Badge tone="info">Draft — not yet published</Badge>
           ) : !event.listingOnly && eventIsInPhase(event, 'reg-open') ? (
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {caps.managedClubIds.length > 0 && (
-                <Link className="btn primary small" to={`/club/${caps.managedClubIds[0]}`}>Register your club →</Link>
+              {detailClubId && event.eventType !== 'camp' && (
+                <Link className="btn primary small" to={`/club/${detailClubId}/registrations?event=${event.slug}`}>Register your club →</Link>
               )}
               {caps.canRegister && (
                 <button className="btn primary small" onClick={() => setSelfRegOpen(true)}>Register yourself →</button>
