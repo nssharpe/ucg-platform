@@ -2039,6 +2039,56 @@ export interface CheckoutSurveyRequiredError {
   missing: string[];
 }
 
+/** Shape shared by any `create-checkout-session` caller (real OR preview
+ *  mode) that needs to branch on its three structured-rejection codes —
+ *  capacity/session/survey checks all run identically in preview mode (see
+ *  the function's "Gates BOTH the Stripe path and the $0 free-order path"
+ *  comments), so a preview call can 409/400 exactly like a real one. */
+interface CheckoutSessionStructuredError {
+  error: string;
+  capacityError?: CheckoutCapacityError;
+  sessionRequiredError?: CheckoutSessionRequiredError;
+  surveyRequiredError?: CheckoutSurveyRequiredError;
+}
+
+async function parseCheckoutSessionError(error: { message: string }): Promise<CheckoutSessionStructuredError> {
+  const { message, body } = await edgeErrorBody(error);
+  if (body?.code === 'capacity-exceeded') {
+    return {
+      error: message,
+      capacityError: {
+        code: 'capacity-exceeded',
+        eventId: body.eventId as string,
+        eventName: body.eventName as string,
+        violations: (body.violations as CapacityViolation[]) ?? [],
+      },
+    };
+  }
+  if (body?.code === 'session-required') {
+    return {
+      error: message,
+      sessionRequiredError: {
+        code: 'session-required',
+        eventId: body.eventId as string,
+        eventName: body.eventName as string,
+        regIds: (body.regIds as string[]) ?? [],
+      },
+    };
+  }
+  if (body?.code === 'session-survey-required') {
+    return {
+      error: message,
+      surveyRequiredError: {
+        code: 'session-survey-required',
+        eventId: body.eventId as string,
+        eventName: body.eventName as string,
+        missing: (body.missing as string[]) ?? [],
+      },
+    };
+  }
+  return { error: message };
+}
+
 export async function createCheckoutSession(args: {
   cartItemIds: string[];
   couponCode?: string;
@@ -2051,41 +2101,8 @@ export async function createCheckoutSession(args: {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('create-checkout-session', { body: args });
   if (error) {
-    const { message, body } = await edgeErrorBody(error);
-    if (body?.code === 'capacity-exceeded') {
-      return {
-        ok: false, error: message,
-        capacityError: {
-          code: 'capacity-exceeded',
-          eventId: body.eventId as string,
-          eventName: body.eventName as string,
-          violations: (body.violations as CapacityViolation[]) ?? [],
-        },
-      };
-    }
-    if (body?.code === 'session-required') {
-      return {
-        ok: false, error: message,
-        sessionRequiredError: {
-          code: 'session-required',
-          eventId: body.eventId as string,
-          eventName: body.eventName as string,
-          regIds: (body.regIds as string[]) ?? [],
-        },
-      };
-    }
-    if (body?.code === 'session-survey-required') {
-      return {
-        ok: false, error: message,
-        surveyRequiredError: {
-          code: 'session-survey-required',
-          eventId: body.eventId as string,
-          eventName: body.eventName as string,
-          missing: (body.missing as string[]) ?? [],
-        },
-      };
-    }
-    return { ok: false, error: message };
+    const parsed = await parseCheckoutSessionError(error);
+    return { ok: false, ...parsed };
   }
   return data as {
     ok: boolean; clientSecret?: string; sessionId?: string; paymentId?: string; free?: boolean;
@@ -2117,12 +2134,22 @@ export async function previewCartTotal(args: {
   ok: boolean; lines?: CartPreviewLine[];
   amountSubtotal?: number; discountAmount?: number; serviceFee?: number; total?: number;
   error?: string;
+  // UAT M-12-01: capacity/session/survey checks run identically in preview
+  // mode (see parseCheckoutSessionError's doc comment), so a caller that
+  // gates a real checkout attempt on preview first (CartCheckout.tsx) needs
+  // these the same way createCheckoutSession's caller does — the Cart page's
+  // own preview usage (informational "Estimated" pricing) simply ignores them.
+  capacityError?: CheckoutCapacityError; sessionRequiredError?: CheckoutSessionRequiredError;
+  surveyRequiredError?: CheckoutSurveyRequiredError;
 }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('create-checkout-session', {
     body: { ...args, mode: 'preview' },
   });
-  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  if (error) {
+    const parsed = await parseCheckoutSessionError(error);
+    return { ok: false, ...parsed };
+  }
   const res = data as {
     ok?: boolean; preview?: boolean; lines?: CartPreviewLine[];
     amountSubtotal?: number; discountAmount?: number; serviceFee?: number; total?: number;

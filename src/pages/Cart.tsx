@@ -12,7 +12,10 @@ import { CapacityConflictDialog } from '../components/CapacityConflictDialog';
 import { hasCapacityConfig } from '../lib/capacity';
 import { missingNationalsSurveyEvents, diffCartLinePrices, cartSectionCount, type SessionRequestGateReg } from '../lib/pricing';
 import { previewCartTotal, type CheckoutCapacityError, type CartPreviewLine } from '../lib/supabase';
-import { useMyRegistrations, useClubRegistrations } from '../lib/registrations-slice';
+import {
+  useMyRegistrations, useClubRegistrations,
+  invalidateMyRegistrations, invalidateClubRegistrations, invalidateEventRegistrations,
+} from '../lib/registrations-slice';
 import type { CartItem, Club, DB, Invoice, Registration } from '../lib/types';
 
 const sum = (items: CartItem[]) => items.reduce((s, i) => s + i.amount, 0);
@@ -394,8 +397,29 @@ function CartScope({
   };
 
   const onPaid = () => {
-    // The invoice, registrations, and cart lines are all written by the webhook —
-    // pull the fresh snapshot so the UI reflects them. Do NOT mutate locally.
+    // The invoice and cart lines are written by the webhook (or, for a $0
+    // order, the free-order branch of create-checkout-session) — `db.invoices`/
+    // `db.carts` are part of `loadAll`'s global hydration, so syncFromSupabase()
+    // below picks them up. Registrations are NOT: they moved to the slice
+    // layer (Phase 3, data-layer.md) and are excluded from `loadAll`, so a
+    // payment's paid-flip is invisible to useMyRegistrations()/
+    // useClubRegistrations()/useEventRegistrations() until their caches are
+    // explicitly invalidated (UAT M-12-02 — this was NOT free-path-specific;
+    // the Stripe path shares this exact onPaid and has the identical latent
+    // gap, just not the one UAT happened to hit). Invalidate every cache this
+    // checkout could have touched: this scope's own tier ("mine" for a
+    // personal cart, this club for a managed one) plus every distinct event
+    // the just-paid items' referenced registrations belong to.
+    if (isClub) invalidateClubRegistrations(ownerKey);
+    else invalidateMyRegistrations();
+    const paidEventIds = new Set<string>();
+    for (const item of checkout?.items ?? []) {
+      for (const regId of item.refRegIds ?? []) {
+        const reg = regs.find((r) => r.id === regId);
+        if (reg) paidEventIds.add(reg.eventId);
+      }
+    }
+    paidEventIds.forEach((eventId) => invalidateEventRegistrations(eventId));
     void syncFromSupabase().finally(() => {
       setCheckout(null);
       toast('Payment complete. Receipt emailed and saved to your Purchase History.');

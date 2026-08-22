@@ -759,3 +759,77 @@ tests/finance.test.ts tests/receipt.test.ts` — zero errors/warnings. `npx vite
 1185/1185 passed across 74 files (+14 from this ticket: 8 new `couponEligibleLine` cases in
 `tests/pricing.test.ts`, 1 new discount-netting case in `tests/finance.test.ts`, 5 new cases in
 the new `tests/receipt.test.ts`).
+
+## M-12-01 x M-12-02 (2026-08-22): explicit confirm for $0 orders + registration-cache refresh after fulfillment
+
+**M-12-01 — no client way to safely "peek" at a $0 total.** `create-checkout-session`'s real
+(non-preview) mode fulfills a coupon-covered $0 order immediately and unconditionally the moment
+it's called — there is no separate "authorize" step to gate. `CartCheckout.tsx` used to call the
+real endpoint straight from its mount effect, so a 100%-coupon cart completed with no
+confirmation at all. Fix: `startPreview()` now always runs `mode: 'preview'` first (a genuinely
+write-free call — no payments row, no coupon reservation, per the "PREVIEW BRANCH POINT" in
+money-invariants.md) and only creates the real session once the preview total is confirmed
+non-zero. A $0 preview instead lands on a new `confirm-free` stage — the same Subtotal/Coupon/
+Service-fee-$0/Total breakdown, plus a primary "Confirm — no charge" button (disabled while
+`submitting`) that's the ONLY thing allowed to call the real endpoint for a $0 cart. Coupon-apply
+(`applyCoupon`) now routes through `startPreview` too, not straight to the real endpoint — this
+closes a second instance of the same bug: applying a 100%-off code from the *already-mounted*
+Stripe form used to hit the identical no-confirm auto-fulfill path.
+
+New pure helper `checkoutMode(previewTotalCents): 'free-confirm' | 'stripe'` (`src/lib/pricing.ts`,
+mirrors the server's own `subtotalCents === 0` free-order gate) — tested in
+`tests/lib/checkout-mode.test.ts`.
+
+**Preview mode can 409/400 too — parser had to move.** Capacity/session-required/session-survey-
+required checks all run identically whether `isPreview` or not (only the capacity hold-refresh
+WRITE is skipped in preview) — confirmed by reading `create-checkout-session/index.ts` directly.
+`previewCartTotal` previously discarded these into a flat `{ok:false, error}` string (fine for
+its original Cart-page "Estimated pricing" use, which treats any preview failure the same way).
+Now that `CartCheckout.tsx` gates real checkout attempts behind preview, it needs the SAME
+structured branching `createCheckoutSession`'s caller already had — extracted the shared parsing
+into `parseCheckoutSessionError()` (`src/lib/supabase.ts`) used by both invokers, and added the
+three optional error fields to `previewCartTotal`'s return type. The Cart page's existing preview
+call site is unaffected (still just checks `ok`).
+
+**M-12-02 — root cause was NOT free-path-specific.** Read through `onPaid` (`Cart.tsx`) →
+`syncFromSupabase()` → `loadAll()`: registrations were moved off `loadAll`'s global hydration
+onto the slice layer (Phase 3, data-layer.md) and `syncFromSupabase()` never refetches them.
+`registrations-slice.ts`'s "mine" tier (`ensureMyRegistrationsLoaded`) only fetches once per
+`personId` and has NO invalidate path — a payment's server-side `paid` flip, learned about only
+via `CartCheckout`'s/`StripeCheckout`'s own polling (never through `writeRegistration`'s
+optimistic local upsert), was therefore invisible until something changed `personId`, i.e. a
+full page reload (which resets the module-level cache variables). **This gap is identical for
+the Stripe path** — `StripeCheckout.tsx` is embedded (`ui_mode: 'embedded'`, no redirect/reload
+on completion) and calls the exact same `onPaid` as the free path. UAT just happened to hit it
+via the free flow, likely because the paid flow used in this round was memberships (not sliced)
+rather than event entries. Fix applied to the ONE shared `onPaid` (`CartScope` in `Cart.tsx`) so
+both paths benefit: added `invalidateMyRegistrations()` / `invalidateClubRegistrations(clubId)` /
+`invalidateEventRegistrations(eventId)` exports to `registrations-slice.ts` (force-refetch,
+bypassing the same-person no-op guard) and call the scope-appropriate one plus one per distinct
+event referenced by the just-paid items' `refRegIds`, before/alongside the existing
+`syncFromSupabase()` (which still legitimately covers invoices/carts — those stayed in
+`loadAll`).
+
+**Not touched:** `MembershipsCheckoutInner`'s `onPaid` (`Cart.tsx`) — membership-only checkout
+never references registrations, so no invalidation needed there.
+
+**Scope note for the controller:** this diff touches `src/components/CartCheckout.tsx`,
+`src/pages/Cart.tsx`, and `src/lib/pricing.ts`, all in `money-invariants.md`'s path list, plus
+`src/lib/supabase.ts` (the `create-checkout-session`/`previewCartTotal` client wrapper, not
+itself listed but part of the same contract). Per CLAUDE.md's money/auth/RLS rule, this needs a
+reviewer-tier adversarial read before merge to `main` — not done as part of this task (scoped to
+implement + verify + commit on `fix/uat-round1`).
+
+**Verification.** `npm run build` — succeeded (tsc -b + vite build), zero TypeScript errors, PWA
+precache + dev-auth firewall check both clean. `npx eslint src/components/CartCheckout.tsx
+src/pages/Cart.tsx src/lib/pricing.ts src/lib/supabase.ts src/lib/registrations-slice.ts
+tests/lib/checkout-mode.test.ts` — zero errors/warnings. `npx vitest run` — 1188/1188 passed
+across 75 files (+3 new `checkoutMode` cases in `tests/lib/checkout-mode.test.ts`; no regressions
+in the existing `tests/components/registrations-slice.test.tsx` (11 tests, still pass) or
+`tests/lib/cart-removal-classify.test.ts`/`cart-section-count.test.ts`). No Browser-pane
+verification — `ucg-dev` wasn't driven headlessly for this task per the brief; the embedded-
+Stripe/free-order flow, coupon interaction, and slice-cache invalidation were verified by reading
+the exact call chains (`create-checkout-session/index.ts`'s preview branch point,
+`slice-cache.ts`'s `invalidate`, `registrations-slice.ts`'s "mine" tier) rather than by clicking
+through the app — flagged for a manual click-through pass (100%-coupon checkout, confirm button,
+then check MyRegistrations/Club roster update without a reload) before this ships live.

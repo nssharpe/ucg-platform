@@ -1037,6 +1037,20 @@ export function processingFee(subtotalCents: number): number {
   return Math.ceil(subtotalCents * 0.03) + 30;
 }
 
+/** Pure decision for `CartCheckout.tsx`'s preview→pay gate (UAT M-12-01): given
+ *  `create-checkout-session { mode: 'preview' }`'s returned `total` in CENTS
+ *  (post-discount subtotal plus service fee — the server charges $0 service
+ *  fee when the subtotal is already $0, mirroring its free-order branch),
+ *  decide whether the UI must stop for an explicit no-charge confirmation
+ *  ('free-confirm') or can proceed straight to creating a real Stripe session
+ *  ('stripe'). A $0 total is reachable ONLY via a coupon discounting the
+ *  whole cart — the server fulfills that order immediately once asked for
+ *  real (no Stripe step to confirm through), so the client must never
+ *  auto-request it without the user explicitly confirming first. */
+export function checkoutMode(previewTotalCents: number): 'free-confirm' | 'stripe' {
+  return previewTotalCents <= 0 ? 'free-confirm' : 'stripe';
+}
+
 /** One line of the "We updated these prices to today's rates" notice shown on
  *  the Cart page (S4, money-story UX spec §1): a cart item whose server
  *  preview price differs from the stale, client-written amount the cart was
