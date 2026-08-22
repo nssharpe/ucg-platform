@@ -20,7 +20,19 @@
 
 ---
 
-## 0. Read this first — the 8 things that matter
+## ⏱ Round-2 status (updated 2026-08-21 after lanes A, M, Z)
+
+Round 1 produced **33 findings** (12 × S1). Triage + fix plan:
+[`2026-08-21-uat-round1-triage.md`](2026-08-21-uat-round1-triage.md). What that means for you:
+
+| Do now | Hold — wait for the fix batch, I'll tell you when |
+|---|---|
+| **E** emails · **G** self-service (skip G-20) · **W** membership · **K** camps · **C** club manager (skip C-14, C-15) · **H** sanctioning/hosting · **N** nationals · **F** finance · **J** judging · **X** public · **D** devices · **Y** keyboard | **P** capacity/waitlists — being redesigned per your Z-03 decisions · **R** refunds + G-20 + C-14 — refund model being reworked per Z-04 · **C-15** + the M re-test — cart/purchase-history restructure per Z-01-02 · **Z-02 / Z-03 / Z-06** re-test after fixes |
+
+Don't re-file anything already in the triage doc — it's tracked. New symptoms on the same
+screens are still welcome.
+
+# 0. Read this first — the 8 things that matter
 
 1. **Test on production.** Stripe is still in **test mode** on prod, so no real money can move.
    Staging is *not* a substitute: every staging payment row is `failed`/`pending`, so all money
@@ -244,7 +256,7 @@ requirement, the section is cited so a disagreement can be settled against the s
 | A-04 | Refresh the page while signed in as an admin, on an admin page | No "access denied" flash before the page loads. Do it 3× — it's a race, so it may not reproduce first try |
 | A-05 | Sign out, then use the browser Back button | You do not end up on a signed-in page with live data |
 | A-06 | Forgot-password flow end to end | Email arrives, link works, new password works, old password doesn't |
-| A-07 | Admin sends an account invite (`#/admin/members`), recipient clicks the link | Lands on Set Password, sets one, is signed in and linked to the right person — **not** a new duplicate person |
+| A-07 | Admin sends an **account invite**: `#/admin/members` → open a person who has **no account** → **Send account invite**. (NOT "+ New Person" — that only creates the profile; A-07-01 was partly this step's wording.) Recipient clicks the link | Lands on Set Password, sets one, is signed in and linked to the right person — **not** a new duplicate person |
 | A-08 | Enroll **TOTP** on a fresh account with a real authenticator app | QR scans; code accepted; recovery guidance is clear about what happens if the phone is lost |
 | A-09 | Sign out, sign back in with TOTP | You're challenged for the code; a wrong code is refused with a readable message; the right one gets in |
 | A-10 | Enroll a **passkey** on real hardware (Face ID / Touch ID / Windows Hello) | Enrolls; a subsequent passkey sign-in does **not** additionally demand TOTP |
@@ -297,7 +309,7 @@ call together and count down out loud.*
 |---|---|---|
 | Z-01 | **Simultaneous checkout.** Both of you get a cart ready with a *different* item. Count down 3-2-1 and click Pay at the same moment. **Then write down both invoice numbers, verbatim, exactly as shown.** | Two payments, two receipts, **two different invoice numbers**. ⚠️ Invoice numbers are currently derived from a row count, which is not concurrency-safe — **a duplicate here is the reproduction we want**, and it is exactly the failure that matters on the first busy morning of registration. Repeat this 3 times |
 | Z-02 | **Simultaneous registration of the same athlete.** Nate (as admin) and Julia (as club manager) both register the *same* athlete for the *same* event at the same moment | Exactly one registration, or a clear conflict message. Not two |
-| Z-03 | **Simultaneous capacity fill.** Set an event cap to a number where you'll collide (e.g. cap 2, you each try to register 2 athletes), then both check out at once | The cap holds. Total registered never exceeds it. The loser gets an error naming the level and the overage (spec §F) |
+| Z-03 | ⏸ **HOLD until the capacity rework ships** (your Z-03-02/03 decisions). Then: **simultaneous capacity fill** — set a cap where you'll collide, both check out at once | The cap holds. Total registered never exceeds it. The loser gets an error naming the level and the overage (spec §F) |
 | Z-04 | **Simultaneous refund approval.** Both approve the same refund request at the same moment | One refund. Not two. Total refunded never exceeds what was paid |
 | Z-05 | **Edit collision.** Both open the same event's settings and save different changes | Last-write-wins is acceptable — **silent data loss with no warning is not**. Note what actually happened |
 | Z-06 | **Judge collision.** Both enter a different score for the same athlete/apparatus at the same time | One wins visibly, or you're warned. Note which |
@@ -564,7 +576,7 @@ different people (that's the point).*
 | J-13 | **Edit** a posted score | Updates everywhere, including the public results |
 | J-14 | Open a **score detail** page | Full breakdown, correct athlete |
 | J-15 | Try score entry on a device with **no unlock** and no privileged account | Refused |
-| J-16 | Judge on a **phone in landscape**, one-handed, on venue-grade wifi | Usable. This is the real meet-day condition — note anything that would be miserable at 8am with a line of gymnasts waiting |
+| J-16 | Judge on a phone in **both portrait and landscape**, one-handed, on venue-grade wifi — every control reachable in portrait without sideways scrolling (Nate's Z-06 finding) | Usable. This is the real meet-day condition — note anything that would be miserable at 8am with a line of gymnasts waiting |
 | J-17 | Turn wifi **off** mid-entry, then back on | Something sane happens — a queued write, or an honest error. Not silent loss |
 
 ---

@@ -51,6 +51,16 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
 
 ## 2. Launch blockers (🤖 buildable now)
 
+0. 🔧 **UAT round-1 fixes (2026-08-21) — the active list.** Lanes A/M/Z produced 33 findings
+   (12 × S1): duplicate registration → double charge (Z-02), change-fee repricing to $90
+   (M-10), coupon scope + discount invisible on receipts (M-11), refund requests per invoice line
+   instead of per registration (Z-04), judge score silent overwrite (Z-06), a Results
+   session-assignment relapse, plus the cart/purchase-history restructure and the capacity
+   redesign both of them decided on. Batches, root causes, and the 5 open questions live in
+   [plans/2026-08-21-uat-round1-triage.md](plans/2026-08-21-uat-round1-triage.md) — work that
+   doc, not this list, until it's drained. The invoice-sequence fix (§3.1) moves into its Batch 1.
+
+
 0. ✅ **Security hardening Phase 3 — COMPLETE 2026-07-26**
    ([plan](plans/2026-07-02-security-hardening.md) has the per-item detail and evidence).
    Every item applied to staging AND prod and verified live: **M1** coupon reservation at
