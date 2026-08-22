@@ -1,5 +1,107 @@
 # UAT round-1 implementation notes (deviations from the triage plan)
 
+## M-10 x Z-04 (2026-08-22 rework): split the mixed line into a pure change line + a pure entry line
+
+**Why.** After Z-04's refund rework shipped (`2d71353`), a `refLineType:'change'` line became
+NEVER refundable. M-10-01's combined "mixed" line (added-discipline entry-total + change fee,
+tagged `'change'`) meant the added discipline's entry-fee portion became permanently
+non-refundable too, and got booked under the change-fee accounting code in finance. The
+combined single line was the wrong shape — this rework splits it into two separate cart lines
+so each keeps its own refund eligibility and accounting code.
+
+**What changed (client only — server three-way split kept as defense-in-depth, per the rework
+request).**
+- `src/pages/Club.tsx` `saveRegs` and `src/pages/MyRegistrations.tsx` `saveRegs`: a discipline
+  ADDED alongside a chargeable edit now gets a SEPARATE `refLineType:'entry'` cart line
+  (`newRegistrationEntryTotal` at the second-discipline rate) instead of being folded into the
+  `refLineType:'change'` line. The change line's `refRegIds` no longer includes added regs at
+  all — it covers only `changedRegs`.
+- New pure helper `regsForChangeLine(newRegs, priorById)` (`src/lib/pricing.ts`): returns the
+  subset of `newRegs` that were already PAID or UPDATED_PENDING per their prior row. **This is
+  narrower than "has a prior row"** — a prior row that exists but was NEVER paid (e.g. a
+  still-unpaid discipline added by an earlier, not-yet-checked-out edit in the same session)
+  must NOT land on the change line, or the server would silently reconstruct a mixed line from
+  it (entry-vs-change is derived per-reg from DB state, not from which cart line the client put
+  it on) and potentially double-charge that reg against its own separate pending entry line.
+  Caught during advisor review with a concrete two-edit trace (edit 1 adds B, entry line
+  pending unpaid; edit 2 changes something else and would have swept B onto the change line
+  under the naive "has a prior row" definition) — the FIRST draft of this rework used that naive
+  definition and had this exact bug. Tested directly: `tests/lib/pricing-registration.test.ts`
+  `regsForChangeLine` describe block, including the never-paid-prior case.
+- `entryFeePendingItem` (both files): a new "already pending ENTRY line" lookup, matched
+  structurally (`kind`/`refLineType`/`refUserId`/`refEventId`) so a discipline added across two
+  separate not-yet-paid edits extends the same entry line (M7/H5-style) instead of stacking a
+  second one — deliberately structural rather than label-based since it's new code with no
+  legacy label-matching behavior to preserve (unlike the change-line lookup below).
+- The change-fee line's label/lookup (`changeFeeLabel`/`changeFeePendingItem`) is UNCHANGED byte-for-byte
+  from before M-10-01 ever touched this file — it's a pure change fee again, so there was never
+  a reason to touch its label or matching logic this time either.
+- `src/lib/reg-estimate.ts`: the pre-checkout ESTIMATE stays one combined number ($45 in the
+  worked example) — it estimates a total, never a line shape — now composed by summing
+  `newRegistrationEntryTotal(...) + registrationChangeFee(...)` directly instead of calling
+  `addedDisciplineChangeTotal` (which is now cart-line-flavored language that no longer matches
+  what the client produces).
+- `addedDisciplineChangeTotal`/`addedDisciplineChangeTotalDollars` (pricing.ts / `_shared/stripe.ts`)
+  and the server's mixed-line branch in `create-checkout-session/index.ts` are UNTOUCHED and
+  KEPT — the server still needs them as defense-in-depth for a forged cart or a legacy
+  pre-rework pending mixed line.
+- `.claude/rules/money-invariants.md`: updated both the `create-checkout-session` entry (states
+  the client no longer produces a mixed line; the server's branch is defense-in-depth only) and
+  the Refunds section (the change-fee exclusion note now explains this is WHY the mixed line was
+  removed, not just a flagged side effect of it).
+
+**`_shared/fulfill.ts` paid-flip verification (requested explicitly).** `fulfill.ts:213-216`
+builds `paidRegIds` as a DEDUPED UNION of `ref_reg_ids` across every item in the payment being
+fulfilled's OWN `lines_snapshot`, then a single `update({paid:true, updated_pending:false}).in('id',
+paidRegIds)`. This is per-PAYMENT, not literally per-line, but that still gives exactly the
+independence the split needs: a payment/checkout containing only the new entry line flips only
+the added reg to paid; one containing only the change line flips only the changed reg. When both
+lines are checked out together (the common case), the union matches what the old single combined
+line would have flipped — no regression there. Confirmed by reading the function, not by
+running it (no Deno test harness in this repo).
+
+**Two revenue-affecting consequences of the `regsForChangeLine` fix — flagged for the
+requirements owner, not resolved here (found on the final advisor review, after the fix
+above was already applied):**
+1. **Editing an all-UNPAID existing registration inside the change-fee window is now $0
+   instead of the change fee.** Before this rework, `changedRegs` was "has a prior row" — so an
+   eligible edit to an athlete's existing-but-never-paid registration (e.g. a level change while
+   its original entry line still sits unpaid in the cart) produced a change-fee line regardless
+   of paid state. With the `regsForChangeLine` fix, such an edit now has `changedRegs = []` (no
+   prior row was ever paid/updated_pending), so the `changedRegs.length > 0` guard drops the
+   change line entirely — shipped behavior charged the change fee there; this rework's fix
+   charges nothing. Defensible on two grounds — `changeIsEligible` never checked paid state to
+   begin with, and `updatedPending`'s own doc comment already frames it as "a *paid* reg edited
+   back to pending," so charging a *never-paid* reg a *change* fee was arguably already
+   questionable — and it also removes a client/server disagreement (the server's
+   `changedRegs.length === 0` branch would have repriced that same line as a full entry total,
+   not a change fee, so the OLD client behavior was already going to mismatch and trigger the
+   "prices updated" banner). But it is a de-charge nobody explicitly asked for. **Needs a
+   requirements-owner decision**, not an implementation call.
+2. **`reg-estimate.ts` does not know about consequence #1 and now OVERSTATES in that same
+   case.** It has no paid-state input at all, so for an all-unpaid existing registration inside
+   the change window it still returns `{kind:'change-fee', amountDollars: changeFeeAmount +
+   entryTotal()}` — a non-zero estimate for what the save path will now actually charge $0 for.
+   This is the reverse of the failure direction reg-estimate.ts's own header comment warns
+   about (understating, not overstating). Documented as a known divergence in the file's header
+   comment rather than fixed — closing it needs a new `RegEstimateInput` field (e.g.
+   `priorRegsArePaid`) threaded from `RegistrationEditor.tsx`, which is a caller outside the
+   files this rework was scoped to touch.
+
+**Minor, non-blocking note:** `entryFeePendingItem` uses `.find()`, so if an athlete somehow
+already has TWO pending entry lines for the same event (e.g. `addToCart`'s original entry line
+plus a mid-edit "add another discipline" line, both still unpaid), a third edit's increment
+lands on whichever one `.find()` returns first. The total charged is still correct either way;
+only which of the two lines carries which portion is arbitrary. Not observed as reachable in
+the primary flows exercised by tests.
+
+**Verification.** `npm run build` — succeeded. `npx eslint src/lib/pricing.ts
+src/lib/reg-estimate.ts src/pages/Club.tsx src/pages/MyRegistrations.tsx
+tests/lib/pricing-registration.test.ts` — zero errors/warnings. `npx vitest run` — 1163/1163
+passed across 73 files (+4 from this rework: the `regsForChangeLine` describe block in
+`tests/lib/pricing-registration.test.ts`; on top of the 1159/73 baseline the Z-04 section above
+recorded).
+
 ## M-10-01 (S1): price added-discipline edits as extra-discipline fee + change fee
 
 **What changed.**

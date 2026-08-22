@@ -6,6 +6,7 @@ import {
   regChangeHasDiff,
   newRegistrationEntryTotal,
   addedDisciplineChangeTotal,
+  regsForChangeLine,
   lateFeeApplies,
   lateFeeAnchor,
   type RegFeeEvent,
@@ -339,6 +340,44 @@ describe('newRegistrationEntryTotal — brand-new registration path stays unchan
         competingClubId: 'club-a', priorDisciplineCount: 0, newDisciplineCount: 1,
       }),
     ).toBe(60);
+  });
+});
+
+// --- regsForChangeLine (UAT M-10 x Z-04): which regs a pure change-fee line
+// covers, given each one's PRIOR paid/updated_pending state. This is the
+// regression guard for the actual bug caught during this rework's review: a
+// still-unpaid reg from an EARLIER, not-yet-checked-out edit (a prior row
+// that exists but was never paid) must NOT land on the change line, or the
+// server would silently reconstruct a mixed line and double-charge it
+// against its own separate pending entry line. ---------------------------
+
+describe('regsForChangeLine (UAT M-10 x Z-04)', () => {
+  const a = { id: 'a' }; // paid
+  const b = { id: 'b' }; // updated_pending (previously paid, re-pended by an earlier edit)
+  const c = { id: 'c' }; // no prior row at all — brand-new this edit
+  const d = { id: 'd' }; // HAS a prior row, but it was never paid — e.g. a still-unpaid
+                          // discipline added by an earlier, not-yet-checked-out edit
+
+  const priorById = new Map<string, { paid?: boolean; updatedPending?: boolean }>([
+    ['a', { paid: true, updatedPending: false }],
+    ['b', { paid: false, updatedPending: true }],
+    ['d', { paid: false, updatedPending: false }],
+  ]);
+
+  it('includes paid and updated_pending regs, excludes a brand-new reg and a never-paid prior reg', () => {
+    expect(regsForChangeLine([a, b, c, d], priorById)).toEqual([a, b]);
+  });
+
+  it('a prior row that was NEVER paid is excluded even though it has a prior row (the actual bug this guards)', () => {
+    expect(regsForChangeLine([d], priorById)).toEqual([]);
+  });
+
+  it('no regs ⇒ empty', () => {
+    expect(regsForChangeLine([], priorById)).toEqual([]);
+  });
+
+  it('a brand-new registration (no priors at all) ⇒ empty', () => {
+    expect(regsForChangeLine([a, b, c], new Map())).toEqual([]);
   });
 });
 

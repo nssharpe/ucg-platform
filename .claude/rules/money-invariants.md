@@ -45,7 +45,14 @@ Auth'd; the caller must own the cart items or manage the club.
   re-pended, some brand-new — e.g. adding a discipline to an already-paid registration) prices
   as the added disciplines' entry-total PLUS the change fee, as one combined amount
   (`addedDisciplineChangeTotal`/`addedDisciplineChangeTotalDollars`) — never the change fee
-  alone, which would undercharge exactly like the original C4 exploit.
+  alone, which would undercharge exactly like the original C4 exploit. **The client never
+  produces a MIXED line as of the UAT M-10 × Z-04 rework (2026-08-22)** — `Club.tsx`/
+  `MyRegistrations.tsx` `saveRegs` now push a discipline added alongside a chargeable edit as
+  its OWN separate `refLineType:'entry'` line, keeping the `'change'` line pure, because
+  change-fee lines are never refundable (see Refunds below) and a combined line would have
+  made the added discipline's entry-fee portion permanently non-refundable too. **The server's
+  MIXED branch stays as defense-in-depth** for a forged cart or a legacy pre-rework pending
+  line — do not remove it.
 - **Ownership (H4):** every `ref_reg_ids` reg must belong to the payer (self cart) or the club
   (club cart); membership `ref_user_id` must be the payer or a club-affiliated person — else 403.
 - Inserts a `pending` `payments` row with **`lines_snapshot`**: the validated, server-priced
@@ -146,9 +153,12 @@ others (idempotent retry: a later approve on the same group only ever touches ro
 
 Refundable base = entry-fee + extra-discipline-fee lines only (`invoice_items.kind='meet-entry'`
 and `ref_line_type` distinct from `'change'`) — **a change-fee line is never refundable**, full
-stop, even for an M-10-01 "mixed" line that also carries an added discipline's entry-total
-(that combined line is tagged `ref_line_type:'change'`, so it is entirely excluded — a known,
-flagged consequence). Base amount per line is post-coupon `paid_cents` from
+stop. This is exactly why the client no longer produces an M-10-01 "mixed" line (2026-08-22
+rework, see `create-checkout-session`'s entry above): a combined line is tagged
+`ref_line_type:'change'`, so it would exclude the added discipline's entry-total from refunds
+entirely. A pre-rework or server-forged mixed line still hits this same exclusion — flagged,
+not fixed, since a `'change'`-tagged line has no way to refund only part of itself. Base amount
+per line is post-coupon `paid_cents` from
 `payments.lines_snapshot` (legacy fallback: invoice_item list price). Registrations: 100%
 at-or-before `lastDateToEdit`, else 75% — scaled PER PAYMENT, not on the combined total
 (`allocateRegistrationRefund`). **Add-ons are a separate, binary rule (D-5):** full refund while

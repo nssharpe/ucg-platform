@@ -9,7 +9,7 @@ import { pushRegistration, pushCampSurvey, pushCart, syncSynchroPartnerLevelRemo
 import { RegistrationEditor } from '../components/RegistrationEditor';
 import { useMyRegistrations, useEventRegistrations, applyLocalRegistrationUpsert, applyLocalRegistrationRemove, mergeUpsertedRegs } from '../lib/registrations-slice';
 import {
-  newRegistrationEntryTotal, registrationChangeFee, addedDisciplineChangeTotal, changeIsEligible, syncSynchroPartnerLevel, lateFeeApplies, lateFeeAnchor,
+  newRegistrationEntryTotal, registrationChangeFee, changeIsEligible, regsForChangeLine, syncSynchroPartnerLevel, lateFeeApplies, lateFeeAnchor,
   campSurveyQuestionsOf, campSurveyAnswersValid, campSurveyToStored, campSurveyAnswerLabel, requiredSessionRequests,
 } from '../lib/pricing';
 import type { RegChangeState } from '../lib/pricing';
@@ -133,17 +133,28 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
 
   // Label used for an event's change fee in the athlete's cart — also how we detect
   // that a change fee for this event is already pending checkout (M7: returns the
-  // item itself so saveRegs can extend it in place instead of just checking). UAT
-  // M-10-01: a mixed line (a discipline added alongside the chargeable edit) keeps
-  // this SAME label — only the AMOUNT reflects the combined total. Switching the
-  // label text would require loosening this `startsWith` lookup, risking a legacy
-  // pre-S4 row (`refLineType == null`, per `classifyCartRemoval`'s L2 note) no
-  // longer being recognized as "already pending" and stacking a second line —
-  // exactly the bug M7/H5 closed. Not worth that risk for a label string.
+  // item itself so saveRegs can extend it in place instead of just checking).
+  //
+  // UAT M-10 x Z-04 (2026-08-22 rework): a discipline ADDED alongside a
+  // chargeable edit no longer folds into this change line — it gets its OWN
+  // separate entry line (`entryFeePendingItem` below), because change-fee
+  // lines (`refLineType:'change'`) are NEVER refundable (Z-04's
+  // requirements-owner rule) and a combined line would have made the added
+  // discipline's entry-fee portion permanently non-refundable too. This line
+  // is a PURE change fee again — same label/lookup as before M-10-01.
   const changeFeeLabel = (eventName: string) => `${eventName} change fee`;
   const changeFeePendingItem = (event: Event) =>
     (db.carts[personId] ?? []).find((c) => c.kind === 'meet-entry' && c.label.startsWith(changeFeeLabel(event.name)));
   const changeFeePending = (event: Event) => !!changeFeePendingItem(event);
+
+  // Already-pending ENTRY line (for a discipline added mid-edit) to extend in
+  // place instead of stacking a second one, mirroring the change-line M7/H5
+  // idiom above. Matched structurally (kind/refLineType/refUserId/refEventId)
+  // — new code with no pre-existing label-matching behavior to preserve, and
+  // the label varies by which disciplines are included so can't serve as a
+  // stable match key.
+  const entryFeePendingItem = (event: Event) =>
+    (db.carts[personId] ?? []).find((c) => c.kind === 'meet-entry' && c.refLineType === 'entry' && c.refUserId === personId && c.refEventId === event.id);
 
   const season = currentSeason(db)!;
 
@@ -274,10 +285,12 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   // (out of scope) — so a member can't make their entry vanish on their own.
   const saveRegs = (event: Event, selectedClubId: string, newRegs: Registration[]) => {
     const applyFee = changeFeeApplies(event);
-    // Captured BEFORE the mutate below so it reflects the pre-edit cart state.
+    // Captured BEFORE the mutate below so they reflect the pre-edit cart state.
     const alreadyPendingItem = changeFeePendingItem(event);
+    const alreadyPendingEntryItem = entryFeePendingItem(event);
     const alreadyPending = !!alreadyPendingItem;
     let chargedFee = 0;
+    let addedEntryFee = 0;
     // Phase 3: read from the pre-write "mine" snapshot — this is the FIRST
     // read of registration state in this call, so it can't have gone stale
     // relative to d.registrations (perpetually empty in Supabase-configured
@@ -360,29 +373,53 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
           })
         : 0;
 
-      // UAT M-10-01: when EDITING an existing registration, a discipline
-      // added alongside the edit (no prior row) owes its own extra-
-      // discipline entry fee ON TOP of any change fee, as one combined line
-      // amount — never the change fee alone (`entryTotal` above stays 0 while
-      // editingExisting; it only prices the brand-new-registration path).
-      // `newOnlyRegs` feeds `combinedChangeTotal` further below, which
-      // combines with a non-zero `changeFee`. The pre-existing "change-fee
-      // window closed, discipline added mid-edit" gap (member side never
-      // separately charges an entry fee there, unlike Club.tsx's H7 fix) is
-      // untouched; out of this ticket's scope.
-      const existingRegIds = new Set(existingForAthlete.map((r) => r.id));
-      const newOnlyRegs = editingExisting ? newRegs.filter((r) => !existingRegIds.has(r.id)) : [];
+      // Upsert lookup, hoisted above the split below (regsForChangeLine needs
+      // it to read each reg's PRIOR paid/updated_pending state).
+      const priorById = new Map(existingForAthlete.map((r) => [r.id, r]));
+
+      // UAT M-10 x Z-04 (2026-08-22): when EDITING an existing registration,
+      // a discipline added alongside the edit (no prior row) owes its own
+      // extra-discipline entry fee ON TOP of any change fee — but as a
+      // SEPARATE entry line now, never folded into the change line
+      // (`entryTotal` above stays 0 while editingExisting; it only prices
+      // the brand-new-registration path). `changedRegs`
+      // (`regsForChangeLine`, pricing.ts — regs that were already
+      // paid/updated_pending) is what the change line's `refRegIds` covers
+      // instead of ALL of `newRegs` — change-fee lines are NEVER refundable,
+      // so keeping an added discipline's entry-fee portion out of that line
+      // preserves its own refund eligibility and accounting code. A prior
+      // row that exists but was NEVER paid (e.g. a still-unpaid discipline
+      // added in an earlier, not-yet-checked-out edit) must land in
+      // `newOnlyRegs`, not `changedRegs` — see `regsForChangeLine`'s doc
+      // comment for why (it would silently reconstruct a mixed line
+      // server-side and double-charge it).
+      //
+      // `chargeAddedEntry` deliberately stays gated on `changeFee > 0` only
+      // (not `!applyFee`): the pre-existing "change-fee window CLOSED,
+      // discipline added mid-edit" gap (member side never separately charges
+      // an entry fee there, unlike Club.tsx's H7 fix) is untouched — out of
+      // this ticket's scope, and closing it is a separate decision.
+      const newOnlyRegs = editingExisting ? newRegs.filter((r) => !priorById.has(r.id)) : [];
+      const changedRegs = editingExisting ? regsForChangeLine(newRegs, priorById) : [];
+      const addedEntryTotal = newOnlyRegs.length > 0
+        ? newRegistrationEntryTotal(event, {
+            competingClubId: selectedClubId,
+            priorDisciplineCount,
+            newDisciplineCount: newOnlyRegs.length,
+            late: lateAnchor ? { earliestCreatedAtISO: lateAnchor } : undefined,
+          })
+        : 0;
+      const chargeAddedEntry = addedEntryTotal > 0 && changeFee > 0;
 
       // Which regs get a cart-add capacity hold stamped (event-mgmt v2 P4):
       // both the change-fee and entry-fee branches further below reference
       // ALL of `newRegs`, so a hold is due on all of them whenever either fee
       // is actually being charged — never on a free edit.
-      const cartLinked = changeFee > 0 || entryTotal > 0;
+      const cartLinked = changeFee > 0 || entryTotal > 0 || addedEntryTotal > 0;
 
       // Upsert each returned reg. A chargeable edit flips a previously-PAID reg
       // back to "Updated pending purchase"; otherwise preserve prior payment
       // state. Brand-new regs: host-club $0 ⇒ paid immediately, else pending.
-      const priorById = new Map(existingForAthlete.map((r) => [r.id, r]));
       for (const reg of newRegs) {
         const prior = priorById.get(reg.id);
         if (prior) {
@@ -395,10 +432,10 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
           }
         } else {
           // A newly added discipline is "Registered" only when nothing is owed
-          // (host-club $0). If a fee line covers it (a change fee mid-edit, or a
-          // brand-new entry total), it stays pending until that line is paid —
-          // refRegIds flips it then.
-          reg.paid = changeFee === 0 && entryTotal === 0;
+          // (host-club $0). If a fee line covers it (a change fee mid-edit, a
+          // brand-new entry total, or an added-discipline entry line), it
+          // stays pending until that line is paid — refRegIds flips it then.
+          reg.paid = changeFee === 0 && entryTotal === 0 && addedEntryTotal === 0;
           reg.updatedPending = false;
         }
         if (cartLinked) {
@@ -438,72 +475,100 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
         }
       }
 
-      // Add the fee/entry line to the MEMBER'S OWN cart, linked to the affected
-      // regs via refRegIds so paying flips exactly those to paid. M7/H5: if a
-      // change line for this event is ALREADY pending, EXTEND it in place
-      // (append newly-covered reg ids + snapshot entries for regs not already
-      // covered) instead of silently dropping the fee (the old behavior) or
-      // stacking a second line — stacking is what let removal delete/resurrect
-      // against a stale snapshot. NEVER overwrite an existing snapshot entry:
-      // it must stay the ORIGINAL pre-change state from the FIRST edit.
-      // UAT M-10-01: a discipline ADDED alongside this chargeable edit owes
-      // its own extra-discipline entry fee ON TOP of the change fee, as one
-      // combined line amount — never the change fee alone (C4 anti-
-      // smuggling: an added reg is always priced by the entry-total logic,
-      // on top of, never instead of, the change fee). `addedDisciplineChangeTotal`
-      // matches the server's mixed-line pricing exactly.
-      const isMixed = newOnlyRegs.length > 0;
-      const combinedChangeTotal = isMixed
-        ? addedDisciplineChangeTotal(event, {
-            competingClubId: selectedClubId,
-            priorDisciplineCount,
-            newDisciplineCount: newOnlyRegs.length,
-            late: lateAnchor ? { earliestCreatedAtISO: lateAnchor } : undefined,
-          })
-        : changeFee;
-      // The toast below prints `chargedFee` — it must reflect the actual
-      // amount pushed to the cart (the combined total when mixed), never the
-      // bare change fee, or the toast would understate what the cart charges.
-      if (changeFee > 0) chargedFee = combinedChangeTotal;
-      if (changeFee > 0 && alreadyPendingItem) {
+      // Add the fee/entry line(s) to the MEMBER'S OWN cart, linked to the
+      // affected regs via refRegIds so paying flips exactly those to paid.
+      // M7/H5: if a change line for this event is ALREADY pending, EXTEND it
+      // in place (append newly-covered reg ids + snapshot entries for regs
+      // not already covered) instead of silently dropping the fee (the old
+      // behavior) or stacking a second line — stacking is what let removal
+      // delete/resurrect against a stale snapshot. NEVER overwrite an
+      // existing snapshot entry: it must stay the ORIGINAL pre-change state
+      // from the FIRST edit.
+      //
+      // UAT M-10 x Z-04 (2026-08-22): this used to fold an added
+      // discipline's entry-total INTO the change line as one combined
+      // amount (M-10-01). That was reworked: change-fee lines
+      // (`refLineType:'change'`) are NEVER refundable (Z-04's
+      // requirements-owner rule), so a combined line made the added
+      // discipline's entry-fee portion permanently non-refundable too. Now
+      // the two are ALWAYS separate lines — a pure change-fee line
+      // (`changedRegs`) and, independently, a pure entry line for whatever
+      // was added (`newOnlyRegs`), each with its own refund eligibility.
+      // (The server's three-way isChange/mixed split in
+      // create-checkout-session stays as defense-in-depth for a forged or
+      // legacy cart that still mixes a line — the client itself never
+      // produces one anymore.)
+      if (changeFee > 0 && changedRegs.length > 0) {
+        chargedFee = changeFee;
         const cart = d.carts[personId] ?? (d.carts[personId] = []);
-        const line = cart.find((c) => c.id === alreadyPendingItem.id);
-        if (line) {
-          const covered = new Set(line.refRegIds ?? []);
-          line.refRegIds = [...covered, ...newRegs.map((r) => r.id).filter((id) => !covered.has(id))];
-          const snapshotCovered = new Set((line.priorRegSnapshot ?? []).map((r) => r.id));
-          const newSnapshotEntries = newRegs.map((r) => priorById.get(r.id)).filter((r): r is Registration => !!r);
-          line.priorRegSnapshot = [
-            ...(line.priorRegSnapshot ?? []),
-            ...newSnapshotEntries.filter((r) => !snapshotCovered.has(r.id)),
-          ];
-          if (isMixed) {
-            // The change fee itself is flat and already baked into
-            // line.amount from when the line was first created — only the
-            // newly added discipline's entry-total portion is incremental.
-            // Label stays the plain "change fee" text (see changeFeeLabel's
-            // doc comment) — only the amount reflects the combined total.
-            line.amount = (line.amount ?? 0) + (combinedChangeTotal - changeFee);
+        if (alreadyPendingItem) {
+          const line = cart.find((c) => c.id === alreadyPendingItem.id);
+          if (line) {
+            const covered = new Set(line.refRegIds ?? []);
+            line.refRegIds = [...covered, ...changedRegs.map((r) => r.id).filter((id) => !covered.has(id))];
+            const snapshotCovered = new Set((line.priorRegSnapshot ?? []).map((r) => r.id));
+            const newSnapshotEntries = changedRegs.map((r) => priorById.get(r.id)).filter((r): r is Registration => !!r);
+            line.priorRegSnapshot = [
+              ...(line.priorRegSnapshot ?? []),
+              ...newSnapshotEntries.filter((r) => !snapshotCovered.has(r.id)),
+            ];
           }
-          pushCart(personId, cart, false);
+        } else {
+          cart.push({
+            id: `ci-change-${Date.now()}`,
+            label: changeFeeLabel(event.name),
+            amount: changeFee,
+            kind: 'meet-entry',
+            refUserId: personId,
+            refRegIds: changedRegs.map((r) => r.id),
+            refEventId: event.id,
+            refLineType: 'change',
+            // Full prior registration row(s) (before this function's edits above),
+            // so deleting this cart item later can revert them (Task A).
+            priorRegSnapshot: changedRegs.map((r) => priorById.get(r.id)).filter((r): r is Registration => !!r),
+          });
         }
-      } else if (changeFee > 0) {
-        const cart = d.carts[personId] ?? (d.carts[personId] = []);
-        cart.push({
-          id: `ci-change-${Date.now()}`,
-          label: changeFeeLabel(event.name),
-          amount: combinedChangeTotal,
-          kind: 'meet-entry',
-          refUserId: personId,
-          refRegIds: newRegs.map((r) => r.id),
-          refEventId: event.id,
-          refLineType: 'change',
-          // Full prior registration row(s) (before this function's edits above),
-          // so deleting this cart item later can revert them (Task A).
-          priorRegSnapshot: newRegs.map((r) => priorById.get(r.id)).filter((r): r is Registration => !!r),
-        });
         pushCart(personId, cart, false);
-      } else if (entryTotal > 0) {
+      }
+
+      if (chargeAddedEntry) {
+        // A discipline was ADDED alongside this chargeable edit: it always
+        // owes its own entry/second-discipline fee, on a line of its OWN,
+        // never the change line above. `alreadyPendingEntryItem` extends an
+        // already-pending entry line in place (mirroring the change line's
+        // M7/H5 idiom) instead of stacking a second one.
+        addedEntryFee = addedEntryTotal;
+        const cart = d.carts[personId] ?? (d.carts[personId] = []);
+        const lateSuffix = lateAnchor !== null && lateFeeApplies(event, lateAnchor) ? ' (incl. late fee)' : '';
+        // Camps ask nothing discipline-related — omit the parenthetical
+        // (PM feedback 2026-07-23).
+        const discSuffix = event.eventType === 'camp' ? '' : ` — ${newOnlyRegs.map((r) => r.discipline).join('+')}`;
+        if (alreadyPendingEntryItem) {
+          const line = cart.find((c) => c.id === alreadyPendingEntryItem.id);
+          if (line) {
+            const covered = new Set(line.refRegIds ?? []);
+            line.refRegIds = [...covered, ...newOnlyRegs.map((r) => r.id).filter((id) => !covered.has(id))];
+            line.amount = (line.amount ?? 0) + addedEntryTotal;
+          }
+        } else {
+          cart.push({
+            id: `ci-${Date.now()}`,
+            label: `${event.name} entry${discSuffix}${lateSuffix}`,
+            amount: addedEntryTotal,
+            kind: 'meet-entry',
+            refUserId: personId,
+            refRegIds: newOnlyRegs.map((r) => r.id),
+            refEventId: event.id,
+            refLineType: 'entry',
+          });
+        }
+        pushCart(personId, cart, false);
+      }
+
+      if (entryTotal > 0) {
+        // Brand-new registration (unaffected by this rework — `entryTotal`
+        // is only ever nonzero when `!editingExisting`, mutually exclusive
+        // with the two branches above).
         const cart = d.carts[personId] ?? (d.carts[personId] = []);
         const lateSuffix = lateAnchor !== null && lateFeeApplies(event, lateAnchor) ? ' (incl. late fee)' : '';
         // Camps ask nothing discipline-related — omit the parenthetical
@@ -524,11 +589,20 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
     });
     if (!applied) return; // offline read-only gate — no false success toast
 
-    toast(chargedFee > 0
-      ? alreadyPending
-        ? 'Registration updated. Your pending change fee now covers this edit too — pay it to finalize.'
-        : `Registration updated. A ${fmtMoney(chargedFee)} change fee was added to your cart — pay it to finalize.`
-      : 'Registration updated.');
+    // UAT M-10 x Z-04: the two are separate lines now, but the toast still
+    // reports the combined total for a mixed save ("combined total is fine
+    // to display" per the rework) — only the CART LINES (and their
+    // refund/accounting treatment) need to stay split.
+    toast(
+      chargedFee > 0 && addedEntryFee > 0
+        ? `Registration updated. ${fmtMoney(chargedFee + addedEntryFee)} added to your cart (change fee + entry fee) — pay it to finalize.`
+        : chargedFee > 0
+          ? alreadyPending
+            ? 'Registration updated. Your pending change fee now covers this edit too — pay it to finalize.'
+            : `Registration updated. A ${fmtMoney(chargedFee)} change fee was added to your cart — pay it to finalize.`
+          : addedEntryFee > 0
+            ? `Registration updated. ${fmtMoney(addedEntryFee)} entry fee was added to your cart — pay it to finalize.`
+            : 'Registration updated.');
     setEditingEventId(null);
   };
 

@@ -15,10 +15,11 @@
 //     changeFee  = changeFeeApplies && eligible ? registrationChangeFee(...) : 0
 //     entryTotal = newRegistrationEntryTotal(... over newly-added regs ...)
 // and then charges:
-//     if (changeFee > 0)                           -> change-fee line, PLUS
-//                                                      entryTotal when a
-//                                                      discipline was also
-//                                                      ADDED (UAT M-10-01)
+//     if (changeFee > 0)                           -> change-fee line, PLUS a
+//                                                      SEPARATE entry line when
+//                                                      a discipline was also
+//                                                      ADDED (UAT M-10 x Z-04 —
+//                                                      two lines, one estimate)
 //     else if (!changeFeeApplies && entryTotal > 0) -> ENTRY-fee line
 // The second branch is easy to miss and was missed in S5's first draft:
 // **adding a discipline to an existing registration while the change-fee
@@ -28,11 +29,33 @@
 //
 // UAT M-10-01 (S1, confirmed by the requirements owner): adding a discipline
 // to an ALREADY-PAID registration while the change-fee window is OPEN must
-// charge the extra-discipline entry fee AND the change fee, as one combined
-// amount (`addedDisciplineChangeTotal`) — not the change fee alone. The first
-// branch above previously stopped at `changeFee` and silently dropped the
+// charge the extra-discipline entry fee AND the change fee. The first branch
+// above previously stopped at `changeFee` and silently dropped the
 // entry-total for the added discipline whenever a change fee also applied.
-import { addedDisciplineChangeTotal, newRegistrationEntryTotal, registrationChangeFee, type RegFeeEvent } from './pricing';
+//
+// UAT M-10 x Z-04 (2026-08-22): this ESTIMATE stays a single combined TOTAL
+// (entry portion + change fee summed) even though the real save path
+// (Club.tsx/MyRegistrations.tsx `saveRegs`) now pushes that total as TWO
+// separate cart lines (a pure change-fee line + a pure entry line) so each
+// keeps its own refund eligibility — change-fee lines are never refundable.
+// This selector only estimates "what will this cost", never a cart line
+// shape, so composing `newRegistrationEntryTotal(...) + registrationChangeFee(...)`
+// directly (rather than via the cart-line-flavored `addedDisciplineChangeTotal`
+// helper) keeps the SAME number ($45 in the worked example) without implying
+// a single-line shape that no longer exists on the client.
+//
+// ⚠ KNOWN DIVERGENCE from the save path (flagged 2026-08-22, not fixed here):
+// the save path's `changedRegs` (`regsForChangeLine`, pricing.ts) only pushes
+// a change line when the athlete's PRIOR regs were actually paid/updated_pending
+// — editing an all-UNPAID existing registration inside the change-fee window
+// now charges $0 there (a deliberate narrowing to stop a paid/pending reg
+// getting smuggled onto the same line as a still-unpaid one). This selector
+// has no paid-state input at all, so for that same all-unpaid case it still
+// returns `{kind:'change-fee', amountDollars: changeFeeAmount + entryTotal()}`
+// — a NON-ZERO estimate for what will actually be a free save. Fixing this
+// needs a new `RegEstimateInput` field (e.g. `priorRegsArePaid`) threaded from
+// `RegistrationEditor.tsx`'s caller; out of scope for the M-10 x Z-04 rework.
+import { newRegistrationEntryTotal, registrationChangeFee, type RegFeeEvent } from './pricing';
 import { fmtMoney } from './scoring';
 
 export type RegEstimate =
@@ -118,12 +141,10 @@ export function registrationEstimate({
     // UAT M-10-01: a discipline ADDED alongside the chargeable edit owes its
     // own extra-discipline entry fee ON TOP of the change fee — never the
     // change fee alone, which would undercharge exactly the C4-adjacent gap
-    // this fixes. `addedDisciplineChangeTotal` is `newRegistrationEntryTotal`
-    // (over the added disciplines) + `registrationChangeFee`, so it already
-    // equals `changeFeeAmount` when nothing was added (entryTotal() is 0).
-    const amountDollars = newDisciplineCount > 0
-      ? addedDisciplineChangeTotal(event, { competingClubId, priorDisciplineCount, newDisciplineCount, late })
-      : changeFeeAmount;
+    // this fixes. Entry portion + change fee, summed directly (this is a
+    // TOTAL estimate, not a cart-line amount — see the header comment on why
+    // this doesn't call `addedDisciplineChangeTotal`).
+    const amountDollars = changeFeeAmount + entryTotal();
     return { kind: 'change-fee', amountDollars };
   }
 

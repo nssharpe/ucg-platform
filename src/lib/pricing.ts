@@ -287,6 +287,38 @@ export function addedDisciplineChangeTotal(
   );
 }
 
+/** Minimal prior-registration slice `regsForChangeLine` needs. */
+export type PriorRegPaidState = { paid?: boolean; updatedPending?: boolean };
+
+/**
+ * Of `newRegs`, return the subset that belongs on a PURE change-fee cart
+ * line's `refRegIds` (UAT M-10 x Z-04, 2026-08-22): regs with a prior row
+ * that was ALREADY paid or updated_pending. Everything else in `newRegs` —
+ * no prior row at all (a brand-new discipline), OR a prior row that was
+ * NEVER paid (e.g. a still-unpaid discipline added in an earlier,
+ * not-yet-checked-out edit this same session) — belongs on a SEPARATE entry
+ * line instead, never this one.
+ *
+ * This distinction is the whole point of the rework: `create-checkout-session`
+ * derives entry-vs-change PER REG from that reg's own `paid`/`updated_pending`
+ * DB state, never from which cart line the client put it on (the C4 fix).
+ * Including a never-paid reg here would silently reconstruct a MIXED line
+ * server-side the moment this line is priced — the server's mixed branch
+ * would fire, disagree with the client's pure-change amount (triggering the
+ * "prices updated" banner), and — worse — double-charge that reg if it
+ * already sits on its OWN separate pending entry line elsewhere (the two
+ * lines would both reference the same id).
+ */
+export function regsForChangeLine<T extends { id: string }>(
+  newRegs: T[],
+  priorById: Map<string, PriorRegPaidState>,
+): T[] {
+  return newRegs.filter((r) => {
+    const prior = priorById.get(r.id);
+    return !!prior && (prior.paid === true || prior.updatedPending === true);
+  });
+}
+
 // --- Per-unit add-on pricing + purchase deadlines (event-mgmt v2 Phase 2) --
 // Each add-on type (banquet/tshirt/banner/leo) can carry an optional
 // `lastPurchaseAt` independent of `regCloses` (may be AFTER regCloses). Pure
