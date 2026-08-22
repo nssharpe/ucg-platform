@@ -112,6 +112,14 @@ Secondary:
 - `event-icons/{mag1,mag2,wag1,wag2,tnt}.svg` — discipline icons, single-fill navy
   `#1E2B38` (recolor via CSS mask/currentColor if needed).
 - Navy variants fill `#1e2b38`, white variants `#ffffff`.
+- `mark.png` (UAT M-05-01, `2026-08-22`) — a one-time 60×60px raster export of
+  `mark.svg`, generated via a headless-Chromium screenshot (jsPDF's `addImage` has no
+  SVG support without the separate, uninstalled `svg2pdf.js` plugin). Kept under
+  Vite's 4096-byte `assetsInlineLimit` so it auto-inlines as base64 rather than
+  emitting a separate asset file. Used only by `src/lib/receipt.ts`'s branded PDF
+  header — this is vector-mark ARTWORK (a raster export of an already-public,
+  already-committed SVG), not a licensed webfont file; the licensed-font
+  never-commit rule above is unrelated and unaffected.
 
 ## Design features to apply (Design Guide §2.2)
 
