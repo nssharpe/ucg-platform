@@ -146,7 +146,7 @@ export function ClubPurchaseHistoryPage() {
           </div>
           <InvoiceLineTable invoice={detail} />
           <div style={{ display: 'flex', gap: 10 }}>
-            <button className="btn primary" onClick={() => downloadReceipt(detail, displayName)}>Download receipt (PDF)</button>
+            <button className="btn primary" onClick={() => downloadReceipt(detail, displayName, { paidBy: payerOf(detail) })}>Download receipt (PDF)</button>
             <button className="btn ghost" onClick={() => setDetail(null)}>Close</button>
           </div>
         </Modal>

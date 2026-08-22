@@ -1704,3 +1704,116 @@ confirm the table's own `.events-table-wrap`/container-query reflow still has ro
 sanctioning-team viewer), `/me/registrations` (the new "Register for another event" section at
 375px, and the `?event=` deep-link landing state), `/club/:clubId/registrations` (the `?event=`
 preselect via a direct URL, e.g. from clicking "Register your club" on the Events list).
+
+## M-05-01 (S3): branded receipt/invoice PDFs
+
+**What changed.**
+- `src/assets/brand/mark.png` (new, 3597 bytes): the standalone navy figure mark
+  (`mark.svg`) rasterized once via Playwright (headless Chromium screenshot of the
+  inline SVG at 60x60px, transparent background) — jsPDF's `addImage` needs raster
+  pixel data (base64/Uint8Array/HTMLImageElement); it has no SVG support without the
+  separate `svg2pdf.js` plugin, which isn't installed. Sized to land under Vite's
+  default `assetsInlineLimit` (4096 bytes) so a plain `import markPng from
+  '../assets/brand/mark.png'` (no `?inline`/`?url` query — those aren't declared for
+  bare asset paths in `vite/client.d.ts` and would have needed either a custom Vite
+  plugin or an async fetch-and-convert step at PDF-generation time) auto-inlines it as
+  a base64 data URI at build time — confirmed in the actual `npm run build` output
+  (`data:image/png;base64` appears exactly once, in the `InvoiceLineTable` shared
+  chunk that all three receipt-downloading pages already pull in) rather than emitting
+  a separate `mark-*.png` asset file. This is the vector mark ARTWORK (already public,
+  already committed as `.svg` in this same directory) — a different asset class from
+  the licensed Greed Condensed/Suisse Intl webfont FILES, which still never ship in
+  the repo (EULA) and stay untouched; jsPDF keeps using its built-in Helvetica only.
+- `src/lib/receipt.ts` — full rewrite of the three `download*` functions' visual
+  layout, built on shared internal helpers (`newDoc`, `drawHeader`, `drawBilledTo`,
+  `drawLines`, `drawFooter`) so the three documents can't visually drift apart:
+  - Header: logo top-left, "UNITED CLUB GYMNASTICS" + `unitedgymnastics.org` next to
+    it, document title ALL CAPS bold navy top-right (`RECEIPT` when `inv.paidAt` is
+    set / `INVOICE` when not, for `downloadReceipt`; always `INVOICE` for the
+    pre-payment `downloadCartInvoice` estimate; always `REFUND RECEIPT` for
+    `downloadRefundReceipt`) with invoice number/date/paid-status meta lines under it,
+    then a navy header rule.
+  - "Billed to" (+ "Paid by" for a club invoice, new optional 4th param
+    `downloadReceipt(inv, forName, opts?: { paidBy?: string })` — `forName` stays the
+    "billed to" name unchanged; `opts.paidBy` is additive so every existing call site
+    except one compiles unchanged). "Prepared for" / "Refunded to" wording preserved
+    for the other two documents (clearer than a generic "Billed to" for those cases).
+  - A clean line-item table: `DESCRIPTION`/`AMOUNT` column headers under a navy rule,
+    right-aligned amounts, muted-gray secondary rows (Subtotal/discount/fee) vs.
+    near-black item rows, a heavier navy rule + bold navy Total row.
+  - Footer: `Service fees are non-refundable. Questions: unitedgymnastics.org` (the
+    exact site link `_shared/email-layout.ts`'s footer already renders — there is no
+    separate contact EMAIL address anywhere in the codebase's emails/functions, only
+    that site link, confirmed by grep) plus each document's existing disclaimer line
+    (cart-estimate caveat / "Refunded to the original payment method.").
+  - Colors: `NAVY` `#1E2B38` (headings/rules), a near-black `(26,26,26)` for item-row
+    text, and a muted `(90,90,90)` gray for secondary/meta text — picked specifically
+    to clear WCAG AA 4.5:1 on white (worked the sRGB contrast math: a gray value needs
+    to be ≤~119 to hit 4.5:1 on white; the OLD code used untested grays as light as
+    140, which is only ~3:1). No pale accent (bluegreen/purple/gold) used as text,
+    per the rebrand spec's hard rule.
+- New pure helper `receiptLines(inv): PdfLine[]` (`src/lib/receipt.ts`, no jsPDF
+  import in its body) — extracted the item/discount/subtotal/total row-building logic
+  that used to be inline in `downloadReceipt`'s drawing loop, so it's independently
+  testable. `PdfLine = { label, amount, kind: 'item'|'subtotal'|'discount'|'fee'|'total' }`.
+  Tests: `tests/receipt.test.ts`, 4 new cases (no-discount, with-discount, a refunded
+  item shown at $0 rather than dropped, and the "coupon applied but discounted
+  nothing" edge case) — this is the "pure layout helper" test called for in place of
+  exercising jsPDF directly (confirmed via grep that no existing test constructs a
+  real `jsPDF` instance; `tests/receipt.test.ts`/`tests/refund-receipt.test.ts` only
+  ever exercised the jsPDF-free `invoice-math.ts` re-exports and `refundReceiptNumber`).
+- `src/pages/ClubPurchaseHistory.tsx`'s `downloadReceipt` call site now passes
+  `{ paidBy: payerOf(detail) }` (the page's existing `payerLabel`-backed resolver) —
+  the only one of the three call sites with an actual "payer might not be the billed
+  club" case; `Cart.tsx`/`PurchaseHistory.tsx` are personal-only (payer === billed-to
+  always), left unchanged.
+
+**A real bug found and fixed via an actual PDF render (not caught by any test).**
+The pre-existing code (both the discount line in `downloadReceipt` and every negative
+amount in `downloadRefundReceipt`) formatted a negative amount with a real Unicode
+minus glyph (U+2212, "−"). jsPDF's standard Helvetica/WinAnsi font encoding does not
+map that glyph correctly — rendered output showed a stray `"` character with the
+digits spaced apart ("$ 1 0" instead of "$10"), i.e. this was ALREADY BROKEN before
+this ticket touched the file, just never noticed because nothing had ever visually
+rendered a discount/refund PDF and looked at it. There is no PDF-rendering test
+harness in this repo, so this was caught by writing a throwaway render script
+(`vi.mock` the logo import to a real base64 PNG, monkey-patch jsPDF's `save` —
+jsPDF assigns `save` as an OWN instance property from `jsPDF.API` at construction
+time, not on `.prototype`, which tripped up the first patch attempt — to write the
+output buffer to a real `.pdf` file instead of triggering a browser download) and
+reading the actual output. Fixed by switching to a plain ASCII hyphen-minus ("-"),
+which IS in WinAnsi and renders correctly — verified by re-rendering. The script and
+its output files were never committed (throwaway verification only, per the "don't
+create files unless necessary" rule); the four sample documents rendered
+(a paid receipt with a discount + "Paid by", an unpaid invoice, a cart estimate, and
+a refund receipt) all confirmed correct branding: logo placement, header rule,
+column-aligned amounts, and the fixed minus sign.
+
+**Deviations / judgment calls.**
+- "Questions: <the contact address used in the email footer>" resolved to the SITE
+  LINK (`unitedgymnastics.org`), not an email address — `_shared/email-layout.ts`'s
+  footer has never carried a contact email, only the site link + tagline (confirmed
+  by reading the file directly, not from memory). `RESEND_FROM` (a personal
+  `@naigc.org` address per older docs) was deliberately NOT used here — that's a
+  send-from address, not a published "contact us" line, and putting a personal email
+  on a public-facing PDF wasn't asked for.
+- `downloadCartInvoice`'s signature is UNCHANGED (no `paidBy`/opts param) — every one
+  of its call sites (`Cart.tsx`) is the personal-cart pre-payment estimate; there is
+  no club-cart caller of it today (`ClubCart.tsx` doesn't import it), so there's
+  nothing for a "Paid by" to resolve to yet. Left as-is rather than adding an unused
+  optional param.
+- `refundReceiptNumber`'s signature and the three `invoiceSubtotal`/`invoiceDiscount`/
+  `invoiceTotal` re-exports are byte-for-byte unchanged, per the brief — only the
+  jsPDF drawing code changed.
+
+**Verification.** `npm run build` — succeeded; main `index-*.js` chunk stayed at
+90.19 kB (gzip 26.28 kB) and `jspdf.es.min-*.js` stayed a separate 399.58 kB (gzip
+129.72 kB) chunk — the new logo asset added zero bytes to either (it landed in the
+shared `InvoiceLineTable` chunk instead, confirmed by grepping the built output for
+`data:image/png;base64`, found exactly once). `npx eslint src/lib/receipt.ts
+src/pages/ClubPurchaseHistory.tsx tests/receipt.test.ts` — zero errors/warnings.
+`npx vitest run` — 1268/1268 passed across 81 files (+4 from this ticket's
+`receiptLines` describe block in `tests/receipt.test.ts`, on top of the 1264/81
+baseline the M-01-03 section above recorded). Manually re-rendered all three document
+types (4 sample PDFs incl. a paid/unpaid receipt variant) via a throwaway,
+never-committed script and read them back — see the minus-sign bug above.
