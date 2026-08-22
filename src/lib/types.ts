@@ -1036,6 +1036,17 @@ export interface RefundRequest {
   reviewedAt?: string | null;
   refundAmountCents?: number | null;
   stripeRefundId?: string | null;
+  /** Ties together every row belonging to ONE reviewable decision (UAT Z-04,
+   *  T4b `20260821150000`) — every per-payment row for a registration refund
+   *  request shares one `requestGroupId`; an add-on request is a one-row
+   *  group where this equals its own `id`. Falls back to `id` for the rare
+   *  row somehow missing it client-side (defensive only — the column is
+   *  NOT NULL in the DB). `RefundReview.tsx` groups on this, not on `id`. */
+  requestGroupId: string;
+  /** Required free-text reason the reviewer gave for REJECTING this request
+   *  (rule 6) — distinct from `reason`/`reasonDetail`, which are the
+   *  REQUESTER's stated reason. Null for pending/approved rows. */
+  rejectionReason?: string | null;
 }
 
 /** A club's membership for a season. Its presence (status 'active') is the gate

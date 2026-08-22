@@ -25,6 +25,8 @@ import {
   campSurveyAnswerLabel,
   refundAmountCents,
   capRefundCents,
+  allocateRegistrationRefund,
+  decideAfterConflict,
   shrinkOrDropCartLines,
   diffCartLinePrices,
 } from '../src/lib/pricing';
@@ -697,6 +699,91 @@ describe('capRefundCents', () => {
     // process-refund uses THAT ($85) as the base; the cap then only guards
     // against cross-request over-refunds on the same payment:
     expect(capRefundCents(8500, 11500)).toBe(8500); // correct with the paid_cents base
+  });
+});
+
+describe('allocateRegistrationRefund (UAT Z-04 rules 1/2/4 — per-payment refund allocation)', () => {
+  it('sums a single payment\'s lines when there is only one payment', () => {
+    const lines = [
+      { paymentId: 'p1', refLineType: 'entry', paidCents: 5000 },
+      { paymentId: 'p1', refLineType: 'entry', paidCents: 3000 },
+    ];
+    expect(allocateRegistrationRefund(lines, { afterDeadline: false })).toEqual([{ paymentId: 'p1', cents: 8000 }]);
+  });
+
+  it('splits into TWO payment allocations when a reg was paid across two invoices (rule 1)', () => {
+    // The exact scenario the grouping fix exists for: an original entry
+    // invoice (p1, $65) plus a later "add discipline" invoice (p2, $45).
+    const lines = [
+      { paymentId: 'p1', refLineType: 'entry', paidCents: 6500 },
+      { paymentId: 'p2', refLineType: 'entry', paidCents: 4500 },
+    ];
+    const out = allocateRegistrationRefund(lines, { afterDeadline: false });
+    expect(out).toHaveLength(2);
+    expect(out).toEqual(expect.arrayContaining([
+      { paymentId: 'p1', cents: 6500 },
+      { paymentId: 'p2', cents: 4500 },
+    ]));
+  });
+
+  it('excludes a change-fee line entirely, even when it shares a payment with a refundable line (rule 2)', () => {
+    const lines = [
+      { paymentId: 'p1', refLineType: 'entry', paidCents: 6500 },
+      { paymentId: 'p1', refLineType: 'change', paidCents: 1500 },
+    ];
+    expect(allocateRegistrationRefund(lines, { afterDeadline: false })).toEqual([{ paymentId: 'p1', cents: 6500 }]);
+  });
+
+  it('drops a payment entirely when its only referencing line is a change fee', () => {
+    const lines = [
+      { paymentId: 'p1', refLineType: 'entry', paidCents: 6500 },
+      { paymentId: 'p2', refLineType: 'change', paidCents: 1500 },
+    ];
+    expect(allocateRegistrationRefund(lines, { afterDeadline: false })).toEqual([{ paymentId: 'p1', cents: 6500 }]);
+  });
+
+  it('applies the 75% scale PER PAYMENT, each independently rounded (rule 4)', () => {
+    // p1: 3333 * 0.75 = 2499.75 -> 2500. p2: 3334 * 0.75 = 2500.5 -> 2501 (banker's-unaware
+    // Math.round rounds .5 up). Rounding one payment must not affect the other's result.
+    const lines = [
+      { paymentId: 'p1', refLineType: 'entry', paidCents: 3333 },
+      { paymentId: 'p2', refLineType: 'entry', paidCents: 3334 },
+    ];
+    const out = allocateRegistrationRefund(lines, { afterDeadline: true });
+    expect(out).toEqual(expect.arrayContaining([
+      { paymentId: 'p1', cents: 2500 },
+      { paymentId: 'p2', cents: 2501 },
+    ]));
+  });
+
+  it('a single payment\'s refund is unchanged from the pre-grouping single-payment math', () => {
+    // Documents that grouping introduces no regression for the common (one
+    // payment, one registration) case that was already correct.
+    const lines = [{ paymentId: 'p1', refLineType: 'entry', paidCents: 8500 }];
+    expect(allocateRegistrationRefund(lines, { afterDeadline: false })).toEqual([{ paymentId: 'p1', cents: 8500 }]);
+    expect(allocateRegistrationRefund(lines, { afterDeadline: true })).toEqual([{ paymentId: 'p1', cents: 6375 }]);
+  });
+
+  it('returns an empty array for no lines at all', () => {
+    expect(allocateRegistrationRefund([], { afterDeadline: false })).toEqual([]);
+  });
+});
+
+describe('decideAfterConflict (UAT Z-04 rule 7 — reviewer 409 handling)', () => {
+  it('is silent when two reviewers both approved (same outcome)', () => {
+    expect(decideAfterConflict('approved', 'approve')).toBe('silent');
+  });
+  it('is silent when two reviewers both rejected (same outcome)', () => {
+    expect(decideAfterConflict('rejected', 'reject')).toBe('silent');
+  });
+  it('toasts when a genuine conflict occurred — approved after this reviewer tried to reject', () => {
+    expect(decideAfterConflict('approved', 'reject')).toBe('toast');
+  });
+  it('toasts when a genuine conflict occurred — rejected after this reviewer tried to approve', () => {
+    expect(decideAfterConflict('rejected', 'approve')).toBe('toast');
+  });
+  it('toasts (does not assume silent) if the request is somehow still pending', () => {
+    expect(decideAfterConflict('pending', 'approve')).toBe('toast');
   });
 });
 

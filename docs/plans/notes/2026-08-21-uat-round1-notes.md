@@ -206,3 +206,209 @@ already recorded above).
 No Deno test harness exists in this repo, so `_shared/fulfill.ts`'s RPC-call change has no
 automated test — the SQL-level guarantee is the atomic single-statement claim itself
 (reviewed line-by-line in the migration's own comments), not a test file.
+
+## Z-04 (S1) + Z-04-02/03 + Nate's Z-04 note + D-5: refund requests per registration
+
+**What changed.**
+- New migration `supabase/migrations/20260821150000_refund_request_groups.sql`: adds
+  `refund_requests.request_group_id text not null` (backfilled to each row's own `id`, then
+  indexed) and `refund_requests.rejection_reason text`. No RLS changes — the table stays
+  SELECT-only for clients; both columns are written only by the two edge functions.
+- New pure function `allocateRegistrationRefund` (`src/lib/pricing.ts`, mirrored byte-for-byte
+  in `supabase/functions/_shared/refund-allocation.ts`, a new file): given a registration's
+  refundable lines (`{paymentId, refLineType, paidCents}[]`), groups by `paymentId`, drops any
+  `'change'`-tagged line outright (rule 2), sums the rest per payment, and scales each payment's
+  sum to 75% (rounded PER PAYMENT, not on the combined total) when `afterDeadline` (rule 4).
+  Returns `{paymentId, cents}[]` — one entry per payment that has anything refundable.
+- New pure function `decideAfterConflict(currentStatus, attempted) → 'silent'|'toast'`
+  (`src/lib/pricing.ts`) for rule 7: a 409 "already reviewed" is silent when the request's
+  current status already matches what the reviewer just attempted (two reviewers reached the
+  same outcome), a toast otherwise (a genuine conflict).
+- `supabase/functions/request-refund/index.ts` — full rewrite for `kind:'registration'`: enumerates
+  every `invoice_items` row with `kind='meet-entry'` and `ref_line_type` distinct from `'change'`
+  whose `ref_reg_ids` contains the reg id (across every invoice, not just the first resolved),
+  resolves each to its invoice's succeeded (`status='paid'`) payment, and inserts one row per
+  (payment, invoice_item) sharing one fresh `request_group_id` (`rg-<uuid>`). Zero refundable
+  lines (including a host-club $0 entry with no invoice_item at all, or a registration with a
+  payment still pending) → 400 "nothing to request a refund for" — see the deviation note below.
+  `kind:'addon'` keeps its one-row shape (`request_group_id = id`) but now REFUSES the request
+  outright (400) when `addonPurchaseOpen(addonLastPurchaseAt(event, lineType), event.reg_closes,
+  now)` says the add-on's own order deadline has passed (rule 5 / UAT D-5) — reusing the exact
+  `_shared/stripe.ts` helpers the purchase gate uses, so the two gates can't drift apart. One
+  request/confirmation email per call (not per line), listing every refundable line + an
+  estimated total + "Service fees are non-refundable." (rule 3).
+- `supabase/functions/process-refund/index.ts` — full rewrite to operate on a whole
+  `request_group_id` group instead of one row: **reject** is a single UPDATE of every pending row
+  in the group to `rejected` with a REQUIRED `rejection_reason` (400 if blank) stored on every
+  row and included in the (one) rejection email (rule 6). **Approve**: loads every pending row in
+  the group, resolves each to its invoice_item + payment, builds the allocation lines (`paidCents`
+  = the payment's `lines_snapshot` entry when present, else `invoice_items.amount` — unchanged
+  fallback), computes `onTime` ONCE for the whole group from the event's `last_date_to_edit`
+  (add-ons are always `onTime` here since a past-deadline one never reaches approval), calls
+  `allocateRegistrationRefund`, then for each returned `{paymentId, cents}` — sequentially —
+  calls `claim_refund_approval` **exactly once**, naming one pending row as that payment's
+  "carrier" (any other pending row on the same payment, e.g. a second invoice_item in one
+  invoice, is claimed alongside it with `refund_amount_cents:0` so the money is attributed to the
+  carrier row only, keeping the cap-sum invariant intact). Only THEN calls Stripe for that
+  payment; on a Stripe failure it reverts that payment's claim (carrier + zero siblings) back to
+  `pending`, logs `error_logs`, and **continues to the next payment** — one payment's failure
+  never blocks the others. The registration remove/blank (and `invoice_items.refunded=true`)
+  only fires once EVERY payment in that approve call succeeded; a partial failure leaves the
+  registration untouched and its still-pending rows retryable by a later approve on the same
+  group (idempotent by construction — a retry's `pending` filter only ever contains
+  not-yet-successful rows). Returns `{ok:true, refunded:[{paymentId,cents,stripeRefundId}],
+  failed:[{paymentId,error}]}` instead of a single `refundAmountCents`.
+- `src/lib/supabase.ts`: `requestRefund` now returns `{ok, groupId, error}` (no more
+  `requestId`/single-item assumption); `processRefund(groupId, action, rejectionReason?)` now
+  takes a group id + optional reason and returns `{ok, refunded, failed, error, status}` — added
+  `status` (from the edge-function error's `context.status`) specifically so the client can tell
+  a genuine 409 conflict apart from any other failure for rule 7.
+- `src/lib/types.ts`: `RefundRequest` gained `requestGroupId: string` (required — defensively
+  falls back to `id` in `rowToRefundRequest` if a stale select ever omits the column) and
+  `rejectionReason?: string | null`.
+- `src/components/RefundRequestDialog.tsx` — rewritten: prop `eventName: string` replaced with
+  `event: Event` (all three call sites — `Club.tsx` ×2, `MyRegistrations.tsx` ×1 — already had
+  the full `Event` object in scope, confirmed before changing). For each item, computes an
+  ESTIMATE client-side from `db.invoices` (Tier-2 boot-scoped to self + managed-club rows, same
+  data the old `RefundReview.tsx` already used for its own estimate) — registration items sum
+  every non-`'change'` `meet-entry` line referencing the reg (mirrors the server enumeration);
+  add-on items look up the single matching line and gate it through `addonConfig`/
+  `addonPurchaseOpen` (`src/lib/pricing.ts`, the exact client-side mirror the purchase flow
+  already uses). An add-on past its deadline is EXCLUDED from submission and shown struck-through
+  with a "No refunds after the order deadline (date)" note (rule 5); the banner always states
+  "Service fees are non-refundable." The submit loop is unchanged in shape (one `requestRefund`
+  call per passed-in item) — each call is already a complete, correctly-grouped registration
+  request server-side, so looping over MULTIPLE REGISTRATIONS (e.g. Club.tsx's multi-discipline
+  batch refund) is still correct; nothing loops per invoice line client-side anymore (there never
+  was such a loop for invoice lines specifically — the pre-existing loop was already one call per
+  registration/add-on item, the bug was server-side only resolving the first payment).
+- `src/pages/admin/league/RefundReview.tsx` — rewritten: groups `db.refundRequests` by
+  `requestGroupId` (`groupRequests`, a pure local helper), renders ONE card per group (lines,
+  payment count when >1, combined estimated total), and separates the reviewer confirmation into
+  `ApproveDialog` (unchanged content, now group-aware) and a new `RejectDialog` with a REQUIRED
+  textarea wired to `processRefund(groupId, 'reject', reason)`. On a 409 from either action, calls
+  `syncFromSupabase()` then `decideAfterConflict` on the refreshed group status to decide
+  silent-refetch vs. toast (rule 7). Approve's success toast now sums `res.refunded[].cents` and
+  flags any `res.failed.length` for retry.
+- `supabase/README.md`: new migration-table row; `docs/whats-next.md` §2 item 0 (Z-04) and §3
+  item 4 (D-5) updated to "drafted, not yet applied/reviewed"; `docs/plans/2026-08-21-uat-round1-triage.md`'s
+  four Z-04 rows updated from ❓/☐ to 🔧 drafted (Z-04-02 resolved as "no separate defect" per
+  Q3's already-confirmed finding — Stripe's own fee reversal, not UCG's service fee).
+
+**Deviations from the brief.**
+- **Zero-refundable-lines now 400s instead of falling back to a "manual review" row.** The old
+  code let a host-club $0 entry (or any registration whose invoice_item never resolved) through
+  with `payment_id: null`, flagged "No traceable payment — manual" in the review queue so an
+  admin could still approve it as a no-op record. The brief's literal rule ("If the reg has zero
+  refundable paid lines → 400 with a clear message") removes that path: a $0 host-club
+  registration cannot get a refund_requests row created for it AT ALL anymore, so a member/manager
+  can no longer self-serve "please remove this $0 registration" through the refund flow — there is
+  no money to refund, but the FLOW also can no longer record/action the removal. Implemented
+  literally per the spec since it's an explicit numbered rule, not a suspected oversight, but
+  flagging it clearly: **this is a real behavior change** worth Nate/Julia's attention before
+  go-live if $0 host-club removals-via-refund-request are a workflow anyone actually uses today.
+- **`claim_refund_approval` sibling-row handling.** The brief says "call it once per distinct
+  payment" but doesn't explicitly cover a payment with MORE than one invoice_item in the group
+  (e.g. an invoice with a separate entry line and a separate extra-discipline-fee line for the
+  SAME registration, both in one payment). Chose to designate one row as the payment's "carrier"
+  (claimed via the RPC, gets the full `refund_amount_cents`) and flip any sibling row to
+  `approved`/`0` alongside it via a plain UPDATE, rather than either (a) re-entering the RPC per
+  row (which would double-cap/double-claim against the same payment) or (b) splitting the
+  refunded amount proportionally across sibling rows (adds rounding complexity for a case that
+  may not occur in real data — a registration's entry + extra-discipline fee are priced as ONE
+  combined line per `create-checkout-session`, not two separate invoice_items, in every path
+  read during this task). Documented in both the migration comment and the function's inline
+  comments so it doesn't read as an oversight later.
+- **Partial-failure state semantics.** Not explicit in the brief. Chose: the registration
+  remove/blank and the FULL `invoice_items.refunded=true` sweep happen only when every payment in
+  THAT approve call succeeds; a partial failure marks only the succeeded payments' items refunded
+  and leaves the registration + failed payments' rows untouched/pending for a retry. This matches
+  the brief's "so a retry processes only what's still pending" line and keeps the registration
+  never in a half-removed state.
+- **`RefundReview.tsx`'s `Approve` button still opens a confirmation dialog** (showing the
+  estimated amount + payment count) rather than firing immediately — the brief didn't ask to
+  remove this, and an approve is exactly as irreversible as before grouping (registration
+  deletion/blanking), so removing the confirmation would have been a regression, not a
+  simplification.
+
+**Noticed but NOT touched.**
+- **A "mixed" M-10-01 line (added discipline + change fee combined, tagged `ref_line_type:
+  'change'`) is now ENTIRELY excluded from refund eligibility**, including the added-discipline's
+  entry-fee PORTION that's bundled into it — rule 2 says change-fee lines are never refundable,
+  full stop, and the mixed line's `ref_line_type` is `'change'` (confirmed by grepping every
+  `refLineType: 'change'` push site — M-10-01's notes above confirm the mixed case deliberately
+  kept the plain `'change'` tag rather than a distinct label). This is a real, if narrow,
+  consequence: an athlete who added a discipline to an already-paid registration (paying entry +
+  change fee combined) cannot get ANY of that money back through the refund flow, not even the
+  entry-fee portion. Whether that's the intended reading of rule 2 for the mixed case
+  specifically is a judgment call for the requirements owner — flagging it rather than silently
+  special-casing mixed lines to be "half refundable," which nothing in the confirmed rules asked
+  for.
+- **`PurchaseHistory.tsx`/`person-export.ts` now show one line per (payment, invoice_item) row**
+  for a multi-payment registration refund instead of one summary row — each row is individually
+  correct (it's a real distinct refund against a real distinct payment), but a member with a
+  2-payment registration refund will see 2 entries where they might expect 1. Not changed because
+  neither file was named in the brief's "grep and check" list produces anything beyond simple
+  per-row rendering that still works correctly; grouping the DISPLAY there is a nice-to-have, not
+  a correctness fix.
+- **`reconciliation.ts`/`Finance.tsx` are UNCHANGED and correctly compatible** — both already key
+  off individual `refund_requests` rows' own `payment_id`/`refund_amount_cents` (never assumed
+  "one row per registration"), so grouping is transparent to them. Worth noting explicitly since
+  they're money-adjacent: this is actually a QUALITY IMPROVEMENT for `reconciliation.ts` — before
+  this change, a registration's SECOND payment never got a `refund_requests` row at all, so any
+  Stripe-side refund against it would have shown as unexplained drift with no row to reconcile
+  against; now every payment that funded a registration gets its own tracked row.
+- **The `onTime` (75%) determination on a RETRIED approve call is recomputed fresh from
+  `new Date()` at retry time**, same as the pre-grouping single-request code always did. If a
+  Stripe failure leaves a payment `pending` and the retry happens after the event's
+  `last_date_to_edit` has since passed (crossing the boundary between the original attempt and
+  the retry), the retried payment gets scaled at 75% while payments that succeeded in the
+  original call kept their on-time 100%. This is a pre-existing behavior (not introduced by
+  grouping — the single-request code recomputed `onTime` fresh on every invocation too) and an
+  edge case narrow enough (requires a Stripe outage spanning the exact edit-deadline instant)
+  that it wasn't worth a design change here; flagging so it isn't rediscovered as new.
+
+**Pre-push SQL for the controller (staging, then prod).** The backfill is a straight
+`update ... where request_group_id is null`, so this is mostly a confidence check rather than a
+required gate:
+```sql
+-- Should be zero both before and after — no row should ever be null.
+select count(*) from refund_requests where request_group_id is null;
+-- Every pre-existing row's group should equal its own id (1 row per group, matching the
+-- pre-fix one-call-per-item flow).
+select count(*) from refund_requests where request_group_id <> id;
+```
+After push, confirm the new columns exist and are queryable:
+```sql
+select id, request_group_id, rejection_reason from refund_requests limit 5;
+```
+Both edge functions (`request-refund`, `process-refund`) must be redeployed together — a stale
+`process-refund` still expecting `{requestId, action}` will 400 the new `{groupId, action,
+rejectionReason}` payload the redeployed client sends (it does still accept a bare `requestId`
+and resolve its group, so a deploy-order mismatch degrades to "processes one row's group,"
+not a hard failure — but redeploy both in the same window regardless).
+
+**Verification.** `npm run build` — succeeded, zero TypeScript errors. `npx eslint
+src/lib/pricing.ts src/lib/types.ts src/lib/supabase.ts src/components/RefundRequestDialog.tsx
+src/pages/admin/league/RefundReview.tsx src/pages/Club.tsx src/pages/MyRegistrations.tsx
+tests/pricing.test.ts tests/finance.test.ts supabase/functions/request-refund/index.ts
+supabase/functions/process-refund/index.ts supabase/functions/_shared/refund-allocation.ts` —
+zero errors/warnings. `npx vitest run` — 1159/1159 passed across 73 files (+12 from this
+ticket: 7 `allocateRegistrationRefund` cases — single payment, two-payment split, change-line
+exclusion at the shared-payment and payment-dropped levels, per-payment-independent 75%
+rounding, single-payment-unchanged regression, empty input — and 5 `decideAfterConflict`
+cases, both in `tests/pricing.test.ts`; on top of the 1147/73 baseline this notes file already
+recorded above).
+
+Both edge functions were re-read end-to-end against the four required invariants: (1)
+**idempotency on retry** — a retry's `pending` filter only ever contains rows not yet
+successfully processed, `claim_refund_approval`'s own `status='pending'` predicate is the
+second line of defense, and already-approved/rejected rows from a prior call are structurally
+excluded from every write path in a later call; (2) **no path refunds a change line** — enforced
+twice (request-refund never inserts a row for a `ref_line_type:'change'` item; `allocateRegistrationRefund`
+excludes one defensively even if it somehow got in); (3) **no path exceeds a payment's
+subtotal** — every payment is claimed through `claim_refund_approval` exactly once per approve
+call, sibling rows on the same payment always carry `0`, so the summed `refund_amount_cents`
+for a payment can never exceed what the RPC's own lock-and-cap returned; (4) **75% applied
+exactly once** — computed once per approve call as `onTime`, passed once into
+`allocateRegistrationRefund`, which itself scales each payment's sum exactly once.

@@ -130,6 +130,7 @@ describe('buildFinanceTxns', () => {
   it('produces a negative refund txn dated reviewedAt for an approved refund', () => {
     const rr: RefundRequest = {
       id: 'rr1',
+      requestGroupId: 'rr1',
       createdAt: '2026-06-01T00:00:00.000Z',
       requesterPersonId: 'person1',
       eventId: 'ev1',
@@ -154,7 +155,7 @@ describe('buildFinanceTxns', () => {
     });
     const payment = mkPayment({ id: 'payA', invoiceId: 'inv1' });
     const rr: RefundRequest = {
-      id: 'rr2', createdAt: '2026-06-01T00:00:00.000Z', requesterPersonId: 'person1', eventId: 'ev1',
+      id: 'rr2', requestGroupId: 'rr2', createdAt: '2026-06-01T00:00:00.000Z', requesterPersonId: 'person1', eventId: 'ev1',
       kind: 'addon', invoiceItemId: 'ii-shirt', paymentId: 'payA', reason: 'other', status: 'approved',
       reviewedAt: '2026-06-16T00:00:00.000Z', refundAmountCents: 2000,
     };
@@ -165,12 +166,12 @@ describe('buildFinanceTxns', () => {
   });
 
   it('excludes rejected and pending refund requests', () => {
-    const base: Omit<RefundRequest, 'id' | 'status'> = {
+    const base: Omit<RefundRequest, 'id' | 'status' | 'requestGroupId'> = {
       createdAt: '2026-06-01T00:00:00.000Z', requesterPersonId: 'person1', eventId: 'ev1',
       kind: 'registration', reason: 'other', refundAmountCents: 1000,
     };
-    const rejected: RefundRequest = { ...base, id: 'rr3', status: 'rejected' };
-    const pendingRr: RefundRequest = { ...base, id: 'rr4', status: 'pending' };
+    const rejected: RefundRequest = { ...base, id: 'rr3', requestGroupId: 'rr3', status: 'rejected' };
+    const pendingRr: RefundRequest = { ...base, id: 'rr4', requestGroupId: 'rr4', status: 'pending' };
     const txns = buildFinanceTxns({ payments: [], invoices: [], refundRequests: [rejected, pendingRr], events: [] });
     expect(txns).toHaveLength(0);
   });
@@ -249,7 +250,7 @@ describe('buildFinanceSummary', () => {
       serviceFee: 130, stripeFee: 90,
     });
     const rr: RefundRequest = {
-      id: 'rrX', createdAt: '2026-06-05T00:00:00.000Z', requesterPersonId: 'person1', eventId: 'ev1',
+      id: 'rrX', requestGroupId: 'rrX', createdAt: '2026-06-05T00:00:00.000Z', requesterPersonId: 'person1', eventId: 'ev1',
       kind: 'registration', reason: 'injury', status: 'approved', reviewedAt: '2026-06-15T00:00:00.000Z', refundAmountCents: 500,
     };
     const txns = buildFinanceTxns({ payments: [payment], invoices: [], refundRequests: [rr], events: [] });

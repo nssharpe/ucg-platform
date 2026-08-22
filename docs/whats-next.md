@@ -59,6 +59,14 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
    redesign both of them decided on. Batches, root causes, and the 5 open questions live in
    [plans/2026-08-21-uat-round1-triage.md](plans/2026-08-21-uat-round1-triage.md) — work that
    doc, not this list, until it's drained. The invoice-sequence fix (§3.1) moves into its Batch 1.
+   **Z-04 (refund requests per invoice line instead of per registration) DRAFTED 2026-08-21**,
+   folded together with the D-5 add-on-refund-policy fix (§3 item 4) and rules 6/7 (required
+   rejection reason; silent-refetch on a same-outcome 409) — migration
+   `20260821150000_refund_request_groups.sql`, both `request-refund`/`process-refund` rewritten,
+   `RefundRequestDialog.tsx`/`RefundReview.tsx` rewritten for the new one-request-per-registration
+   shape. Detail in `docs/plans/notes/2026-08-21-uat-round1-notes.md`. **Not yet applied to
+   staging/prod, and the reviewer-tier adversarial review of the diff is still owed** — the
+   controller owns both per the CLAUDE.md money-invariants rule.
 
 
 0. ✅ **Security hardening Phase 3 — COMPLETE 2026-07-26**
@@ -139,14 +147,17 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
   ⚠️ `eslint-plugin-jsx-a11y` **could not be installed** — no release supports eslint 10 (repo is
   on 10.8.0). Re-check later; it's the cheapest way to stop A1-class regressions at the source.
 3. **New-club-request email** to `newclubinquiries@naigc.org` (transport exists, not wired).
-4. 🤖 **Add-on refund policy per Julia (UAT D-5, 2026-08-19) — code diverges from policy.**
-  Policy: an add-on refunds **in full until that add-on type's order deadline
-  (`lastPurchaseAt`), and not at all after it**. Today `process-refund` applies the
-  registration rule (100% at-or-before `last_date_to_edit`, else 75%) to `kind:'addon'`
-  requests too (index.ts §"computedRefundCents"). Needs: per-add-on deadline lookup in
-  `process-refund`, matching request-dialog messaging, and a refusal path for
-  past-deadline add-on requests. **Money path — sonnet drafts, reviewer-tier reviews the
-  diff before merge** per the CLAUDE.md routing rule.
+4. ✅ **Add-on refund policy per Julia (UAT D-5, 2026-08-19) — DRAFTED 2026-08-21, not yet
+  applied.** Policy: an add-on refunds **in full until that add-on type's order deadline
+  (`lastPurchaseAt`), and not at all after it**. Folded into the Z-04 refund-grouping rewrite
+  (branch `fix/uat-round1`, migration `20260821150000_refund_request_groups.sql` — see
+  `supabase/README.md`'s row for detail): `request-refund` now refuses an add-on request
+  outright at REQUEST time once `addonPurchaseOpen`/`addonLastPurchaseAt` (`_shared/stripe.ts`)
+  says its window has closed, and `process-refund` no longer applies the registration 100%/75%
+  rule to `kind:'addon'` at all — an add-on that reaches approval is always refunded in full
+  (it could only get there while still in-window). Reviewer-tier adversarial review of the
+  full diff (money-invariants.md scope) is still owed before merge/push per the CLAUDE.md
+  routing rule — not yet done.
 5. **PWA production update path** — verify deploys reach users promptly; add a "new
   version available, reload" prompt if not.
 6. **`npm audit` + Dependabot** in CI. **Audited 2026-07-31 — nothing that ships to a user is

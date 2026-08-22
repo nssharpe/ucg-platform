@@ -1206,6 +1206,74 @@ export function capRefundCents(computedCents: number, availableCents: number): n
   return Math.min(computedCents, Math.max(0, availableCents));
 }
 
+/**
+ * One resolved refundable line for `allocateRegistrationRefund` — a paid
+ * `invoice_items` row (entry or extra-discipline fee) for the registration
+ * being refunded, already resolved to the payment that funded it. */
+export interface RefundAllocationLine {
+  paymentId: string;
+  /** `invoice_items.ref_line_type` — a `'change'` line is excluded entirely
+   *  (rule 2: change fees are never refundable), regardless of `afterDeadline`. */
+  refLineType: string | null;
+  /** Post-coupon `paid_cents` for this line (payments.lines_snapshot; falls
+   *  back to `invoice_items.amount` when the snapshot predates the field —
+   *  see process-refund's resolution). */
+  paidCents: number;
+}
+
+/**
+ * Per-PAYMENT refund allocation for a registration refund (UAT Z-04, rules
+ * 1/2/4): a registration can be paid across MULTIPLE Stripe payments — an
+ * original entry invoice plus a later "add discipline" invoice, each its own
+ * charge — and a refund on that registration must refund EVERY one of them,
+ * not just the first one resolved. Pure: groups the given lines by
+ * `paymentId`, drops any `'change'` line (never refundable), sums what's left
+ * per payment, then scales each payment's sum to 75% (rounded) when
+ * `afterDeadline` — PER PAYMENT, not on the combined total, so each Stripe
+ * refund call gets its own correctly-rounded amount and rounding never
+ * leaks a cent from one payment's allocation into another's. A payment left
+ * with zero refundable lines (only a change line referenced it) does not
+ * appear in the result at all. Mirrored in
+ * `supabase/functions/_shared/refund-allocation.ts` for `process-refund`
+ * (Deno can't import `src/lib` code). Caller is responsible for actually
+ * calling `claim_refund_approval` once per returned payment — this function
+ * only computes amounts, it does no I/O and no capping against what's
+ * already been approved (that's the RPC's job, per payment).
+ */
+export function allocateRegistrationRefund(
+  lines: RefundAllocationLine[],
+  opts: { afterDeadline: boolean },
+): { paymentId: string; cents: number }[] {
+  const byPayment = new Map<string, number>();
+  for (const line of lines) {
+    if (line.refLineType === 'change') continue;
+    byPayment.set(line.paymentId, (byPayment.get(line.paymentId) ?? 0) + line.paidCents);
+  }
+  return Array.from(byPayment.entries()).map(([paymentId, sumCents]) => ({
+    paymentId,
+    cents: opts.afterDeadline ? Math.round(sumCents * 0.75) : sumCents,
+  }));
+}
+
+/**
+ * Rule 7 (UAT Z-04): `process-refund` returns a 409 "already reviewed" when a
+ * group has no pending rows left — which happens both for a genuine conflict
+ * (a second reviewer rejected it while this one was approving) AND for the
+ * harmless case of two reviewers clicking the SAME decision (e.g. both hit
+ * Approve within a race). `RefundReview.tsx` should silently refetch and move
+ * the request to history in the harmless case, and keep the error toast for
+ * the genuine conflict. Pure so the branch is unit-testable without a live
+ * 409: 'silent' when the request's CURRENT status already equals the outcome
+ * the reviewer just attempted, 'toast' otherwise (including when it's still
+ * 'pending' somehow, or decided to the OPPOSITE outcome). */
+export function decideAfterConflict(
+  currentStatus: 'pending' | 'approved' | 'rejected',
+  attempted: 'approve' | 'reject',
+): 'silent' | 'toast' {
+  const outcomeStatus = attempted === 'approve' ? 'approved' : 'rejected';
+  return currentStatus === outcomeStatus ? 'silent' : 'toast';
+}
+
 // --- Nationals session-request survey (event-mgmt v2 Phase 5 A1, spec §L.1/§E5.4) ---
 // Pure derivation of WHICH surveys a club/independent athlete owes for a
 // nationals event, and whether a given set of existing survey rows already

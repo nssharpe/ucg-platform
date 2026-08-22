@@ -682,13 +682,17 @@ const rowToRefundRequest = (r: {
   event_id: string; kind: string; reg_id: string | null; invoice_item_id: string | null;
   payment_id: string | null; reason: string; reason_detail: string | null; status: string;
   reviewed_by: string | null; reviewed_at: string | null; refund_amount_cents: number | null;
-  stripe_refund_id: string | null;
+  stripe_refund_id: string | null; request_group_id?: string | null; rejection_reason?: string | null;
 }): RefundRequest => ({
   id: r.id, createdAt: r.created_at, requesterPersonId: r.requester_person_id, clubId: r.club_id,
   eventId: r.event_id, kind: r.kind as RefundRequest['kind'], regId: r.reg_id, invoiceItemId: r.invoice_item_id,
   paymentId: r.payment_id, reason: r.reason as RefundRequest['reason'], reasonDetail: r.reason_detail,
   status: r.status as RefundRequest['status'], reviewedBy: r.reviewed_by, reviewedAt: r.reviewed_at,
   refundAmountCents: r.refund_amount_cents, stripeRefundId: r.stripe_refund_id,
+  // Defensive fallback to `id` — the column is NOT NULL in the DB (T4b
+  // 20260821150000 backfilled every pre-existing row), but this tolerates a
+  // stale generated-types select list that hasn't picked the column up yet.
+  requestGroupId: r.request_group_id ?? r.id, rejectionReason: r.rejection_reason ?? null,
 });
 // waitlist_groups is not yet in the generated database.types.ts (this
 // migration hasn't been applied/regenerated against at write time) — inline
@@ -2492,14 +2496,20 @@ export async function createWaiverLink(args: {
   return data as { ok: boolean; token?: string; link?: string; signerRole?: 'self' | 'guardian'; error?: string };
 }
 
-/** Request a refund on a paid registration entry or a purchased add-on line
- *  (event-mgmt v2 Phase 3, spec §H). Server resolves ownership/authorization
- *  and eligibility (host club must be the league's own — `is_league_host`);
- *  creates a `refund_requests` row and emails the requester + refund managers.
- *  Does NOT itself process the refund — that's the review flow (T6). Pass
- *  `clubId` when requesting on behalf of an athlete from a club-manager
- *  context (the server verifies the caller actually manages that club before
- *  honoring it — a mismatched clubId is simply ignored server-side). */
+/** Request a refund on a paid registration or a purchased add-on line
+ *  (event-mgmt v2 Phase 3, spec §H; grouped-per-registration rewrite, UAT
+ *  Z-04). For `kind: 'registration'`, the server enumerates EVERY refundable
+ *  paid line for that registration across every payment that funded it
+ *  (rule 1) and creates ONE group of `refund_requests` rows tied together by
+ *  `groupId` — never just the first invoice/payment resolved. For
+ *  `kind: 'addon'`, unchanged single-item shape, refused server-side outright
+ *  if the add-on's own purchase deadline has passed (rule 5). Server resolves
+ *  ownership/authorization and eligibility (host club must be the league's
+ *  own — `is_league_host`) and emails the requester + refund managers. Does
+ *  NOT itself process the refund — that's the review flow (T6). Pass `clubId`
+ *  when requesting on behalf of an athlete from a club-manager context (the
+ *  server verifies the caller actually manages that club before honoring it —
+ *  a mismatched clubId is simply ignored server-side). */
 export async function requestRefund(args: {
   kind: 'registration' | 'addon';
   regId?: string;
@@ -2507,28 +2517,52 @@ export async function requestRefund(args: {
   reason: 'injury' | 'illness' | 'bereavement' | 'other';
   reasonDetail?: string;
   clubId?: string;
-}): Promise<{ ok: boolean; requestId?: string; error?: string }> {
+}): Promise<{ ok: boolean; groupId?: string; error?: string }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('request-refund', { body: args });
   if (error) return { ok: false, error: await edgeErrorMessage(error) };
-  return data as { ok: boolean; requestId?: string; error?: string };
+  return data as { ok: boolean; groupId?: string; error?: string };
 }
 
-/** Approve or reject a pending refund request (event-mgmt v2 Phase 3, spec §H,
- *  T6). Refund-manager/admin only, enforced server-side. Approve computes the
- *  refund (100%/75% by the event's `lastDateToEdit`, capped at what's left on
- *  the payment), calls Stripe, and applies the item/registration state change;
- *  reject just declines with no item/registration change (beyond clearing
+/** One SUCCEEDED payment from a grouped `processRefund('approve', …)` call —
+ *  a registration refund can span multiple payments (rule 1); each is
+ *  claimed/refunded independently so one payment's Stripe failure never
+ *  blocks the others. */
+export interface RefundGroupRefunded { paymentId: string; cents: number; stripeRefundId: string | null }
+/** One payment that could NOT be refunded automatically in a grouped approve
+ *  call (e.g. a Stripe failure) — its rows stay 'pending' and a later
+ *  approve on the same group retries exactly these. */
+export interface RefundGroupFailed { paymentId: string; error: string }
+
+/** Approve or reject an entire refund request GROUP (event-mgmt v2 Phase 3,
+ *  spec §H, T6; grouped rewrite UAT Z-04). Refund-manager/admin only,
+ *  enforced server-side. Approve computes the refund PER PAYMENT the group
+ *  references (100%/75% by the event's `lastDateToEdit` for a registration,
+ *  always 100% for an add-on — rule 5), capped at what's left on each
+ *  payment, calls Stripe once per payment, and — only once every payment
+ *  succeeded — applies the item/registration state change; a partial failure
+ *  leaves the registration untouched and retryable. Reject requires a
+ *  free-text `rejectionReason` (rule 6) and declines every still-pending row
+ *  in the group with no item/registration change (beyond clearing
  *  `refund_requested`). Caller should `syncFromSupabase()` afterward to pick
  *  up the new `refund_requests`/registrations/invoice_items state. */
 export async function processRefund(
-  requestId: string,
+  groupId: string,
   action: 'approve' | 'reject',
-): Promise<{ ok: boolean; refundAmountCents?: number; stripeRefundId?: string | null; error?: string }> {
+  rejectionReason?: string,
+): Promise<{ ok: boolean; refunded?: RefundGroupRefunded[]; failed?: RefundGroupFailed[]; error?: string; status?: number }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
-  const { data, error } = await supabase.functions.invoke('process-refund', { body: { requestId, action } });
-  if (error) return { ok: false, error: await edgeErrorMessage(error) };
-  return data as { ok: boolean; refundAmountCents?: number; stripeRefundId?: string | null; error?: string };
+  const { data, error } = await supabase.functions.invoke('process-refund', { body: { groupId, action, rejectionReason } });
+  if (error) {
+    // Rule 7 (UAT Z-04): RefundReview.tsx needs to tell a genuine 409
+    // conflict apart from "someone already decided this the same way I just
+    // did" — both surface as the SAME error message, so the status code is
+    // the only signal. `context` is the raw Response FunctionsHttpError
+    // wraps (see edgeErrorMessage/edgeErrorBody above).
+    const status = (error as { context?: Response }).context?.status;
+    return { ok: false, error: await edgeErrorMessage(error), status };
+  }
+  return data as { ok: boolean; refunded?: RefundGroupRefunded[]; failed?: RefundGroupFailed[]; error?: string };
 }
 
 /** Admin/sanctioning-only waitlist override (event-mgmt v2 P4 T7): 'promote'

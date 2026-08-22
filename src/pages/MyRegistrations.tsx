@@ -789,7 +789,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
       {refundTarget && (
         <RefundRequestDialog
           items={[refundTarget.item]}
-          eventName={refundTarget.event.name}
+          event={refundTarget.event}
           onClose={() => setRefundTarget(null)}
           onSubmitted={() => { /* store refresh happens inside the dialog via syncFromSupabase() */ }}
         />

@@ -1041,7 +1041,7 @@ function ClubAddonsCard({ event, clubId, canManage }: { event: Event; clubId: st
       {addonRefundTarget && (
         <RefundRequestDialog
           items={[addonRefundTarget]}
-          eventName={event.name}
+          event={event}
           clubId={clubId}
           onClose={() => setAddonRefundTarget(null)}
           onSubmitted={() => { /* store refresh happens inside the dialog via syncFromSupabase() */ }}
@@ -2205,7 +2205,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
       {refundTarget && (
         <RefundRequestDialog
           items={refundTarget}
-          eventName={event.name}
+          event={event}
           clubId={clubId}
           onClose={() => setRefundTarget(null)}
           onSubmitted={() => { /* store refresh happens inside the dialog via syncFromSupabase() */ }}
