@@ -130,25 +130,52 @@ Eligible only for events hosted by an `is_league_host`-flagged club, OR any UCG-
 mirror check `ucgHosted` first, and `ucg_hosted` is admin-only writable via guard trigger
 `20260722220449` precisely because it grants eligibility).
 
-Base amount is post-coupon `paid_cents` from `payments.lines_snapshot` (legacy fallback:
-invoice_item list price). 100% at-or-before `lastDateToEdit`, else 75%, capped at the payment's
-remaining subtotal minus prior approved refunds (`refundAmountCents`/`capRefundCents`,
-`pricing.ts`). **The service fee is never refunded.** $0-capped approvals skip Stripe.
+**Grouped per registration, not per invoice line (UAT Z-04, `20260821150000`).** A refund
+REQUEST is one per registration, covering every paid line across every payment that funded it —
+a reg paid by an original invoice plus a later "add discipline" invoice has TWO Stripe payments,
+and both get refunded under one request. `refund_requests.request_group_id` ties together every
+per-(payment, invoice_item) row belonging to one such request (an add-on request is a one-row
+group, `request_group_id = id`). `request-refund` enumerates every refundable line and inserts
+the whole group in one call; `process-refund` approves/rejects the WHOLE GROUP — reject is one
+UPDATE of every pending row (with a required `rejection_reason`, emailed); approve computes a
+per-payment allocation (`allocateRegistrationRefund`, `pricing.ts` / mirrored
+`_shared/refund-allocation.ts`) and calls `claim_refund_approval` **once per distinct payment**,
+continuing to the next payment on a Stripe failure so one payment's failure never blocks the
+others (idempotent retry: a later approve on the same group only ever touches rows still
+`pending`).
 
-**The cap and the claim are ONE atomic step — `claim_refund_approval` (`20260731210000`).**
-It takes `SELECT … FOR UPDATE` on the `payments` row, then sums approved refunds, caps, and
-claims the request inside that transaction. **Never recompute availability in TS and then
-claim** — that two-step shape was the actual 2026-07-31 bug: the per-request claim keys on the
-request's own id, so two DIFFERENT pending requests on the SAME payment both read the same
-stale baseline. Stripe's ceiling hid it, because Stripe's ceiling is the CHARGE
+Refundable base = entry-fee + extra-discipline-fee lines only (`invoice_items.kind='meet-entry'`
+and `ref_line_type` distinct from `'change'`) — **a change-fee line is never refundable**, full
+stop, even for an M-10-01 "mixed" line that also carries an added discipline's entry-total
+(that combined line is tagged `ref_line_type:'change'`, so it is entirely excluded — a known,
+flagged consequence). Base amount per line is post-coupon `paid_cents` from
+`payments.lines_snapshot` (legacy fallback: invoice_item list price). Registrations: 100%
+at-or-before `lastDateToEdit`, else 75% — scaled PER PAYMENT, not on the combined total
+(`allocateRegistrationRefund`). **Add-ons are a separate, binary rule (D-5):** full refund while
+`now <= that add-on type's lastPurchaseAt` (`addonLastPurchaseAt`/`addonPurchaseOpen`,
+`_shared/stripe.ts`), refused OUTRIGHT at request time after — no 75% add-on refund exists.
+**The service fee is never refunded** in either case. $0-capped approvals skip Stripe.
+
+**The cap and the claim are ONE atomic step per payment — `claim_refund_approval`
+(`20260731210000`), UNCHANGED by the grouping rework.** It takes `SELECT … FOR UPDATE` on the
+`payments` row, then sums approved refunds, caps, and claims ONE row inside that transaction.
+**Never recompute availability in TS and then claim, and never batch multiple payments into one
+claim call** — the original two-step shape was the actual 2026-07-31 bug: the per-request claim
+keys on the request's own id, so two DIFFERENT pending requests on the SAME payment both read
+the same stale baseline. Stripe's ceiling hid it, because Stripe's ceiling is the CHARGE
 (`subtotal + fee`) while ours is `subtotal` — so a concurrent pair landing in that gap refunded
-part of the service fee. Serialization is per-payment. `revertClaim` deliberately stays outside
-the lock; a concurrent caller counting a not-yet-reverted claim gets UNDER-refunded, which
-self-resolves and errs in the safe direction.
+part of the service fee. Serialization is per-payment. When a group has more than one pending
+row on the SAME payment (e.g. two invoice_items in one invoice), one row is the "carrier" claimed
+via the RPC for the full amount; any sibling is flipped to `approved`/`refund_amount_cents:0`
+alongside it by a plain UPDATE — never a second RPC call against the same payment.
+`revertClaim` deliberately stays outside the lock; a concurrent caller counting a not-yet-reverted
+claim gets UNDER-refunded, which self-resolves and errs in the safe direction.
 
 On-time approval deletes the registration; post-deadline keeps it `refunded` + `keep_listed`
-with apparatus blanked. A Dashboard-issued refund (bypassing this flow) does NOT reflect back
-into `payments.status`.
+with apparatus blanked — applied ONCE per group, only once every payment in that approve call
+succeeded (a partial failure leaves the registration untouched and the failed payments' rows
+`pending` for retry). A Dashboard-issued refund (bypassing this flow) does NOT reflect back into
+`payments.status`.
 
 Host-payout "owed" (confirmed by Julia 2026-07-17): event gross collected (registrations +
 add-ons, before service/admin fees); refunds NOT deducted, since hosts handle their own.
