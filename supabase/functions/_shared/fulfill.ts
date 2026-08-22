@@ -227,8 +227,23 @@ export async function fulfillPayment(db: DB, payment: PaymentRow, opts: FulfillO
     // retry doesn't renumber the invoice.
     number = (existingInv as { number?: string }).number ?? `UCG-${payment.id}`;
   } else {
-    const { count } = await db.from('invoices').select('id', { count: 'exact', head: true });
-    number = `UCG-2026-${String((count ?? 0) + 1).padStart(4, '0')}`;
+    // Concurrency-safe sequence claim (UAT Z-01 follow-up): a row-COUNT-based
+    // number used to be minted here, which let two concurrent fulfillments
+    // (a Stripe retry racing a fresh checkout) read the same count and mint
+    // the SAME number — the loser then failed on invoices.number's unique
+    // constraint, permanently stuck at `pending` (the atomic claim below
+    // never runs). `next_invoice_number` (20260821140000) claims the number
+    // atomically via a single insert-on-conflict-returning, so there's no
+    // read-then-write gap to race. No fallback on error — an invoice number
+    // must never be guessed; a failure here throws and this fulfillment
+    // attempt aborts (payment stays pending for the caller's existing
+    // retry/error_logs path to pick up, exactly as any other write failure
+    // in this function already does).
+    const { data: numberData, error: numberErr } = await db.rpc('next_invoice_number');
+    if (numberErr || typeof numberData !== 'string' || !numberData) {
+      throw new Error(`fulfillPayment: next_invoice_number failed for payment ${payment.id}: ${numberErr?.message ?? 'no number returned'}`);
+    }
+    number = numberData;
   }
   await db.from('invoices').upsert({
     id: invoiceId, number,

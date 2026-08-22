@@ -1447,6 +1447,22 @@ export function pushInvoice(inv: Invoice) {
   remoteReplace('invoice_items', { invoice_id: inv.id }, inv.items.map((it) => invoiceItemToRow(inv.id, it)));
 }
 
+/** Claim the next sequential `UCG-YYYY-NNNN` invoice number via the atomic
+ *  `next_invoice_number` RPC (20260821140000; service_role- and
+ *  is_admin()-gated server-side — see the migration). Used by
+ *  Membership.tsx's admin "comp" path, the only CLIENT writer of a real
+ *  invoice (the webhook/free-order paths call the same RPC directly from
+ *  `_shared/fulfill.ts`). Throws rather than falling back to any
+ *  client-guessed number — a duplicate/incorrect invoice number is a money
+ *  correctness bug, not a UX one; callers must catch and abort. */
+export async function nextInvoiceNumber(): Promise<string> {
+  if (!supabase) throw new Error('Not configured.');
+  const { data, error } = await supabase.rpc('next_invoice_number');
+  if (error) { console.error('[supabase] next_invoice_number failed:', error); throw new Error(error.message); }
+  if (typeof data !== 'string' || !data) throw new Error('next_invoice_number returned no number.');
+  return data;
+}
+
 export function pushClubRequest(r: ClubRequest) { remoteUpsert('club_requests', [clubRequestToRow(r)]); }
 
 /** Insert a new immutable waiver document version (admin only via RLS). */

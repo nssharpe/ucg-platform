@@ -5,7 +5,7 @@ import { useCapabilities } from '../lib/capabilities';
 import { Badge, Field } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 import { fmtMoney } from '../lib/scoring';
-import { pushCartItem, pushInvoice, pushMembership, fetchPublishedWaiver, recordWaiverSignature, requestGuardianWaiver, notifyClubCart, sendMembershipWelcome } from '../lib/supabase';
+import { pushCartItem, pushInvoice, pushMembership, fetchPublishedWaiver, recordWaiverSignature, requestGuardianWaiver, notifyClubCart, sendMembershipWelcome, nextInvoiceNumber } from '../lib/supabase';
 import type { Athlete, InvoiceItem, Membership, MembershipType, WaiverDocument } from '../lib/types';
 import { GENERAL_WAIVER_TYPE } from '../lib/types';
 import { isMinorAt, expectedWaiverSignerName, waiverNameMatches } from '../lib/waivers-core';
@@ -207,12 +207,30 @@ function MembershipInner({ me }: { me: Athlete }) {
   // Stripe-backed /cart/memberships flow). Only the two non-card admin/club
   // paths remain: 'comp' (admin override, real $0 invoice) and 'club' (push
   // the fee to the club cart, pending until a manager pays).
-  const complete = (via: 'club' | 'comp') => {
+  const complete = async (via: 'club' | 'comp') => {
     // "First membership" signal — computed from the PRE-purchase membership list.
     // Welcome fires once: only when the member held no prior active/paid (or
     // club-payment-pending) membership before this purchase. Pending-waiver-only
     // rows don't count as a completed purchase. (Server re-checks no-club +
     // Outside-US; this guard is the once-only gate.)
+
+    // The comp path mints a real invoice number; claim it BEFORE the mutate()
+    // below runs so a numbering failure (RPC error, not signed in, etc.)
+    // aborts before any membership/invoice state changes at all — never fall
+    // back to a client-guessed number (money-invariants "never fall back").
+    // 'club' pushes a club-cart fee instead of writing an invoice, so it
+    // never needs a number.
+    let invoiceNumber: string | null = null;
+    if (via === 'comp') {
+      try {
+        invoiceNumber = await nextInvoiceNumber();
+      } catch (e) {
+        console.error('[Membership] nextInvoiceNumber failed:', e);
+        toast('Could not generate an invoice number — nothing was changed. Try again.', { variant: 'error' });
+        return;
+      }
+    }
+
     const hadPriorMembership = me.memberships.some(
       (m) => m.status === 'active' || m.status === 'pending-club-payment' || m.clubCartPending || m.paidVia != null,
     );
@@ -285,7 +303,9 @@ function MembershipInner({ me }: { me: Athlete }) {
       } else {
         const invoice = {
           id: `inv-${Date.now()}`,
-          number: `UCG-2026-${String(d.invoices.length + 1).padStart(4, '0')}`,
+          // Claimed atomically above (nextInvoiceNumber) — asserted non-null
+          // since via === 'comp' is exactly the branch that claimed it.
+          number: invoiceNumber!,
           clubId: null,
           athleteId: me.id,
           createdAt: new Date().toISOString(),

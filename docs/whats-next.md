@@ -91,17 +91,19 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
   collapse, a NotFound route, and keyboard-accessible Details/Hide toggles.
 
   Residuals deliberately left open:
-   - **Invoice numbering** (O1 spec §3) — two formats coexist; deferred to the
-     pre-launch data sweep per Nate, since all current rows are test data. The
-     generators derive the sequence from a row COUNT, which is not concurrency-safe.
-     **Julia decided 2026-08-19 (UAT D-4):** wipe the whole record before go-live and keep
-     the latest format, `UCG-YYYY-XXXX`. The format question is closed; the DB-sequence
-     concurrency fix below is unchanged.
-     💬 **Recommend reclassifying this as a Stripe go-live gate rather than a quality pass**
-     ([findings §6.4](specs/2026-07-31-review-and-cleanup-findings.md)): the trigger for the
-     concurrency bug isn't a data sweep, it's the first two people checking out at the same
-     time. Duplicate numbers on real financial records are painful to unwind and trivial to
-     prevent beforehand — the fix is a DB sequence.
+   - **Invoice numbering** (O1 spec §3) — two formats coexist. **Julia decided 2026-08-19
+     (UAT D-4):** wipe the whole record before go-live and keep the latest format,
+     `UCG-YYYY-XXXX`; legacy `UCG-I-<epoch>` rows are test data, not renumbered.
+     **The concurrency fix shipped 2026-08-21** (branch `fix/uat-round1`, migration
+     `20260821140000_invoice_number_counters.sql` — see `supabase/README.md`'s row for
+     detail): both generators (`_shared/fulfill.ts`'s webhook/free-order path,
+     `Membership.tsx`'s admin comp path) used to derive the sequence from a row COUNT with
+     no lock, so two concurrent fulfillments could mint the same number. Replaced by the
+     atomic `next_invoice_number` RPC (single insert-on-conflict-returning — the row lock
+     IS the serialization, same idiom as `reserve_coupon`/`claim_refund_approval`), seeded
+     to continue past the live test data. **Not yet applied to staging/prod** — controller
+     `db push`s per the standard staging-then-prod procedure. The pre-launch wipe (D-4) is
+     still open and unaffected by this fix.
    - **Pre-existing 375px overflow on the admin Communicate compose-editor card** —
      found during H5–H7, proven pre-existing via `git stash`, out of scope there.
    - **Keyboard verification of the H7 toggles was click+DOM-based**, not real key
