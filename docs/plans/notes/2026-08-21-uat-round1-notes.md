@@ -647,3 +647,115 @@ the file), handles a slot with zero paid rows (yes — `order by paid desc, crea
 asc` degrades to earliest-created when nothing is paid), and is idempotent on re-run (yes — the
 dedupe's `having count(*) > 1` finds nothing once every slot has ≤1 live row, and
 `create unique index if not exists` no-ops once it exists).
+
+## M-11-01 (S1) + M-11-02/M-20-01: coupon scope + persist/render the discount
+
+**Task A — coupon scope.** Every non-membership line (pure change fee, the MIXED added-
+discipline-plus-change line, and add-ons) was tagged coupon-scope `'meet-entry'` — the same tag
+as a true new entry — so a promo scoped to "Event entries" silently discounted change fees and
+add-ons along with real entries, and effectively discounted the whole cart on most carts (a cart
+with only memberships was the one case it didn't).
+
+- `CouponScope` (`supabase/functions/_shared/stripe.ts`, mirrored `src/lib/pricing.ts`) gained
+  `'change-fee'` and `'addon'`. Retagged the three affected `pushLine` calls in
+  `create-checkout-session/index.ts`: the pure-change branch → `'change-fee'`; the add-on branch
+  → `'addon'`; the full-entry branch is unchanged (`'meet-entry'`, correctly).
+- **The MIXED added-discipline+change-fee line** (`addedDisciplineChangeTotalDollars`) is also
+  tagged `'change-fee'`, even though most of its dollar amount is really an added discipline's
+  entry-total. Reasoning (confirmed with reviewer-tier before implementing): it can't be
+  cleanly split into an eligible and an ineligible portion, the refund path already treats this
+  exact line as `ref_line_type:'change'` — fully non-refundable, "flagged, not fixed" per
+  money-invariants.md's Refunds section — and under-discounting (a 'meet-entry' coupon skips
+  this line entirely) is the safe-direction error versus over-discounting a glued-on change fee.
+  This branch is defense-in-depth only post the M-10 x Z-04 rework above — the client no longer
+  produces a mixed line at all.
+- Extracted the eligibility rule itself into a pure `couponEligibleLine(line, coupon)` —
+  `_shared/stripe.ts` (server, used by the real filter in `create-checkout-session` at what was
+  the inline block around old line ~980) mirrored in `src/lib/pricing.ts` (client). The client
+  mirror is **not wired into any live call site** — confirmed (with reviewer-tier) that
+  `applyCoupon` in `pricing.ts` is called nowhere outside `tests/pricing.test.ts`, and
+  `CartCheckout.tsx`'s local `applyCoupon` click handler just round-trips a code to the server
+  and renders its `mode:'preview'` response verbatim (`amountSubtotal`/`discountAmount`/
+  `serviceFee` are all server numbers) — there is no client-side coupon recompute to fix. The
+  mirror exists so the one eligibility rule has a tested implementation on both runtimes, ready
+  to reuse if a client preview is ever built.
+- Confirmed unchanged: the service fee is computed on the POST-discount subtotal
+  (`processingFee(subtotalCents)` is called AFTER `subtotalCents -= discountCents`, near the end
+  of the function, well below the coupon-application block).
+- Tests: `tests/pricing.test.ts` new `couponEligibleLine` describe block — entry line eligible
+  for a `'meet-entry'` coupon; change-fee/addon/membership lines not; `'any'` eligible for
+  every scope; a `'membership'` coupon matches all three membership scopes and nothing else; a
+  `appliesToEventId` mismatch is ineligible even for the right scope; a fine-grained membership
+  coupon matches only its own exact scope.
+
+**Task B — persist and render the discount.** `fulfillPayment` wrote `invoice_items` from each
+line's `amount_cents` (pre-discount list price) and never wrote a discount row, even though
+`payments.lines_snapshot` already carried post-discount `paid_cents` per line and
+`invoices.coupon_code` was already persisted — so every renderer showed the full list-price
+items summing to MORE than what the confirmation email said was actually charged.
+
+- **`SnapshotItem.paid_cents` was already present** (added in an earlier pass tonight, before
+  this task started) — nothing to add there; just confirmed it's there and used it.
+- `_shared/fulfill.ts`: after the `invoice_items` upsert, if `Σ amount_cents − Σ (paid_cents ??
+  amount_cents) > 0`, upsert one more row: deterministic id `ii-<paymentId>-discount`,
+  `kind: 'discount'`, `label: 'Promo code <code>'` (or `'Discount'` with no code), `amount:
+  -(discountCents/100)`, `refunded: false`, every `ref_*`/`addon_*` field null. Idempotent on a
+  webhook retry like every other write in this function. The `?? amount_cents` fallback (not `??
+  0`) matters: a legacy item reconstructed from live `cart_items` (the pre-2026-07-02
+  no-snapshot fallback a few lines above, which has no discount info) must read as
+  undiscounted, never as "100% off" — caught by reviewer-tier before writing the line.
+- `emailReceipt` (same file): computed `discountCents` the same way but scoped to the `items`
+  param actually being emailed (which is already duplicate-slot-filtered in the UAT Z-02 case —
+  reused the same shape rather than re-deriving `payment.amount_subtotal`, so it stays correct
+  under `subtotalOverrideCents` too) and rendered it as a negative row, styled `#184b56`
+  (`--teal-900`, brand-approved as text on white per `src/index.css`'s comment), placed BEFORE
+  the service-fee row so items − discount + fee = the existing "Total paid" row.
+- **The three in-app renderers needed NO changes** — `invoiceSubtotal`/`invoiceDiscount`/
+  `invoiceTotal` (`src/lib/receipt.ts`) and the inline subtotal/discount/total blocks in
+  `Cart.tsx` (~640-663) and `PurchaseHistory.tsx` (~178-204) already had correct `kind ===
+  'discount'` handling; it was simply dead code because no discount row was ever written. Once
+  `fulfillPayment` writes the row, all three "wake up" already-correct. Verified by hand-tracing
+  the arithmetic (Cart.tsx/PurchaseHistory.tsx: `subtotal` = non-discount items incl. fee,
+  `total = subtotal - discount`) and by the new `tests/receipt.test.ts`.
+- `src/lib/finance.ts`: **no double-count risk found, so no change.** `buildFinanceTxns` prefers
+  `payments.linesSnapshot` (`paidCents`, already post-discount PER LINE) whenever present, which
+  is true for every payment new enough to ever carry a coupon — that path never touches
+  `invoice_items` at all, so the new discount row can't double-subtract there. The fallback path
+  (very old pre-snapshot payments, `invoice.items` summed directly) already had `'discount'`
+  wired end-to-end before this task (`itemKeyFor('discount', …) → 'discount'`, already in
+  `KNOWN_ITEM_KEYS`/`ITEM_KEY_LABELS`, already asserted in `tests/finance.test.ts`) — it just had
+  no discount rows to sum yet. Added a `buildFinanceTxns`/`buildFinanceSummary` test proving that
+  path nets a discount row into `grossCents` correctly rather than inflating it.
+- **Flagged, not fixed** (per reviewer-tier — out of this task's scope, a product question for
+  Julia): the discount `invoice_item` has `ref_event_id: null` (a coupon can span multiple
+  events + memberships in one cart, so it has no single honest event to attribute to). This means
+  an EVENT-SCOPED Finance summary (`buildFinanceSummary({ eventId })`) filters the discount line
+  out entirely (it only keeps lines whose own `refEventId` matches), so `hostPayoutOwedCents`
+  for that event shows the full undiscounted entry-fee gross — consistent with the existing
+  "host payout is gross before fees, refunds not deducted" policy Julia confirmed 2026-07-17, but
+  worth her explicit confirmation now that a real discount mechanism exists (before this fix, no
+  coupon discount was ever visible anywhere, so this gap was theoretical).
+- Confirmed `request-refund` never enumerates a `'discount'` item: its registration-kind query
+  filters `kind === 'meet-entry' && ref_line_type !== 'change'` (`index.ts:303`) and its addon-kind
+  query requires `kind === 'addon'` (`index.ts:174`) — a `'discount'` row matches neither, and the
+  function's own header comment (`index.ts:74-76`) documents `'discount'` as explicitly excluded.
+- Tests: new `tests/receipt.test.ts` (file didn't exist before) — `invoiceSubtotal`/
+  `invoiceDiscount`/`invoiceTotal` with no discount row, with one, with a refunded (non-discount)
+  line, with a REFUNDED discount line (must not count), and with multiple discount-eligible
+  lines summed. New `tests/finance.test.ts` case (above). All-positive discounts only — a
+  discount that somehow exceeded `amount_cents` (shouldn't happen; `create-checkout-session`
+  already caps `discountCents` at `eligibleCents`) isn't separately guarded here since it'd
+  require a pre-existing pricing bug upstream, not something this task's write path can cause.
+
+**Functions to deploy:** `create-checkout-session` (Task A retagging + `couponEligibleLine`) and
+`stripe-webhook` (bundles the changed `_shared/fulfill.ts`; `_shared/stripe.ts`'s new exports are
+also bundled into both). No migration — `invoice_item_kind` already had `'discount'` in its enum
+(`20260601000001_schema.sql`), and `CouponScope` is an in-memory-only concept, never persisted.
+
+**Verification.** `npm run build` — succeeded, zero TypeScript errors. `npx eslint
+supabase/functions/create-checkout-session/index.ts supabase/functions/_shared/stripe.ts
+supabase/functions/_shared/fulfill.ts src/lib/pricing.ts src/lib/receipt.ts tests/pricing.test.ts
+tests/finance.test.ts tests/receipt.test.ts` — zero errors/warnings. `npx vitest run` —
+1185/1185 passed across 74 files (+14 from this ticket: 8 new `couponEligibleLine` cases in
+`tests/pricing.test.ts`, 1 new discount-netting case in `tests/finance.test.ts`, 5 new cases in
+the new `tests/receipt.test.ts`).

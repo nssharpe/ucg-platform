@@ -113,6 +113,41 @@ describe('buildFinanceTxns', () => {
     expect(txns[0].invoiceNumber).toBe('INV-0001');
   });
 
+  // UAT M-11-02 / M-20-01: fulfillPayment now persists a `kind: 'discount'`
+  // invoice_items row (negative amount) alongside the list-price lines.
+  // `buildFinanceTxns` prefers `linesSnapshot` (paidCents, already net of any
+  // coupon) whenever it's present — a real payment never hits this fallback
+  // AND carries a discount, since every snapshot since T6 has paidCents. But
+  // this fallback path (very old pre-snapshot payments) sums `invoice.items`
+  // directly, so a discount row must net out there too, not double-count as
+  // extra revenue.
+  it('nets a persisted discount row via the invoice-items fallback (never double-counts it)', () => {
+    const invoice = mkInvoice({
+      couponCode: 'EARLYBIRD',
+      items: [
+        { id: 'ii1', label: 'Event entry', amount: 60, kind: 'meet-entry', refLineType: 'entry', refEventId: 'ev1' },
+        { id: 'ii2', label: 'Promo code EARLYBIRD', amount: -10, kind: 'discount' },
+      ],
+    });
+    const payment = mkPayment({ invoiceId: 'inv1', amountSubtotal: 5000 });
+    const txns = buildFinanceTxns({ payments: [payment], invoices: [invoice], refundRequests: [], events: [] });
+    expect(txns).toHaveLength(1);
+    expect(txns[0].lines).toEqual([
+      { itemKey: 'meet-entry:entry', label: 'Event entry', amountCents: 6000, refEventId: 'ev1' },
+      { itemKey: 'discount', label: 'Promo code EARLYBIRD', amountCents: -1000, refEventId: undefined },
+    ]);
+    // Gross entry revenue stays the full 6000 (the discount is its own line,
+    // not netted into the entry's own gross)...
+    const summary = buildFinanceSummary(txns, {});
+    const entryLine = summary.lines.find((l) => l.itemKey === 'meet-entry:entry')!;
+    const discountLine = summary.lines.find((l) => l.itemKey === 'discount')!;
+    expect(entryLine.grossCents).toBe(6000);
+    expect(discountLine.grossCents).toBe(-1000);
+    // ...but the TOTAL nets it out, matching what was actually collected.
+    expect(summary.grossCents).toBe(5000);
+    expect(txns[0].subtotalCents).toBe(5000);
+  });
+
   it('excludes pending and failed payments', () => {
     const pending = mkPayment({ id: 'p2', status: 'pending' });
     const failed = mkPayment({ id: 'p3', status: 'failed' });

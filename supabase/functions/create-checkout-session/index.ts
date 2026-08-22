@@ -51,6 +51,7 @@ import {
   addonLastPurchaseAt,
   addonPriceDollars,
   addonPurchaseOpen,
+  couponEligibleLine,
   getStripe,
   lateFeeAnchor,
   membershipFeeDollars,
@@ -60,6 +61,7 @@ import {
   registrationChangeFeeDollars,
   seasonPurchasableForCheckout,
   toCents,
+  type CouponScope,
   type MembershipRow,
   type MembershipType,
   type RegFeeEvent,
@@ -670,7 +672,10 @@ Deno.serve(async (req) => {
   // `scope`/`eventId` are the coupon-matching tags: which "Applies to" category
   // (per the promo-code feature) this line falls under, so a coupon can be
   // scoped to e.g. just athlete memberships or just one specific event.
-  type CouponScope = 'athlete-membership' | 'club-membership' | 'coach-membership' | 'meet-entry';
+  // `CouponScope`/eligibility live in `_shared/stripe.ts` (UAT M-11-01) —
+  // `'change-fee'` and `'addon'` exist precisely so a `'meet-entry'`-scoped
+  // coupon ("Event entries") discounts actual new entries only, never a
+  // change fee or an add-on.
   // `itemId` ties each Stripe line back to its cart item so the POST-discount
   // per-line amount (the coupon allocation below mutates `cents` in place) can
   // be frozen onto the snapshot as `paid_cents` — the refund base (T6).
@@ -861,8 +866,10 @@ Deno.serve(async (req) => {
 
       if (addedRegs.length === 0) {
         // Pure edit (level/apparatus/club change on already-purchased regs,
-        // no new reg row): change-fee only, unchanged.
-        pushLine(i.id, i.label, registrationChangeFeeDollars(event, { competingClubId }), 'meet-entry', reg.event_id);
+        // no new reg row): change-fee only. UAT M-11-01: scoped 'change-fee',
+        // NOT 'meet-entry' — a coupon scoped to "Event entries" must never
+        // discount a change fee.
+        pushLine(i.id, i.label, registrationChangeFeeDollars(event, { competingClubId }), 'change-fee', reg.event_id);
       } else if (changedRegs.length === 0) {
         // Every referenced reg is brand-new: full entry-total path, unchanged.
         const newDisciplineCount = refRegs.length;
@@ -895,10 +902,20 @@ Deno.serve(async (req) => {
         const lineRegs = athleteEventRegs.filter((r) => addedRegIds.has(r.id));
         const outsideRegsForAnchor = athleteEventRegs.filter((r) => !addedRegIds.has(r.id));
         const anchor = lateFeeAnchor(lineRegs, outsideRegsForAnchor, new Date().toISOString());
+        // UAT M-11-01: scoped 'change-fee', not 'meet-entry', even though
+        // this combined amount includes the added discipline's entry-total —
+        // it can't be cleanly split, and the refund path already treats a
+        // MIXED line as `ref_line_type:'change'` (fully non-refundable, see
+        // money-invariants.md's Refunds section) for the same reason. Under-
+        // discounting the entry-total portion here is the safe direction:
+        // it never gives a 'meet-entry' coupon a change fee to eat, matching
+        // "the service fee is never refunded"-style conservatism elsewhere
+        // in this file. This branch is defense-in-depth only — the client no
+        // longer produces a mixed line as of the M-10 x Z-04 rework.
         pushLine(i.id, i.label, addedDisciplineChangeTotalDollars(event, {
           competingClubId, priorDisciplineCount, newDisciplineCount,
           late: anchor ? { earliestCreatedAtISO: anchor } : undefined,
-        }), 'meet-entry', reg.event_id);
+        }), 'change-fee', reg.event_id);
       }
       continue;
     }
@@ -928,7 +945,9 @@ Deno.serve(async (req) => {
       if (!addonPurchaseOpen(deadline, event.reg_closes, new Date())) {
         return json({ ok: false, error: `The purchase window for the ${typeName} add-on has closed.` }, 400);
       }
-      pushLine(i.id, i.label, price, 'meet-entry', i.ref_event_id);
+      // UAT M-11-01: scoped 'addon', not 'meet-entry' — a coupon scoped to
+      // "Event entries" must never discount a t-shirt/banner/banquet/leo line.
+      pushLine(i.id, i.label, price, 'addon', i.ref_event_id);
       continue;
     }
 
@@ -977,16 +996,11 @@ Deno.serve(async (req) => {
       }
 
       if (valid) {
-        const eligible = lines.filter((l) => {
-          if (appliesTo === 'any') return true;
-          if (appliesTo === 'membership') {
-            return l.scope === 'athlete-membership' || l.scope === 'club-membership' || l.scope === 'coach-membership';
-          }
-          if (appliesTo === 'meet-entry') {
-            return l.scope === 'meet-entry' && (!appliesToEventId || l.eventId === appliesToEventId);
-          }
-          return l.scope === appliesTo;
-        });
+        // UAT M-11-01: eligibility is the shared, unit-tested
+        // `couponEligibleLine` (`_shared/stripe.ts`, mirrored in
+        // src/lib/pricing.ts) rather than an inline filter, so the "which
+        // scope discounts which line" rule lives in exactly one place.
+        const eligible = lines.filter((l) => couponEligibleLine(l, { appliesTo, appliesToEventId }));
         const eligibleCents = eligible.reduce((s, l) => s + l.cents, 0);
         if (eligibleCents > 0) {
           const pctOff = couponRow.pct_off == null ? null : Number(couponRow.pct_off);

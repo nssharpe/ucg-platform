@@ -315,3 +315,58 @@ export function addonPurchaseOpen(
 export function toCents(dollars: number): number {
   return Math.round(dollars * 100);
 }
+
+// --- Coupon scoping (UAT M-11-01, S1) ---------------------------------------
+// A promo code's "Applies to" setting must discount only the category of line
+// it names — a code scoped to `appliesTo: 'meet-entry'` ("Event entries") is
+// meant for actual new registrations, never a change fee or an add-on. Before
+// this fix every non-membership line (entry, change fee, AND add-on) was
+// tagged 'meet-entry', so a meet-entry-scoped code silently discounted the
+// entire cart. `'change-fee'` and `'addon'` give those lines their own scope
+// so only an `appliesTo: 'any'` (or, for change-fee, no scope match at all —
+// there is no admin-facing "Change fees"/"Add-ons" coupon category today, see
+// `Coupon['appliesTo']` in src/lib/types.ts) code reaches them.
+
+/** Which category a server-priced line falls under, for coupon eligibility.
+ *  MIRRORED IN src/lib/pricing.ts — keep in sync. */
+export type CouponScope =
+  | 'athlete-membership' | 'club-membership' | 'coach-membership'
+  | 'meet-entry' | 'change-fee' | 'addon';
+
+/** Minimal per-line shape `couponEligibleLine` needs. */
+export interface CouponScopedLine {
+  scope?: CouponScope;
+  eventId?: string;
+}
+
+/** Minimal coupon-rule shape (the DB row is snake_case `applies_to`/
+ *  `applies_to_event_id`; the client's `Coupon` type mirrors this camelCase —
+ *  see pricing.ts). */
+export interface CouponEligibilityRule {
+  appliesTo: string;
+  appliesToEventId?: string | null;
+}
+
+/**
+ * Is `line` eligible for `coupon`'s discount, per the coupon's "Applies to"
+ * scope? `'any'` matches every line; the legacy `'membership'` matches all
+ * three membership scopes; `'meet-entry'` matches ONLY a true entry line
+ * (never `'change-fee'` or `'addon'`), further narrowed to one event when
+ * `appliesToEventId` is set; anything else falls back to an exact scope
+ * match (today that only ever matches the fine-grained membership scopes,
+ * since no coupon can be authored with `appliesTo: 'change-fee'`/`'addon'`).
+ * Pure — used by BOTH the real eligibility filter in
+ * `create-checkout-session` and (mirrored) any client-side coupon preview.
+ * MIRRORED IN src/lib/pricing.ts — keep in sync.
+ */
+export function couponEligibleLine(line: CouponScopedLine, coupon: CouponEligibilityRule): boolean {
+  const { appliesTo, appliesToEventId } = coupon;
+  if (appliesTo === 'any') return true;
+  if (appliesTo === 'membership') {
+    return line.scope === 'athlete-membership' || line.scope === 'club-membership' || line.scope === 'coach-membership';
+  }
+  if (appliesTo === 'meet-entry') {
+    return line.scope === 'meet-entry' && (!appliesToEventId || line.eventId === appliesToEventId);
+  }
+  return line.scope === appliesTo;
+}

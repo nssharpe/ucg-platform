@@ -986,6 +986,48 @@ export function applyCoupon(amount: number, coupon: Coupon): number {
   return amount;
 }
 
+// --- Coupon scoping (UAT M-11-01, S1) ---------------------------------------
+// Which "Applies to" category a priced line falls under, so a coupon scoped
+// to e.g. `appliesTo: 'meet-entry'` ("Event entries") discounts actual new
+// registrations only — never a change fee or an add-on line, which used to
+// all share the same 'meet-entry' tag and so got discounted right along with
+// real entries. MIRRORED IN supabase/functions/_shared/stripe.ts — keep in
+// sync. Not currently wired into any client-side preview (the cart/checkout
+// UI renders only the server's authoritative Subtotal/Coupon/Fee/Total, per
+// money-invariants.md — there is no client-side coupon recompute to fix);
+// exported so the eligibility rule has exactly one tested implementation per
+// runtime, reusable if a client preview is ever added.
+export type CouponScope =
+  | 'athlete-membership' | 'club-membership' | 'coach-membership'
+  | 'meet-entry' | 'change-fee' | 'addon';
+
+/** Minimal per-line shape `couponEligibleLine` needs. */
+export interface CouponScopedLine {
+  scope?: CouponScope;
+  eventId?: string;
+}
+
+/**
+ * Is `line` eligible for `coupon`'s discount, per the coupon's "Applies to"
+ * scope? `'any'` matches every line; the legacy `'membership'` matches all
+ * three membership scopes; `'meet-entry'` matches ONLY a true entry line
+ * (never `'change-fee'` or `'addon'`), further narrowed to one event when
+ * `appliesToEventId` is set; anything else falls back to an exact scope
+ * match. MIRRORED IN supabase/functions/_shared/stripe.ts (`couponEligibleLine`)
+ * — keep in sync.
+ */
+export function couponEligibleLine(line: CouponScopedLine, coupon: Pick<Coupon, 'appliesTo' | 'appliesToEventId'>): boolean {
+  const { appliesTo, appliesToEventId } = coupon;
+  if (appliesTo === 'any') return true;
+  if (appliesTo === 'membership') {
+    return line.scope === 'athlete-membership' || line.scope === 'club-membership' || line.scope === 'coach-membership';
+  }
+  if (appliesTo === 'meet-entry') {
+    return line.scope === 'meet-entry' && (!appliesToEventId || line.eventId === appliesToEventId);
+  }
+  return line.scope === appliesTo;
+}
+
 /** Service fee passed to the payer: 3% + $0.30 of the order subtotal, in CENTS.
  *  Operates in Stripe's cent unit (distinct from the dollar-based legacy fns above).
  *  Rounds UP (never to-nearest) so the collected fee never falls a cent short

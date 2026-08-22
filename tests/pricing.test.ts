@@ -6,6 +6,7 @@ import {
   offeredMembershipTypes,
   couponValid,
   applyCoupon,
+  couponEligibleLine,
   newRegistrationEntryTotal,
   reassignPartners,
   syncSynchroPartnerLevel,
@@ -166,6 +167,48 @@ describe('applyCoupon', () => {
   });
   it('no discount fields → unchanged', () => {
     expect(applyCoupon(40, { code: 'N', appliesTo: 'any' })).toBe(40);
+  });
+});
+
+describe('couponEligibleLine (UAT M-11-01)', () => {
+  const entryLine = { scope: 'meet-entry' as const, eventId: 'evt-1' };
+  const changeFeeLine = { scope: 'change-fee' as const, eventId: 'evt-1' };
+  const addonLine = { scope: 'addon' as const, eventId: 'evt-1' };
+  const membershipLine = { scope: 'athlete-membership' as const };
+
+  it('a meet-entry coupon is eligible for a true entry line', () => {
+    expect(couponEligibleLine(entryLine, { appliesTo: 'meet-entry' })).toBe(true);
+  });
+  it('a meet-entry coupon is NOT eligible for a change-fee line', () => {
+    expect(couponEligibleLine(changeFeeLine, { appliesTo: 'meet-entry' })).toBe(false);
+  });
+  it('a meet-entry coupon is NOT eligible for an addon line', () => {
+    expect(couponEligibleLine(addonLine, { appliesTo: 'meet-entry' })).toBe(false);
+  });
+  it('a meet-entry coupon is NOT eligible for a membership line', () => {
+    expect(couponEligibleLine(membershipLine, { appliesTo: 'meet-entry' })).toBe(false);
+  });
+  it('an "any" coupon is eligible for every line, regardless of scope', () => {
+    for (const line of [entryLine, changeFeeLine, addonLine, membershipLine]) {
+      expect(couponEligibleLine(line, { appliesTo: 'any' })).toBe(true);
+    }
+  });
+  it('a "membership" coupon matches all three membership scopes, never entry/change-fee/addon', () => {
+    expect(couponEligibleLine({ scope: 'athlete-membership' }, { appliesTo: 'membership' })).toBe(true);
+    expect(couponEligibleLine({ scope: 'club-membership' }, { appliesTo: 'membership' })).toBe(true);
+    expect(couponEligibleLine({ scope: 'coach-membership' }, { appliesTo: 'membership' })).toBe(true);
+    expect(couponEligibleLine(entryLine, { appliesTo: 'membership' })).toBe(false);
+    expect(couponEligibleLine(changeFeeLine, { appliesTo: 'membership' })).toBe(false);
+    expect(couponEligibleLine(addonLine, { appliesTo: 'membership' })).toBe(false);
+  });
+  it('a meet-entry coupon scoped to one event does not match an entry line for a different event', () => {
+    expect(couponEligibleLine(entryLine, { appliesTo: 'meet-entry', appliesToEventId: 'evt-2' })).toBe(false);
+    expect(couponEligibleLine(entryLine, { appliesTo: 'meet-entry', appliesToEventId: 'evt-1' })).toBe(true);
+    expect(couponEligibleLine(entryLine, { appliesTo: 'meet-entry', appliesToEventId: null })).toBe(true);
+  });
+  it('a fine-grained membership coupon matches only its own exact scope', () => {
+    expect(couponEligibleLine({ scope: 'club-membership' }, { appliesTo: 'club-membership' })).toBe(true);
+    expect(couponEligibleLine({ scope: 'athlete-membership' }, { appliesTo: 'club-membership' })).toBe(false);
   });
 });
 

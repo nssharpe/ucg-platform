@@ -338,6 +338,35 @@ export async function fulfillPayment(db: DB, payment: PaymentRow, opts: FulfillO
       refunded: false,
     }], { onConflict: 'id' });
   }
+  // --- UAT M-11-02 / M-20-01: persist the discount as its own invoice line ---
+  // `amount_cents` above is the PRE-discount list price; `paid_cents` (frozen
+  // per line at checkout time, see `create-checkout-session`) is what was
+  // ACTUALLY charged post-coupon. The gap between their sums is exactly the
+  // coupon discount, previously computed for checkout display/the receipt
+  // EMAIL total only and never written anywhere — so every other renderer
+  // (Purchase History, the Cart receipt modal, the PDF receipt) showed the
+  // full list-price items summing to MORE than what the payment/email
+  // actually charged. `paid_cents ?? i.amount_cents` treats a legacy item
+  // with no discount info (the pre-T6 `cart_items`-reconstructed fallback
+  // above, which never set `paid_cents`) as undiscounted, never as a bogus
+  // "gave away everything" discount. Deterministic id ⇒ idempotent on a
+  // webhook retry, same as every other upsert in this function.
+  if (items.length) {
+    const totalAmountCents = items.reduce((s, i) => s + i.amount_cents, 0);
+    const totalPaidCents = items.reduce((s, i) => s + (i.paid_cents ?? i.amount_cents), 0);
+    const discountCents = totalAmountCents - totalPaidCents;
+    if (discountCents > 0) {
+      await db.from('invoice_items').upsert([{
+        id: `ii-${payment.id}-discount`, invoice_id: invoiceId,
+        label: payment.coupon_code ? `Promo code ${payment.coupon_code}` : 'Discount',
+        amount: -(discountCents / 100), kind: 'discount',
+        ref_user_id: null, ref_reg_ids: null, ref_event_id: null, ref_line_type: null,
+        addon_size: null, addon_assignee: null,
+        refunded: false,
+      }], { onConflict: 'id' });
+    }
+  }
+
   // The service fee (the only source of non-whole-dollar cents in what the
   // customer actually paid) was previously computed for checkout display and
   // the receipt EMAIL only, never persisted — so Purchase History / the
@@ -584,6 +613,12 @@ async function emailReceipt(
   const subtotal = subtotalOverrideCents ?? payment.amount_subtotal ?? items.reduce((s, i) => s + i.amount_cents, 0);
   const fee = payment.service_fee ?? 0;
   const total = subtotal + fee;
+  // UAT M-11-02 / M-20-01: the discount over exactly THESE `items` (already
+  // duplicate-slot-filtered when applicable — see the doc comment above) so
+  // this reconciles with `subtotal`/`total` above in every case, the same
+  // amount_cents-vs-paid_cents gap the persisted invoice_items discount row
+  // above is computed from.
+  const discountCents = items.reduce((s, i) => s + (i.amount_cents - (i.paid_cents ?? i.amount_cents)), 0);
 
   // Per-event confirmation config (emv2 P0 Task 4): events referenced by the
   // purchased lines can carry a host-configured confirmation message
@@ -704,6 +739,13 @@ async function emailReceipt(
     .map((i) => `<tr><td style="padding:6px 16px 6px 0;color:#1E2B38;">${esc(i.label)}</td>` +
       `<td style="padding:6px 0;text-align:right;white-space:nowrap;color:#1E2B38;">${fmtMoney(i.amount_cents)}</td></tr>`)
     .join('');
+  // UAT M-11-02 / M-20-01: the discount, negative, BEFORE the service fee —
+  // so the rows visibly reconcile to `total` (items − discount + fee) instead
+  // of the item rows alone summing to more than what was actually charged.
+  const discountRow = discountCents > 0
+    ? `<tr><td style="padding:6px 16px 6px 0;color:#184b56;">Promo code${payment.coupon_code ? ` (${esc(payment.coupon_code)})` : ''}</td>` +
+      `<td style="padding:6px 0;text-align:right;white-space:nowrap;color:#184b56;">−${fmtMoney(discountCents)}</td></tr>`
+    : '';
   const feeRow = fee > 0
     ? `<tr><td style="padding:6px 16px 6px 0;color:#5b6b7a;">Service fee (card processing)</td>` +
       `<td style="padding:6px 0;text-align:right;white-space:nowrap;color:#5b6b7a;">${fmtMoney(fee)}</td></tr>`
@@ -716,7 +758,7 @@ async function emailReceipt(
 <p>Thanks for your purchase. Here's your receipt for the items below.</p>
 ${eventSectionsHtml}${campSectionHtml}<p style="color:#5b6b7a;font-size:13px;margin:0 0 12px;">Receipt ${esc(invoiceNumber)}</p>
 <table style="border-collapse:collapse;margin:8px 0;font-size:14px;width:100%;">
-${rows}${feeRow}
+${rows}${discountRow}${feeRow}
 <tr><td style="padding:10px 16px 0 0;border-top:2px solid #1E2B38;font-weight:700;color:#1E2B38;">Total paid</td>
 <td style="padding:10px 0 0;border-top:2px solid #1E2B38;text-align:right;font-weight:700;color:#1E2B38;">${fmtMoney(total)}</td></tr>
 </table>`,
