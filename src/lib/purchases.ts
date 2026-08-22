@@ -4,7 +4,7 @@
 // including ones the viewer themselves paid) pages.
 import type { CartItem, Invoice, Payment } from './types';
 import { fmtMoney } from './scoring';
-import { invoiceTotal } from './receipt';
+import { invoiceTotal } from './invoice-math';
 
 /** A personal (non-club) invoice belonging to `personId` — either they're the
  *  billed individual (`athleteId`) or one of the invoice's line items is FOR

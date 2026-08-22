@@ -25,20 +25,10 @@ export function refundReceiptNumber(requestId: string): string {
   return `RF-${requestId}`;
 }
 
-/** Net total of an invoice (refunded items don't count). */
-export function invoiceTotal(inv: Invoice): number {
-  return inv.items.reduce((sum, i) => sum + (i.refunded ? 0 : i.amount), 0);
-}
-
-/** Subtotal before any promo/discount lines (refunded items don't count). */
-export function invoiceSubtotal(inv: Invoice): number {
-  return inv.items.reduce((sum, i) => sum + (i.refunded || i.kind === 'discount' ? 0 : i.amount), 0);
-}
-
-/** Total of discount lines as a positive number (0 when there are none). */
-export function invoiceDiscount(inv: Invoice): number {
-  return -inv.items.reduce((sum, i) => sum + (i.refunded || i.kind !== 'discount' ? 0 : i.amount), 0);
-}
+// Pure invoice math lives in invoice-math.ts (no jsPDF) — re-exported here so
+// existing importers keep working.
+export { invoiceTotal, invoiceSubtotal, invoiceDiscount } from './invoice-math';
+import { invoiceTotal, invoiceSubtotal, invoiceDiscount } from './invoice-math';
 
 /** Generate and download a PDF receipt for an invoice. */
 export function downloadReceipt(inv: Invoice, forName: string): void {
