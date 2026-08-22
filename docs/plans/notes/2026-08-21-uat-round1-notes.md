@@ -1165,3 +1165,128 @@ No Browser-pane verification — this is a data-layer/pure-logic fix with no new
 beyond one extra `<option>` and one caption `<p>` in Results.tsx, both exercised by the existing
 render path; the EventWizard session-editor UI itself (Remove-button toast, discipline-toggle
 block) was not clicked through live in a browser, only read for correctness.
+
+## A-11-01 / A-07-02 / A-06-01 / A-07-01 / A-01-01 (2026-08-22): admin MFA gate, invite/reset landing, New-Person invite, UCG wording
+
+**A-11-01 - admin MFA hard gate.** Decided per triage Q4 (block admin pages only, prompt every
+sign-in). `adminMfaGate` (`src/lib/mfa-core.ts`, pure) + `useAdminMfaSatisfied`
+(`src/lib/mfa.ts`, reactive: `listFactors()` for verified TOTP + `aal.methods` for the passkey
+exemption - CONSUMES `PASSKEY_AMR_METHOD`, does not reimplement it). `RequireAdmin` (`App.tsx`)
+now renders a full-page "Set up two-factor authentication to continue" panel (same shape as its
+existing "Admin access required" panel) whenever `caps.isAdmin && mfaSatisfied === false`, with a
+primary link to `/me` and a secondary link Home. `/me` stays outside `RequireAdmin` so there is
+always a way out. Deleted `AdminMfaNag` outright (not reduced to a banner) - once admin pages
+hard-block, a reminder banner elsewhere adds no enforcement value, only noise. Both sign-out call
+sites (`Layout.tsx`, `MfaChallenge.tsx`) now call `clearLegacyMfaNagDismissal()` to scrub any
+leftover `sessionStorage['ucg-mfa-nag-dismissed']` from before this change (moot going forward
+since nothing writes that key anymore, but cheap insurance).
+
+Deviation from the advisor-caught draft: the first pass would have hung on `PageFallback` forever
+on a `listFactors()` error (`if (cancelled || error) return;` left `hasTotp` at `null`
+permanently). Fixed to resolve `error` to `hasTotp = false` - falls through to the (escapable)
+block panel instead of an infinite spinner. Also confirmed against the installed `auth-js` source
+that `data.totp` from `listFactors()` already excludes unverified factors (bucketed by type only
+when `factor.status === 'verified'`), so no extra filtering was needed - documented in the code
+comment rather than assumed.
+
+**A-07-02 / A-06-01 - invite/reset landing.** This was NOT a dashboard-config issue as first
+suspected from reading `_getSessionFromURL` synchronously extracting `window.location.href` - see
+the full trace now in `.claude/rules/auth-and-mfa.md` -> "HashRouter vs Supabase implicit flow".
+Short version: Supabase's own `window.location.hash = ''` (after its `_getUser` network call)
+fires a real `hashchange` that bounces HashRouter to `/`, and the OLD `SetPasswordRedirect` had
+already deleted its own `?setpw=1` query marker as cleanup by that point, so its effect
+early-returned and never re-navigated back to `/set-password` - stranding the user on a
+signed-out-looking Home page. Fixed by capturing the marker once at module load in `auth.ts`
+(`initialSetPwKind()` / `hasInitialLinkError()`, mirroring the existing
+`initialUrlHasAuthCallback` idiom), immune to every later rewrite.
+
+Split the marker into `?setpw=invite` (`invite-account`) vs `?setpw=reset` (Gate.tsx
+forgot-password) - chosen over capturing the `onAuthStateChange` event type
+(`PASSWORD_RECOVERY`/`SIGNED_IN`) because the event can fire before or after `SetPassword.tsx`
+mounts depending on network timing, whereas the static URL marker has none of that race. A bare
+legacy `?setpw=1` (any already-sent email still in flight) is treated as `'legacy'` and routed
+like `'invite'`, matching prior behavior for those in-flight links. Post-success routing:
+`'reset'` -> `/` (Home), `'invite'`/`'legacy'` -> `/membership` (matches the invite email's "you
+will land on the membership page" copy - left the email content itself untouched).
+
+`SetPassword.tsx`'s `!session` (expired-link) state now reads "This link has expired or was
+already used" with a "Request a new link ->" button that navigates to `/me`, which - for a
+signed-out visitor - renders `Gate`'s sign-in screen with its existing "Forgot my password?"
+action; there is no separate standalone sign-in route to link to more directly.
+
+Also fixed in passing: `SetPasswordRedirect`'s own `history.replaceState(null, ...)` call was
+passing `null` as the state arg, which wipes whatever React Router had stored in
+`history.state` - changed to pass `window.history.state` through. (Ended up unused by the final
+design since the invite/reset marker lives in the URL, not router state, but it is a correctness
+fix regardless and cheap to keep.)
+
+**Not fixed here, flagged for dashboard/ops if it recurs:** if the Supabase dashboard's redirect
+allow-list ever drops the custom `redirectTo`, the `?setpw=...` marker never reaches the app and
+none of the above helps - separately, email link-scanners (Outlook/Gmail Safe Links) prefetching
+a one-time invite link before the real click is a second, legitimate way to hit the expired-link
+state. Neither is a code defect; both documented in the rule file.
+
+**A-07-01 (Nate) - "+ New Person" optional invite.** Added a "Send account invite now" checkbox
+to `PersonForm`'s New-Person dialog only (`!person`), default ON, effectively gated on an email
+being present via the pure `shouldSendInviteOnCreate({isNew, email, checked})`
+(`src/lib/person-form-core.ts`, tested). New `onCreated?: (person, sendInvite) => void` prop fires
+once, only on a fresh creation. `AdminMembers.tsx` wires it to the EXISTING `createAccountInvite`
+path (~line 452) - **note this is the signup-link flow** (an `accountInvites` row + a generic
+`sendEmail` "create your account" link), **not** the `invite-account` edge function's branded
+set-password email that `Club.tsx`'s manager-side "add athlete" uses. The task named
+`createAccountInvite` explicitly as the path to wire, so this is intentional, but it means "+ New
+Person -> invite" and "Club.tsx -> add athlete" send visually different emails today - worth a
+follow-up if that inconsistency ever surfaces in UAT.
+
+TS note for the next person touching `PersonForm.save()`: the created-person reference must be
+typed `Athlete | undefined` (not narrowed to `null`/`never`) since it is only assigned inside the
+`mutate()` closure and read after - `let createdPerson: Athlete | undefined;` avoids a TS
+control-flow false negative that `npm run build` would otherwise catch.
+
+**A-01-01 - UCG wording.** Fixed: `src/pages/WaiverSign.tsx:77` heading ("NAIGC waiver" -> "UCG
+waiver"); `supabase/functions/request-guardian-waiver/index.ts:94,100` (body copy + subject line,
+same substitution). `supabase/functions/send-membership-welcome/index.ts:194-195`: no UCG
+equivalent exists in the codebase/brand spec for NAIGC's `/upcoming-events/`, `/email-sign-up/`,
+or Instagram handle, so per the task's fallback rule, both `naigc.org` links now point to
+`https://www.unitedgymnastics.org` (site root) and the copy was reworded from "sign up for our
+[announcement] email list ... NAIGC information ... follow our [Instagram] ... NAIGC members" to
+"visit [unitedgymnastics.org] and follow our social media to stay up-to-date on important UCG
+information ... connect with UCG members" - dropped the specific Instagram link entirely since no
+UCG handle is known anywhere in the repo. Left untouched per the task's explicit exclusions: the
+`julia.sharpe+<region>-team@naigc.org` addresses (lines 59-65, contact-address infrastructure,
+same category as the `info@naigc.org`/`nate.sharpe@naigc.org` exclusion even though not
+byte-for-byte named), scoring rule-set names, and `supabase/templates/*`.
+
+**Item 5 finding (signup-confirmation "wrong website" - Julia).** Grepped
+`supabase/templates/*.html`, `supabase/config.toml` (`site_url`/`additional_redirect_urls`), every
+`APP_PUBLIC_URL` fallback across `supabase/functions/**`, and `_shared/email-layout.ts`. **All of
+it already points at the correct domains** - `https://www.unitedgymnastics.org` in every template
+footer and the shared layout, `https://nssharpe.github.io/ucg-platform/` (+ wildcards) as
+`site_url`/redirect allow-list, `https://nssharpe.github.io/ucg-platform` as every function's
+`APP_PUBLIC_URL` fallback. No wrong-site URL found in-repo. `confirmation.html` was last touched
+in the "unitedgymnastics.org footer" rebrand commit; git history does not show conclusive evidence
+of a `supabase config push` since. **Most likely explanation: prod has not received a `config
+push` since these templates were fixed** (or Julia saw a cached/already-received email from
+before that push) - this is a deployment gap, not a code defect. Per the task and
+`config-push-dryrun` skill, left the push itself to the controller.
+
+**Deploy list:** `request-guardian-waiver`, `send-membership-welcome`, `invite-account` (redirect
+marker changed from `?setpw=1` to `?setpw=invite`).
+
+**Verification.** `npm run build` - tsc + vite, zero errors. `npx eslint` on every touched file
+(`src/App.tsx src/lib/auth.ts src/lib/mfa.ts src/lib/mfa-core.ts src/lib/person-form-core.ts
+src/components/PersonForm.tsx src/pages/admin/AdminMembers.tsx src/pages/SetPassword.tsx
+src/pages/Gate.tsx src/components/Layout.tsx src/pages/MfaChallenge.tsx src/pages/WaiverSign.tsx
+supabase/functions/invite-account/index.ts supabase/functions/request-guardian-waiver/index.ts
+supabase/functions/send-membership-welcome/index.ts tests/lib/mfa-core.test.ts
+tests/lib/person-form-core.test.ts`) - zero errors/warnings. `npx vitest run` - **1220/1220
+passed** across 78 files (9 new: 4 `adminMfaGate` cases in `tests/lib/mfa-core.test.ts`, 5
+`shouldSendInviteOnCreate` cases in `tests/lib/person-form-core.test.ts`).
+
+No Browser-pane verification this round - every change here is either pure logic (both new test
+files), an auth-flow ordering fix that needs a real Supabase invite/reset email round-trip to
+observe live (cannot be simulated in the local preview without a real email link), or a small
+form addition (`PersonForm` checkbox) using existing `checkrow`/`btn` classes with no new color
+pairing, so the contrast/responsive rules are not in play. Flagging the admin-MFA gate and the
+invite/reset landing as the two highest-value things to click through live against staging before
+the next UAT round, since neither got an end-to-end browser pass here.

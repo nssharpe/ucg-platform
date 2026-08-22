@@ -91,13 +91,13 @@ Deno.serve(async (req) => {
     heading: 'Signature requested',
     bodyHtml: `<p>Hello ${esc(body.guardianName ?? '')},</p>
 <p>${esc(athlete)} has requested that you, as parent/guardian, sign the
-NAIGC waiver for United Club Gymnastics.</p>`,
+UCG waiver for United Club Gymnastics.</p>`,
     cta: { text: 'Review & sign the waiver', href: link },
     footnoteHtml: 'This is an electronic signature with timestamp and IP recorded.',
   });
 
   try {
-    await sendOne({ to: guardianEmail, subject: `Sign the NAIGC waiver for ${athlete}`, html });
+    await sendOne({ to: guardianEmail, subject: `Sign the UCG waiver for ${athlete}`, html });
   } catch (e) {
     return json({ ok: false, error: `Email failed: ${e instanceof Error ? e.message : String(e)}` }, 500);
   }

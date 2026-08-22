@@ -7,6 +7,7 @@ import { useCapabilities } from '../lib/capabilities';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { offeredMembershipTypes } from '../lib/pricing';
 import { useSession } from '../lib/auth';
+import { clearLegacyMfaNagDismissal } from '../lib/mfa';
 import { TopbarMembership } from './TopbarMembership';
 import { ReportProblemDialog } from './ReportProblemDialog';
 import { useNavHistory, useGoBack, resolveLabel } from '../lib/navHistory';
@@ -161,6 +162,7 @@ export function Layout({ children }: { children: ReactNode }) {
                 // auto-login (src/lib/dev-auth.ts) doesn't immediately log back
                 // in on the next reload, letting the signed-out gate be tested.
                 if (import.meta.env.DEV) sessionStorage.setItem('ucg-dev-signed-out', '1');
+                clearLegacyMfaNagDismissal();
                 void supabase!.auth.signOut();
               }}
             >

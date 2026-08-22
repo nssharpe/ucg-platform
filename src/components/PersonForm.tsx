@@ -6,6 +6,7 @@ import { DIETARY_OPTIONS, DISCIPLINES, SHIRT_SIZES, STATE_REGIONS } from '../lib
 import type { Athlete, Gender, Placement } from '../lib/types';
 import { nextId } from '../lib/ids';
 import { pushPerson } from '../lib/supabase';
+import { shouldSendInviteOnCreate } from '../lib/person-form-core';
 
 const GENDERS: Gender[] = ['Male', 'Female', 'Non-binary', 'Genderfluid', 'Agender', 'Other'];
 
@@ -36,12 +37,20 @@ const blank = (): Omit<Athlete, 'id'> => ({
   dietary: [], dietaryNotes: '', memberships: [], achievements: [],
 });
 
-/** Create (person undefined) or edit an athlete/coach in a modal. */
-export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () => void }) {
+/** Create (person undefined) or edit an athlete/coach in a modal.
+ *  `onCreated` (UAT A-07-01 Nate) fires only on a fresh creation — never on
+ *  an edit — with the freshly-created person and whether the "Send account
+ *  invite now" checkbox was checked (and eligible: see
+ *  `shouldSendInviteOnCreate`). Callers own what "send an invite" means
+ *  (AdminMembers.tsx wires it to its existing `createAccountInvite`). */
+export function PersonForm({ person, onClose, onCreated }: { person?: Athlete; onClose: () => void; onCreated?: (person: Athlete, sendInvite: boolean) => void }) {
   const db = useDB();
   const toast = useToast();
   const [draft, setDraft] = useState<Omit<Athlete, 'id'>>(person ? { ...person } : blank());
   const set = (patch: Partial<Athlete>) => setDraft({ ...draft, ...patch });
+  // New-Person only; default ON (Nate, UAT A-07-01) — most new people are
+  // expected to want an account right away.
+  const [sendInvite, setSendInvite] = useState(true);
   const states = Object.keys(STATE_REGIONS);
   // Club must be an explicit choice: either pick a club, or tick "Independent
   // Athlete" (which maps to mainClubId = null behind the scenes). No default.
@@ -76,6 +85,7 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
     if (!clubChosen) { toast('Pick a club, or check "Independent Athlete".'); return; }
     if (!valid) { toast(`Name, email, date of birth, and ${stateLabel.toLowerCase()} are required.`); return; }
     const data = { ...draft, firstName: draft.firstName.trim(), lastName: draft.lastName.trim(), email: draft.email.trim() };
+    let createdPerson: Athlete | undefined;
     const applied = mutate((d) => {
       if (person) {
         const i = d.people.findIndex((x) => x.id === person.id);
@@ -85,10 +95,14 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
         const created = { id: nextId(d.people, 'p-'), ...data };
         d.people.push(created);
         pushPerson(created);
+        createdPerson = created;
       }
     });
     if (!applied) return; // offline read-only gate — no false success toast
     toast(person ? 'Person updated.' : `${data.kind === 'coach' ? 'Coach' : 'Athlete'} created — open their profile to manage memberships.`);
+    if (createdPerson) {
+      onCreated?.(createdPerson, shouldSendInviteOnCreate({ isNew: true, email: createdPerson.email, checked: sendInvite }));
+    }
     onClose();
   };
 
@@ -265,6 +279,18 @@ export function PersonForm({ person, onClose }: { person?: Athlete; onClose: () 
         </div>
       </Field>
       <Field label="Dietary notes"><textarea rows={2} value={draft.dietaryNotes} onChange={(e) => set({ dietaryNotes: e.target.value })} /></Field>
+
+      {!person && (
+        <label className="checkrow" style={{ marginTop: 12 }}>
+          <input
+            type="checkbox"
+            checked={sendInvite}
+            disabled={!draft.email.trim()}
+            onChange={(e) => setSendInvite(e.target.checked)}
+          />
+          Send account invite now
+        </label>
+      )}
 
       <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
         <button className="btn primary" disabled={!valid} onClick={save}>{person ? 'Save changes' : 'Create person'}</button>

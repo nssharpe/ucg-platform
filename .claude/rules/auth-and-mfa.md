@@ -57,6 +57,21 @@ dashboard (RP display "UCG Events", RP ID `nssharpe.github.io`, origin
 E2E: `e2e/passkey.spec.ts` uses Playwright's CDP virtual authenticator; skips cleanly today
 because staging's RP ID isn't `localhost`.
 
+## Admin-pages MFA hard gate (UAT A-11-01, decided 2026-08-21)
+
+`RequireAdmin` (`App.tsx`) now hard-blocks every `/admin/*` route for an admin with neither a
+verified TOTP factor nor a passkey-signed-in session — full-page panel, not a dismissable nag.
+Decision logic: `adminMfaGate` (`mfa-core.ts`, pure, unit-tested); reactive resolution:
+`useAdminMfaSatisfied` (`src/lib/mfa.ts`). **This hook is a CONSUMER of the passkey exemption
+above, not a fourth lockstep layer** — it computes `hasPasskey` off `aal.methods.includes(PASSKEY_AMR_METHOD)`,
+the exact same signal `needsMfaStepUp` uses; it never reimplements the check. `/me` (ProfileMfa,
+the enrollment UI) is deliberately NOT behind `RequireAdmin`, so a gated admin always has a way
+out. The old `AdminMfaNag` (dismissable via `sessionStorage['ucg-mfa-nag-dismissed']`, which
+survived sign-out in the same tab) was **deleted outright** rather than kept as a banner — once
+admin pages hard-block, a reminder banner elsewhere adds no enforcement value. Both sign-out call
+sites (`Layout.tsx`, `MfaChallenge.tsx`) call `clearLegacyMfaNagDismissal()` to scrub any
+leftover key from before this change.
+
 ## App roles
 
 `user_roles.role`, enum `app_role`: `admin`, `sanctioning`, `regional_rep` (region via
@@ -71,11 +86,52 @@ wait on `useRolesLoaded()` or they flash "access denied" on refresh. Reset on si
 ## HashRouter vs Supabase implicit flow
 
 Auth tokens arrive in the URL hash, which clashes with HashRouter. Invite/set-password links use
-`redirectTo` = app base + `?setpw=1` (a query survives hash-stripping); `App.tsx` detects it and
-routes `#/set-password`; `SetPassword.tsx` waits ~2.5s for the async session. **Dashboard
+`redirectTo` = app base + `?setpw=invite` (`invite-account`) or `?setpw=reset` (Gate.tsx's
+forgot-password) — a query survives hash-stripping; `App.tsx`'s `SetPasswordRedirect` detects it
+and routes `#/set-password`; `SetPassword.tsx` waits ~2.5s for the async session. **Dashboard
 requirement:** redirect URLs must include `https://nssharpe.github.io/ucg-platform/**` and
-`http://localhost:5173/**` wildcards or the query is dropped. `Gate.tsx` also offers
-forgot-password (same `?setpw=1` landing) and OTP magic-link sign-in.
+`http://localhost:5173/**` wildcards or the query is dropped. `Gate.tsx` also offers OTP
+magic-link sign-in.
+
+**A real ordering bug lived here, not just the dashboard gotcha above (audited 2026-08-21, UAT
+A-07-02/A-06-01).** Traced through the installed `@supabase/auth-js` source (`GoTrueClient.js`):
+`_initialize()` reads `window.location.href` into a local `params` object **synchronously**, at
+the very start of the call (before any `await`) — this happens at module load in `auth.ts`
+(`supabase.auth.getSession()`), well before React mounts. So the access/refresh tokens themselves
+are safe from anything React Router does afterward; there is no token-LOSS race. The real bug was
+downstream: `_getSessionFromURL`'s implicit-grant path does `await this._getUser(access_token)` —
+a genuine network round trip — and only THEN runs `window.location.hash = ''` to scrub the tokens
+from the URL. That direct hash mutation fires a real `hashchange`, which HashRouter follows
+straight to `/`. Meanwhile `SetPasswordRedirect` (mounted inside the router) had already fired
+once on `?setpw=...`, navigated to `/set-password`, and — as its OWN cleanup — deleted the `setpw`
+query param. So by the time Supabase's later `hash=''` bounce lands, the query param the redirect
+used to decide whether to re-navigate is already gone: the effect early-returned, stranding the
+app on Home, often before the session had even been saved (`_saveSession` runs after
+`_getSessionFromURL` returns) — i.e. it rendered signed-out. That is exactly Julia's "invite link
+landed on the signed-out Home page with no guidance" repro.
+
+**Fix:** capture the `setpw` marker and any link error ONCE at module load in `auth.ts`
+(`initialSetPwKind()` / `hasInitialLinkError()`, mirroring the existing `initialUrlHasAuthCallback`
+idiom just below them) instead of re-reading `window.location.search`/`.hash` later.
+`SetPasswordRedirect` and `SetPassword.tsx` both read from these module-level captures, so they
+keep working no matter how many times the URL gets rewritten out from under them afterward (own
+cleanup, Supabase's `hash=''`, or both). `SetPassword.tsx` routes post-success on the captured
+kind: `'reset'` → Home, `'invite'`/`'legacy'` (the old bare `?setpw=1`, for any already-sent email
+still in flight) → `/membership`, matching the invite email's "you'll land on the membership page"
+copy. A router-`state` marker was considered and rejected: the redirect's own
+`window.history.replaceState(null, '', ...)` call would wipe it (passing `null` clears React
+Router's history-state slot — now fixed to pass `window.history.state` instead regardless, but the
+URL-marker approach avoids depending on it). Also fixed: `SetPassword.tsx`'s `!session`
+(expired-link) state now shows an explicit "This link has expired or was already used" message
+with a "Request a new link →" button (→ `/me`, which renders `Gate`'s sign-in screen with "Forgot
+my password?" for a signed-out visitor) instead of only a terse heading.
+
+**Still true and NOT fixed by the above (flag for dashboard/ops attention if it recurs):** if the
+Supabase dashboard's redirect allow-list ever drops the custom `redirectTo` (falls back to the
+bare Site URL), the `?setpw=...` marker never reaches the app at all and none of the above can
+help — the Dashboard requirement above still applies. Email link-scanners (Outlook/Gmail Safe
+Links) pre-fetching a one-time invite link before the real click is a second, unrelated way to
+legitimately land on the expired-link state.
 
 ## Initial-paint auth flash (App.tsx)
 

@@ -84,7 +84,11 @@ function AuthGate() {
     clearMsg();
     if (!email.trim()) { setErr('Enter your email first.'); return; }
     setBusy(true);
-    const redirectTo = `${window.location.origin}${import.meta.env.BASE_URL ?? '/'}?setpw=1`;
+    // 'reset' (not the old bare `setpw=1`) so SetPassword.tsx lands a
+    // password-reset link on Home, distinct from an account-setup invite
+    // (invite-account, `?setpw=invite`), which lands on membership instead
+    // (UAT A-07-02 / A-06-01).
+    const redirectTo = `${window.location.origin}${import.meta.env.BASE_URL ?? '/'}?setpw=reset`;
     const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
     setBusy(false);
     if (error) setErr(error.message);

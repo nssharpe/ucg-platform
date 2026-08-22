@@ -676,7 +676,19 @@ To activate it, sign up using <strong>this email address</strong> (${escapeHtml(
           </tbody>
         </table>
       </div>
-      {editing && <PersonForm person={editing === 'new' ? undefined : editing} onClose={() => setEditing(null)} />}
+      {editing && (
+        <PersonForm
+          person={editing === 'new' ? undefined : editing}
+          onClose={() => setEditing(null)}
+          // UAT A-07-01 (Nate): "+ New Person" can optionally fire the same
+          // account-setup invite as the per-person "Send account invite"
+          // row action. This is the signup-link flow (createAccountInvite:
+          // an accountInvites row + a generic sendEmail signup link) — NOT
+          // the invite-account edge function's branded set-password email
+          // used by Club.tsx's manager-side "add athlete".
+          onCreated={(created, sendInvite) => { if (sendInvite) void createAccountInvite(created); }}
+        />
+      )}
       {showMerge && <MergeAthletesModal onClose={() => setShowMerge(false)} />}
       {/* W13 task 6: revoke confirmation modal */}
       {revoking && (

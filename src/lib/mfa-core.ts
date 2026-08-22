@@ -40,3 +40,22 @@ export function needsMfaStepUp(
  *  name before enrolling a fresh one of that type. */
 export const TOTP_FRIENDLY_NAME = 'Authenticator app';
 export const PASSKEY_FRIENDLY_NAME = 'Passkey';
+
+/** Admin-PAGES hard gate (UAT A-11-01, decided 2026-08-21: block admin pages
+ *  only, prompt at every sign-in — NOT a dismissable nag). "Satisfied" =
+ *  admin has a verified TOTP factor OR the current session's amr includes
+ *  the passkey sign-in exemption — the SAME exemption `needsMfaStepUp` uses
+ *  above. This function is a CONSUMER of that exemption, not a fourth
+ *  lockstep layer: callers must pass `hasPasskey` computed off
+ *  `aal.methods.includes(PASSKEY_AMR_METHOD)` (see `src/lib/mfa.ts`'s
+ *  `useAdminMfaSatisfied`), never a separate check. Pure/no I/O so it's
+ *  directly unit-testable. */
+export interface AdminMfaGateInput {
+  isAdmin: boolean;
+  hasTotp: boolean;
+  hasPasskey: boolean;
+}
+export function adminMfaGate({ isAdmin, hasTotp, hasPasskey }: AdminMfaGateInput): 'allow' | 'block' {
+  if (!isAdmin) return 'allow';
+  return hasTotp || hasPasskey ? 'allow' : 'block';
+}
