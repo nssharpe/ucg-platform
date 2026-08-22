@@ -97,6 +97,18 @@ Auth'd; the caller must own the cart items or manage the club.
   insert the `payments` row with `stripe_session_id: null` and call the fulfillment core
   directly (inline retry-once + `error_logs` on failure, so a failure never strands the order
   pending forever). FE polls a `'free'` stage instead of mounting Stripe Embedded.
+  **The real (non-preview) call does this immediately and unconditionally the moment it's
+  invoked — there is no server-side way to "peek" at a $0 total without fulfilling it.**
+  `CartCheckout.tsx` (UAT M-12-01, `2026-08-22`) therefore ALWAYS calls `mode: 'preview'` first
+  (`checkoutMode()` in `pricing.ts` decides the branch) and only calls the real endpoint once the
+  preview total is confirmed non-zero, OR the user clicks the resulting `confirm-free` stage's
+  explicit "Confirm — no charge" button. Coupon-apply from an already-mounted Stripe form routes
+  through the same preview gate — applying a 100%-off code there is the second way to reach a $0
+  total, and used to auto-fulfill exactly like the mount-time path. Capacity/session/survey
+  checks run identically in preview mode (only the capacity hold-refresh WRITE is skipped), so
+  `previewCartTotal` (`supabase.ts`) parses the same structured rejections
+  (`parseCheckoutSessionError`, shared with `createCheckoutSession`) — a preview-mode 409/400
+  must reach `onCapacityConflict`/`onSessionRequired`/`onSurveyRequired` exactly like a real one.
 - **One live slot per (event, athlete, discipline) — UAT Z-02, `20260822010000`.** Before
   pricing a `meet-entry` line, every referenced reg is checked against `allEventRegs` via the
   pure `findPaidSibling` (`src/lib/registration-status.ts` / mirrored
