@@ -240,6 +240,34 @@ export function registrationChangeFeeDollars(
   return event.change_fee?.amount ?? 0;
 }
 
+/**
+ * Combined price (DOLLARS) for adding a discipline to a registration that
+ * already has at least one PAID/updated-pending discipline at this
+ * event+club (UAT M-10-01, S1): the ADDED discipline(s)' entry-total
+ * (`newRegistrationEntryTotalDollars`, priced from `priorDisciplineCount` —
+ * pass the count INCLUDING the already-paid discipline(s)) PLUS the event's
+ * change fee (`registrationChangeFeeDollars`), as ONE combined amount —
+ * never the change fee alone (that undercharge is exactly the C4-adjacent
+ * bug this closes: an added reg must always be priced by the entry-total
+ * logic, on top of, never instead of, the change fee). Host club ⇒ 0 (both
+ * components zero themselves). Mirrors `addedDisciplineChangeTotal` in
+ * src/lib/pricing.ts — keep in sync.
+ */
+export function addedDisciplineChangeTotalDollars(
+  event: RegFeeEvent,
+  { competingClubId, priorDisciplineCount, newDisciplineCount, late }: {
+    competingClubId: string;
+    priorDisciplineCount: number;
+    newDisciplineCount: number;
+    late?: { earliestCreatedAtISO: string };
+  },
+): number {
+  return (
+    newRegistrationEntryTotalDollars(event, { competingClubId, priorDisciplineCount, newDisciplineCount, late })
+    + registrationChangeFeeDollars(event, { competingClubId })
+  );
+}
+
 /** Addon price (DOLLARS) for an event, by line type. FAIL-CLOSED: an unknown
  *  line type, or a type not configured on this event (e.g. a tshirt line for
  *  an event with no `tshirt_addon`), returns `null` — the caller MUST reject

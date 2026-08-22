@@ -9,7 +9,7 @@ import { pushRegistration, pushCampSurvey, pushCart, syncSynchroPartnerLevelRemo
 import { RegistrationEditor } from '../components/RegistrationEditor';
 import { useMyRegistrations, useEventRegistrations, applyLocalRegistrationUpsert, applyLocalRegistrationRemove, mergeUpsertedRegs } from '../lib/registrations-slice';
 import {
-  newRegistrationEntryTotal, registrationChangeFee, changeIsEligible, syncSynchroPartnerLevel, lateFeeApplies, lateFeeAnchor,
+  newRegistrationEntryTotal, registrationChangeFee, addedDisciplineChangeTotal, changeIsEligible, syncSynchroPartnerLevel, lateFeeApplies, lateFeeAnchor,
   campSurveyQuestionsOf, campSurveyAnswersValid, campSurveyToStored, campSurveyAnswerLabel, requiredSessionRequests,
 } from '../lib/pricing';
 import type { RegChangeState } from '../lib/pricing';
@@ -133,7 +133,13 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
 
   // Label used for an event's change fee in the athlete's cart — also how we detect
   // that a change fee for this event is already pending checkout (M7: returns the
-  // item itself so saveRegs can extend it in place instead of just checking).
+  // item itself so saveRegs can extend it in place instead of just checking). UAT
+  // M-10-01: a mixed line (a discipline added alongside the chargeable edit) keeps
+  // this SAME label — only the AMOUNT reflects the combined total. Switching the
+  // label text would require loosening this `startsWith` lookup, risking a legacy
+  // pre-S4 row (`refLineType == null`, per `classifyCartRemoval`'s L2 note) no
+  // longer being recognized as "already pending" and stacking a second line —
+  // exactly the bug M7/H5 closed. Not worth that risk for a label string.
   const changeFeeLabel = (eventName: string) => `${eventName} change fee`;
   const changeFeePendingItem = (event: Event) =>
     (db.carts[personId] ?? []).find((c) => c.kind === 'meet-entry' && c.label.startsWith(changeFeeLabel(event.name)));
@@ -354,6 +360,19 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
           })
         : 0;
 
+      // UAT M-10-01: when EDITING an existing registration, a discipline
+      // added alongside the edit (no prior row) owes its own extra-
+      // discipline entry fee ON TOP of any change fee, as one combined line
+      // amount — never the change fee alone (`entryTotal` above stays 0 while
+      // editingExisting; it only prices the brand-new-registration path).
+      // `newOnlyRegs` feeds `combinedChangeTotal` further below, which
+      // combines with a non-zero `changeFee`. The pre-existing "change-fee
+      // window closed, discipline added mid-edit" gap (member side never
+      // separately charges an entry fee there, unlike Club.tsx's H7 fix) is
+      // untouched; out of this ticket's scope.
+      const existingRegIds = new Set(existingForAthlete.map((r) => r.id));
+      const newOnlyRegs = editingExisting ? newRegs.filter((r) => !existingRegIds.has(r.id)) : [];
+
       // Which regs get a cart-add capacity hold stamped (event-mgmt v2 P4):
       // both the change-fee and entry-fee branches further below reference
       // ALL of `newRegs`, so a hold is due on all of them whenever either fee
@@ -427,6 +446,25 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
       // stacking a second line — stacking is what let removal delete/resurrect
       // against a stale snapshot. NEVER overwrite an existing snapshot entry:
       // it must stay the ORIGINAL pre-change state from the FIRST edit.
+      // UAT M-10-01: a discipline ADDED alongside this chargeable edit owes
+      // its own extra-discipline entry fee ON TOP of the change fee, as one
+      // combined line amount — never the change fee alone (C4 anti-
+      // smuggling: an added reg is always priced by the entry-total logic,
+      // on top of, never instead of, the change fee). `addedDisciplineChangeTotal`
+      // matches the server's mixed-line pricing exactly.
+      const isMixed = newOnlyRegs.length > 0;
+      const combinedChangeTotal = isMixed
+        ? addedDisciplineChangeTotal(event, {
+            competingClubId: selectedClubId,
+            priorDisciplineCount,
+            newDisciplineCount: newOnlyRegs.length,
+            late: lateAnchor ? { earliestCreatedAtISO: lateAnchor } : undefined,
+          })
+        : changeFee;
+      // The toast below prints `chargedFee` — it must reflect the actual
+      // amount pushed to the cart (the combined total when mixed), never the
+      // bare change fee, or the toast would understate what the cart charges.
+      if (changeFee > 0) chargedFee = combinedChangeTotal;
       if (changeFee > 0 && alreadyPendingItem) {
         const cart = d.carts[personId] ?? (d.carts[personId] = []);
         const line = cart.find((c) => c.id === alreadyPendingItem.id);
@@ -439,14 +477,22 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
             ...(line.priorRegSnapshot ?? []),
             ...newSnapshotEntries.filter((r) => !snapshotCovered.has(r.id)),
           ];
+          if (isMixed) {
+            // The change fee itself is flat and already baked into
+            // line.amount from when the line was first created — only the
+            // newly added discipline's entry-total portion is incremental.
+            // Label stays the plain "change fee" text (see changeFeeLabel's
+            // doc comment) — only the amount reflects the combined total.
+            line.amount = (line.amount ?? 0) + (combinedChangeTotal - changeFee);
+          }
           pushCart(personId, cart, false);
         }
       } else if (changeFee > 0) {
         const cart = d.carts[personId] ?? (d.carts[personId] = []);
         cart.push({
           id: `ci-change-${Date.now()}`,
-          label: `${changeFeeLabel(event.name)}`,
-          amount: changeFee,
+          label: changeFeeLabel(event.name),
+          amount: combinedChangeTotal,
           kind: 'meet-entry',
           refUserId: personId,
           refRegIds: newRegs.map((r) => r.id),

@@ -13,7 +13,7 @@ import type { Athlete, CartItem, Club, Event, Membership, Registration, Season, 
 import { fmtMoney } from '../lib/scoring';
 import {
   newRegistrationEntryTotal, reassignPartners, registrationChangeFee, changeIsEligible,
-  syncSynchroPartnerLevel, findIncomingSynchroPartner, lateFeeApplies, lateFeeAnchor,
+  addedDisciplineChangeTotal, syncSynchroPartnerLevel, findIncomingSynchroPartner, lateFeeApplies, lateFeeAnchor,
   addonPurchaseOpen, initialClubAddonDraft, buildClubAddonCartItems,
 } from '../lib/pricing';
 import type { RegChangeState, ClubAddonDraft } from '../lib/pricing';
@@ -1388,7 +1388,14 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
 
   // Change-fee label for this event+athlete's club-cart line — also how we
   // detect an already-pending change line to extend in place (M7/H5 fix,
-  // mirroring MyRegistrations.tsx's changeFeeLabel/changeFeePending).
+  // mirroring MyRegistrations.tsx's changeFeeLabel/changeFeePending). UAT
+  // M-10-01: a mixed line (a discipline added alongside the chargeable edit)
+  // keeps this SAME label rather than a distinct one — changing the label
+  // text would have required switching this lookup off exact-match, which
+  // risks silently un-recognizing an already-pending line (reintroducing the
+  // M7/H5 cart-line-stacking bug this lookup exists to prevent). The line's
+  // AMOUNT reflects the combined total; only the label stays the plain
+  // "change fee" text.
   const changeFeeLabel = (athlete: Athlete) => `${event.name} change fee — ${athlete.firstName} ${athlete.lastName}`;
   const changeFeePendingItem = (athleteId: string) => {
     const athlete = effectivePeople.find((p) => p.id === athleteId);
@@ -1548,6 +1555,27 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
         const cart = d.carts[clubId] ?? (d.carts[clubId] = []);
         const athlete = d.people.find((p) => p.id === athleteId)!;
         const newSnapshotEntries = newRegs.map((r) => priorById.get(r.id)).filter((r): r is Registration => !!r);
+        // UAT M-10-01: a discipline ADDED alongside this chargeable edit owes
+        // its own extra-discipline entry fee ON TOP of the change fee, as one
+        // combined line amount — never the change fee alone (that's the
+        // under-price this fixes; C4 anti-smuggling: an added reg is always
+        // priced by the entry-total logic, on top of, never instead of, the
+        // change fee). `addedDisciplineChangeTotal` = the added disciplines'
+        // entry-total (over `newOnlyRegs`, at `priorDisciplineCount` including
+        // the already-registered ones) + the flat change fee, matching the
+        // server's mixed-line pricing exactly. Gated on `!opts?.skipEntryFeeLine`
+        // like `entryTotal` above — when addToCart already owns a SEPARATE
+        // entry-fee line for these exact newOnlyRegs, folding their total in
+        // here too would double-charge them across both lines.
+        const isMixed = !opts?.skipEntryFeeLine && newOnlyRegs.length > 0;
+        const combinedTotal = isMixed
+          ? addedDisciplineChangeTotal(event, {
+              competingClubId: clubId,
+              priorDisciplineCount,
+              newDisciplineCount: newOnlyRegs.length,
+              late: editLateAnchor ? { earliestCreatedAtISO: editLateAnchor } : undefined,
+            })
+          : changeFee;
         if (alreadyPendingItem) {
           const line = cart.find((c) => c.id === alreadyPendingItem.id);
           if (line) {
@@ -1558,12 +1586,19 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
               ...(line.priorRegSnapshot ?? []),
               ...newSnapshotEntries.filter((r) => !snapshotCovered.has(r.id)),
             ];
+            if (isMixed) {
+              // The change fee itself is flat and already baked into
+              // line.amount from when the line was first created — only the
+              // newly added discipline's entry-total portion (combinedTotal
+              // minus this edit's own changeFee) is incremental per edit.
+              line.amount = (line.amount ?? 0) + (combinedTotal - changeFee);
+            }
           }
         } else {
           cart.push({
             id: `ci-change-${Date.now()}-${athleteId}`,
             label: changeFeeLabel(athlete),
-            amount: changeFee,
+            amount: combinedTotal,
             kind: 'meet-entry',
             refUserId: athleteId,
             refRegIds: newRegs.map((r) => r.id),

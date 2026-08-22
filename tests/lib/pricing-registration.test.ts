@@ -5,6 +5,7 @@ import {
   changeIsEligible,
   regChangeHasDiff,
   newRegistrationEntryTotal,
+  addedDisciplineChangeTotal,
   lateFeeApplies,
   lateFeeAnchor,
   type RegFeeEvent,
@@ -278,6 +279,66 @@ describe('registrationEntryFee — late-registration surcharge (Task 3)', () => 
         late: { earliestCreatedAtISO: '2026-07-01T00:00:00Z' },
       }),
     ).toBe(0);
+  });
+});
+
+// --- UAT M-10-01 (S1): pricing an added discipline on an already-paid reg ---
+// Worked example from the requirements owner: entryFee $60, secondDisciplineFee
+// $30, changeFee $15, one paid discipline + one added → $45 (extra-discipline
+// fee + change fee, as one line). Amounts are DOLLARS, matching every other
+// helper in this file (registrationEntryFee/newRegistrationEntryTotal never
+// return cents) — not the cents-style "4500"/"6000" figures from the ticket.
+
+const uatEvent: RegFeeEvent = {
+  hostClubId: 'host-club',
+  entryFee: 60,
+  secondDisciplineFee: 30,
+  changeFee: { amount: 15, startsAt: '2026-01-01T00:00:00Z' },
+};
+
+describe('addedDisciplineChangeTotal (UAT M-10-01)', () => {
+  it('one paid discipline + one added: extra-discipline fee + change fee = $45', () => {
+    expect(
+      addedDisciplineChangeTotal(uatEvent, {
+        competingClubId: 'club-a', priorDisciplineCount: 1, newDisciplineCount: 1,
+      }),
+    ).toBe(45);
+  });
+
+  it('two prior disciplines + one added: still $45 — second-discipline rate is flat beyond the first', () => {
+    expect(
+      addedDisciplineChangeTotal(uatEvent, {
+        competingClubId: 'club-a', priorDisciplineCount: 2, newDisciplineCount: 1,
+      }),
+    ).toBe(45);
+  });
+
+  it('host club: $0 — both the entry-total and change-fee components zero themselves', () => {
+    expect(
+      addedDisciplineChangeTotal(uatEvent, {
+        competingClubId: 'host-club', priorDisciplineCount: 1, newDisciplineCount: 1,
+      }),
+    ).toBe(0);
+  });
+
+  it('is newRegistrationEntryTotal + registrationChangeFee summed (not re-derived independently)', () => {
+    const combined = addedDisciplineChangeTotal(uatEvent, {
+      competingClubId: 'club-a', priorDisciplineCount: 1, newDisciplineCount: 2,
+    });
+    const expected = newRegistrationEntryTotal(uatEvent, {
+      competingClubId: 'club-a', priorDisciplineCount: 1, newDisciplineCount: 2,
+    }) + registrationChangeFee(uatEvent, { competingClubId: 'club-a' });
+    expect(combined).toBe(expected);
+  });
+});
+
+describe('newRegistrationEntryTotal — brand-new registration path stays unchanged by UAT M-10-01', () => {
+  it('prior 0, new 1 (a genuinely brand-new single-discipline reg): base entry fee alone, no change fee folded in', () => {
+    expect(
+      newRegistrationEntryTotal(uatEvent, {
+        competingClubId: 'club-a', priorDisciplineCount: 0, newDisciplineCount: 1,
+      }),
+    ).toBe(60);
   });
 });
 

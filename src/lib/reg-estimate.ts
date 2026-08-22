@@ -15,14 +15,24 @@
 //     changeFee  = changeFeeApplies && eligible ? registrationChangeFee(...) : 0
 //     entryTotal = newRegistrationEntryTotal(... over newly-added regs ...)
 // and then charges:
-//     if (changeFee > 0)                           -> change-fee line
+//     if (changeFee > 0)                           -> change-fee line, PLUS
+//                                                      entryTotal when a
+//                                                      discipline was also
+//                                                      ADDED (UAT M-10-01)
 //     else if (!changeFeeApplies && entryTotal > 0) -> ENTRY-fee line
 // The second branch is easy to miss and was missed in S5's first draft:
 // **adding a discipline to an existing registration while the change-fee
 // window is CLOSED is charged as an entry fee, not free.** Reporting "no
 // charge" there understates the bill, which is the failure direction that
 // actually harms trust.
-import { newRegistrationEntryTotal, registrationChangeFee, type RegFeeEvent } from './pricing';
+//
+// UAT M-10-01 (S1, confirmed by the requirements owner): adding a discipline
+// to an ALREADY-PAID registration while the change-fee window is OPEN must
+// charge the extra-discipline entry fee AND the change fee, as one combined
+// amount (`addedDisciplineChangeTotal`) — not the change fee alone. The first
+// branch above previously stopped at `changeFee` and silently dropped the
+// entry-total for the added discipline whenever a change fee also applied.
+import { addedDisciplineChangeTotal, newRegistrationEntryTotal, registrationChangeFee, type RegFeeEvent } from './pricing';
 import { fmtMoney } from './scoring';
 
 export type RegEstimate =
@@ -104,7 +114,18 @@ export function registrationEstimate({
   const changeFeeAmount = eligible && changeFeeApplies
     ? registrationChangeFee(event, { competingClubId })
     : 0;
-  if (changeFeeAmount > 0) return { kind: 'change-fee', amountDollars: changeFeeAmount };
+  if (changeFeeAmount > 0) {
+    // UAT M-10-01: a discipline ADDED alongside the chargeable edit owes its
+    // own extra-discipline entry fee ON TOP of the change fee — never the
+    // change fee alone, which would undercharge exactly the C4-adjacent gap
+    // this fixes. `addedDisciplineChangeTotal` is `newRegistrationEntryTotal`
+    // (over the added disciplines) + `registrationChangeFee`, so it already
+    // equals `changeFeeAmount` when nothing was added (entryTotal() is 0).
+    const amountDollars = newDisciplineCount > 0
+      ? addedDisciplineChangeTotal(event, { competingClubId, priorDisciplineCount, newDisciplineCount, late })
+      : changeFeeAmount;
+    return { kind: 'change-fee', amountDollars };
+  }
 
   // Change-fee window not open (or the event has no change fee configured) but
   // disciplines are being added ⇒ the save path bills those as a NEW ENTRY.

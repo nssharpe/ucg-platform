@@ -255,6 +255,38 @@ export function newRegistrationEntryTotal(
   return total;
 }
 
+/**
+ * Combined price for adding a discipline to a registration that already has
+ * at least one PAID/updated-pending discipline at this event+club (UAT
+ * M-10-01, S1 — confirmed by the requirements owner): the ADDED
+ * discipline(s)' entry-total (`newRegistrationEntryTotal`, priced from
+ * `priorDisciplineCount` — pass the count INCLUDING the already-paid
+ * discipline(s), so the added one lands at the second-discipline rate) PLUS
+ * the event's change fee (`registrationChangeFee`), as ONE combined amount —
+ * never the change fee alone. That undercharge was the actual bug: a mixed
+ * line (one paid reg + one brand-new reg) was previously priced as either a
+ * cheap change-fee-only line or a full fresh-entry line, never "extra
+ * discipline + change fee" together. Host club ⇒ 0 (both components zero
+ * themselves via their own guards). MIRRORED IN
+ * supabase/functions/_shared/stripe.ts (`addedDisciplineChangeTotalDollars`)
+ * — keep in sync.
+ */
+export function addedDisciplineChangeTotal(
+  event: RegFeeEvent,
+  { competingClubId, priorDisciplineCount, newDisciplineCount, late }: {
+    competingClubId: string;
+    priorDisciplineCount: number;
+    newDisciplineCount: number;
+    /** Late-fee inputs (Task 3), applied to the ADDED discipline(s) only. */
+    late?: { earliestCreatedAtISO: string };
+  },
+): number {
+  return (
+    newRegistrationEntryTotal(event, { competingClubId, priorDisciplineCount, newDisciplineCount, late })
+    + registrationChangeFee(event, { competingClubId })
+  );
+}
+
 // --- Per-unit add-on pricing + purchase deadlines (event-mgmt v2 Phase 2) --
 // Each add-on type (banquet/tshirt/banner/leo) can carry an optional
 // `lastPurchaseAt` independent of `regCloses` (may be AFTER regCloses). Pure

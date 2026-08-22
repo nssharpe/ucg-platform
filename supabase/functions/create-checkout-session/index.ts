@@ -47,6 +47,7 @@
 // the permanent `used_count` bump at fulfillment time.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
+  addedDisciplineChangeTotalDollars,
   addonLastPurchaseAt,
   addonPriceDollars,
   addonPurchaseOpen,
@@ -758,34 +759,67 @@ Deno.serve(async (req) => {
       const event = events.get(reg.event_id);
       if (!event) return json({ ok: false, error: `Unknown event ${reg.event_id}.` }, 400);
       const competingClubId = reg.club_id ?? '';
-      const isChange = refRegs.every((r) => r.paid === true || r.updated_pending === true);
-      if (isChange) {
+      const lineRegIds = new Set(i.ref_reg_ids ?? []);
+      // All of this athlete's non-refunded regs at this event+club — used both
+      // for prior-discipline counts and as the late-fee anchor's full pool.
+      const athleteEventRegs = allEventRegs.filter((r) =>
+        r.event_id === reg.event_id &&
+        r.athlete_id === reg.athlete_id &&
+        (r.club_id ?? '') === competingClubId,
+      );
+      // Other non-refunded regs for (event, athlete, competing club) NOT in
+      // this line at all (neither changed nor added here).
+      const outsideRegs = athleteEventRegs.filter((r) => !lineRegIds.has(r.id));
+
+      // UAT M-10-01 (S1): entry-vs-change is derived PER-REG, then the line is
+      // split three ways rather than the old binary `every(...)` check — a
+      // line whose refs MIX an already-purchased/re-pended reg with a
+      // brand-new one (adding a discipline to a paid registration) must be
+      // priced as extra-discipline entry fee + change fee, ONE combined line
+      // — never as a cheap change-fee-only line (C4 anti-smuggling: an added
+      // reg is ALWAYS priced by the entry-total logic, never the change fee
+      // alone) and never as a full fresh-entry line (which double-charges the
+      // base entry fee already paid for the first discipline).
+      const changedRegs = refRegs.filter((r) => r.paid === true || r.updated_pending === true);
+      const addedRegs = refRegs.filter((r) => !(r.paid === true || r.updated_pending === true));
+
+      if (addedRegs.length === 0) {
+        // Pure edit (level/apparatus/club change on already-purchased regs,
+        // no new reg row): change-fee only, unchanged.
         pushLine(i.id, i.label, registrationChangeFeeDollars(event, { competingClubId }), 'meet-entry', reg.event_id);
-      } else {
-        const lineRegIds = new Set(i.ref_reg_ids ?? []);
+      } else if (changedRegs.length === 0) {
+        // Every referenced reg is brand-new: full entry-total path, unchanged.
         const newDisciplineCount = refRegs.length;
-        // Prior = other non-refunded regs for (event, athlete, competing club) not in this line.
-        const priorDisciplineCount = allEventRegs.filter((r) =>
-          r.event_id === reg.event_id &&
-          r.athlete_id === reg.athlete_id &&
-          (r.club_id ?? '') === competingClubId &&
-          !lineRegIds.has(r.id),
-        ).length;
+        const priorDisciplineCount = outsideRegs.length;
         // Late-registration fee attachment (emv2 P0 Task 3, corrected): the
         // surcharge attaches ONLY to the line CONTAINING the athlete's
         // earliest-created reg for this event+club (`lateFeeAnchor` returns
         // that line's anchor or null) — otherwise every later entry purchase
         // would re-add a fee already charged with the athlete's first line.
         // MIRRORS src/lib/pricing.ts's `lateFeeAnchor` — keep in sync.
-        const athleteEventRegs = allEventRegs.filter((r) =>
-          r.event_id === reg.event_id &&
-          r.athlete_id === reg.athlete_id &&
-          (r.club_id ?? '') === competingClubId,
-        );
         const lineRegs = athleteEventRegs.filter((r) => lineRegIds.has(r.id));
-        const outsideRegs = athleteEventRegs.filter((r) => !lineRegIds.has(r.id));
         const anchor = lateFeeAnchor(lineRegs, outsideRegs, new Date().toISOString());
         pushLine(i.id, i.label, newRegistrationEntryTotalDollars(event, {
+          competingClubId, priorDisciplineCount, newDisciplineCount,
+          late: anchor ? { earliestCreatedAtISO: anchor } : undefined,
+        }), 'meet-entry', reg.event_id);
+      } else {
+        // Mixed line: a discipline was ADDED alongside an already-purchased/
+        // re-pended one — extra-discipline entry fee + change fee, as ONE
+        // line. `priorDisciplineCount` counts the changed regs in THIS line
+        // (already-registered before) PLUS everything outside the line, so
+        // the added discipline(s) price at the second-discipline rate onward.
+        // The late-fee anchor considers only the ADDED regs as "this line"
+        // (`lineRegs`) against everything else including the changed regs
+        // (`outsideRegs`) — an added discipline can still be a late
+        // registration; an already-paid discipline never re-triggers it.
+        const addedRegIds = new Set(addedRegs.map((r) => r.id));
+        const newDisciplineCount = addedRegs.length;
+        const priorDisciplineCount = changedRegs.length + outsideRegs.length;
+        const lineRegs = athleteEventRegs.filter((r) => addedRegIds.has(r.id));
+        const outsideRegsForAnchor = athleteEventRegs.filter((r) => !addedRegIds.has(r.id));
+        const anchor = lateFeeAnchor(lineRegs, outsideRegsForAnchor, new Date().toISOString());
+        pushLine(i.id, i.label, addedDisciplineChangeTotalDollars(event, {
           competingClubId, priorDisciplineCount, newDisciplineCount,
           late: anchor ? { earliestCreatedAtISO: anchor } : undefined,
         }), 'meet-entry', reg.event_id);
