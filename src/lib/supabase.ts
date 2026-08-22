@@ -2356,15 +2356,118 @@ export async function logClientError(e: {
 }
 
 /** Read recent client errors (admins only, via RLS). Optional text filter is
- *  applied client-side over email/message/context. */
-export async function fetchErrorLogs(limit = 200): Promise<ErrorLogRow[]> {
+ *  applied client-side over email/message/context.
+ *
+ *  `before` is a keyset-pagination cursor (an ISO `createdAt` from a
+ *  previous page — see `nextPageCursor` in `admin-errors-core.ts`) so the
+ *  admin Errors & Problems page's "Load more" button can fetch strictly
+ *  older rows instead of re-fetching everything with a bigger limit. */
+export async function fetchErrorLogs(opts: { limit?: number; before?: string } = {}): Promise<ErrorLogRow[]> {
   if (!supabase) return [];
-  const { data, error } = await supabase.from('error_logs').select('*').order('created_at', { ascending: false }).limit(limit);
+  const limit = opts.limit ?? 200;
+  let q = supabase.from('error_logs').select('*').order('created_at', { ascending: false }).limit(limit);
+  if (opts.before) q = q.lt('created_at', opts.before);
+  const { data, error } = await q;
   if (error) { console.error('[supabase] fetchErrorLogs failed:', error); return []; }
   return (data ?? []).map((r) => ({
     id: r.id, createdAt: r.created_at, email: r.email, personId: r.person_id, context: r.context,
     message: r.message, stack: r.stack, detail: r.detail, url: r.url, userAgent: r.user_agent, appVersion: r.app_version,
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Problem reports — durable, admin-searchable record of "Report a problem"
+// submissions (report-problem inserts with the service role; email stays
+// the alerting path, this table is the review path). Admin-only via RLS.
+// ---------------------------------------------------------------------------
+export interface ProblemReportRow {
+  id: string;
+  createdAt: string;
+  authUserId: string | null;
+  reporterPersonId: string | null;
+  reporterEmail: string | null;
+  reporterName: string | null;
+  category: 'bug' | 'question' | 'unsure';
+  description: string;
+  route: string | null;
+  appVersion: string | null;
+  userAgent: string | null;
+  recentErrors: unknown;
+  attachmentCount: number;
+  status: 'open' | 'resolved';
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+  resolutionNote: string | null;
+}
+
+function rowToProblemReport(r: Record<string, unknown>): ProblemReportRow {
+  return {
+    id: r.id as string,
+    createdAt: r.created_at as string,
+    authUserId: (r.auth_user_id as string | null) ?? null,
+    reporterPersonId: (r.reporter_person_id as string | null) ?? null,
+    reporterEmail: (r.reporter_email as string | null) ?? null,
+    reporterName: (r.reporter_name as string | null) ?? null,
+    category: r.category as ProblemReportRow['category'],
+    description: r.description as string,
+    route: (r.route as string | null) ?? null,
+    appVersion: (r.app_version as string | null) ?? null,
+    userAgent: (r.user_agent as string | null) ?? null,
+    recentErrors: r.recent_errors ?? null,
+    attachmentCount: (r.attachment_count as number | null) ?? 0,
+    status: r.status as ProblemReportRow['status'],
+    resolvedAt: (r.resolved_at as string | null) ?? null,
+    resolvedBy: (r.resolved_by as string | null) ?? null,
+    resolutionNote: (r.resolution_note as string | null) ?? null,
+  };
+}
+
+/** Read problem reports (admin-only, via RLS). Targeted fetch — not
+ *  `loadAll` — per data-layer.md; scoped by `status` server-side (the page
+ *  refetches on a status-tab change rather than filtering a narrower
+ *  server response down further client-side) with keyset pagination via
+ *  `before`/`limit` for "Load more", matching `fetchErrorLogs`. */
+export async function fetchProblemReports(
+  opts: { status?: 'open' | 'resolved'; limit?: number; before?: string } = {},
+): Promise<ProblemReportRow[]> {
+  if (!supabase) return [];
+  const limit = opts.limit ?? 200;
+  let q = supabase.from('problem_reports').select('*').order('created_at', { ascending: false }).limit(limit);
+  if (opts.status) q = q.eq('status', opts.status);
+  if (opts.before) q = q.lt('created_at', opts.before);
+  const { data, error } = await q;
+  if (error) { console.error('[supabase] fetchProblemReports failed:', error); return []; }
+  return (data ?? []).map(rowToProblemReport);
+}
+
+/** Resolve or reopen a problem report. Stamps `resolved_at`/`resolved_by`
+ *  (the caller's own auth uid) on resolve; reopening clears both but keeps
+ *  `resolution_note` as history rather than erasing it. `is_admin()` is
+ *  aal2-gated (auth-and-mfa.md), so an admin whose session hasn't stepped up
+ *  can hit this and have RLS silently filter the row out of the UPDATE —
+ *  PostgREST then returns success with zero rows, not an error. `.select()`
+ *  + treating an empty result as failure is what catches that; without it
+ *  the UI would flip the badge optimistically while nothing changed. */
+export async function updateProblemReportStatus(
+  id: string,
+  status: 'open' | 'resolved',
+  note?: string,
+): Promise<{ ok: boolean; row?: ProblemReportRow; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const patch: Record<string, unknown> = { status };
+  if (status === 'resolved') {
+    const { data: u } = await supabase.auth.getUser();
+    patch.resolved_at = new Date().toISOString();
+    patch.resolved_by = u.user?.id ?? null;
+    if (note !== undefined) patch.resolution_note = note.trim() || null;
+  } else {
+    patch.resolved_at = null;
+    patch.resolved_by = null;
+  }
+  const { data, error } = await supabase.from('problem_reports').update(patch).eq('id', id).select().maybeSingle();
+  if (error) return { ok: false, error: error.message };
+  if (!data) return { ok: false, error: 'Update was blocked — no row matched (check admin access).' };
+  return { ok: true, row: rowToProblemReport(data) };
 }
 
 // ---------------------------------------------------------------------------

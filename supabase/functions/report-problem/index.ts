@@ -106,14 +106,44 @@ Deno.serve(async (req) => {
   // --- Resolve the reporter SERVER-SIDE (never trust client-sent identity) ---
   const { data: caller } = await db
     .from('people')
-    .select('first_name, last_name, email')
+    .select('id, first_name, last_name, email')
     .eq('auth_user_id', userData.user.id)
     .maybeSingle();
   const reporterEmail = (caller?.email ?? userData.user.email ?? '').trim();
   const reporterName = caller ? `${caller.first_name} ${caller.last_name}`.trim() : '';
   const reporterLabel = reporterName ? `${reporterName}${reporterEmail ? ` (${reporterEmail})` : ''}` : (reporterEmail || 'Unknown reporter');
+  const userAgent = req.headers.get('user-agent') ?? null;
 
   const recipients = ROUTES[category];
+
+  // --- Persist a durable row FIRST, so it exists even if the email send
+  // below fails (Resend outage, bad recipient, etc.) — the admin "Errors &
+  // Problems" page is now the review path, the email is only the alerting
+  // path. Insert failure must not block the email either way: log it to
+  // error_logs and keep going, mirroring process-refund's
+  // insert(...).then(() => {}, () => {}) fire-and-forget idiom.
+  const { error: insertErr } = await db.from('problem_reports').insert({
+    auth_user_id: userData.user.id,
+    reporter_person_id: caller?.id ?? null,
+    reporter_email: reporterEmail || null,
+    reporter_name: reporterName || null,
+    category,
+    description: descriptionSafe,
+    route: route || null,
+    app_version: appVersion,
+    user_agent: userAgent,
+    recent_errors: recentErrors.length ? recentErrors : null,
+    attachment_count: attachments.length,
+  });
+  // PostgREST insert errors resolve, not reject — check `.error`, not a
+  // catch. Never blocks the email below either way (fire-and-forget log).
+  if (insertErr) {
+    await db.from('error_logs').insert({
+      context: 'report-problem',
+      message: `Failed to persist problem_reports row: ${insertErr.message}`,
+      detail: { category, route },
+    }).then(() => {}, () => {});
+  }
 
   const errorsBlock = recentErrors.length
     ? `<p style="margin:16px 0 4px;font-weight:700;">Recent console errors</p>

@@ -1290,3 +1290,144 @@ form addition (`PersonForm` checkbox) using existing `checkrow`/`btn` classes wi
 pairing, so the contrast/responsive rules are not in play. Flagging the admin-MFA gate and the
 invite/reset landing as the two highest-value things to click through live against staging before
 the next UAT round, since neither got an end-to-end browser pass here.
+
+## "Errors & Problems" admin page — persisted problem reports (new ask, 2026-08-22)
+
+Product owners want user-submitted "Report a problem" submissions durable in an admin view
+instead of living only in the routed email. Built a new admin page rather than a UAT fix.
+
+**Migration `20260822030000_problem_reports.sql`.** New table `problem_reports` (uuid PK — like
+`error_logs`, NOT the usual app-generated text id, because every row is inserted by the service
+role from one Edge Function; there's no client-generated id to preserve). Columns exactly as
+specced: reporter identity (`auth_user_id`/`reporter_person_id`/`reporter_email`/
+`reporter_name`), `category` (`bug`/`question`/`unsure`, matches `report-problem`'s `ROUTES`),
+`description`/`route`/`app_version`/`user_agent`/`recent_errors`/`attachment_count`, and
+`status`/`resolved_at`/`resolved_by`/`resolution_note`. Index on `(status, created_at desc)`.
+RLS: `is_admin()`-only SELECT + UPDATE, same idiom as `error_logs`' admin read policy; explicitly
+**no INSERT policy** — the function inserts with the service role, which bypasses RLS, so a
+client insert policy would grant nothing anyone needs. **Deviation:** the task said don't
+hand-name migration files (`migration-push` skill), but this session is explicitly scoped off
+`supabase` CLI commands, so there's no `supabase migration new` to run — hand-timestamped
+`20260822030000` (after the existing `20260822020000_score_compare_and_set.sql`, itself also not
+yet applied). **Controller: run `supabase migration list` before pushing either — reconcile,
+don't assume no one else touched the remote.**
+
+**`report-problem` (`supabase/functions/report-problem/index.ts`).** Inserts one `problem_reports`
+row with the service-role client BEFORE the email send (so the row survives a Resend outage),
+then sends the email exactly as before — the email is the alerting path, the table is the review
+path. Insert failure doesn't block the email either way: checked via the resolved `{error}` (a
+PostgREST insert error resolves, it doesn't reject — a `.catch`/`.then(ok, fail)` pair on the
+promise would never fire), logged to `error_logs` with context `'report-problem'`, then the
+function carries on to send. Added `id` to the existing `people` select (needed for
+`reporter_person_id`, wasn't selected before) and read `user_agent` from the request header
+server-side (`req.headers.get('user-agent')`) rather than adding a new client-sent field — keeps
+the "reporter identity resolved server-side, never trusted from the payload" property intact
+without touching the client submit path at all. Screenshots stay email-only; only
+`attachment_count` is persisted.
+
+**Admin page.** Route `#/admin/errors` now renders `src/pages/AdminErrors.tsx` (was
+`src/pages/ErrorLog.tsx` directly) — nav label renamed "Error Log" → "Errors & Problems"
+(`Layout.tsx:58`). Two tabs via the existing `Tabs` component: **Problem Reports** (default) and
+**Error Log** (the pre-existing component, now a sub-view — moved its `<h1>`/page-sub up into the
+new wrapper so there's only one page heading, and swapped its `<div className="card"
+style={{overflow:'hidden'}}>` table wrapper for `overflowX:'auto'` on an inner div, since
+`overflow:hidden` on a wide 4-column table just clips content instead of scrolling it — the new
+Problem Reports table has 9 columns, so this was worth fixing on both tabs while touching the
+file). Problem Reports tab: search box (description/reporter/route, client-side), status filter
+(open/resolved/all — a SERVER-scoped refetch, not a client narrowing of an already-narrowed
+fetch — see the doc comment on `fetchProblemReports`), category filter, a newest/oldest sort
+toggle (client-side over the loaded page), category badges (`err`/`info`/`navy` tones for
+bug/question/unsure) and status badges (`warn`/`ok` for open/resolved — all four are existing
+`Badge` tones with pre-verified contrast, no new color pairing introduced), expandable rows for
+the full description/user-agent/recent-errors/resolution note, and a Resolve (opens a modal with
+an optional note) / Reopen (reopening clears `resolved_at`/`resolved_by` but keeps
+`resolution_note` as history rather than erasing it — a deliberate choice, not tested elsewhere in
+the codebase) button per row.
+
+**Resolve/reopen empty-update guard.** `is_admin()` is aal2-gated (`auth-and-mfa.md`) — an admin
+whose session hasn't stepped up to aal2 would have the UPDATE silently filtered to zero rows by
+RLS, which PostgREST reports as SUCCESS with no error, not a 403. `updateProblemReportStatus`
+chains `.select().maybeSingle()` after the update and treats a null result as a failure (toast,
+no local state mutation) specifically to catch this — without it the UI would flip the status
+badge optimistically while nothing changed server-side.
+
+**Pagination.** `fetchErrorLogs` now takes `{limit?, before?}` (was a single `limit` positional
+arg; the one call site in `ErrorLog.tsx` was updated) and `fetchProblemReports` takes
+`{status?, limit?, before?}` — both keyset-paginated via `created_at < before`, default limit
+200 unchanged. New pure module `src/lib/admin-errors-core.ts`: `filterProblemReports(rows,
+{q, status, category})` (client-side search/filter over one already-fetched page) and
+`nextPageCursor(rows)` (the oldest — i.e. LAST, under `created_at desc` ordering — row's
+`createdAt`, or null for an empty page). Both tabs' "Load more" buttons derive `hasMore` from
+`rows.length === PAGE_SIZE` rather than cursor presence, and append-and-dedupe the next page by
+`id` rather than trusting the cursor to never overlap. **Known gap, documented in the pure
+module's own comment, not fixed:** `created_at` isn't unique, so a burst of rows sharing the exact
+cursor timestamp could in principle be skipped by the next page's strict `<` fetch — accepted
+as-is (dedupe-by-id handles the overlap case; a same-millisecond skip is the residual risk and
+rare enough for admin-paced data not to warrant a composite `(created_at, id)` cursor). 14 new
+vitest cases in `tests/lib/admin-errors-core.test.ts`.
+
+**A React lint fix worth flagging for the next person touching this pattern.**
+`react-hooks/set-state-in-effect` flagged the obvious `useEffect(() => load(serverStatus),
+[serverStatus])` shape because `load` called `setLoading(true)` synchronously before its
+`fetchProblemReports(...).then(...)`. Fixed by moving the "start loading" signal to the actual
+event that triggers a refetch (the status-`<select>`'s `onChange`, plus the component's initial
+`useState(true)`) and leaving `load` itself to only call `setState` inside the `.then()` — the
+effect's synchronous body no longer calls `setState` directly at all.
+
+**RLS probe for the controller (run after `supabase db push` on staging, before prod).** Must use
+a REAL non-admin JWT (anon key + a signed-in non-admin session) — a service-role client bypasses
+RLS and would produce a false pass either way.
+
+1. Non-admin read — expect `200 []` (a restrictive SELECT policy filters rows silently; this is
+   NOT a 403, per the "RLS predicate vs grant revoke" rule in `supabase-migrations.md` — don't
+   misread a clean empty array as a broken probe):
+   ```
+   curl -s "$STAGING_URL/rest/v1/problem_reports?select=id&limit=1" \
+     -H "apikey: $STAGING_ANON_KEY" -H "Authorization: Bearer $NON_ADMIN_JWT"
+   ```
+2. Non-admin write (insert) — expect a `42501`/permission-denied style rejection (no INSERT policy
+   at all, so this should fail closed regardless of role):
+   ```
+   curl -s -X POST "$STAGING_URL/rest/v1/problem_reports" \
+     -H "apikey: $STAGING_ANON_KEY" -H "Authorization: Bearer $NON_ADMIN_JWT" \
+     -H "Content-Type: application/json" -H "Prefer: return=representation" \
+     -d '{"category":"bug","description":"probe"}'
+   ```
+3. Non-admin update — expect `200 []` (same silent-filter shape as the read: the UPDATE policy's
+   `using (is_admin())` clause excludes every row from the update set for a non-admin, so
+   PostgREST reports success with zero rows changed rather than an error):
+   ```
+   curl -s -X PATCH "$STAGING_URL/rest/v1/problem_reports?id=eq.<any-existing-id>" \
+     -H "apikey: $STAGING_ANON_KEY" -H "Authorization: Bearer $NON_ADMIN_JWT" \
+     -H "Content-Type: application/json" \
+     -d '{"status":"open"}'
+   ```
+4. Admin positive control — sign in as the seeded admin, confirm the SAME read (step 1) returns
+   the actual rows and the SAME update (step 3) returns the patched row, not `[]` — proves the
+   `200 []` above is RLS filtering, not a broken table/query.
+
+**Deploy list:** `report-problem` (adds the `problem_reports` insert + reads `user_agent` from
+the request header). No other functions touched.
+
+**Verification.** `npm run build` — tsc + vite, zero errors. `npx eslint` on every touched file
+(`src/App.tsx src/components/Layout.tsx src/pages/AdminErrors.tsx src/pages/ErrorLog.tsx
+src/lib/supabase.ts src/lib/admin-errors-core.ts tests/lib/admin-errors-core.test.ts
+supabase/functions/report-problem/index.ts`) — zero errors/warnings (one `set-state-in-effect`
+error caught and fixed, see above). `npx vitest run` — **1234/1234 passed** across 79 files (14
+new: `tests/lib/admin-errors-core.test.ts`).
+
+No Browser-pane verification this round (controller-only task, per the brief). Describing the UI
+precisely instead: `#/admin/errors` (nav "Errors & Problems") opens on the Problem Reports tab —
+search input, three `<select>` filters (status/category/sort) in a wrapping flex row, a card with
+a horizontally-scrollable 9-column table (Created/Category/Reporter/Route/Build/Description/
+Screenshots/Status/action), row click expands a detail panel (user agent, recent console errors,
+resolution info), and a centered "Load more" button beneath the card when a full page (200 rows)
+came back. The Error Log tab is visually unchanged except the same "Load more" button. Both tabs
+reuse existing `.card`/`.tbl`/`.badge`/`.btn`/`.input` classes and the shared `Badge`/`Modal`
+components — no new colors or contrast pairings were introduced, so the general contrast
+requirement is satisfied by construction rather than by a fresh check. **Flagging for the
+controller: the nav-label change ("Error Log" → "Errors & Problems") is exactly the kind of nav
+change `ui-brand-and-layout.md` says needs a `responsive-sweep` pass (375/768/1280px, drawer
+open/close, topbar wrap) — not done here since this session had no Browser pane. Do that, plus a
+live click-through of the new page (both tabs, the Resolve/Reopen flow, and Load More), before
+calling this UAT-closed.**

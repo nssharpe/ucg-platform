@@ -109,7 +109,7 @@ const ManagerAccessReview = lazy(() => import('./pages/ManagerAccessReview'));
 const SetPassword = lazy(() => import('./pages/SetPassword'));
 const MyRegistrations = lazy(() => import('./pages/MyRegistrations').then((m) => ({ default: m.MyRegistrations })));
 const PurchaseHistory = lazy(() => import('./pages/PurchaseHistory').then((m) => ({ default: m.PurchaseHistory })));
-const ErrorLog = lazy(() => import('./pages/ErrorLog').then((m) => ({ default: m.ErrorLog })));
+const AdminErrors = lazy(() => import('./pages/AdminErrors').then((m) => ({ default: m.AdminErrors })));
 const RefundReview = lazy(() => import('./pages/admin/league/RefundReview').then((m) => ({ default: m.RefundReview })));
 const Finance = lazy(() => import('./pages/admin/league/Finance').then((m) => ({ default: m.Finance })));
 const UcgEvent = lazy(() => import('./pages/admin/UcgEvent').then((m) => ({ default: m.UcgEvent })));
@@ -382,7 +382,7 @@ export default function App() {
               <Route path="/admin/league" element={<RequireAdmin><AdminLeague /></RequireAdmin>} />
               <Route path="/admin/ucg-event/:template/:seasonId" element={<RequireAdmin><UcgEvent /></RequireAdmin>} />
               <Route path="/admin/communicate" element={<RequireAdmin><Communicate /></RequireAdmin>} />
-              <Route path="/admin/errors" element={<RequireAdmin><ErrorLog /></RequireAdmin>} />
+              <Route path="/admin/errors" element={<RequireAdmin><AdminErrors /></RequireAdmin>} />
               <Route path="/admin/refunds" element={<RequireRefundAccess><RefundReview /></RequireRefundAccess>} />
               <Route path="/admin/finance" element={<RequireFinanceAccess><Finance /></RequireFinanceAccess>} />
               <Route path="/waiver/sign/:token" element={<WaiverSign />} />
