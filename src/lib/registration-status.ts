@@ -52,3 +52,40 @@ export function regGroupPaymentStatusInfo(
 ): RegPaymentStatusInfo {
   return regPaymentStatusInfo(registrationGroupPaymentStatus(regs));
 }
+
+// --- Duplicate-slot predicate (UAT Z-02-01, S1) -----------------------------
+// "No athlete can be charged twice for the same (event, discipline)." A
+// "live slot" is one (eventId, athleteId, discipline) triple; at most one
+// non-refunded registration should ever occupy it — enforced at the DB level
+// by the partial unique index `registrations_live_slot_uniq`
+// (`supabase/migrations/20260822010000_registrations_live_slot_uniq.sql`).
+// `findPaidSibling` is the pure predicate mirrored server-side in
+// `supabase/functions/_shared/registration-status.ts` — KEEP IN LOCKSTEP
+// (only field casing differs: camelCase here, snake_case there).
+export interface SlotRegLike {
+  id: string;
+  eventId: string;
+  athleteId: string;
+  discipline: string;
+  refunded?: boolean;
+  paid?: boolean;
+}
+
+/**
+ * The other, already-PAID, non-refunded registration occupying `reg`'s exact
+ * (event, athlete, discipline) slot, if any — `null` when `reg` has no live
+ * paid sibling. Never matches `reg` against itself (same `id`), a refunded
+ * sibling, a different discipline (so a legacy multi-row camp registration —
+ * one row per discipline — never conflicts with itself), or an unpaid
+ * sibling (an unpaid pending reg isn't a "you already paid this" conflict).
+ */
+export function findPaidSibling<T extends SlotRegLike>(reg: SlotRegLike, allRegs: readonly T[]): T | null {
+  return allRegs.find((r) =>
+    r.id !== reg.id &&
+    r.eventId === reg.eventId &&
+    r.athleteId === reg.athleteId &&
+    r.discipline === reg.discipline &&
+    !r.refunded &&
+    r.paid === true,
+  ) ?? null;
+}

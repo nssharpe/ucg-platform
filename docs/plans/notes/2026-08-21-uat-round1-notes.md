@@ -514,3 +514,136 @@ call, sibling rows on the same payment always carry `0`, so the summed `refund_a
 for a payment can never exceed what the RPC's own lock-and-cap returned; (4) **75% applied
 exactly once** — computed once per approve call as `onTime`, passed once into
 `allocateRegistrationRefund`, which itself scales each payment's sum exactly once.
+
+## UAT Z-02-01 (S1): no athlete charged twice for the same (event, discipline)
+
+**What happened.** A league admin and a club manager registered the SAME athlete for the SAME
+event at the same moment and both checked out — two invoices, two Stripe charges, two
+`registrations` rows. Ids are minted client-side (`reg-<ms>-<athlete>-<disc>`,
+`RegistrationEditor.tsx:585/618`), so the two sessions' rows never collided on id and nothing
+noticed. No DB constraint prevented two live rows in the same slot; neither checkout nor
+fulfillment checked for a paid sibling.
+
+**Layered fix, four pieces:**
+
+1. **Migration `20260822010000_registrations_live_slot_uniq.sql`** (NOT YET applied to staging
+   or prod). A `do $$ … $$` block dedupes any existing violation FIRST (for every
+   (event_id, athlete_id, discipline) held by >1 non-refunded row: keep the paid row, or the
+   earliest-created if none/all paid; mark every other row in that slot `refunded=true,
+   keep_listed=false, refund_requested=false`, `raise notice`-ing each slot and each row it
+   touched) — then `create unique index if not exists registrations_live_slot_uniq on
+   registrations (event_id, athlete_id, discipline) where refunded = false`. Deliberately NOT
+   scoped to `club_id` (a cross-club duplicate is the same bug — the existing client-side
+   `paidRegistrationClub` cross-club lock already treats this as a conflict) and deliberately
+   NOT excluding waitlisted rows (a waitlisted registration is still a real claim on the slot).
+   Both the dedupe and the index creation are idempotent on re-run.
+
+   **Pre-push SQL for the controller (staging, then prod) — run BEFORE applying, to see what
+   the dedupe will touch:**
+   ```sql
+   select event_id, athlete_id, discipline, count(*), array_agg(id) as reg_ids
+   from registrations
+   where refunded = false
+   group by event_id, athlete_id, discipline
+   having count(*) > 1;
+   ```
+   Expected: only the two known ZZTEST rows from this UAT run (Stripe test-mode money, no real
+   refund needed), or nothing. After applying, the same query (with the `having` clause) should
+   return zero rows on both projects, and the migration's `RAISE NOTICE` output (visible in the
+   `supabase db push` output / dashboard logs) should list exactly what it touched — confirm it
+   matches the pre-push query's contents before trusting the index creation succeeded silently.
+
+2. **`create-checkout-session`** (`supabase/functions/create-checkout-session/index.ts:778-833`,
+   in the `meet-entry` block, right after the existing "mixes different athletes or events"
+   guard and before pricing): for every reg the line references, checks `allEventRegs` (already
+   loaded for the whole request) for a live sibling at the same (event, athlete, discipline) —
+   an already-**paid** sibling 409s immediately (`"<Name> is already registered for <discipline>
+   at <event> — refresh the page and check the roster before checking out."`); an **unpaid**
+   sibling additionally triggers a check for a `pending` payment referencing it created within
+   the last `CART_HOLD_MINUTES` (30 min — mirrors the existing capacity soft-hold model), 409ing
+   with a "someone else is checking this out right now" message if found. The pending check
+   depends on `payments.ref_reg_ids` (line 1197 free path / line 1310 Stripe path) — this column
+   existed in the schema but was **never populated** before this change (confirmed via
+   `admin-delete-person/index.ts:267-272`, which already queries it with an `.ov.{}` overlap
+   filter that has silently always matched nothing beyond `person_id` — populating it also fixes
+   that dormant gap as a side effect, out of scope to otherwise touch here). `events` query
+   widened to select `name` for the error message (`RegFeeEvent` itself, shared with the
+   webhook, deliberately NOT widened — kept as a separate `eventNames` side map).
+
+3. **`_shared/fulfill.ts`** (used by both `stripe-webhook` and the free-checkout path): right
+   before flipping `paid` on `paidRegIds`, re-fetches each reg's current (event_id, athlete_id,
+   discipline, refunded, paid) plus every other live reg at the same event(s), and re-runs the
+   same `findPaidSibling` predicate. A reg with a paid sibling is excluded from the `paid` flip
+   and handed to `handleDuplicateSlotRegistrations`, which is deliberately called from the
+   **winner-only, once-only side-effects section** (same place as coupon redemption and the
+   receipt email) — NOT immediately after detection — because the Stripe refund call inside it
+   is not idempotent and must never run twice on a concurrent/retried delivery of the same
+   payment. It:
+   - Refunds the **full Stripe charge** (omitting `amount` so Stripe refunds exactly what it
+     captured) when EVERY chargeable line on the payment was a "clean" duplicate line (every
+     referenced reg in the line is a duplicate); refunds only the **duplicate line's
+     `paid_cents`** (added a `paid_cents?` field to `SnapshotItem` — it was already being
+     written into `lines_snapshot` by `create-checkout-session` but never declared/read on the
+     fulfill side) when the payment also covered other, legitimate lines.
+   - **Deliberate scope limit:** a line that MIXES a duplicate reg with a legitimate one in the
+     SAME line (e.g. one line pricing two disciplines where only one collided) is NOT
+     auto-refunded — `paid_cents` is frozen per LINE at checkout time, not per registration
+     within a line, and `fulfill.ts` has no access to the pricing internals that priced each
+     discipline. Logged to `error_logs` (`context: 'fulfill'`) for manual review instead of
+     guessing a split. This is the one place the task's "say which you implemented and why"
+     applies — implemented the clean full-line case (the realistic shape of this bug, one
+     discipline registered twice), documented the mixed-line gap rather than half-solving it.
+   - Marks the duplicate registration(s) `refunded=true, keep_listed=false,
+     refund_requested=false` UNCONDITIONALLY (even if the Stripe call fails) — a slot-occupying
+     duplicate must never stay `paid:true` regardless of the money side; a Stripe failure is
+     logged to `error_logs` for manual follow-up instead.
+   - Marks the invoice_item for a "clean" duplicate line `refunded:true` (so it doesn't show as
+     a live charge and a later manual `request-refund` skips it) but **deliberately does NOT**
+     mark a mixed line's invoice_item `refunded:true` — that item's `ref_reg_ids` also covers a
+     legitimate registration, and `request-refund`'s lookup is `invoice_items.ref_reg_ids @>
+     [regId]`, so marking the whole row refunded would falsely block a future legitimate refund
+     request for the OTHER registration sharing that line.
+   - Sends the payer "Your payment was refunded" instead of (whole-payment-duplicate) or
+     alongside an amount-adjusted (mixed-payment) receipt — `emailReceipt` gained an optional
+     `subtotalOverrideCents` param for the adjusted-receipt case.
+
+   **Known residual gap (documented, not closed):** the duplicate-detection read (fetch sibling
+   regs' current `paid` state) and the `paid`-flip write are two separate statements, not one
+   atomic SQL operation. Two DIFFERENT payments fulfilling two pre-existing duplicate rows at
+   the EXACT same instant could each read the other's row as not-yet-paid and both flip through
+   — a narrow TOCTOU window the DB unique index does NOT close (the index guards row *creation*,
+   not the `paid` flip). Closing this fully would need an atomic per-slot claim (mirroring
+   `claim_refund_approval`'s row-lock idiom) rather than the read-then-write the task's own spec
+   described; flagging as a possible follow-up rather than building a new locking RPC out of
+   scope for this ticket.
+
+4. **Client:** no code change needed. `CartCheckout.tsx`'s existing generic error branch
+   (`r.error ?? 'Could not start checkout...'` → `onError?.(msg)`) already forwards ANY
+   `{ok:false, error}` body verbatim, and both `Cart.tsx` call sites already wire `onError` to
+   `toast(msg, {variant:'error'})` — the new 409 responses need no special `code` field to reach
+   the user, so this flows through unchanged.
+
+5. **Tests:** `findPaidSibling` extracted as a pure predicate in `src/lib/registration-status.ts`
+   (camelCase, tested in `tests/lib/registration-status.test.ts` — 8 new cases: paid sibling,
+   refunded sibling, same id, different discipline, different event, different athlete, unpaid
+   sibling, legacy multi-row camp registration) mirrored snake_case in the new
+   `supabase/functions/_shared/registration-status.ts` for both `create-checkout-session` and
+   `_shared/fulfill.ts` to import.
+
+**Functions to deploy:** `create-checkout-session`, `stripe-webhook` (unchanged itself, but
+bundles `_shared/fulfill.ts` and `_shared/registration-status.ts`, both changed — Edge Functions
+bundle `_shared/` automatically on deploy, so no separate step, just don't forget
+`stripe-webhook` needs `--no-verify-jwt` re-confirmed per the usual trap).
+
+**Verification.** `npm run build` — succeeded, zero TypeScript errors. `npx eslint
+src/lib/registration-status.ts tests/lib/registration-status.test.ts
+supabase/functions/create-checkout-session/index.ts supabase/functions/_shared/fulfill.ts
+supabase/functions/_shared/registration-status.ts` — zero errors/warnings. `npx vitest run` —
+1171/1171 passed across 73 files (+8 from this ticket, confirmed by diffing against the branch
+tip before this change: 1163/73 baseline, 1171/73 after — all 8 new cases in
+`tests/lib/registration-status.test.ts`'s new `findPaidSibling` describe block). Migration re-read for: dedupe runs
+BEFORE index creation (yes — the `do $$` block precedes the `create unique index` statement in
+the file), handles a slot with zero paid rows (yes — `order by paid desc, created_at asc, id
+asc` degrades to earliest-created when nothing is paid), and is idempotent on re-run (yes — the
+dedupe's `having count(*) > 1` finds nothing once every slot has ≤1 live row, and
+`create unique index if not exists` no-ops once it exists).

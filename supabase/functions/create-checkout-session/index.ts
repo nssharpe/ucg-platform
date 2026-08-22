@@ -74,6 +74,7 @@ import {
   type GroupRow,
   type SessionRow,
 } from '../_shared/capacity.ts';
+import { findPaidSibling } from '../_shared/registration-status.ts';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -237,14 +238,20 @@ Deno.serve(async (req) => {
     ...regsByLine.map((r) => r.event_id),
   ]));
   let events = new Map<string, RegFeeEvent>();
+  let eventNames = new Map<string, string>();
   let allEventRegs: RegRow[] = []; // ALL non-refunded regs for the involved events (for prior counts)
   if (eventIds.length) {
     const { data: mr, error: mErr } = await db
       .from('events')
-      .select('id, host_club_id, entry_fee, second_discipline_fee, change_fee, tshirt_addon, banner_addon, banquet, camp_config, reg_closes, late_reg')
+      .select('id, name, host_club_id, entry_fee, second_discipline_fee, change_fee, tshirt_addon, banner_addon, banquet, camp_config, reg_closes, late_reg')
       .in('id', eventIds);
     if (mErr) return json({ ok: false, error: mErr.message }, 500);
     events = new Map((mr ?? []).map((m) => [m.id as string, m as unknown as RegFeeEvent]));
+    // Display-only lookup for the UAT Z-02 duplicate-slot 409 message below —
+    // `RegFeeEvent` (mirrored from `_shared/stripe.ts`, shared with the
+    // webhook) deliberately doesn't carry `name`, so this stays a separate
+    // side map rather than widening that shared type.
+    eventNames = new Map((mr ?? []).map((m) => [m.id as string, ((m as { name?: string | null }).name ?? 'this event')]));
     const { data: amr, error: amErr } = await db
       .from('registrations')
       .select('id, event_id, athlete_id, club_id, refunded, created_at, ' +
@@ -767,6 +774,66 @@ Deno.serve(async (req) => {
         return json({ ok: false, error:
           `"${i.label}" mixes registrations for different athletes or events — remove it from your cart (✕) and add the registrations again.` }, 400);
       }
+
+      // UAT Z-02 (S1): no athlete can be charged twice for the same
+      // (event, discipline) slot. Two different sessions (e.g. a league
+      // admin and a club manager) can each create their OWN registration row
+      // for the same athlete+event+discipline — client-minted ids
+      // (`RegistrationEditor.tsx`) guarantee the rows never collide on id,
+      // so nothing before this point notices. `allEventRegs` (already loaded
+      // above: every non-refunded reg at every event this checkout touches,
+      // across every club) is exactly the dataset to check against — no
+      // extra query for the paid-sibling half. This is defense in depth
+      // alongside the DB-level `registrations_live_slot_uniq` partial unique
+      // index, which is what actually stops a second duplicate ROW from ever
+      // being created; this check exists for a duplicate row that already
+      // exists (pre-migration data, or a race that briefly created one
+      // before the index applied).
+      const pendingCutoffIso = new Date(Date.now() - CART_HOLD_MINUTES * 60_000).toISOString();
+      for (const r of refRegs) {
+        const paidSibling = findPaidSibling(r, allEventRegs);
+        // Other LIVE (non-refunded) rows at this exact slot, excluding every
+        // reg this very line already references (this line editing/paying
+        // its own regs is never a conflict with itself).
+        const otherSlotRegIds = allEventRegs
+          .filter((s) => s.event_id === r.event_id && s.athlete_id === r.athlete_id && s.discipline === r.discipline)
+          .filter((s) => !refRegs.some((line) => line.id === s.id))
+          .map((s) => s.id);
+        let conflictReason: string | null = null;
+        if (paidSibling) {
+          conflictReason = 'paid';
+        } else if (otherSlotRegIds.length) {
+          // Mid-checkout collision: someone else's UNPAID registration for
+          // this exact slot is referenced by a payment still `pending`
+          // within the last CART_HOLD_MINUTES — i.e. sitting inside an
+          // active, not-yet-completed Stripe Embedded Checkout right now.
+          // Mirrors the CART_HOLD_MINUTES (30 min) soft-hold model used
+          // elsewhere for capacity. `payments.ref_reg_ids` is populated at
+          // insert time below (both the free and Stripe paths) specifically
+          // so this overlap query works — it was otherwise an unpopulated
+          // vestigial column (see money-invariants.md).
+          const { data: pendingPay } = await db.from('payments')
+            .select('id')
+            .eq('status', 'pending')
+            .gte('created_at', pendingCutoffIso)
+            .overlaps('ref_reg_ids', otherSlotRegIds)
+            .limit(1)
+            .maybeSingle();
+          if (pendingPay) conflictReason = 'pending';
+        }
+        if (conflictReason) {
+          const { data: athleteRow } = await db.from('people')
+            .select('first_name, last_name').eq('id', r.athlete_id).maybeSingle();
+          const athleteName = (athleteRow
+            ? `${(athleteRow as { first_name?: string }).first_name ?? ''} ${(athleteRow as { last_name?: string }).last_name ?? ''}`.trim()
+            : '') || 'This athlete';
+          const eventName = eventNames.get(r.event_id) ?? 'this event';
+          const message = conflictReason === 'paid'
+            ? `${athleteName} is already registered for ${r.discipline} at ${eventName} — refresh the page and check the roster before checking out.`
+            : `${athleteName} is already being checked out for ${r.discipline} at ${eventName} by someone else right now — wait a few minutes and check the roster before trying again.`;
+          return json({ ok: false, error: message }, 409);
+        }
+      }
       const competingClubId = reg.club_id ?? '';
       const lineRegIds = new Set(i.ref_reg_ids ?? []);
       // All of this athlete's non-refunded regs at this event+club — used both
@@ -1125,6 +1192,11 @@ Deno.serve(async (req) => {
         service_fee: 0,
         currency: 'usd',
         cart_item_ids: items.map((i) => i.id),
+        // Populated (previously always null — a dormant/vestigial column,
+        // see money-invariants.md) so the UAT Z-02 mid-checkout pending-slot
+        // overlap query above, and admin-delete-person's existing
+        // `ref_reg_ids.ov.{}` scrub filter, both actually work.
+        ref_reg_ids: allRefRegIds.length ? allRefRegIds : null,
         lines_snapshot: linesSnapshot,
         ref_season_id: single?.ref_season_id ?? null,
         ref_type: single?.ref_type ?? null,
@@ -1233,6 +1305,8 @@ Deno.serve(async (req) => {
       service_fee: feeCents,
       currency: 'usd',
       cart_item_ids: items.map((i) => i.id),
+      // See the free-order insert above for why this is populated now.
+      ref_reg_ids: allRefRegIds.length ? allRefRegIds : null,
       lines_snapshot: linesSnapshot,
       ref_season_id: single?.ref_season_id ?? null,
       ref_type: single?.ref_type ?? null,
