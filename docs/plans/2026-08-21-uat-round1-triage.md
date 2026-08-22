@@ -97,7 +97,18 @@ until this ships. Z-03-01 (the actual concurrency test) runs after.
 
 ---
 
-## Questions (answers change the design — everything else proceeds)
+## Questions — ✅ all answered 2026-08-21 (late evening)
+
+| # | Answer | Consequence |
+|---|---|---|
+| Q1 | EARLYBIRD is **Event entries** | M-11-01 is a line-scope bug in checkout, not config |
+| Q2 | **Confirmed** rule set | Refund rework proceeds as specified (per-registration request; change fees never; service fee never; 75% after deadline on the refundable base; add-ons per D-5) |
+| Q3 | Screenshot reviewed: Stripe's **−$6.43 processing fee is Stripe's own, charged on the original payment and never returned** (Stripe policy since 2017; no option to reverse it). UCG's $6.45 service fee was **not** refunded. Net: only the $90 line was refunded | Policy (A) stands: refund the item base only, keep the service fee, which covers Stripe's unrecoverable fee. Refund emails/receipts will state "service fees are non-refundable". The real defect was refunding a change-fee line at all (→ Z-04-01) |
+| Q4 | **Agreed:** block admin pages only; prompt every sign-in | A-11 design fixed |
+| Q5 | **My Purchases = personal only.** Club Purchases = all of that club's invoices incl. ones the viewer paid; club receipts show **"Paid by <account>"** and the list filters/searches by payer | Batch 3 scoping fixed (supersedes my proposal) |
+| Q6 | Screenshots received (M-10, M-11 ×4, Z-04-02, Z-06). **New ask:** user-submitted problem reports need an admin view — an "Errors & Problems" page: Error Log tab (existing; it appears capped at 200) + Problem Reports tab with search/sort/filter and a Resolve state | Added as **Batch 2b** |
+
+### Original questions (kept for the record)
 
 1. **Q1 · EARLYBIRD scope.** In `#/admin/league → Promos`, what is EARLYBIRD's "Applies to"? If it's **Any**, the add-on/change-fee discount was as configured and only the service-fee base is the bug. If it's **Event entries**, line tagging is wrong.
 2. **Q2 · Refund rule set — confirm:** one request per registration; refundable = entry fee + extra-discipline fees; **change fees never refundable**; **service fee never refunded**; the after-deadline 75% applies to that refundable base; add-ons per your D-5 (full until order deadline, none after).
@@ -105,6 +116,13 @@ until this ships. Z-03-01 (the actual concurrency test) runs after.
 4. **Q4 · MFA gate scope.** Block only **admin pages** until enrolled (the person can still use athlete/club features), prompting on every sign-in — or the whole app?
 5. **Q5 · Purchase-history scoping.** Proposal: **My Purchase History** = every invoice my account paid (personal + any club cart I paid), with a "Paid for" column; **Club Purchase History** = that club's invoices regardless of who paid. Matches M-19-01 + Z-01-02 together — confirm.
 6. **Screenshots.** Send the two screenshot folders (Appendix D) — M-10, M-11, Z-04-02 and Z-06 each have one I need to see.
+
+## Batch 2b — Problem-reports admin view (new, from Q6)
+
+Where "Report a problem" submissions live today is being verified (email-only vs. table). Target:
+`#/admin/errors` becomes **Errors & Problems** with two tabs — **Error Log** (existing; add
+"load more" past the 200-row cap) and **Problem Reports** (description, page, build, reporter,
+screenshots, open/resolved; search/sort/filter; Resolve toggle).
 
 ## 👤 Nate actions
 

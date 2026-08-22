@@ -758,6 +758,15 @@ Deno.serve(async (req) => {
       }
       const event = events.get(reg.event_id);
       if (!event) return json({ ok: false, error: `Unknown event ${reg.event_id}.` }, 400);
+      // Every reg in one meet-entry line must be the SAME athlete at the SAME
+      // event (reviewer-added with UAT M-10): the prior/added discipline
+      // counts below are derived from `reg` (refRegs[0]), so a crafted line
+      // mixing athlete A's paid reg with athlete B's new reg would price B at
+      // the second-discipline rate instead of a full entry. Fail closed.
+      if (refRegs.some((r) => r.event_id !== reg.event_id || r.athlete_id !== reg.athlete_id)) {
+        return json({ ok: false, error:
+          `"${i.label}" mixes registrations for different athletes or events — remove it from your cart (✕) and add the registrations again.` }, 400);
+      }
       const competingClubId = reg.club_id ?? '';
       const lineRegIds = new Set(i.ref_reg_ids ?? []);
       // All of this athlete's non-refunded regs at this event+club — used both
