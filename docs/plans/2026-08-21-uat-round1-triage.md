@@ -11,7 +11,13 @@ Status key: ☐ not started · 🔧 in progress · ✅ shipped · ❓ blocked on
 
 ---
 
-## ⛴ Overnight build status (2026-08-23, pre-dawn) — ALL CODE COMPLETE, SHIP GATE PENDING
+## ✅ SHIPPED 2026-08-23 — everything below is LIVE (staging + prod)
+
+Migrations applied + verified with RLS probes and a post_score conflict smoke on staging;
+9 functions deployed to both projects (webhook trio confirmed verify_jwt=false); frontend
+build `b9d4464` live. Only Batch 5 (capacity) remains — at the prototype stage.
+
+### The original pre-ship snapshot (kept for the record)
 
 Every batch below is **implemented, tested, and reviewer-tier-reviewed on branch `fix/uat-round1`**
 (31 commits; build ✓, eslint ✓ across all 81 changed files, **1268/1268 vitest**, responsive sweep
