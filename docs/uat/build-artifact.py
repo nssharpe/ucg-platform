@@ -515,10 +515,10 @@ ul.cards span {{ color: var(--soft); font-size: .9rem; }}
 
 <section class="block">
   <div class="callout" style="border-left:4px solid var(--accent)">
-    <p><strong>Round-2 status (after lanes A, M, Z — 33 findings, 12 × S1).</strong>
-    <b>Do now:</b> E · G (skip G-20) · W · K · C (skip C-14, C-15) · H · N · F · J · X · D · Y.
-    <b>Hold until I say so:</b> P (capacity being redesigned per your Z-03 decisions) · R + G-20 + C-14 (refund model reworked per Z-04) · C-15 + the M re-test (cart/purchase-history restructure per Z-01-02) · Z-02 / Z-03 / Z-06 re-tests.
-    Don’t re-file what’s already in the triage doc — it’s tracked. New symptoms on the same screens are still welcome.</p>
+    <p><strong>Round-2 status (2026-08-23): every round-1 fix is LIVE in production.</strong>
+    <b>Do now:</b> everything except lane P — including the R refund lane (new per-registration model), the M re-test (coupons scoped + on receipts, $0 confirm, separate cart/purchases pages), and the Z-02/Z-04/Z-06 + A-11/A-07/A-06 re-tests.
+    <b>Still on hold:</b> P + Z-03 — the capacity redesign is a clickable prototype awaiting your comments.
+    Don’t re-file what’s in the triage doc; new symptoms on the same screens are welcome.</p>
   </div>
   <h2>Read this first</h2>
   <p class="lede">Eight things that change what the rest of this is worth.</p>

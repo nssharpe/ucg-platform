@@ -20,17 +20,16 @@
 
 ---
 
-## ⏱ Round-2 status (updated 2026-08-21 after lanes A, M, Z)
+## ⏱ Round-2 status (updated 2026-08-23 — ALL round-1 fixes are LIVE)
 
-Round 1 produced **33 findings** (12 × S1). Triage + fix plan:
-[`2026-08-21-uat-round1-triage.md`](2026-08-21-uat-round1-triage.md). What that means for you:
+Every round-1 fix shipped to production 2026-08-23 (migrations, functions, frontend —
+build `b9d4464`). Triage + what changed: [`2026-08-21-uat-round1-triage.md`](2026-08-21-uat-round1-triage.md).
 
-| Do now | Hold — wait for the fix batch, I'll tell you when |
+| Do now | Still on hold |
 |---|---|
-| **E** emails · **G** self-service (skip G-20) · **W** membership · **K** camps · **C** club manager (skip C-14, C-15) · **H** sanctioning/hosting · **N** nationals · **F** finance · **J** judging · **X** public · **D** devices · **Y** keyboard | **P** capacity/waitlists — being redesigned per your Z-03 decisions · **R** refunds + G-20 + C-14 — refund model being reworked per Z-04 · **C-15** + the M re-test — cart/purchase-history restructure per Z-01-02 · **Z-02 / Z-03 / Z-06** re-test after fixes |
+| Everything previously green **plus**: **R** refunds (new per-registration model — one request, change fees non-refundable, reject asks for a reason) · **G-20** · **C-14** · **C-15** + the **M re-test** (coupons now scoped + on receipts; $0 checkout confirms; cart/purchases are separate pages with a club switcher) · **Z-02 / Z-04 / Z-06 re-tests** (duplicate guard, refund grouping, score-conflict dialog) · **A-11 / A-07 / A-06 re-tests** | **P** capacity/waitlists + **Z-03** — the redesign is at the prototype stage: [play with the clickable prototype](https://claude.ai/code/artifact/c236e9d2-cc25-488f-9f55-5e0324e13fa4) and comment; the build starts after your feedback |
 
-Don't re-file anything already in the triage doc — it's tracked. New symptoms on the same
-screens are still welcome.
+Don't re-file anything already in the triage doc. New symptoms on the same screens are welcome.
 
 # 0. Read this first — the 8 things that matter
 
