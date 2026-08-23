@@ -1,0 +1,251 @@
+<title>Capacity Rework Prototype</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Instrument+Sans:wght@400;600;700&display=swap">
+<style>
+  :root{
+    --navy:#1e2b38; --coral:#f0785a; --coral-dk:#bd3f27; --ground:#fcfcfc; --card:#ffffff;
+    --line:#c6cdd6; --soft:#5a6875; --ok:#2e7d4f; --ok-bg:#e7f3ec; --warn-bg:#fdf3e4; --err-bg:#fbebe7;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--ground);color:var(--navy);font:15px/1.5 "Instrument Sans",system-ui,sans-serif;margin:0;padding:24px 16px 80px}
+  .wrap{max-width:880px;margin:0 auto}
+  h1{font-family:"Archivo Black",sans-serif;text-transform:uppercase;font-size:clamp(24px,4vw,34px);letter-spacing:.5px;margin:0 0 4px;text-wrap:balance}
+  h2{font-family:"Archivo Black",sans-serif;text-transform:uppercase;font-size:16px;letter-spacing:.5px;margin:0 0 10px}
+  .sub{color:var(--soft);margin:0 0 18px}
+  .note{background:var(--warn-bg);border:1px solid #e8d9b0;border-radius:8px;padding:10px 14px;font-size:13.5px;margin-bottom:22px}
+  .tabs{display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap}
+  .tab{border:1.5px solid var(--line);background:var(--card);color:var(--navy);border-radius:999px;padding:8px 18px;font:600 14px "Instrument Sans",sans-serif;cursor:pointer}
+  .tab[aria-selected="true"]{background:var(--navy);border-color:var(--navy);color:#fcfcfc}
+  .tab:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(--coral-dk);outline-offset:2px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-bottom:14px}
+  .lbl{font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--soft);display:block;margin-bottom:6px}
+  .seg{display:inline-flex;border:1.5px solid var(--line);border-radius:8px;overflow:hidden;flex-wrap:wrap}
+  .seg button{border:0;background:var(--card);padding:7px 14px;font:600 13.5px "Instrument Sans",sans-serif;color:var(--navy);cursor:pointer;border-right:1px solid var(--line)}
+  .seg button:last-child{border-right:0}
+  .seg button[aria-pressed="true"]{background:var(--coral);color:var(--navy);font-weight:700}
+  .caprow{display:flex;align-items:center;gap:10px;margin:8px 0;flex-wrap:wrap}
+  .caprow label{min-width:150px;font-weight:600;font-size:14px}
+  input[type="text"]{width:90px;border:1.5px solid var(--line);border-radius:6px;padding:7px 10px;font:600 14px "Instrument Sans",sans-serif;color:var(--navy);background:var(--card);font-variant-numeric:tabular-nums}
+  input.bad{border-color:var(--coral-dk);background:var(--err-bg)}
+  .hint{font-size:12.5px;color:var(--soft)}
+  .err{font-size:12.5px;color:var(--coral-dk);font-weight:600}
+  .regd{font-size:12.5px;color:var(--soft);font-variant-numeric:tabular-nums}
+  .bar{position:relative;height:22px;border-radius:6px;background:#eef1f4;border:1px solid var(--line);overflow:hidden;flex:1 1 200px;min-width:160px}
+  .bar>span{position:absolute;inset:0 auto 0 0;background:var(--ok)}
+  .bar.full>span{background:var(--coral-dk)}
+  .bar.warn>span{background:#d99a27}
+  .bar b{position:relative;z-index:1;display:block;text-align:center;font-size:12px;line-height:22px;color:var(--navy);mix-blend-mode:normal}
+  .bar.full b,.bar .onfill{color:#fff}
+  .sesrow{display:flex;align-items:center;gap:12px;padding:10px 4px;border-top:1px solid var(--line);cursor:pointer;flex-wrap:wrap}
+  .sesrow:hover{background:#f4f6f8}
+  .sesrow .nm{min-width:200px;font-weight:600}
+  .pill{display:inline-block;border-radius:999px;padding:2px 10px;font-size:11.5px;font-weight:700}
+  .pill.ok{background:var(--ok-bg);color:var(--ok)} .pill.full{background:var(--err-bg);color:var(--coral-dk)} .pill.wl{background:var(--warn-bg);color:#8a6d00}
+  .overlay{position:fixed;inset:0;background:rgba(30,43,56,.55);display:none;align-items:center;justify-content:center;padding:16px;z-index:10}
+  .overlay.open{display:flex}
+  .modal{background:var(--card);border-radius:12px;max-width:520px;width:100%;padding:20px 22px;max-height:85vh;overflow:auto}
+  .modal table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+  .modal th{font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--soft);text-align:left;padding:6px 8px;border-bottom:1.5px solid var(--line)}
+  .modal td{padding:7px 8px;border-bottom:1px solid #e8ecef;font-size:14px}
+  .modal td.num{text-align:right}
+  .x{float:right;border:0;background:none;font-size:18px;cursor:pointer;color:var(--soft)}
+  .btn{border:0;border-radius:8px;background:var(--coral);color:var(--navy);font:700 14px "Instrument Sans",sans-serif;padding:9px 18px;cursor:pointer}
+  .btn.ghost{background:none;border:1.5px solid var(--line);color:var(--navy);font-weight:600}
+  .toast{position:fixed;right:16px;bottom:16px;background:var(--navy);color:#dfe8f0;border-radius:8px;padding:10px 16px;font-size:13.5px;max-width:340px;display:none}
+  .toast.show{display:block}
+  .divider{border:0;border-top:1px solid var(--line);margin:16px 0}
+  @media (prefers-reduced-motion:no-preference){ .bar>span{transition:width .25s ease} }
+</style>
+<div class="wrap">
+  <h1>Capacity rework — clickable prototype</h1>
+  <p class="sub">Mock data, nothing saves. Built from your Z-03 decisions — poke at both tabs and comment directly on this page with anything that's off.</p>
+  <div class="note"><b>What you decided (and what this shows):</b> no more "Max total participants" · each discipline picks <b>No cap / Per discipline / Per level</b> · whole positive numbers enforced as you type · you can't set a cap below current paid registrations · the summary shows progress toward every cap, and in by-session mode a per-session bar with a detail overlay.</div>
+
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" aria-selected="true" data-tab="editor">Cap editor</button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="summary">Event summary</button>
+  </div>
+
+  <section id="tab-editor">
+    <div class="card">
+      <span class="lbl">Registration mode</span>
+      <div class="seg" id="mode">
+        <button aria-pressed="true" data-m="disc">By discipline</button>
+        <button aria-pressed="false" data-m="sess">By session</button>
+      </div>
+      <p class="hint" style="margin:8px 0 0">By discipline: caps per discipline or per level, no pre-created sessions. By session: sessions with per-apparatus routine caps only.</p>
+    </div>
+    <div id="disc-editor"></div>
+    <div id="sess-editor" style="display:none">
+      <div class="card">
+        <h2>Sessions</h2>
+        <p class="hint">Per-session routine caps per apparatus (unchanged from today). Discipline/level caps don't apply in this mode.</p>
+        <div id="ses-list"></div>
+        <hr class="divider">
+        <button class="btn ghost" id="add-ses">+ Add session</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-summary" style="display:none">
+    <div class="card" id="sum-disc">
+      <h2>Progress toward caps</h2>
+      <p class="hint" style="margin-top:0">Paid registrations only — pending carts don't count.</p>
+      <div id="sum-disc-bars"></div>
+    </div>
+    <div class="card" id="sum-sess" style="display:none">
+      <h2>Session capacity</h2>
+      <div class="caprow">
+        <span class="lbl" style="margin:0">Show</span>
+        <div class="seg" id="sum-filter">
+          <button aria-pressed="true" data-f="all">All athletes</button>
+          <button aria-pressed="false" data-f="wag-beg">WAG · Beginner</button>
+          <button aria-pressed="false" data-f="mag-adv">MAG · Advanced</button>
+        </div>
+      </div>
+      <p class="hint">The bar is the whole session (all routines); click a session for per-apparatus detail and the waitlist.</p>
+      <div id="ses-bars"></div>
+    </div>
+  </section>
+</div>
+
+<div class="overlay" id="ovl" role="dialog" aria-modal="true" aria-labelledby="ovl-h">
+  <div class="modal">
+    <button class="x" id="ovl-x" aria-label="Close">✕</button>
+    <h2 id="ovl-h">Session detail</h2>
+    <div id="ovl-body"></div>
+  </div>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+const DISCS = [
+  { id:'WAG', name:'WAG', levels:['Beginner','Intermediate','Advanced'], regd:{Beginner:18,Intermediate:11,Advanced:6}, mode:'level', caps:{Beginner:'24',Intermediate:'16',Advanced:'8'}, dcap:'' },
+  { id:'MAG', name:'MAG', levels:['Developmental','Intermediate','Advanced'], regd:{Developmental:9,Intermediate:7,Advanced:5}, mode:'disc', caps:{}, dcap:'30' },
+  { id:'TNT', name:'T&T', levels:['Novice','Intermediate','Advanced'], regd:{Novice:4,Intermediate:3,Advanced:2}, mode:'none', caps:{}, dcap:'' },
+];
+const SESSIONS = [
+  { id:'s1', name:'Session 1 — Sat AM · WAG Beg/Int', total:120, used:97, wl:0,
+    app:[['Vault',30,26],['Bars',30,25],['Beam',30,24],['Floor',30,22]], regs:41 },
+  { id:'s2', name:'Session 2 — Sat PM · WAG Adv + MAG', total:120, used:120, wl:6,
+    app:[['Vault',30,30],['Bars',30,30],['Beam',30,30],['Floor',30,30]], regs:44 },
+  { id:'s3', name:'Session 3 — Sun · T&T + open', total:90, used:31, wl:0,
+    app:[['Trampoline',30,14],['Tumbling',30,10],['Double-mini',30,7]], regs:16 },
+];
+const $ = (s)=>document.querySelector(s);
+let toastT; function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),3500); }
+const wholeOk = (v)=>/^\d+$/.test(v) && Number(v)>0;
+
+function discEditor(){
+  const host = $('#disc-editor'); host.innerHTML='';
+  for (const d of DISCS){
+    const regdTotal = Object.values(d.regd).reduce((a,b)=>a+b,0);
+    const card = document.createElement('div'); card.className='card';
+    card.innerHTML = `<h2>${d.name}</h2>
+      <div class="caprow"><span class="lbl" style="margin:0">Cap</span>
+        <div class="seg" data-d="${d.id}">
+          <button data-cm="none" aria-pressed="${d.mode==='none'}">No cap</button>
+          <button data-cm="disc" aria-pressed="${d.mode==='disc'}">Per discipline</button>
+          <button data-cm="level" aria-pressed="${d.mode==='level'}">Per level</button>
+        </div></div><div class="capbody"></div>`;
+    const body = card.querySelector('.capbody');
+    const render = ()=>{
+      body.innerHTML='';
+      if (d.mode==='none') body.innerHTML = `<p class="hint">No limit — ${regdTotal} registered so far.</p>`;
+      if (d.mode==='disc') body.appendChild(capRow(`${d.name} total`, d.dcap, regdTotal, v=>{ d.dcap=v; }));
+      if (d.mode==='level') for (const lv of d.levels) body.appendChild(capRow(lv, d.caps[lv]??'', d.regd[lv], v=>{ d.caps[lv]=v; }));
+    };
+    card.querySelectorAll('[data-cm]').forEach(b=>b.addEventListener('click',()=>{
+      d.mode=b.dataset.cm;
+      card.querySelectorAll('[data-cm]').forEach(x=>x.setAttribute('aria-pressed', String(x===b)));
+      render();
+    }));
+    render(); host.appendChild(card);
+  }
+}
+function capRow(label, val, regd, save){
+  const row = document.createElement('div'); row.className='caprow';
+  row.innerHTML = `<label>${label}</label><input type="text" inputmode="numeric" value="${val}">
+    <span class="regd">${regd} registered</span><span class="msg"></span>`;
+  const inp = row.querySelector('input'), msg = row.querySelector('.msg');
+  inp.addEventListener('input', ()=>{
+    const v = inp.value.trim();
+    if (v===''){ inp.className=''; msg.textContent=''; msg.className='msg hint'; save(''); return; }
+    if (!wholeOk(v)){ inp.className='bad'; msg.textContent='Whole numbers above zero only.'; msg.className='msg err'; return; }
+    if (Number(v) < regd){ inp.className='bad'; msg.textContent=`Can't go below the ${regd} already registered.`; msg.className='msg err'; return; }
+    inp.className=''; msg.textContent='✓'; msg.className='msg hint'; save(v);
+  });
+  return row;
+}
+function sesEditor(){
+  const host=$('#ses-list'); host.innerHTML='';
+  for (const s of SESSIONS){
+    const div=document.createElement('div'); div.className='sesrow'; div.style.cursor='default';
+    div.innerHTML=`<span class="nm">${s.name}</span><span class="regd">${s.app.map(a=>`${a[0]} ${a[1]}`).join(' · ')}</span>
+      <button class="btn ghost" data-del="${s.id}" style="margin-left:auto">Remove</button>`;
+    div.querySelector('[data-del]').addEventListener('click',()=>{
+      if (s.regs>0) toast(`Can't remove "${s.name}" — ${s.regs} athletes are assigned. Move them first.`);
+      else toast('Removed (mock).');
+    });
+    host.appendChild(div);
+  }
+}
+$('#add-ses').addEventListener('click',()=>toast('New session added (mock) — it keeps its id forever, so athletes never lose their assignment.'));
+
+function bar(used,total){
+  const pct = total? Math.min(100, Math.round(used/total*100)) : 0;
+  const cls = pct>=100?'full':pct>=85?'warn':'';
+  return `<div class="bar ${cls}"><span style="width:${pct}%"></span><b class="${pct>55?'onfill':''}">${used} / ${total} · ${pct}%</b></div>`;
+}
+function sumDisc(){
+  const host=$('#sum-disc-bars'); host.innerHTML='';
+  for (const d of DISCS){
+    const wrap=document.createElement('div'); wrap.style.marginBottom='14px';
+    let inner=`<span class="lbl">${d.name}</span>`;
+    if (d.mode==='none') inner+=`<p class="hint" style="margin:2px 0">No cap — ${Object.values(d.regd).reduce((a,b)=>a+b,0)} registered</p>`;
+    if (d.mode==='disc') inner+=`<div class="caprow"><label>${d.name} total</label>${bar(Object.values(d.regd).reduce((a,b)=>a+b,0), Number(d.dcap)||0)}</div>`;
+    if (d.mode==='level') for (const lv of d.levels) inner+=`<div class="caprow"><label>${lv}</label>${bar(d.regd[lv], Number(d.caps[lv])||0)}</div>`;
+    wrap.innerHTML=inner; host.appendChild(wrap);
+  }
+}
+function sumSess(){
+  const host=$('#ses-bars'); host.innerHTML='';
+  for (const s of SESSIONS){
+    const row=document.createElement('div'); row.className='sesrow'; row.setAttribute('role','button'); row.tabIndex=0;
+    const st = s.used>=s.total ? `<span class="pill full">Full</span>${s.wl?` <span class="pill wl">Waitlist ${s.wl}</span>`:''}` : `<span class="pill ok">Open</span>`;
+    row.innerHTML=`<span class="nm">${s.name}</span>${bar(s.used,s.total)}${st}`;
+    const open=()=>{
+      $('#ovl-h').textContent=s.name;
+      $('#ovl-body').innerHTML=`<table><tr><th>Apparatus</th><th style="text-align:right">Cap</th><th style="text-align:right">Used</th><th style="text-align:right">Open spots</th></tr>
+        ${s.app.map(a=>`<tr><td>${a[0]}</td><td class="num">${a[1]}</td><td class="num">${a[2]}</td><td class="num" style="font-weight:700;color:${a[1]-a[2]>0?'var(--ok)':'var(--coral-dk)'}">${a[1]-a[2]}</td></tr>`).join('')}
+      </table><p class="hint" style="margin-top:10px">${s.wl?`Waitlist: <b>${s.wl} group${s.wl>1?'s':''}</b> — promoted automatically (FIFO) when space frees.`:'No waitlist.'}</p>`;
+      $('#ovl').classList.add('open'); $('#ovl-x').focus();
+    };
+    row.addEventListener('click',open);
+    row.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){e.preventDefault();open();} });
+    host.appendChild(row);
+  }
+}
+$('#ovl-x').addEventListener('click',()=>$('#ovl').classList.remove('open'));
+$('#ovl').addEventListener('click',e=>{ if(e.target.id==='ovl') $('#ovl').classList.remove('open'); });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') $('#ovl').classList.remove('open'); });
+
+let mode='disc';
+$('#mode').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+  mode=b.dataset.m;
+  $('#mode').querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
+  $('#disc-editor').style.display = mode==='disc'?'':'none';
+  $('#sess-editor').style.display = mode==='sess'?'':'none';
+  $('#sum-disc').style.display = mode==='disc'?'':'none';
+  $('#sum-sess').style.display = mode==='sess'?'':'none';
+}));
+$('#sum-filter').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+  $('#sum-filter').querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
+  toast(b.dataset.f==='all' ? 'Showing all sessions.' : 'Filtered to sessions containing that discipline + level (mock keeps all visible).');
+}));
+document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
+  document.querySelectorAll('.tab').forEach(x=>x.setAttribute('aria-selected',String(x===t)));
+  $('#tab-editor').style.display = t.dataset.tab==='editor'?'':'none';
+  $('#tab-summary').style.display = t.dataset.tab==='summary'?'':'none';
+}));
+discEditor(); sesEditor(); sumDisc(); sumSess();
+</script>

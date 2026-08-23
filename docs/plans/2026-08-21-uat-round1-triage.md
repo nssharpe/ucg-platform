@@ -11,6 +11,33 @@ Status key: ☐ not started · 🔧 in progress · ✅ shipped · ❓ blocked on
 
 ---
 
+## ⛴ Overnight build status (2026-08-23, pre-dawn) — ALL CODE COMPLETE, SHIP GATE PENDING
+
+Every batch below is **implemented, tested, and reviewer-tier-reviewed on branch `fix/uat-round1`**
+(31 commits; build ✓, eslint ✓ across all 81 changed files, **1268/1268 vitest**, responsive sweep
+375/768/1280 with evidence, admin-MFA gate verified live on staging). Batch 5's clickable
+capacity prototype is published for Julia. NOT yet shipped: the PreToolUse guard's confirmation
+on `supabase db push` can't be answered in an unattended session, so the 5 migrations —
+`20260821140000` invoice counters · `20260821150000` refund groups · `20260822010000`
+registrations unique slot · `20260822020000` score compare-and-set · `20260822030000`
+problem_reports — are drafted but unapplied, and everything downstream (function deploys,
+merge to main) is correctly parked behind them.
+
+**Morning runbook (order matters):**
+1. Nate approves the staging push; controller verifies + runs the RLS probes (notes file has them).
+2. Nate approves the prod push (pre-checks already ran clean: no dup registrations, no dup
+   invoice numbers, max invoice `UCG-2026-0056` seeds the counter).
+3. Controller deploys: `create-checkout-session`, `stripe-webhook`, `request-refund`,
+   `process-refund`, `judge-entry`, `report-problem`, `request-guardian-waiver`,
+   `send-membership-welcome`, `invite-account` (verify_jwt confirmations per hook).
+4. Controller merges `fix/uat-round1` → main and pushes (frontend deploy). Frontend MUST NOT
+   ship before the migrations (score posting + refunds call the new RPCs/columns).
+5. Live smoke: score post + conflict dialog, one $0 checkout, one refund request/approve, a
+   problem report appearing in Errors & Problems.
+
+
+---
+
 ## Batch 1 — Money correctness (S1, first)
 
 Money path per CLAUDE.md routing: sonnet drafts, reviewer-tier (Fable) reviews every diff.
