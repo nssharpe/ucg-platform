@@ -26,6 +26,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendOne } from './resend.ts';
 import { renderEmail } from './email-layout.ts';
 import { buildCampConfirmationHtml, campSurveyQuestionsOfConfig, type CampAthleteSurvey, type CampConfigLike } from './camp-confirmation.ts';
+import { getStripe } from './stripe.ts';
+import { findPaidSibling, type SlotRegLike } from './registration-status.ts';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const fmtMoney = (cents: number) =>
@@ -56,6 +58,15 @@ export interface SnapshotItem {
   club_id: string | null;
   label: string;
   amount_cents: number;
+  /** POST-discount cents actually charged for this line (same convention as
+   *  `create-checkout-session`'s `paid_cents` — see money-invariants.md).
+   *  Present on every snapshot written since T6 (`20260731...`); optional
+   *  here only for the legacy-reconstructed-from-`cart_items` fallback path
+   *  below, which has no discount info to reconstruct it from and falls
+   *  back to `amount_cents`. Used by the UAT Z-02 duplicate-slot refund
+   *  (refund exactly what was actually paid for the duplicate line, not its
+   *  pre-discount list price). */
+  paid_cents?: number;
   kind: string;
   ref_user_id: string | null;
   ref_season_id: string | null;
@@ -210,11 +221,47 @@ export async function fulfillPayment(db: DB, payment: PaymentRow, opts: FulfillO
   // --- Flip the paid registrations (event entries + change fees) -------------
   // Service role bypasses the guard_registration_paid trigger (Phase 1), so
   // this remains the authoritative writer of registrations.paid.
+  //
+  // UAT Z-02 (S1) — re-check for a duplicate slot right before flipping.
+  // `create-checkout-session`'s own duplicate-slot guard (money-invariants.md)
+  // only sees the world as of ITS request; it cannot see a sibling payment
+  // that was created around the same moment and is fulfilling concurrently
+  // (or already existed before that guard/the DB unique index
+  // `registrations_live_slot_uniq` ever shipped). Whichever payment's
+  // fulfillment reaches this point SECOND for a slot must not flip its own
+  // registration to paid on top of an already-paid sibling — it refunds
+  // itself instead (`handleDuplicateSlotRegistrations` below).
   const paidRegIds = Array.from(new Set(items.flatMap((i) => i.ref_reg_ids ?? [])));
+  const duplicateRegIds = new Set<string>();
   if (paidRegIds.length) {
+    const { data: targetRows } = await db.from('registrations')
+      .select('id, event_id, athlete_id, discipline, refunded, paid')
+      .in('id', paidRegIds);
+    const targets = (targetRows ?? []) as SlotRegLike[];
+    const eventIds = Array.from(new Set(targets.map((r) => r.event_id)));
+    const { data: liveRows } = eventIds.length
+      ? await db.from('registrations')
+        .select('id, event_id, athlete_id, discipline, refunded, paid')
+        .in('event_id', eventIds)
+        .eq('refunded', false)
+      : { data: [] as SlotRegLike[] };
+    const live = (liveRows ?? []) as SlotRegLike[];
+    for (const target of targets) {
+      if (findPaidSibling(target, live)) duplicateRegIds.add(target.id);
+    }
+  }
+  // Flipping ONLY the non-duplicate ids is itself idempotent under a retry
+  // (re-running this update with the same, or a shrinking, id set is a
+  // harmless no-op/re-assert) — but the Stripe refund + registration-blank +
+  // payer email inside `handleDuplicateSlotRegistrations` are NOT
+  // idempotent, so that call is deferred to the "winner-only, once-only
+  // side effects" section below, gated behind the SAME atomic
+  // `fulfilled_at` claim as coupon redemption and the receipt email.
+  const regIdsToFlip = paidRegIds.filter((id) => !duplicateRegIds.has(id));
+  if (regIdsToFlip.length) {
     await db.from('registrations')
       .update({ paid: true, updated_pending: false })
-      .in('id', paidRegIds);
+      .in('id', regIdsToFlip);
   }
 
   // --- Write the paid invoice (idempotent: id derived from the payment row) ---
@@ -227,8 +274,23 @@ export async function fulfillPayment(db: DB, payment: PaymentRow, opts: FulfillO
     // retry doesn't renumber the invoice.
     number = (existingInv as { number?: string }).number ?? `UCG-${payment.id}`;
   } else {
-    const { count } = await db.from('invoices').select('id', { count: 'exact', head: true });
-    number = `UCG-2026-${String((count ?? 0) + 1).padStart(4, '0')}`;
+    // Concurrency-safe sequence claim (UAT Z-01 follow-up): a row-COUNT-based
+    // number used to be minted here, which let two concurrent fulfillments
+    // (a Stripe retry racing a fresh checkout) read the same count and mint
+    // the SAME number — the loser then failed on invoices.number's unique
+    // constraint, permanently stuck at `pending` (the atomic claim below
+    // never runs). `next_invoice_number` (20260821140000) claims the number
+    // atomically via a single insert-on-conflict-returning, so there's no
+    // read-then-write gap to race. No fallback on error — an invoice number
+    // must never be guessed; a failure here throws and this fulfillment
+    // attempt aborts (payment stays pending for the caller's existing
+    // retry/error_logs path to pick up, exactly as any other write failure
+    // in this function already does).
+    const { data: numberData, error: numberErr } = await db.rpc('next_invoice_number');
+    if (numberErr || typeof numberData !== 'string' || !numberData) {
+      throw new Error(`fulfillPayment: next_invoice_number failed for payment ${payment.id}: ${numberErr?.message ?? 'no number returned'}`);
+    }
+    number = numberData;
   }
   await db.from('invoices').upsert({
     id: invoiceId, number,
@@ -240,6 +302,19 @@ export async function fulfillPayment(db: DB, payment: PaymentRow, opts: FulfillO
   // server snapshot, not the client). Financial source of truth stays the
   // payment row (server-recomputed subtotal + Stripe's real fee, or 0/0 for a
   // free order).
+  // UAT Z-02: a line whose `ref_reg_ids` are ENTIRELY duplicate-slot
+  // registrations was (or will be, in the winner-only step below) fully
+  // Stripe-refunded — write its invoice_item as already-refunded so it
+  // never shows as a live charge and a later manual `request-refund` skips
+  // it. Deliberately NOT applied to a MIXED line (some duplicate, some
+  // legitimate refs) — `handleDuplicateSlotRegistrations` does NOT
+  // auto-refund a mixed line (see its doc comment), and marking the WHOLE
+  // item `refunded:true` there would wrongly block a future legitimate
+  // `request-refund` for the OTHER, non-duplicate registration sharing that
+  // same line (its lookup is `invoice_items.ref_reg_ids @> [regId]`, so it
+  // would hit this same row and see "already refunded").
+  const isCleanDuplicateLine = (i: SnapshotItem) =>
+    (i.ref_reg_ids ?? []).length > 0 && (i.ref_reg_ids ?? []).every((id) => duplicateRegIds.has(id));
   if (items.length) {
     await db.from('invoice_items').upsert(
       items.map((i, idx) => ({
@@ -248,7 +323,7 @@ export async function fulfillPayment(db: DB, payment: PaymentRow, opts: FulfillO
         ref_user_id: i.ref_user_id ?? null,
         ref_reg_ids: i.ref_reg_ids, ref_event_id: i.ref_event_id, ref_line_type: i.ref_line_type,
         addon_size: i.addon_size ?? null, addon_assignee: i.addon_assignee ?? null,
-        refunded: false,
+        refunded: isCleanDuplicateLine(i),
       })),
       { onConflict: 'id' },
     );
@@ -263,6 +338,35 @@ export async function fulfillPayment(db: DB, payment: PaymentRow, opts: FulfillO
       refunded: false,
     }], { onConflict: 'id' });
   }
+  // --- UAT M-11-02 / M-20-01: persist the discount as its own invoice line ---
+  // `amount_cents` above is the PRE-discount list price; `paid_cents` (frozen
+  // per line at checkout time, see `create-checkout-session`) is what was
+  // ACTUALLY charged post-coupon. The gap between their sums is exactly the
+  // coupon discount, previously computed for checkout display/the receipt
+  // EMAIL total only and never written anywhere — so every other renderer
+  // (Purchase History, the Cart receipt modal, the PDF receipt) showed the
+  // full list-price items summing to MORE than what the payment/email
+  // actually charged. `paid_cents ?? i.amount_cents` treats a legacy item
+  // with no discount info (the pre-T6 `cart_items`-reconstructed fallback
+  // above, which never set `paid_cents`) as undiscounted, never as a bogus
+  // "gave away everything" discount. Deterministic id ⇒ idempotent on a
+  // webhook retry, same as every other upsert in this function.
+  if (items.length) {
+    const totalAmountCents = items.reduce((s, i) => s + i.amount_cents, 0);
+    const totalPaidCents = items.reduce((s, i) => s + (i.paid_cents ?? i.amount_cents), 0);
+    const discountCents = totalAmountCents - totalPaidCents;
+    if (discountCents > 0) {
+      await db.from('invoice_items').upsert([{
+        id: `ii-${payment.id}-discount`, invoice_id: invoiceId,
+        label: payment.coupon_code ? `Promo code ${payment.coupon_code}` : 'Discount',
+        amount: -(discountCents / 100), kind: 'discount',
+        ref_user_id: null, ref_reg_ids: null, ref_event_id: null, ref_line_type: null,
+        addon_size: null, addon_assignee: null,
+        refunded: false,
+      }], { onConflict: 'id' });
+    }
+  }
+
   // The service fee (the only source of non-whole-dollar cents in what the
   // customer actually paid) was previously computed for checkout display and
   // the receipt EMAIL only, never persisted — so Purchase History / the
@@ -312,12 +416,177 @@ export async function fulfillPayment(db: DB, payment: PaymentRow, opts: FulfillO
   if (payment.coupon_code) {
     await db.rpc('redeem_coupon', { p_code: payment.coupon_code, p_person_id: personId, p_payment_id: payment.id });
   }
-  // Email the REAL payer a receipt (best-effort; never fails fulfillment).
-  try {
-    await emailReceipt(db, personId, items, payment, number);
-  } catch (e) {
-    console.error('[fulfill] receipt email failed:', e);
+  // UAT Z-02 (S1): the Stripe refund + registration-blank + payer email for
+  // any duplicate-slot registration(s) found above. NOT idempotent (a Stripe
+  // refund call must never run twice), so — same as coupon redemption above
+  // and the receipt email below — it belongs strictly inside this
+  // winner-only, once-only section, never before the atomic claim.
+  if (duplicateRegIds.size) {
+    await handleDuplicateSlotRegistrations(db, payment, items, duplicateRegIds, opts);
   }
+  // Email the REAL payer a receipt (best-effort; never fails fulfillment).
+  // UAT Z-02: a line that was ENTIRELY a duplicate-slot registration was
+  // already refunded above and must not appear as a charge on the receipt.
+  // A payment that was NOTHING BUT duplicate line(s) gets no receipt at all
+  // — `handleDuplicateSlotRegistrations` already sent the payer the
+  // "already registered, refunded" notice instead. Same `isCleanDuplicateLine`
+  // predicate as the invoice_items write above.
+  const receiptItems = duplicateRegIds.size ? items.filter((i) => !isCleanDuplicateLine(i)) : items;
+  if (receiptItems.length) {
+    const removedCents = duplicateRegIds.size
+      ? items.filter(isCleanDuplicateLine).reduce((s, i) => s + (i.paid_cents ?? i.amount_cents), 0)
+      : 0;
+    const subtotalOverride = removedCents > 0 && payment.amount_subtotal != null
+      ? Math.max(0, payment.amount_subtotal - removedCents)
+      : undefined;
+    try {
+      await emailReceipt(db, personId, receiptItems, payment, number, subtotalOverride);
+    } catch (e) {
+      console.error('[fulfill] receipt email failed:', e);
+    }
+  }
+}
+
+/**
+ * UAT Z-02 (S1): handle registration(s) in `duplicateRegIds` — already
+ * excluded from the `paid` flip above because a live paid sibling already
+ * occupies their (event, athlete, discipline) slot. Refunds the money,
+ * blanks the registration, and emails the payer instead of a receipt.
+ *
+ * Granularity note: `paid_cents` is frozen PER LINE at checkout time (see
+ * `create-checkout-session`), not per registration within a line, and this
+ * module has no access to the pricing internals that priced each
+ * discipline within a multi-reg line. So:
+ *  - A line whose `ref_reg_ids` are ENTIRELY duplicates is "clean" — its
+ *    whole `paid_cents` is refunded via Stripe.
+ *  - If EVERY chargeable line on the payment is clean-duplicate, the
+ *    payment covered nothing else — refund the FULL Stripe charge (omit
+ *    `amount` so Stripe refunds exactly what it captured) and skip the
+ *    normal receipt entirely (the caller already filters `receiptItems`).
+ *  - A MIXED line (some referenced regs duplicate, some legitimate — e.g.
+ *    one line pricing two disciplines where only one collided) is NOT
+ *    auto-refunded — logged to `error_logs` for manual review instead of
+ *    guessing a split. This is a deliberate scope limit, documented in the
+ *    UAT Z-02 wrap-up notes.
+ */
+async function handleDuplicateSlotRegistrations(
+  db: DB,
+  payment: PaymentRow,
+  items: SnapshotItem[],
+  duplicateRegIds: Set<string>,
+  opts: FulfillOpts,
+): Promise<void> {
+  const isCleanDuplicateLine = (i: SnapshotItem) =>
+    (i.ref_reg_ids ?? []).length > 0 && (i.ref_reg_ids ?? []).every((id) => duplicateRegIds.has(id));
+  const affectedLines = items.filter((i) => (i.ref_reg_ids ?? []).some((id) => duplicateRegIds.has(id)));
+  if (!affectedLines.length) return;
+
+  const chargeableItems = items.filter((i) => i.amount_cents > 0 || (i.paid_cents ?? 0) > 0);
+  const wholePaymentIsDuplicate = chargeableItems.length > 0 && chargeableItems.every(isCleanDuplicateLine);
+
+  const mixedLines = affectedLines.filter((i) => !isCleanDuplicateLine(i));
+  if (mixedLines.length) {
+    await db.from('error_logs').insert({
+      context: 'fulfill',
+      message: `Payment ${payment.id} fulfilled a line mixing a duplicate-slot registration with a legitimate one — paid_cents is frozen PER LINE, so the amount can't be safely split here. NOT auto-refunded; needs manual review.`,
+      detail: {
+        paymentId: payment.id, duplicateRegIds: Array.from(duplicateRegIds),
+        lines: mixedLines.map((l) => ({ id: l.id, label: l.label, refRegIds: l.ref_reg_ids, paidCents: l.paid_cents ?? l.amount_cents })),
+      },
+    }).then(() => {}, () => {});
+  }
+
+  const cleanDuplicateLines = affectedLines.filter(isCleanDuplicateLine);
+  const cleanRefundCents = cleanDuplicateLines.reduce((s, i) => s + (i.paid_cents ?? i.amount_cents), 0);
+
+  let stripeRefundId: string | null = null;
+  let refundOk = true;
+  const needsRefund = wholePaymentIsDuplicate || cleanRefundCents > 0;
+  if (needsRefund && opts.piId) {
+    try {
+      const stripe = getStripe();
+      const refund = wholePaymentIsDuplicate
+        // Refund the FULL charge exactly as captured (subtotal + service
+        // fee) rather than recomputing it — omitting `amount` asks Stripe to
+        // refund the entire PaymentIntent, which can't drift from what was
+        // actually charged.
+        ? await stripe.refunds.create({ payment_intent: opts.piId })
+        : await stripe.refunds.create({ payment_intent: opts.piId, amount: cleanRefundCents });
+      stripeRefundId = refund.id;
+    } catch (e) {
+      refundOk = false;
+      await db.from('error_logs').insert({
+        context: 'fulfill',
+        message: `UAT Z-02 duplicate-slot Stripe refund FAILED for payment ${payment.id}: ${e instanceof Error ? e.message : String(e)} — needs a manual Stripe refund.`,
+        detail: { paymentId: payment.id, piId: opts.piId, wholePaymentIsDuplicate, cleanRefundCents },
+      }).then(() => {}, () => {});
+    }
+  } else if (needsRefund && !opts.piId) {
+    // Free order (coupon covered it) or a legacy payment with no recorded
+    // PaymentIntent: nothing was ever charged via Stripe, so there is
+    // nothing to refund there — still worth a log line since a "duplicate"
+    // free order is unusual.
+    await db.from('error_logs').insert({
+      context: 'fulfill',
+      message: `UAT Z-02 duplicate-slot registration on payment ${payment.id} with no Stripe PaymentIntent (free order or legacy) — no Stripe refund needed, nothing was charged there.`,
+      detail: { paymentId: payment.id, wholePaymentIsDuplicate, cleanRefundCents },
+    }).then(() => {}, () => {});
+  }
+
+  // Mark the duplicate registration(s) so they disappear from the roster,
+  // regardless of the Stripe outcome above — a registration occupying an
+  // already-paid slot must never itself end up `paid:true`.
+  await db.from('registrations').update({
+    refunded: true, keep_listed: false, refund_requested: false,
+  }).in('id', Array.from(duplicateRegIds));
+
+  await db.from('error_logs').insert({
+    context: 'fulfill',
+    message: `UAT Z-02: duplicate-slot registration(s) handled for payment ${payment.id} — ${Array.from(duplicateRegIds).join(', ')}. ` +
+      `Refunded ${wholePaymentIsDuplicate ? 'the full charge' : `${cleanRefundCents} cents`}` +
+      `${stripeRefundId ? ` (Stripe refund ${stripeRefundId})` : refundOk ? ' (nothing to charge back)' : ' — STRIPE REFUND FAILED, see the prior error_logs entry'}.`,
+    detail: { paymentId: payment.id, duplicateRegIds: Array.from(duplicateRegIds), wholePaymentIsDuplicate, cleanRefundCents, stripeRefundId, refundOk },
+  }).then(() => {}, () => {});
+
+  // Email the payer "already registered, refunded" instead of a receipt for
+  // money that's being given back (the caller separately still sends a
+  // normal receipt for any NON-duplicate lines on a mixed payment).
+  try {
+    const refundedCents = wholePaymentIsDuplicate
+      ? (payment.amount_subtotal ?? 0) + (payment.service_fee ?? 0)
+      : cleanRefundCents;
+    await emailDuplicateRefundNotice(db, payment, refundedCents);
+  } catch (e) {
+    console.error('[fulfill] duplicate-slot notice email failed:', e);
+  }
+}
+
+/** Email the payer that a duplicate-slot registration's payment was
+ *  refunded (UAT Z-02) — sent INSTEAD of the normal receipt when the whole
+ *  payment was the duplicate, or alongside an adjusted receipt for the rest
+ *  when the payment also covered legitimate lines. */
+async function emailDuplicateRefundNotice(db: DB, payment: PaymentRow, refundedCents: number): Promise<void> {
+  const personId = payment.person_id;
+  if (!personId) return;
+  const { data: p } = await db.from('people')
+    .select('first_name, last_name, email').eq('id', personId).maybeSingle();
+  const person = p as { first_name?: string; last_name?: string; email?: string } | null;
+  const toEmail = (person?.email ?? '').trim();
+  if (!EMAIL_RE.test(toEmail)) return;
+  const forName = `${person?.first_name ?? ''} ${person?.last_name ?? ''}`.trim() || 'Member';
+
+  const html = renderEmail({
+    heading: 'Your payment was refunded',
+    bodyHtml: `<p>Hi ${esc(forName)},</p>
+<p>It looks like this athlete was already registered for this event and discipline — most likely by someone else on the roster around the same time. To make sure no one is charged twice, we've refunded ${fmtMoney(refundedCents)} back to your original payment method.</p>
+<p>No action is needed on your part. If the athlete still needs to register, please check the roster on the platform first, or contact your club/event administrator with any questions.</p>`,
+    footnoteHtml: `Billed to ${esc(forName)} (${esc(toEmail)}).`,
+  });
+  await sendOne({
+    to: `${forName} <${toEmail}>`,
+    subject: 'Your United Club Gymnastics payment was refunded',
+    html,
+  });
 }
 
 /** Email the payer their confirmation + HTML receipt. Recipient is the payer's
@@ -328,6 +597,11 @@ async function emailReceipt(
   items: SnapshotItem[],
   payment: PaymentRow,
   invoiceNumber: string,
+  /** UAT Z-02: when one or more (but not all) of the payment's lines were
+   *  refunded as a duplicate-slot registration, `items` here has already had
+   *  those lines filtered out — this is the subtotal to show instead of
+   *  `payment.amount_subtotal` (which still includes the refunded amount). */
+  subtotalOverrideCents?: number,
 ): Promise<void> {
   const { data: p } = await db.from('people')
     .select('first_name, last_name, email').eq('id', personId).maybeSingle();
@@ -336,9 +610,15 @@ async function emailReceipt(
   if (!EMAIL_RE.test(toEmail)) return;
   const forName = `${person?.first_name ?? ''} ${person?.last_name ?? ''}`.trim() || 'Member';
 
-  const subtotal = payment.amount_subtotal ?? items.reduce((s, i) => s + i.amount_cents, 0);
+  const subtotal = subtotalOverrideCents ?? payment.amount_subtotal ?? items.reduce((s, i) => s + i.amount_cents, 0);
   const fee = payment.service_fee ?? 0;
   const total = subtotal + fee;
+  // UAT M-11-02 / M-20-01: the discount over exactly THESE `items` (already
+  // duplicate-slot-filtered when applicable — see the doc comment above) so
+  // this reconciles with `subtotal`/`total` above in every case, the same
+  // amount_cents-vs-paid_cents gap the persisted invoice_items discount row
+  // above is computed from.
+  const discountCents = items.reduce((s, i) => s + (i.amount_cents - (i.paid_cents ?? i.amount_cents)), 0);
 
   // Per-event confirmation config (emv2 P0 Task 4): events referenced by the
   // purchased lines can carry a host-configured confirmation message
@@ -459,6 +739,13 @@ async function emailReceipt(
     .map((i) => `<tr><td style="padding:6px 16px 6px 0;color:#1E2B38;">${esc(i.label)}</td>` +
       `<td style="padding:6px 0;text-align:right;white-space:nowrap;color:#1E2B38;">${fmtMoney(i.amount_cents)}</td></tr>`)
     .join('');
+  // UAT M-11-02 / M-20-01: the discount, negative, BEFORE the service fee —
+  // so the rows visibly reconcile to `total` (items − discount + fee) instead
+  // of the item rows alone summing to more than what was actually charged.
+  const discountRow = discountCents > 0
+    ? `<tr><td style="padding:6px 16px 6px 0;color:#184b56;">Promo code${payment.coupon_code ? ` (${esc(payment.coupon_code)})` : ''}</td>` +
+      `<td style="padding:6px 0;text-align:right;white-space:nowrap;color:#184b56;">−${fmtMoney(discountCents)}</td></tr>`
+    : '';
   const feeRow = fee > 0
     ? `<tr><td style="padding:6px 16px 6px 0;color:#5b6b7a;">Service fee (card processing)</td>` +
       `<td style="padding:6px 0;text-align:right;white-space:nowrap;color:#5b6b7a;">${fmtMoney(fee)}</td></tr>`
@@ -471,7 +758,7 @@ async function emailReceipt(
 <p>Thanks for your purchase. Here's your receipt for the items below.</p>
 ${eventSectionsHtml}${campSectionHtml}<p style="color:#5b6b7a;font-size:13px;margin:0 0 12px;">Receipt ${esc(invoiceNumber)}</p>
 <table style="border-collapse:collapse;margin:8px 0;font-size:14px;width:100%;">
-${rows}${feeRow}
+${rows}${discountRow}${feeRow}
 <tr><td style="padding:10px 16px 0 0;border-top:2px solid #1E2B38;font-weight:700;color:#1E2B38;">Total paid</td>
 <td style="padding:10px 0 0;border-top:2px solid #1E2B38;text-align:right;font-weight:700;color:#1E2B38;">${fmtMoney(total)}</td></tr>
 </table>`,

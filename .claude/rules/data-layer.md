@@ -29,6 +29,20 @@ split — **every row returned is always complete**).
 | people (thin name+club, works for ANONYMOUS callers via `public_competitors`) | `usePeopleNames(ids)` |
 | people (full rows) | `usePeopleForIds(ids)` / `usePeopleForClub(clubId)` / `useAdminPeople()` (league-wide, admin-only) / `usePersonAdmin(personId)` / `fetchPersonRemote(personId)` (uncached, for a destructive write) |
 
+**`syncFromSupabase()` does NOT refresh registrations/scores/people slices** — it's `loadAll()`,
+which excludes exactly the tables this section moved off global hydration. A write whose ONLY
+client-visible effect is a slice-scoped row changing state server-side (a payment webhook/
+free-order fulfillment flipping a registration `paid`, for instance) is invisible until the
+relevant slice is explicitly invalidated. This bit UAT M-12-02 (`2026-08-22`): `Cart.tsx`'s
+`onPaid` called `syncFromSupabase()` and nothing else, so a just-paid registration kept reading
+"Pending Purchase" until a hard reload (which resets the module-level slice caches, forcing a
+refetch). `registrations-slice.ts` now exports `invalidateMyRegistrations()` /
+`invalidateClubRegistrations(clubId)` / `invalidateEventRegistrations(eventId)` (force a refetch
+bypassing the "mine" tier's same-person no-op guard / wrapping the by-club/by-event slices'
+`invalidate`) — call the scope-appropriate one(s) after ANY write that changes a registration's
+state without going through `writeRegistration`'s own optimistic
+`applyLocalRegistrationUpsert`.
+
 All built on the shared generic `src/lib/slice-cache.ts`. Slices are **memory-only** (never
 localStorage).
 

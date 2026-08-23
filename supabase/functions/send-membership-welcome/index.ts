@@ -191,8 +191,8 @@ Deno.serve(async (req) => {
     heading: 'Welcome to United Club Gymnastics',
     bodyHtml: `<p>Hi ${esc(firstName)},</p>
 <p>Welcome to United Club Gymnastics (UCG)! ${copiedSentence}</p>
-<p>Upcoming events will also be posted ${link('https://naigc.org/upcoming-events/', 'here')} as they are scheduled. Season usually starts around November, with the majority of competitions in January&ndash;March. Regionals are hosted around late February to early March, and then UCG Nationals are held in early to mid-April.</p>
-<p>Please sign up for our ${link('https://naigc.org/email-sign-up/', 'announcement')} email list to stay up-to-date on important NAIGC information! You can also follow our ${link('https://www.instagram.com/naigcgymnastics/?hl=en', 'Instagram')} as a good way to learn more and connect with NAIGC members.</p>
+<p>Upcoming events will also be posted ${link('https://www.unitedgymnastics.org', 'here')} as they are scheduled. Season usually starts around November, with the majority of competitions in January&ndash;March. Regionals are hosted around late February to early March, and then UCG Nationals are held in early to mid-April.</p>
+<p>Please visit ${link('https://www.unitedgymnastics.org', 'unitedgymnastics.org')} and follow our social media to stay up-to-date on important UCG information — a good way to learn more and connect with UCG members.</p>
 <p>For the Love of the Sport,<br>UCG Volunteer Team</p>`,
   });
 

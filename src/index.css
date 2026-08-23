@@ -735,6 +735,10 @@ option { color: var(--ink); background: #fff; }
 
 /* ---------- scoring (judge tablet) ---------- */
 .judge-pad { max-width: 760px; margin: 0 auto; }
+/* UAT Z-06-01 (Nate, S3): lets the roster table scroll within its card on a
+   narrow phone in portrait instead of the action button clipping off the
+   right edge (matches .events-table-wrap / .reg-grid-wrap). */
+.judge-roster-wrap { overflow-x: auto; }
 .flash-score {
   background: var(--navy-800);
   color: var(--white);
@@ -988,6 +992,12 @@ option { color: var(--ink); background: #fff; }
   .topbar-spacer { display: none; }
   .content { padding: 18px 14px 48px; }
   .topbar { padding: 10px 14px; }
+
+  /* Events list (UAT M-01-03): the Register column's stacked buttons need the
+     width the discipline icons were taking — hide the icons (decorative
+     alongside the discipline code text, which stays) rather than remove them
+     from the DOM, so a wider viewport still shows them. */
+  .disc-icon { display: none; }
 }
 
 /* Narrow screens: shrink the user chip to its avatar and tighten the topbar gap so
@@ -996,6 +1006,11 @@ option { color: var(--ink); background: #fff; }
 @media (max-width: 600px) {
   .topbar { gap: 8px; }
   .topbar-user-name { display: none; }
+  /* UAT round-1 (Z-01-02): the topbar can now carry TWO cart chips (personal
+     + club) alongside the profile chip — collapse both to just their emoji
+     + count at the same breakpoint the profile name collapses, so line 1
+     never overflows. */
+  .topbar-cart-label { display: none; }
   /* name hidden — collapse the chip to a concentric circle around the avatar */
   .topbar-user { padding: 4px; }
 }

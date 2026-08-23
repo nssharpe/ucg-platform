@@ -4,7 +4,7 @@ import { useDB } from '../lib/store';
 import { judgeUnlock, judgeSubmitScore } from '../lib/supabase';
 import { useEventScores, writeScore, applyLocalScoreUpdate } from '../lib/scores-slice';
 import { useEventRegistrations } from '../lib/registrations-slice';
-import { Badge, Field } from '../components/ui';
+import { Badge, Field, Modal } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 import { APPARATUS } from '../lib/types';
 import type { Score } from '../lib/types';
@@ -71,6 +71,13 @@ export function Judge() {
   const [codeError, setCodeError] = useState('');
   const [unlocking, setUnlocking] = useState(false);
   const [posting, setPosting] = useState(false);
+  // Compare-and-set (UAT Z-06-01): the `updated_at` this device last saw for
+  // the score currently open (null = "I believe no score exists yet"), and
+  // the Replace/Keep-existing dialog state when a post comes back stale.
+  const [expectedUpdatedAt, setExpectedUpdatedAt] = useState<string | null>(null);
+  const [conflict, setConflict] = useState<{
+    athleteName: string; apparatusName: string; newFinal: number; current: Score;
+  } | null>(null);
   const privileged = caps.isAdmin || caps.managedClubIds.length > 0;
   const unlockedForEvent = !!eventRec && !!accessMap[eventRec.id];
   const canScore = privileged || unlockedForEvent;
@@ -201,6 +208,8 @@ export function Judge() {
     setExecDed('');
     setDed2(sc?.deductions2 != null ? String(sc.deductions2) : '');
     setEScore2Raw(sc?.eScore2 != null ? String(sc.eScore2) : '');
+    setExpectedUpdatedAt(sc?.updatedAt ?? null);
+    setConflict(null);
     // A brand-new score at a 'simple' entry-mode event defaults to manual
     // override; editing an existing score always restores exactly how it was
     // posted (calc panel if it had one).
@@ -217,11 +226,18 @@ export function Judge() {
   const close = () => {
     setActiveReg(null); setSv(''); setDed(''); setExecDed(''); setCalcSt(null);
     setDed2(''); setEScore2Raw('');
+    setConflict(null);
   };
 
-  const submit = async () => {
+  /** Builds the score payload and posts it with `expected` as the
+   *  compare-and-set expectation, then either finishes (flash + close +
+   *  toast) or — on a conflict — opens the Replace/Keep-existing dialog
+   *  without closing the entry panel, so `replaceConflict` can re-post the
+   *  SAME judge-entered values with the winning row's `updated_at`. */
+  const postCurrent = async (expected: string | null) => {
     if (!active || finalScore == null) return;
     const athleteName = `${activeAthlete!.firstName} ${activeAthlete!.lastName}`;
+    const apparatusName = apparatusDefs.find((a) => a.code === apparatus)?.name ?? apparatus;
     let fields: Partial<Score>;
     if (usingCalcFull && outcome) {
       fields = scoreFromOutcome(calcCfg!, outcome);
@@ -246,9 +262,19 @@ export function Judge() {
     };
 
     if (privileged) {
-      const score = { ...base, enteredBy: 'judge-you', enteredAt: new Date().toISOString() };
-      const applied = writeScore(score);
-      if (!applied) return; // offline read-only gate — no false "Score posted"
+      const score: Score = { ...base, enteredBy: 'judge-you', enteredAt: new Date().toISOString() };
+      setPosting(true);
+      const result = await writeScore(score, expected);
+      setPosting(false);
+      if (!result.ok) {
+        if (result.reason === 'offline') return; // guardOnline already toasted — no false "Score posted"
+        if (result.reason === 'conflict') {
+          setConflict({ athleteName, apparatusName, newFinal: finalScore, current: result.current ?? score });
+          return;
+        }
+        toast(result.error, { variant: 'error' });
+        return;
+      }
     } else {
       // Codeless judge: an anonymous/unprivileged device can't write `scores`
       // under RLS at all — the judge-entry Edge Function (service role) does
@@ -262,15 +288,44 @@ export function Judge() {
         token, regId: active.id, apparatus,
         sv: base.sv, deductions: base.deductions, eScore: base.eScore, final: base.final,
         source: base.source, calc: base.calc, calcState: base.calcState, flashed: true,
+        expectedUpdatedAt: expected,
         ...(panels2 ? { deductions2: base.deductions2, eScore2: base.eScore2 } : {}),
       });
       setPosting(false);
-      if (!res.ok) { toast(res.error ?? 'Could not post the score.', { variant: 'error' }); return; }
-      applyLocalScoreUpdate({ ...base, enteredBy: 'judge-code', enteredAt: new Date().toISOString() });
+      const fallback: Score = { ...base, enteredBy: 'judge-code', enteredAt: new Date().toISOString() };
+      if (!res.ok) {
+        if (res.conflict) {
+          setConflict({ athleteName, apparatusName, newFinal: finalScore, current: res.current ?? fallback });
+          return;
+        }
+        toast(res.error ?? 'Could not post the score.', { variant: 'error' });
+        return;
+      }
+      applyLocalScoreUpdate(res.current ?? fallback);
     }
     setFlash({ name: athleteName, score: finalScore });
     close();
     toast(`Score posted: ${athleteName} — ${fmtScore(finalScore)}`);
+  };
+
+  const submit = () => postCurrent(expectedUpdatedAt);
+
+  /** Conflict dialog "Replace": re-post the same judge-entered values with
+   *  the winning row's own `updated_at` as the new expectation. */
+  const replaceConflict = () => {
+    if (!conflict) return;
+    const expected = conflict.current.updatedAt ?? null;
+    setConflict(null);
+    void postCurrent(expected);
+  };
+
+  /** Conflict dialog "Keep existing": discard the local entry and reflect
+   *  the row that actually won immediately (don't wait on realtime). */
+  const keepExisting = () => {
+    if (!conflict) return;
+    applyLocalScoreUpdate(conflict.current);
+    setConflict(null);
+    close();
   };
 
   // Score entry is for the event host / league admins, OR a device that
@@ -487,38 +542,60 @@ export function Judge() {
         </div>
       ) : (
         <div className="card" style={{ overflow: 'hidden' }}>
-          <table className="tbl">
-            <thead><tr><th>Athlete</th><th>Club</th><th>Level</th><th className="num">Score</th><th /></tr></thead>
-            <tbody>
-              {scoresStatus === 'loading' || regsStatus === 'loading' || peopleStatus === 'loading' ? (
-                <tr><td colSpan={5} style={{ color: 'var(--ink-soft)' }}>Loading…</td></tr>
-              ) : (
-                <>
-                  {regs.map((r) => {
-                    const a = competitorById.get(r.athleteId);
-                    const sc = scoreFor(r.id);
-                    return (
-                      <tr key={r.id}>
-                        <td><strong>{a?.firstName} {a?.lastName}</strong></td>
-                        <td>{db.clubs.find((c) => c.id === r.clubId)?.shortName}</td>
-                        <td style={{ fontSize: 13 }}>{db.levels.find((l) => l.id === r.levelId)?.name}</td>
-                        <td className="num score">
-                          {sc ? <Link to={scoreDetailPath(sc.id)} data-tip="Score details">{fmtScore(sc.final)}</Link> : <Badge tone="info">awaiting</Badge>}
-                        </td>
-                        <td style={{ textAlign: 'right' }}>
-                          <button className="btn small" onClick={() => openScoring(r)}>
-                            {sc ? 'Edit' : 'Score'}
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {regs.length === 0 && <tr><td colSpan={5} style={{ color: 'var(--ink-soft)' }}>No athletes registered on this event in this session.</td></tr>}
-                </>
-              )}
-            </tbody>
-          </table>
+          {/* UAT Z-06-01 (Nate, S3): on an iPhone in portrait this table's
+              action button sat off the right edge with no way to reach it —
+              the outer card's `overflow: hidden` was clipping instead of
+              scrolling. `.judge-roster-wrap` (overflow-x: auto) lets the
+              table scroll WITHIN the card, matching the existing
+              `.events-table-wrap`/`.reg-grid-wrap` pattern. */}
+          <div className="judge-roster-wrap">
+            <table className="tbl">
+              <thead><tr><th>Athlete</th><th>Club</th><th>Level</th><th className="num">Score</th><th /></tr></thead>
+              <tbody>
+                {scoresStatus === 'loading' || regsStatus === 'loading' || peopleStatus === 'loading' ? (
+                  <tr><td colSpan={5} style={{ color: 'var(--ink-soft)' }}>Loading…</td></tr>
+                ) : (
+                  <>
+                    {regs.map((r) => {
+                      const a = competitorById.get(r.athleteId);
+                      const sc = scoreFor(r.id);
+                      return (
+                        <tr key={r.id}>
+                          <td><strong>{a?.firstName} {a?.lastName}</strong></td>
+                          <td>{db.clubs.find((c) => c.id === r.clubId)?.shortName}</td>
+                          <td style={{ fontSize: 13 }}>{db.levels.find((l) => l.id === r.levelId)?.name}</td>
+                          <td className="num score">
+                            {sc ? <Link to={scoreDetailPath(sc.id)} data-tip="Score details">{fmtScore(sc.final)}</Link> : <Badge tone="info">awaiting</Badge>}
+                          </td>
+                          <td style={{ textAlign: 'right' }}>
+                            <button className="btn small" onClick={() => openScoring(r)}>
+                              {sc ? 'Edit' : 'Score'}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {regs.length === 0 && <tr><td colSpan={5} style={{ color: 'var(--ink-soft)' }}>No athletes registered on this event in this session.</td></tr>}
+                  </>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
+      )}
+
+      {conflict && (
+        <Modal title="Score already posted" onClose={keepExisting}>
+          <p>
+            A score of <strong>{fmtScore(conflict.current.final)}</strong> is already posted for{' '}
+            <strong>{conflict.athleteName}</strong> on {conflict.apparatusName} — replace it with{' '}
+            <strong>{fmtScore(conflict.newFinal)}</strong>?
+          </p>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 18 }}>
+            <button className="btn ghost" onClick={keepExisting}>Keep existing</button>
+            <button className="btn primary" onClick={replaceConflict}>Replace</button>
+          </div>
+        </Modal>
       )}
     </div>
   );

@@ -244,3 +244,37 @@ const initialUrlHasAuthCallback = /(?:^|[#&])(access_token|error)=/.test(window.
 export function hasAuthCallbackInUrl(): boolean {
   return initialUrlHasAuthCallback;
 }
+
+// Captured ONCE at module load, for the same reason as
+// `initialUrlHasAuthCallback` above: the invite/reset landing flow
+// (App.tsx's SetPasswordRedirect, SetPassword.tsx) rewrites BOTH the query
+// (deletes `?setpw=...` once settled on /set-password) and, via Supabase's
+// own implicit-grant handling, the hash (`window.location.hash = ''` inside
+// auth-js's `_getSessionFromURL`, fired after its `_getUser` network round
+// trip — a REAL hashchange that can bounce HashRouter back to `/` well after
+// this module first evaluates). Any code that re-reads
+// window.location.search/.hash later can see a stale or already-deleted
+// marker. Reading both once here, before React or Supabase can touch the
+// URL, makes them immune to every rewrite that follows.
+const initialSetPwParam = new URLSearchParams(window.location.search).get('setpw');
+const initialLinkError = /error=|otp_expired|access_denied/i.test(window.location.hash + window.location.search);
+
+/** Which flavor of the set-password link this page load arrived from.
+ *  `invite-account`'s redirect carries `?setpw=invite`; the forgot-password
+ *  flow (Gate.tsx) carries `?setpw=reset`; `'legacy'` covers any
+ *  already-sent email still carrying the old bare `?setpw=1` (pre
+ *  UAT-round1) — treated the same as `'invite'` by SetPassword.tsx to match
+ *  that flow's pre-existing "lands on membership" behavior. `null` = not a
+ *  set-password landing at all. */
+export function initialSetPwKind(): 'invite' | 'reset' | 'legacy' | null {
+  if (initialSetPwParam === 'invite') return 'invite';
+  if (initialSetPwParam === 'reset') return 'reset';
+  if (initialSetPwParam) return 'legacy';
+  return null;
+}
+
+/** True if the initial URL carried a Supabase auth error (expired/already-
+ *  used link) — captured once for the same reason as `initialSetPwKind`. */
+export function hasInitialLinkError(): boolean {
+  return initialLinkError;
+}

@@ -74,7 +74,7 @@ export default function WaiverSign() {
 
   return (
     <div className="card card-pad" style={{ maxWidth: 640, margin: '40px auto' }}>
-      <h2>NAIGC waiver — {isSelf ? 'athlete signature' : 'guardian signature'}</h2>
+      <h2>UCG waiver — {isSelf ? 'athlete signature' : 'guardian signature'}</h2>
       <div style={{
         background: 'var(--ice-100)', border: '1px solid var(--line)', borderRadius: 8,
         padding: 14, fontSize: 13, maxHeight: 280, overflowY: 'auto', margin: '12px 0',

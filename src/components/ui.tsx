@@ -7,7 +7,7 @@ import { subscribeToast } from '../lib/toast-bus';
 // Toasts persist until the user dismisses them (✕) — they never auto-expire, so
 // errors and confirmations can be read and screenshotted. `variant: 'error'`
 // adds a coral accent. (The older `persist` option is accepted but now a no-op.)
-type ToastItem = { id: number; msg: string; variant: 'info' | 'error' };
+type ToastItem = { id: number; msg: string; variant: 'info' | 'error'; action?: { label: string; to: string } };
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
@@ -19,7 +19,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const push = useCallback((msg: string, opts?: ToastOptions) => {
     const id = nextId.current++;
-    setToasts((t) => [...t, { id, msg, variant: opts?.variant ?? 'info' }]);
+    setToasts((t) => [...t, { id, msg, variant: opts?.variant ?? 'info', action: opts?.action }]);
   }, []);
 
   // Let non-component code (write-queue boot wiring, the offline mutation
@@ -47,7 +47,25 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               ...(t.variant === 'error' ? { borderLeft: '4px solid var(--coral-600)' } : {}),
             }}
           >
-            <span style={{ flex: 1 }}>{t.msg}</span>
+            <span style={{ flex: 1 }}>
+              {t.msg}
+              {t.action && (
+                <>
+                  {' '}
+                  <button
+                    type="button"
+                    onClick={() => { window.location.hash = t.action!.to; remove(t.id); }}
+                    style={{
+                      background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                      color: 'var(--ice-200)', fontWeight: 700, textDecoration: 'underline',
+                      font: 'inherit',
+                    }}
+                  >
+                    {t.action.label} →
+                  </button>
+                </>
+              )}
+            </span>
             <button
               onClick={() => remove(t.id)}
               aria-label="Dismiss"

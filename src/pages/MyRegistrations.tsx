@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { Badge, Combo, Field, Modal, Tabs } from '../components/ui';
@@ -9,18 +9,22 @@ import { pushRegistration, pushCampSurvey, pushCart, syncSynchroPartnerLevelRemo
 import { RegistrationEditor } from '../components/RegistrationEditor';
 import { useMyRegistrations, useEventRegistrations, applyLocalRegistrationUpsert, applyLocalRegistrationRemove, mergeUpsertedRegs } from '../lib/registrations-slice';
 import {
-  newRegistrationEntryTotal, registrationChangeFee, changeIsEligible, syncSynchroPartnerLevel, lateFeeApplies, lateFeeAnchor,
+  newRegistrationEntryTotal, registrationChangeFee, changeIsEligible, regsForChangeLine, syncSynchroPartnerLevel, lateFeeApplies, lateFeeAnchor,
   campSurveyQuestionsOf, campSurveyAnswersValid, campSurveyToStored, campSurveyAnswerLabel, requiredSessionRequests,
 } from '../lib/pricing';
 import type { RegChangeState } from '../lib/pricing';
 import { holdStamp, waitlistPosition } from '../lib/capacity';
 import { fmtMoney } from '../lib/scoring';
 import type { Athlete, Club, Level, Event, Registration, Season, WaitlistGroup } from '../lib/types';
-import { canStillEditRegistration, eventIsRefundEligible } from '../lib/events-core';
+import { canStillEditRegistration, eventIsInPhase, eventIsRefundEligible } from '../lib/events-core';
 import { RefundRequestDialog, type RefundRequestItem } from '../components/RefundRequestDialog';
 import { SessionRequestSurveyCard } from '../components/SessionRequestSurvey';
 import { NationalsDashboard } from '../components/NationalsDashboard';
 import { EventCheckinCard } from '../components/EventCheckinCard';
+// UAT M-01-03: reuse the exact same self-registration flow the Events pages
+// use — never re-derive a second registration modal for "Register for
+// another event" below.
+import { SelfRegModal } from './Events';
 import { currentSeason } from '../lib/season-lifecycle';
 import { regGroupPaymentStatusInfo } from '../lib/registration-status';
 
@@ -47,11 +51,32 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   const toast = useToast();
   const fmtDate = useFmtDate();
   const navigate = useNavigate();
-  const [tab, setTab] = useState<'upcoming' | 'past'>('upcoming');
-  const [q, setQ] = useState('');
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [searchParams] = useSearchParams();
+  // UAT M-01-03: the Events list's "Edit registration" entry point deep-links
+  // here via `?event=<slug>` — read once (lazy initializer, same idiom as
+  // Club.tsx's EventRegGrid event-picker preselect) rather than an effect that
+  // calls setState (the react-hooks/set-state-in-effect ESLint trap
+  // documented in ui-brand-and-layout.md): land on the right tab, filter the
+  // list down to just that event (the search box's own filtering does the
+  // "scrolled to" work, since a single-result list needs no further scroll),
+  // and expand its card. A slug that doesn't match any registered event is a
+  // silent no-op (falls through to the normal defaults).
+  const deepLinkedEvent = (() => {
+    const slug = searchParams.get('event');
+    return slug ? db.events.find((e) => e.slug === slug) : undefined;
+  })();
+  const [tab, setTab] = useState<'upcoming' | 'past'>(
+    () => (deepLinkedEvent ? (deepLinkedEvent.endDate >= today() ? 'upcoming' : 'past') : 'upcoming'),
+  );
+  const [q, setQ] = useState(() => deepLinkedEvent?.name ?? '');
+  const [expanded, setExpanded] = useState<string | null>(() => deepLinkedEvent?.id ?? null);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [refundTarget, setRefundTarget] = useState<{ event: Event; item: RefundRequestItem } | null>(null);
+  // "Register for another event" (UAT M-01-03): the event currently opened in
+  // the self-registration modal, and a separate search box for that section
+  // (independent of the main list's `q` above).
+  const [registerEventId, setRegisterEventId] = useState<string | null>(null);
+  const [registerQ, setRegisterQ] = useState('');
 
   // Phase 3 (data-layer-scale): "mine" (Tier 2, synchronous — CONTRACT §2) is
   // the primary source throughout this page, since every registration here
@@ -128,16 +153,49 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   const affiliatedClubIds = me ? [me.mainClubId, ...(me.altClubIds ?? [])].filter((x): x is string => !!x) : [];
   const affiliatedClubs = db.clubs.filter((c) => affiliatedClubIds.includes(c.id));
 
+  // "Register for another event" (UAT M-01-03): every event this athlete is
+  // eligible for (canRegister — active athlete membership, the same gate the
+  // Events detail page's "Register yourself" button uses) with registration
+  // currently open, that they don't already have a registration for. Sorted
+  // soonest-first so the nearer deadline surfaces at the top.
+  const registerableEvents = caps.canRegister
+    ? db.events
+      .filter((ev) => !ev.listingOnly && eventIsInPhase(ev, 'reg-open'))
+      .filter((ev) => !myRegs.some((r) => r.eventId === ev.id && r.athleteId === personId && !r.refunded))
+      .sort((a, b) => a.startDate.localeCompare(b.startDate))
+    : [];
+  const registerLq = registerQ.trim().toLowerCase();
+  const registerRows = registerLq
+    ? registerableEvents.filter((ev) => `${ev.name} ${ev.city}, ${ev.state}`.toLowerCase().includes(registerLq))
+    : registerableEvents;
+
   // A event's change fee is live once its start date has passed.
   const changeFeeApplies = (event: Event) => !!(event.changeFee && new Date() >= new Date(event.changeFee.startsAt));
 
   // Label used for an event's change fee in the athlete's cart — also how we detect
   // that a change fee for this event is already pending checkout (M7: returns the
   // item itself so saveRegs can extend it in place instead of just checking).
+  //
+  // UAT M-10 x Z-04 (2026-08-22 rework): a discipline ADDED alongside a
+  // chargeable edit no longer folds into this change line — it gets its OWN
+  // separate entry line (`entryFeePendingItem` below), because change-fee
+  // lines (`refLineType:'change'`) are NEVER refundable (Z-04's
+  // requirements-owner rule) and a combined line would have made the added
+  // discipline's entry-fee portion permanently non-refundable too. This line
+  // is a PURE change fee again — same label/lookup as before M-10-01.
   const changeFeeLabel = (eventName: string) => `${eventName} change fee`;
   const changeFeePendingItem = (event: Event) =>
     (db.carts[personId] ?? []).find((c) => c.kind === 'meet-entry' && c.label.startsWith(changeFeeLabel(event.name)));
   const changeFeePending = (event: Event) => !!changeFeePendingItem(event);
+
+  // Already-pending ENTRY line (for a discipline added mid-edit) to extend in
+  // place instead of stacking a second one, mirroring the change-line M7/H5
+  // idiom above. Matched structurally (kind/refLineType/refUserId/refEventId)
+  // — new code with no pre-existing label-matching behavior to preserve, and
+  // the label varies by which disciplines are included so can't serve as a
+  // stable match key.
+  const entryFeePendingItem = (event: Event) =>
+    (db.carts[personId] ?? []).find((c) => c.kind === 'meet-entry' && c.refLineType === 'entry' && c.refUserId === personId && c.refEventId === event.id);
 
   const season = currentSeason(db)!;
 
@@ -268,10 +326,12 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   // (out of scope) — so a member can't make their entry vanish on their own.
   const saveRegs = (event: Event, selectedClubId: string, newRegs: Registration[]) => {
     const applyFee = changeFeeApplies(event);
-    // Captured BEFORE the mutate below so it reflects the pre-edit cart state.
+    // Captured BEFORE the mutate below so they reflect the pre-edit cart state.
     const alreadyPendingItem = changeFeePendingItem(event);
+    const alreadyPendingEntryItem = entryFeePendingItem(event);
     const alreadyPending = !!alreadyPendingItem;
     let chargedFee = 0;
+    let addedEntryFee = 0;
     // Phase 3: read from the pre-write "mine" snapshot — this is the FIRST
     // read of registration state in this call, so it can't have gone stale
     // relative to d.registrations (perpetually empty in Supabase-configured
@@ -354,16 +414,53 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
           })
         : 0;
 
+      // Upsert lookup, hoisted above the split below (regsForChangeLine needs
+      // it to read each reg's PRIOR paid/updated_pending state).
+      const priorById = new Map(existingForAthlete.map((r) => [r.id, r]));
+
+      // UAT M-10 x Z-04 (2026-08-22): when EDITING an existing registration,
+      // a discipline added alongside the edit (no prior row) owes its own
+      // extra-discipline entry fee ON TOP of any change fee — but as a
+      // SEPARATE entry line now, never folded into the change line
+      // (`entryTotal` above stays 0 while editingExisting; it only prices
+      // the brand-new-registration path). `changedRegs`
+      // (`regsForChangeLine`, pricing.ts — regs that were already
+      // paid/updated_pending) is what the change line's `refRegIds` covers
+      // instead of ALL of `newRegs` — change-fee lines are NEVER refundable,
+      // so keeping an added discipline's entry-fee portion out of that line
+      // preserves its own refund eligibility and accounting code. A prior
+      // row that exists but was NEVER paid (e.g. a still-unpaid discipline
+      // added in an earlier, not-yet-checked-out edit) must land in
+      // `newOnlyRegs`, not `changedRegs` — see `regsForChangeLine`'s doc
+      // comment for why (it would silently reconstruct a mixed line
+      // server-side and double-charge it).
+      //
+      // `chargeAddedEntry` deliberately stays gated on `changeFee > 0` only
+      // (not `!applyFee`): the pre-existing "change-fee window CLOSED,
+      // discipline added mid-edit" gap (member side never separately charges
+      // an entry fee there, unlike Club.tsx's H7 fix) is untouched — out of
+      // this ticket's scope, and closing it is a separate decision.
+      const newOnlyRegs = editingExisting ? newRegs.filter((r) => !priorById.has(r.id)) : [];
+      const changedRegs = editingExisting ? regsForChangeLine(newRegs, priorById) : [];
+      const addedEntryTotal = newOnlyRegs.length > 0
+        ? newRegistrationEntryTotal(event, {
+            competingClubId: selectedClubId,
+            priorDisciplineCount,
+            newDisciplineCount: newOnlyRegs.length,
+            late: lateAnchor ? { earliestCreatedAtISO: lateAnchor } : undefined,
+          })
+        : 0;
+      const chargeAddedEntry = addedEntryTotal > 0 && changeFee > 0;
+
       // Which regs get a cart-add capacity hold stamped (event-mgmt v2 P4):
       // both the change-fee and entry-fee branches further below reference
       // ALL of `newRegs`, so a hold is due on all of them whenever either fee
       // is actually being charged — never on a free edit.
-      const cartLinked = changeFee > 0 || entryTotal > 0;
+      const cartLinked = changeFee > 0 || entryTotal > 0 || addedEntryTotal > 0;
 
       // Upsert each returned reg. A chargeable edit flips a previously-PAID reg
       // back to "Updated pending purchase"; otherwise preserve prior payment
       // state. Brand-new regs: host-club $0 ⇒ paid immediately, else pending.
-      const priorById = new Map(existingForAthlete.map((r) => [r.id, r]));
       for (const reg of newRegs) {
         const prior = priorById.get(reg.id);
         if (prior) {
@@ -376,10 +473,10 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
           }
         } else {
           // A newly added discipline is "Registered" only when nothing is owed
-          // (host-club $0). If a fee line covers it (a change fee mid-edit, or a
-          // brand-new entry total), it stays pending until that line is paid —
-          // refRegIds flips it then.
-          reg.paid = changeFee === 0 && entryTotal === 0;
+          // (host-club $0). If a fee line covers it (a change fee mid-edit, a
+          // brand-new entry total, or an added-discipline entry line), it
+          // stays pending until that line is paid — refRegIds flips it then.
+          reg.paid = changeFee === 0 && entryTotal === 0 && addedEntryTotal === 0;
           reg.updatedPending = false;
         }
         if (cartLinked) {
@@ -419,45 +516,100 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
         }
       }
 
-      // Add the fee/entry line to the MEMBER'S OWN cart, linked to the affected
-      // regs via refRegIds so paying flips exactly those to paid. M7/H5: if a
-      // change line for this event is ALREADY pending, EXTEND it in place
-      // (append newly-covered reg ids + snapshot entries for regs not already
-      // covered) instead of silently dropping the fee (the old behavior) or
-      // stacking a second line — stacking is what let removal delete/resurrect
-      // against a stale snapshot. NEVER overwrite an existing snapshot entry:
-      // it must stay the ORIGINAL pre-change state from the FIRST edit.
-      if (changeFee > 0 && alreadyPendingItem) {
+      // Add the fee/entry line(s) to the MEMBER'S OWN cart, linked to the
+      // affected regs via refRegIds so paying flips exactly those to paid.
+      // M7/H5: if a change line for this event is ALREADY pending, EXTEND it
+      // in place (append newly-covered reg ids + snapshot entries for regs
+      // not already covered) instead of silently dropping the fee (the old
+      // behavior) or stacking a second line — stacking is what let removal
+      // delete/resurrect against a stale snapshot. NEVER overwrite an
+      // existing snapshot entry: it must stay the ORIGINAL pre-change state
+      // from the FIRST edit.
+      //
+      // UAT M-10 x Z-04 (2026-08-22): this used to fold an added
+      // discipline's entry-total INTO the change line as one combined
+      // amount (M-10-01). That was reworked: change-fee lines
+      // (`refLineType:'change'`) are NEVER refundable (Z-04's
+      // requirements-owner rule), so a combined line made the added
+      // discipline's entry-fee portion permanently non-refundable too. Now
+      // the two are ALWAYS separate lines — a pure change-fee line
+      // (`changedRegs`) and, independently, a pure entry line for whatever
+      // was added (`newOnlyRegs`), each with its own refund eligibility.
+      // (The server's three-way isChange/mixed split in
+      // create-checkout-session stays as defense-in-depth for a forged or
+      // legacy cart that still mixes a line — the client itself never
+      // produces one anymore.)
+      if (changeFee > 0 && changedRegs.length > 0) {
+        chargedFee = changeFee;
         const cart = d.carts[personId] ?? (d.carts[personId] = []);
-        const line = cart.find((c) => c.id === alreadyPendingItem.id);
-        if (line) {
-          const covered = new Set(line.refRegIds ?? []);
-          line.refRegIds = [...covered, ...newRegs.map((r) => r.id).filter((id) => !covered.has(id))];
-          const snapshotCovered = new Set((line.priorRegSnapshot ?? []).map((r) => r.id));
-          const newSnapshotEntries = newRegs.map((r) => priorById.get(r.id)).filter((r): r is Registration => !!r);
-          line.priorRegSnapshot = [
-            ...(line.priorRegSnapshot ?? []),
-            ...newSnapshotEntries.filter((r) => !snapshotCovered.has(r.id)),
-          ];
-          pushCart(personId, cart, false);
+        if (alreadyPendingItem) {
+          const line = cart.find((c) => c.id === alreadyPendingItem.id);
+          if (line) {
+            const covered = new Set(line.refRegIds ?? []);
+            line.refRegIds = [...covered, ...changedRegs.map((r) => r.id).filter((id) => !covered.has(id))];
+            const snapshotCovered = new Set((line.priorRegSnapshot ?? []).map((r) => r.id));
+            const newSnapshotEntries = changedRegs.map((r) => priorById.get(r.id)).filter((r): r is Registration => !!r);
+            line.priorRegSnapshot = [
+              ...(line.priorRegSnapshot ?? []),
+              ...newSnapshotEntries.filter((r) => !snapshotCovered.has(r.id)),
+            ];
+          }
+        } else {
+          cart.push({
+            id: `ci-change-${Date.now()}`,
+            label: changeFeeLabel(event.name),
+            amount: changeFee,
+            kind: 'meet-entry',
+            refUserId: personId,
+            refRegIds: changedRegs.map((r) => r.id),
+            refEventId: event.id,
+            refLineType: 'change',
+            // Full prior registration row(s) (before this function's edits above),
+            // so deleting this cart item later can revert them (Task A).
+            priorRegSnapshot: changedRegs.map((r) => priorById.get(r.id)).filter((r): r is Registration => !!r),
+          });
         }
-      } else if (changeFee > 0) {
-        const cart = d.carts[personId] ?? (d.carts[personId] = []);
-        cart.push({
-          id: `ci-change-${Date.now()}`,
-          label: `${changeFeeLabel(event.name)}`,
-          amount: changeFee,
-          kind: 'meet-entry',
-          refUserId: personId,
-          refRegIds: newRegs.map((r) => r.id),
-          refEventId: event.id,
-          refLineType: 'change',
-          // Full prior registration row(s) (before this function's edits above),
-          // so deleting this cart item later can revert them (Task A).
-          priorRegSnapshot: newRegs.map((r) => priorById.get(r.id)).filter((r): r is Registration => !!r),
-        });
         pushCart(personId, cart, false);
-      } else if (entryTotal > 0) {
+      }
+
+      if (chargeAddedEntry) {
+        // A discipline was ADDED alongside this chargeable edit: it always
+        // owes its own entry/second-discipline fee, on a line of its OWN,
+        // never the change line above. `alreadyPendingEntryItem` extends an
+        // already-pending entry line in place (mirroring the change line's
+        // M7/H5 idiom) instead of stacking a second one.
+        addedEntryFee = addedEntryTotal;
+        const cart = d.carts[personId] ?? (d.carts[personId] = []);
+        const lateSuffix = lateAnchor !== null && lateFeeApplies(event, lateAnchor) ? ' (incl. late fee)' : '';
+        // Camps ask nothing discipline-related — omit the parenthetical
+        // (PM feedback 2026-07-23).
+        const discSuffix = event.eventType === 'camp' ? '' : ` — ${newOnlyRegs.map((r) => r.discipline).join('+')}`;
+        if (alreadyPendingEntryItem) {
+          const line = cart.find((c) => c.id === alreadyPendingEntryItem.id);
+          if (line) {
+            const covered = new Set(line.refRegIds ?? []);
+            line.refRegIds = [...covered, ...newOnlyRegs.map((r) => r.id).filter((id) => !covered.has(id))];
+            line.amount = (line.amount ?? 0) + addedEntryTotal;
+          }
+        } else {
+          cart.push({
+            id: `ci-${Date.now()}`,
+            label: `${event.name} entry${discSuffix}${lateSuffix}`,
+            amount: addedEntryTotal,
+            kind: 'meet-entry',
+            refUserId: personId,
+            refRegIds: newOnlyRegs.map((r) => r.id),
+            refEventId: event.id,
+            refLineType: 'entry',
+          });
+        }
+        pushCart(personId, cart, false);
+      }
+
+      if (entryTotal > 0) {
+        // Brand-new registration (unaffected by this rework — `entryTotal`
+        // is only ever nonzero when `!editingExisting`, mutually exclusive
+        // with the two branches above).
         const cart = d.carts[personId] ?? (d.carts[personId] = []);
         const lateSuffix = lateAnchor !== null && lateFeeApplies(event, lateAnchor) ? ' (incl. late fee)' : '';
         // Camps ask nothing discipline-related — omit the parenthetical
@@ -478,11 +630,24 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
     });
     if (!applied) return; // offline read-only gate — no false success toast
 
-    toast(chargedFee > 0
-      ? alreadyPending
-        ? 'Registration updated. Your pending change fee now covers this edit too — pay it to finalize.'
-        : `Registration updated. A ${fmtMoney(chargedFee)} change fee was added to your cart — pay it to finalize.`
-      : 'Registration updated.');
+    // UAT M-10 x Z-04: the two are separate lines now, but the toast still
+    // reports the combined total for a mixed save ("combined total is fine
+    // to display" per the rework) — only the CART LINES (and their
+    // refund/accounting treatment) need to stay split.
+    toast(
+      chargedFee > 0 && addedEntryFee > 0
+        ? `Registration updated. ${fmtMoney(chargedFee + addedEntryFee)} added to your cart (change fee + entry fee) — pay it to finalize.`
+        : chargedFee > 0
+          ? alreadyPending
+            ? 'Registration updated. Your pending change fee now covers this edit too — pay it to finalize.'
+            : `Registration updated. A ${fmtMoney(chargedFee)} change fee was added to your cart — pay it to finalize.`
+          : addedEntryFee > 0
+            ? `Registration updated. ${fmtMoney(addedEntryFee)} entry fee was added to your cart — pay it to finalize.`
+            : 'Registration updated.',
+      // UAT M-01-02: this edit routes through the athlete's own personal cart
+      // (`d.carts[personId]` above).
+      { action: { label: 'View cart', to: '/cart' } },
+    );
     setEditingEventId(null);
   };
 
@@ -709,6 +874,66 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
         </div>
       )}
 
+      {/* "Register for another event" (UAT M-01-03): only shown to an athlete
+          eligible to register at all (caps.canRegister) — a coach-only member
+          gets no dead-end section here, same gate as the Events detail page's
+          "Register yourself" button. */}
+      {caps.canRegister && me && (
+        <div style={{ marginTop: 28 }}>
+          <h2 className="display" style={{ fontSize: 18, marginBottom: 10 }}>Register for another event</h2>
+          {registerableEvents.length > 8 && (
+            <input
+              type="search" className="input" placeholder="Search by event or city…"
+              value={registerQ} onChange={(e) => setRegisterQ(e.target.value)}
+              style={{ maxWidth: 300, marginBottom: 10 }}
+            />
+          )}
+          {registerableEvents.length === 0 ? (
+            <p style={{ color: 'var(--ink-soft)' }}>No other events are open for registration right now.</p>
+          ) : registerRows.length === 0 ? (
+            <p style={{ color: 'var(--ink-soft)' }}>No events match "{registerQ}".</p>
+          ) : (
+            <div className="card" style={{ overflow: 'hidden' }}>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                {registerRows.map((ev, i) => (
+                  <div
+                    key={ev.id}
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+                      padding: '10px 14px', flexWrap: 'wrap',
+                      borderTop: i > 0 ? '1px solid var(--line)' : undefined,
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 14 }}>{ev.name}</div>
+                      <div style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
+                        {ev.startDate}{ev.endDate !== ev.startDate ? `–${ev.endDate}` : ''} · {ev.city}, {ev.state}
+                      </div>
+                    </div>
+                    <button className="btn small primary" onClick={() => setRegisterEventId(ev.id)}>Register →</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Self-registration modal for the section above — reuses the exact
+          Events.tsx flow (cart, add-ons, camp survey all included). */}
+      {registerEventId && me && (() => {
+        const ev = db.events.find((e) => e.id === registerEventId);
+        if (!ev) return null;
+        return (
+          <SelfRegModal
+            event={ev}
+            athlete={me}
+            onClose={() => setRegisterEventId(null)}
+            toast={toast}
+          />
+        );
+      })()}
+
       {editingEventId && me && (() => {
         const event = db.events.find((m) => m.id === editingEventId);
         if (!event) return null;
@@ -743,7 +968,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
       {refundTarget && (
         <RefundRequestDialog
           items={[refundTarget.item]}
-          eventName={refundTarget.event.name}
+          event={refundTarget.event}
           onClose={() => setRefundTarget(null)}
           onSubmitted={() => { /* store refresh happens inside the dialog via syncFromSupabase() */ }}
         />

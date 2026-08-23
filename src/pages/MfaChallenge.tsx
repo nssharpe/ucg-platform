@@ -15,6 +15,7 @@ import { useEffect, useState } from 'react';
 import type { Factor } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { refreshAal } from '../lib/auth';
+import { clearLegacyMfaNagDismissal } from '../lib/mfa';
 import primaryLogoWhite from '../assets/brand/primary-logo-white.svg';
 
 export function MfaChallenge() {
@@ -63,6 +64,7 @@ export function MfaChallenge() {
 
   const signOut = async () => {
     if (!supabase) return;
+    clearLegacyMfaNagDismissal();
     await supabase.auth.signOut();
   };
 

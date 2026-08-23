@@ -725,6 +725,13 @@ export interface Score {
   /** Athlete withdrew from this apparatus (reference-tool "Scratched"). Excluded
    *  from placement/team scoring; distinct from a 0.0 score. Nationals scoring. */
   scratched?: boolean;
+  /** Server-stamped compare-and-set version (UAT Z-06-01) — the `updated_at`
+   *  the caller last saw for this score id. READ-ONLY: never written by
+   *  `scoreToRow`'s push mapping — it's entirely server-controlled (default
+   *  on insert, a trigger on update). Passed back as `post_score`'s
+   *  `p_expected_updated_at` on the NEXT post so a second judge's concurrent
+   *  write is caught as a conflict instead of silently overwriting. */
+  updatedAt?: string;
 }
 
 export interface InvoiceItem {
@@ -1036,6 +1043,17 @@ export interface RefundRequest {
   reviewedAt?: string | null;
   refundAmountCents?: number | null;
   stripeRefundId?: string | null;
+  /** Ties together every row belonging to ONE reviewable decision (UAT Z-04,
+   *  T4b `20260821150000`) — every per-payment row for a registration refund
+   *  request shares one `requestGroupId`; an add-on request is a one-row
+   *  group where this equals its own `id`. Falls back to `id` for the rare
+   *  row somehow missing it client-side (defensive only — the column is
+   *  NOT NULL in the DB). `RefundReview.tsx` groups on this, not on `id`. */
+  requestGroupId: string;
+  /** Required free-text reason the reviewer gave for REJECTING this request
+   *  (rule 6) — distinct from `reason`/`reasonDetail`, which are the
+   *  REQUESTER's stated reason. Null for pending/approved rows. */
+  rejectionReason?: string | null;
 }
 
 /** A club's membership for a season. Its presence (status 'active') is the gate

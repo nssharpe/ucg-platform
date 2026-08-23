@@ -132,6 +132,47 @@ describe('validateJudgeSubmit', () => {
     expect(result.ok).toBe(false);
   });
 
+  it('accepts and passes through expectedUpdatedAt (compare-and-set, UAT Z-06-01)', () => {
+    const result = validateJudgeSubmit(eventId, {
+      regId: 'reg-1', apparatus: 'vault', sv: 4.2, deductions: 0.5, final: 3.7,
+      expectedUpdatedAt: '2026-08-22T10:00:00.000Z',
+    }, reg());
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.score.expectedUpdatedAt).toBe('2026-08-22T10:00:00.000Z');
+  });
+
+  it('defaults expectedUpdatedAt to null when absent or explicitly null', () => {
+    const withoutIt = validateJudgeSubmit(eventId, {
+      regId: 'reg-1', apparatus: 'vault', sv: 4.2, deductions: 0.5, final: 3.7,
+    }, reg());
+    expect(withoutIt.ok).toBe(true);
+    if (withoutIt.ok) expect(withoutIt.score.expectedUpdatedAt).toBeNull();
+
+    const explicitNull = validateJudgeSubmit(eventId, {
+      regId: 'reg-1', apparatus: 'vault', sv: 4.2, deductions: 0.5, final: 3.7,
+      expectedUpdatedAt: null,
+    }, reg());
+    expect(explicitNull.ok).toBe(true);
+    if (explicitNull.ok) expect(explicitNull.score.expectedUpdatedAt).toBeNull();
+  });
+
+  it('rejects a non-string expectedUpdatedAt', () => {
+    const result = validateJudgeSubmit(eventId, {
+      regId: 'reg-1', apparatus: 'vault', sv: 4.2, deductions: 0.5, final: 3.7,
+      expectedUpdatedAt: 1755856800000 as unknown as string,
+    }, reg());
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/expected-update timestamp/);
+  });
+
+  it('rejects an oversized expectedUpdatedAt', () => {
+    const result = validateJudgeSubmit(eventId, {
+      regId: 'reg-1', apparatus: 'vault', sv: 4.2, deductions: 0.5, final: 3.7,
+      expectedUpdatedAt: 'x'.repeat(65),
+    }, reg());
+    expect(result.ok).toBe(false);
+  });
+
   it('rejects oversized free-form fields (anonymous storage-bloat guard)', () => {
     const base = { regId: 'reg-1', apparatus: 'vault', sv: 4.2, deductions: 0.5, final: 3.7 };
     expect(validateJudgeSubmit(eventId, { ...base, source: 'x'.repeat(41) }, reg()).ok).toBe(false);

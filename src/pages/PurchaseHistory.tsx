@@ -5,11 +5,16 @@ import { Badge, Modal } from '../components/ui';
 import { useFmtDate } from '../components/ui-hooks';
 import { fmtMoney } from '../lib/scoring';
 import { downloadReceipt, downloadRefundReceipt, invoiceTotal } from '../lib/receipt';
+import { InvoiceLineTable } from '../components/InvoiceLineTable';
+import { isPersonalInvoice } from '../lib/purchases';
 import type { DB, Invoice, InvoiceItem, RefundRequest } from '../lib/types';
 
-/** Purchases History (MY UCG): every invoice tied to this account — memberships
- *  and event entries — with a plain-English summary, a details overlay, and a
- *  downloadable PDF receipt. */
+/** My Purchase History (UAT round-1, Z-01-02): PERSONAL invoices only —
+ *  invoices whose payer is the viewer AND that are not club-cart invoices
+ *  (`isPersonalInvoice`). A club invoice a manager happened to pay lives on
+ *  that club's OWN Purchase History page (`/club/:id/purchases`,
+ *  `ClubPurchaseHistory.tsx`) instead — before this split, both showed up
+ *  mixed together here with no way to tell which money was whose. */
 export function PurchaseHistory() {
   const caps = useCapabilities();
   if (!caps.person) {
@@ -61,8 +66,7 @@ function PurchaseHistoryInner({ personId, name }: { personId: string; name: stri
   // member should ever see or be asked to act on.
   const invoices = useMemo(() =>
     db.invoices
-      .filter((inv) => inv.paidAt != null)
-      .filter((inv) => inv.athleteId === personId || inv.items.some((i) => i.refUserId === personId))
+      .filter((inv) => inv.paidAt != null && isPersonalInvoice(inv, personId))
       .slice()
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     [db.invoices, personId],
@@ -171,43 +175,13 @@ function PurchaseHistoryInner({ personId, name }: { personId: string; name: stri
           <div style={{ fontSize: 13.5, color: 'var(--ink-soft)', marginBottom: 12 }}>
             {fmtDate(detail.createdAt)} · Paid · Billed to {name}
           </div>
-          {(() => {
-            // Lines visible to this viewer (their own line(s) on a shared club
-            // invoice, or every line on their own invoice).
-            const shown = detail.athleteId === personId ? detail.items : detail.items.filter((i) => i.refUserId === personId);
-            const lineItems = shown.filter((i) => i.kind !== 'discount');
-            const subtotal = lineItems.reduce((s, i) => s + (i.refunded ? 0 : i.amount), 0);
-            const discount = -shown.filter((i) => i.kind === 'discount').reduce((s, i) => s + (i.refunded ? 0 : i.amount), 0);
-            const total = subtotal - discount;
-            return (
-              <table className="tbl" style={{ marginBottom: 12 }}>
-                <tbody>
-                  {lineItems.map((i) => (
-                    <tr key={i.id}>
-                      <td>{i.label}{i.refunded ? ' (refunded)' : ''}</td>
-                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtMoney(i.refunded ? 0 : i.amount)}</td>
-                    </tr>
-                  ))}
-                  {discount > 0 && (
-                    <>
-                      <tr style={{ borderTop: '1px solid var(--line)' }}>
-                        <td style={{ color: 'var(--ink-soft)' }}>Subtotal</td>
-                        <td style={{ textAlign: 'right', color: 'var(--ink-soft)' }}>{fmtMoney(subtotal)}</td>
-                      </tr>
-                      <tr>
-                        <td style={{ color: 'var(--ink-soft)' }}>Promo code{detail.couponCode ? ` (${detail.couponCode})` : ''}</td>
-                        <td style={{ textAlign: 'right', color: 'var(--ink-soft)' }}>−{fmtMoney(discount)}</td>
-                      </tr>
-                    </>
-                  )}
-                  <tr style={{ borderTop: '2px solid var(--navy-800)', fontWeight: 700 }}>
-                    <td>Total{discount > 0 ? ' paid' : ''}</td>
-                    <td style={{ textAlign: 'right' }}>{fmtMoney(total)}</td>
-                  </tr>
-                </tbody>
-              </table>
-            );
-          })()}
+          {/* UAT M-20-01: unfiltered — this page is scoped to PERSONAL
+              invoices only now (isPersonalInvoice), so the viewer IS the
+              invoice's only athlete; the old per-viewer refUserId filter was
+              dead weight here and actively wrong for a shared invoice (see
+              InvoiceLineTable's doc comment / ClubPurchaseHistory.tsx, which
+              is where that case now lives, unfiltered, with "Paid by"). */}
+          <InvoiceLineTable invoice={detail} />
           <div style={{ display: 'flex', gap: 10 }}>
             <button className="btn primary" onClick={() => downloadReceipt(detail, name)}>Download receipt (PDF)</button>
             <button className="btn ghost" onClick={() => setDetail(null)}>Close</button>

@@ -84,11 +84,39 @@ describe('registrationEstimate — editing an existing registration', () => {
     expect(e).toEqual({ kind: 'new-entry', amountDollars: 25 });
   });
 
-  it('window OPEN + discipline added: change fee takes precedence over the entry fee', () => {
+  it('window OPEN + discipline added: change fee PLUS the added discipline\'s entry total, not the change fee alone (UAT M-10-01)', () => {
+    // Second-discipline fee (25, since priorDisciplineCount is 1) + change fee
+    // (15) = 40 — previously this returned just the $15 change fee, silently
+    // dropping the entry-total owed for the newly added discipline.
     expect(est({
       isEditingExisting: true, changeFeeApplies: true,
       newDisciplineCount: 1, priorDisciplineCount: 1,
+    })).toEqual({ kind: 'change-fee', amountDollars: 40 });
+  });
+
+  it('UAT M-10-01 worked example: entryFee 60 / secondDisciplineFee 30 / changeFee 15, one paid discipline + one added → $45', () => {
+    const uatEvent: RegFeeEvent = {
+      hostClubId: 'host-club', entryFee: 60, secondDisciplineFee: 30,
+      changeFee: { amount: 15, startsAt: '2026-01-01T00:00:00Z' },
+    };
+    expect(est({
+      event: uatEvent, isEditingExisting: true, changeFeeApplies: true,
+      newDisciplineCount: 1, priorDisciplineCount: 1,
+    })).toEqual({ kind: 'change-fee', amountDollars: 45 });
+  });
+
+  it('window OPEN + a pure edit (no discipline added): change fee alone, unchanged', () => {
+    expect(est({
+      isEditingExisting: true, changeFeeApplies: true,
+      newDisciplineCount: 0, priorDisciplineCount: 1,
     })).toEqual({ kind: 'change-fee', amountDollars: 15 });
+  });
+
+  it('host-club athlete adding a discipline mid-edit: still free, never combined', () => {
+    expect(est({
+      competingClubId: 'host-club', isEditingExisting: true, changeFeeApplies: true,
+      newDisciplineCount: 1, priorDisciplineCount: 1,
+    })).toEqual({ kind: 'host-free' });
   });
 
   it('window CLOSED + nothing added: no charge', () => {

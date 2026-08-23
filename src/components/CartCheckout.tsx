@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { fmtMoney } from '../lib/scoring';
 import {
-  createCheckoutSession, fetchPaymentStatus,
+  createCheckoutSession, fetchPaymentStatus, previewCartTotal,
   type CheckoutCapacityError, type CheckoutSessionRequiredError, type CheckoutSurveyRequiredError,
 } from '../lib/supabase';
+import { checkoutMode } from '../lib/pricing';
 import { StripeCheckout } from './StripeCheckout';
 import type { CartItem } from '../lib/types';
 
@@ -14,6 +15,16 @@ const FREE_MAX_TRIES = 20; // ~30s — the server already ran fulfillment synchr
 type Stage =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
+  | {
+      // UAT M-12-01: a write-free `mode: 'preview'` call came back $0
+      // (`checkoutMode` — post-discount subtotal plus service fee, service
+      // fee itself 0 on a $0 subtotal). The real endpoint fulfills a $0
+      // order immediately and unconditionally once called, so this stage
+      // exists specifically to stop and require an explicit click before
+      // that happens — never auto-advance out of it.
+      kind: 'confirm-free';
+      amountSubtotal: number; discountAmount: number; couponCode?: string; submitting: boolean;
+    }
   | {
       kind: 'checkout'; clientSecret: string; paymentId: string;
       amountSubtotal: number; discountAmount: number; serviceFee: number; couponCode?: string;
@@ -28,17 +39,35 @@ type Stage =
       amountSubtotal: number; discountAmount: number; couponCode?: string;
     };
 
+/** The three structured rejections either endpoint (preview or real) can
+ *  return — capacity/session/survey checks run identically in preview mode
+ *  (see `previewCartTotal`'s doc comment in `supabase.ts`), so both call
+ *  sites below need the exact same branching. */
+interface CheckoutRejection {
+  error?: string;
+  capacityError?: CheckoutCapacityError;
+  sessionRequiredError?: CheckoutSessionRequiredError;
+  surveyRequiredError?: CheckoutSurveyRequiredError;
+}
+
 /** Reusable Stripe Embedded Checkout for an arbitrary set of cart lines.
- *  Creates the checkout session once on mount (`create-checkout-session`, which
- *  recomputes every amount server-side — the cart `amount`s are display-only),
- *  shows a server-authoritative Subtotal / Coupon / Service fee / Total summary,
- *  and renders the embedded form. The verified `stripe-webhook` does ALL
- *  fulfillment server-side; this component performs NO local mutation. It does
- *  NOT render a success state and does NOT sync — on a genuine `paid` it calls
- *  `onPaid()` and lets the parent own post-payment UI/sync. A promo code can be
- *  applied before paying — the CODE is sent to the server, never a discount
- *  amount, and re-creates the session (the amounts shown are always what the
- *  server just computed). */
+ *  First runs a write-free price preview (`create-checkout-session { mode:
+ *  'preview' }`) to learn the real total WITHOUT triggering the server's
+ *  free-order fulfillment; only once that preview is authoritatively
+ *  non-zero does it create the real session (recomputes every amount
+ *  server-side — the cart `amount`s are display-only) and mount the Stripe
+ *  form. A $0 preview instead stops on an explicit "Confirm — no charge"
+ *  step (UAT M-12-01) — the real endpoint would otherwise fulfill a $0
+ *  order immediately and unconditionally the moment it's called, with no
+ *  chance to confirm first. Shows a server-authoritative Subtotal / Coupon /
+ *  Service fee / Total summary either way. The verified `stripe-webhook` (or,
+ *  for a $0 order, `create-checkout-session`'s own free-order branch) does
+ *  ALL fulfillment server-side; this component performs NO local mutation.
+ *  It does NOT render a success state and does NOT sync — on a genuine
+ *  `paid` it calls `onPaid()` and lets the parent own post-payment UI/sync.
+ *  A promo code can be applied before paying — the CODE is sent to the
+ *  server, never a discount amount, and re-runs the preview (the amounts
+ *  shown are always what the server just computed). */
 export function CartCheckout({
   items,
   title,
@@ -74,8 +103,23 @@ export function CartCheckout({
   // simply expires; a production build fires exactly once.
   const startedRef = useRef(false);
 
-  const startSession = (couponCode?: string) => {
-    setStage({ kind: 'loading' });
+  const handleRejection = (r: CheckoutRejection) => {
+    if (r.capacityError && onCapacityConflict) { onCapacityConflict(r.capacityError); return; }
+    if (r.sessionRequiredError && onSessionRequired) { onSessionRequired(r.sessionRequiredError); return; }
+    if (r.surveyRequiredError && onSurveyRequired) { onSurveyRequired(r.surveyRequiredError); return; }
+    const msg = r.error ?? 'Could not start checkout. Please try again.';
+    setStage({ kind: 'error', message: msg });
+    onError?.(msg);
+  };
+
+  // Creates the REAL session (mode default): the write that actually charges
+  // a card, or — for a $0 cart — fulfills the order immediately. Only ever
+  // called (a) from startPreview below once a non-zero preview total is
+  // confirmed authoritative, or (b) from the "Confirm — no charge" button.
+  // Deliberately does NOT touch `stage` before resolving in case (b): the
+  // confirm-free card stays on screen with its button disabled
+  // (stage.submitting) rather than flashing to the generic loading card.
+  const startRealSession = (couponCode?: string) => {
     void createCheckoutSession({ cartItemIds: items.map((i) => i.id), couponCode })
       .then((r) => {
         if (r.ok && r.free && r.paymentId && r.amountSubtotal != null) {
@@ -89,19 +133,11 @@ export function CartCheckout({
             amountSubtotal: r.amountSubtotal, discountAmount: r.discountAmount ?? 0,
             serviceFee: r.serviceFee, couponCode,
           });
-        } else if (r.capacityError && onCapacityConflict) {
-          onCapacityConflict(r.capacityError);
-        } else if (r.sessionRequiredError && onSessionRequired) {
-          onSessionRequired(r.sessionRequiredError);
-        } else if (r.surveyRequiredError && onSurveyRequired) {
-          onSurveyRequired(r.surveyRequiredError);
         } else {
-          const msg = r.error ?? 'Could not start checkout. Please try again.';
-          setStage({ kind: 'error', message: msg });
-          onError?.(msg);
+          handleRejection(r);
         }
       })
-      .catch((e) => {
+      .catch((e: unknown) => {
         const msg = e instanceof Error ? e.message : 'Could not start checkout. Please try again.';
         setStage({ kind: 'error', message: msg });
         onError?.(msg);
@@ -109,10 +145,41 @@ export function CartCheckout({
       .finally(() => setCouponBusy(false));
   };
 
+  // Write-free preview: decides free-confirm vs. Stripe WITHOUT ever risking
+  // the real endpoint's immediate, unconditional $0 fulfillment. Re-run on
+  // mount and on every coupon apply — a coupon can move a cart between the
+  // two branches either direction.
+  const startPreview = (couponCode?: string) => {
+    setStage({ kind: 'loading' });
+    void previewCartTotal({ cartItemIds: items.map((i) => i.id), couponCode })
+      .then((r) => {
+        if (r.ok && r.lines && r.amountSubtotal != null && r.total != null) {
+          if (checkoutMode(r.total) === 'free-confirm') {
+            setStage({
+              kind: 'confirm-free', amountSubtotal: r.amountSubtotal,
+              discountAmount: r.discountAmount ?? 0, couponCode, submitting: false,
+            });
+            setCouponBusy(false);
+          } else {
+            startRealSession(couponCode);
+          }
+        } else {
+          handleRejection(r);
+          setCouponBusy(false);
+        }
+      })
+      .catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : 'Could not start checkout. Please try again.';
+        setStage({ kind: 'error', message: msg });
+        onError?.(msg);
+        setCouponBusy(false);
+      });
+  };
+
   useEffect(() => {
     if (items.length === 0 || startedRef.current) return;
     startedRef.current = true;
-    startSession();
+    startPreview();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items]);
 
@@ -122,19 +189,25 @@ export function CartCheckout({
   // reference (Cart.tsx `checkout.items` / `db.carts[...]`), so the effect's
   // dependency never actually changes and it never re-ran. Any transient
   // create-checkout-session failure stranded the user on "Try again" forever.
-  // Call startSession() directly instead of hoping the effect re-fires;
+  // Call startPreview() directly instead of hoping the effect re-fires;
   // startedRef is still set so the mount effect (if it DOES ever re-run,
   // e.g. items legitimately changes) doesn't race a second session creation.
   const retry = () => {
     startedRef.current = true;
-    startSession();
+    startPreview();
   };
 
   const applyCoupon = () => {
     const code = couponInput.trim();
     if (!code) return;
     setCouponBusy(true);
-    startSession(code);
+    startPreview(code);
+  };
+
+  const confirmFree = () => {
+    if (stage.kind !== 'confirm-free' || stage.submitting) return;
+    setStage({ ...stage, submitting: true });
+    startRealSession(stage.couponCode);
   };
 
   const handleError = (msg: string) => {
@@ -186,6 +259,41 @@ export function CartCheckout({
     return (
       <div className="card card-pad">
         <p style={{ color: 'var(--ink-soft)', margin: 0 }}>Preparing your secure checkout…</p>
+      </div>
+    );
+  }
+
+  if (stage.kind === 'confirm-free') {
+    const confirmSummary = { subtotal: stage.amountSubtotal / 100, discount: stage.discountAmount / 100 };
+    return (
+      <div className="card card-pad" style={{ maxWidth: 520 }}>
+        <h3 className="card-title" style={{ marginTop: 0, color: 'var(--ink)' }}>{title}</h3>
+        <div style={{ borderTop: '1px solid var(--line)', margin: '10px 0 0', paddingTop: 10, fontSize: 14 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+            <span style={{ color: 'var(--ink-soft)' }}>Subtotal</span>
+            <span>{fmtMoney(confirmSummary.subtotal)}</span>
+          </div>
+          {stage.couponCode && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 4, color: 'var(--teal-900)' }}>
+              <span>Coupon {stage.couponCode}</span>
+              <span>−{fmtMoney(confirmSummary.discount)}</span>
+            </div>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 4 }}>
+            <span style={{ color: 'var(--ink-soft)' }}>Service fee (card processing)</span>
+            <span>{fmtMoney(0)}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 8 }}>
+            <strong style={{ fontSize: 16 }}>Total due</strong>
+            <strong style={{ fontSize: 16 }}>{fmtMoney(0)}</strong>
+          </div>
+        </div>
+        <p style={{ color: 'var(--ink-soft)', margin: '12px 0 0' }}>
+          Your coupon covers the full cost — no payment needed. Confirm below to complete this order.
+        </p>
+        <button className="btn primary" style={{ marginTop: 12 }} onClick={confirmFree} disabled={stage.submitting}>
+          {stage.submitting ? 'Confirming…' : 'Confirm — no charge'}
+        </button>
       </div>
     );
   }

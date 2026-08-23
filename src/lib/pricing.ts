@@ -255,6 +255,70 @@ export function newRegistrationEntryTotal(
   return total;
 }
 
+/**
+ * Combined price for adding a discipline to a registration that already has
+ * at least one PAID/updated-pending discipline at this event+club (UAT
+ * M-10-01, S1 — confirmed by the requirements owner): the ADDED
+ * discipline(s)' entry-total (`newRegistrationEntryTotal`, priced from
+ * `priorDisciplineCount` — pass the count INCLUDING the already-paid
+ * discipline(s), so the added one lands at the second-discipline rate) PLUS
+ * the event's change fee (`registrationChangeFee`), as ONE combined amount —
+ * never the change fee alone. That undercharge was the actual bug: a mixed
+ * line (one paid reg + one brand-new reg) was previously priced as either a
+ * cheap change-fee-only line or a full fresh-entry line, never "extra
+ * discipline + change fee" together. Host club ⇒ 0 (both components zero
+ * themselves via their own guards). MIRRORED IN
+ * supabase/functions/_shared/stripe.ts (`addedDisciplineChangeTotalDollars`)
+ * — keep in sync.
+ */
+export function addedDisciplineChangeTotal(
+  event: RegFeeEvent,
+  { competingClubId, priorDisciplineCount, newDisciplineCount, late }: {
+    competingClubId: string;
+    priorDisciplineCount: number;
+    newDisciplineCount: number;
+    /** Late-fee inputs (Task 3), applied to the ADDED discipline(s) only. */
+    late?: { earliestCreatedAtISO: string };
+  },
+): number {
+  return (
+    newRegistrationEntryTotal(event, { competingClubId, priorDisciplineCount, newDisciplineCount, late })
+    + registrationChangeFee(event, { competingClubId })
+  );
+}
+
+/** Minimal prior-registration slice `regsForChangeLine` needs. */
+export type PriorRegPaidState = { paid?: boolean; updatedPending?: boolean };
+
+/**
+ * Of `newRegs`, return the subset that belongs on a PURE change-fee cart
+ * line's `refRegIds` (UAT M-10 x Z-04, 2026-08-22): regs with a prior row
+ * that was ALREADY paid or updated_pending. Everything else in `newRegs` —
+ * no prior row at all (a brand-new discipline), OR a prior row that was
+ * NEVER paid (e.g. a still-unpaid discipline added in an earlier,
+ * not-yet-checked-out edit this same session) — belongs on a SEPARATE entry
+ * line instead, never this one.
+ *
+ * This distinction is the whole point of the rework: `create-checkout-session`
+ * derives entry-vs-change PER REG from that reg's own `paid`/`updated_pending`
+ * DB state, never from which cart line the client put it on (the C4 fix).
+ * Including a never-paid reg here would silently reconstruct a MIXED line
+ * server-side the moment this line is priced — the server's mixed branch
+ * would fire, disagree with the client's pure-change amount (triggering the
+ * "prices updated" banner), and — worse — double-charge that reg if it
+ * already sits on its OWN separate pending entry line elsewhere (the two
+ * lines would both reference the same id).
+ */
+export function regsForChangeLine<T extends { id: string }>(
+  newRegs: T[],
+  priorById: Map<string, PriorRegPaidState>,
+): T[] {
+  return newRegs.filter((r) => {
+    const prior = priorById.get(r.id);
+    return !!prior && (prior.paid === true || prior.updatedPending === true);
+  });
+}
+
 // --- Per-unit add-on pricing + purchase deadlines (event-mgmt v2 Phase 2) --
 // Each add-on type (banquet/tshirt/banner/leo) can carry an optional
 // `lastPurchaseAt` independent of `regCloses` (may be AFTER regCloses). Pure
@@ -922,6 +986,48 @@ export function applyCoupon(amount: number, coupon: Coupon): number {
   return amount;
 }
 
+// --- Coupon scoping (UAT M-11-01, S1) ---------------------------------------
+// Which "Applies to" category a priced line falls under, so a coupon scoped
+// to e.g. `appliesTo: 'meet-entry'` ("Event entries") discounts actual new
+// registrations only — never a change fee or an add-on line, which used to
+// all share the same 'meet-entry' tag and so got discounted right along with
+// real entries. MIRRORED IN supabase/functions/_shared/stripe.ts — keep in
+// sync. Not currently wired into any client-side preview (the cart/checkout
+// UI renders only the server's authoritative Subtotal/Coupon/Fee/Total, per
+// money-invariants.md — there is no client-side coupon recompute to fix);
+// exported so the eligibility rule has exactly one tested implementation per
+// runtime, reusable if a client preview is ever added.
+export type CouponScope =
+  | 'athlete-membership' | 'club-membership' | 'coach-membership'
+  | 'meet-entry' | 'change-fee' | 'addon';
+
+/** Minimal per-line shape `couponEligibleLine` needs. */
+export interface CouponScopedLine {
+  scope?: CouponScope;
+  eventId?: string;
+}
+
+/**
+ * Is `line` eligible for `coupon`'s discount, per the coupon's "Applies to"
+ * scope? `'any'` matches every line; the legacy `'membership'` matches all
+ * three membership scopes; `'meet-entry'` matches ONLY a true entry line
+ * (never `'change-fee'` or `'addon'`), further narrowed to one event when
+ * `appliesToEventId` is set; anything else falls back to an exact scope
+ * match. MIRRORED IN supabase/functions/_shared/stripe.ts (`couponEligibleLine`)
+ * — keep in sync.
+ */
+export function couponEligibleLine(line: CouponScopedLine, coupon: Pick<Coupon, 'appliesTo' | 'appliesToEventId'>): boolean {
+  const { appliesTo, appliesToEventId } = coupon;
+  if (appliesTo === 'any') return true;
+  if (appliesTo === 'membership') {
+    return line.scope === 'athlete-membership' || line.scope === 'club-membership' || line.scope === 'coach-membership';
+  }
+  if (appliesTo === 'meet-entry') {
+    return line.scope === 'meet-entry' && (!appliesToEventId || line.eventId === appliesToEventId);
+  }
+  return line.scope === appliesTo;
+}
+
 /** Service fee passed to the payer: 3% + $0.30 of the order subtotal, in CENTS.
  *  Operates in Stripe's cent unit (distinct from the dollar-based legacy fns above).
  *  Rounds UP (never to-nearest) so the collected fee never falls a cent short
@@ -929,6 +1035,20 @@ export function applyCoupon(amount: number, coupon: Coupon): number {
  *  `processingFee` in supabase/functions/_shared/stripe.ts. */
 export function processingFee(subtotalCents: number): number {
   return Math.ceil(subtotalCents * 0.03) + 30;
+}
+
+/** Pure decision for `CartCheckout.tsx`'s preview→pay gate (UAT M-12-01): given
+ *  `create-checkout-session { mode: 'preview' }`'s returned `total` in CENTS
+ *  (post-discount subtotal plus service fee — the server charges $0 service
+ *  fee when the subtotal is already $0, mirroring its free-order branch),
+ *  decide whether the UI must stop for an explicit no-charge confirmation
+ *  ('free-confirm') or can proceed straight to creating a real Stripe session
+ *  ('stripe'). A $0 total is reachable ONLY via a coupon discounting the
+ *  whole cart — the server fulfills that order immediately once asked for
+ *  real (no Stripe step to confirm through), so the client must never
+ *  auto-request it without the user explicitly confirming first. */
+export function checkoutMode(previewTotalCents: number): 'free-confirm' | 'stripe' {
+  return previewTotalCents <= 0 ? 'free-confirm' : 'stripe';
 }
 
 /** One line of the "We updated these prices to today's rates" notice shown on
@@ -1172,6 +1292,74 @@ export function refundAmountCents(
  * `supabase/functions/process-refund/index.ts`. */
 export function capRefundCents(computedCents: number, availableCents: number): number {
   return Math.min(computedCents, Math.max(0, availableCents));
+}
+
+/**
+ * One resolved refundable line for `allocateRegistrationRefund` — a paid
+ * `invoice_items` row (entry or extra-discipline fee) for the registration
+ * being refunded, already resolved to the payment that funded it. */
+export interface RefundAllocationLine {
+  paymentId: string;
+  /** `invoice_items.ref_line_type` — a `'change'` line is excluded entirely
+   *  (rule 2: change fees are never refundable), regardless of `afterDeadline`. */
+  refLineType: string | null;
+  /** Post-coupon `paid_cents` for this line (payments.lines_snapshot; falls
+   *  back to `invoice_items.amount` when the snapshot predates the field —
+   *  see process-refund's resolution). */
+  paidCents: number;
+}
+
+/**
+ * Per-PAYMENT refund allocation for a registration refund (UAT Z-04, rules
+ * 1/2/4): a registration can be paid across MULTIPLE Stripe payments — an
+ * original entry invoice plus a later "add discipline" invoice, each its own
+ * charge — and a refund on that registration must refund EVERY one of them,
+ * not just the first one resolved. Pure: groups the given lines by
+ * `paymentId`, drops any `'change'` line (never refundable), sums what's left
+ * per payment, then scales each payment's sum to 75% (rounded) when
+ * `afterDeadline` — PER PAYMENT, not on the combined total, so each Stripe
+ * refund call gets its own correctly-rounded amount and rounding never
+ * leaks a cent from one payment's allocation into another's. A payment left
+ * with zero refundable lines (only a change line referenced it) does not
+ * appear in the result at all. Mirrored in
+ * `supabase/functions/_shared/refund-allocation.ts` for `process-refund`
+ * (Deno can't import `src/lib` code). Caller is responsible for actually
+ * calling `claim_refund_approval` once per returned payment — this function
+ * only computes amounts, it does no I/O and no capping against what's
+ * already been approved (that's the RPC's job, per payment).
+ */
+export function allocateRegistrationRefund(
+  lines: RefundAllocationLine[],
+  opts: { afterDeadline: boolean },
+): { paymentId: string; cents: number }[] {
+  const byPayment = new Map<string, number>();
+  for (const line of lines) {
+    if (line.refLineType === 'change') continue;
+    byPayment.set(line.paymentId, (byPayment.get(line.paymentId) ?? 0) + line.paidCents);
+  }
+  return Array.from(byPayment.entries()).map(([paymentId, sumCents]) => ({
+    paymentId,
+    cents: opts.afterDeadline ? Math.round(sumCents * 0.75) : sumCents,
+  }));
+}
+
+/**
+ * Rule 7 (UAT Z-04): `process-refund` returns a 409 "already reviewed" when a
+ * group has no pending rows left — which happens both for a genuine conflict
+ * (a second reviewer rejected it while this one was approving) AND for the
+ * harmless case of two reviewers clicking the SAME decision (e.g. both hit
+ * Approve within a race). `RefundReview.tsx` should silently refetch and move
+ * the request to history in the harmless case, and keep the error toast for
+ * the genuine conflict. Pure so the branch is unit-testable without a live
+ * 409: 'silent' when the request's CURRENT status already equals the outcome
+ * the reviewer just attempted, 'toast' otherwise (including when it's still
+ * 'pending' somehow, or decided to the OPPOSITE outcome). */
+export function decideAfterConflict(
+  currentStatus: 'pending' | 'approved' | 'rejected',
+  attempted: 'approve' | 'reject',
+): 'silent' | 'toast' {
+  const outcomeStatus = attempted === 'approve' ? 'approved' : 'rejected';
+  return currentStatus === outcomeStatus ? 'silent' : 'toast';
 }
 
 // --- Nationals session-request survey (event-mgmt v2 Phase 5 A1, spec §L.1/§E5.4) ---

@@ -4,8 +4,8 @@
 // Flow: authorize the caller manages the club → create/claim the person row with
 // this club as their main club → create the auth user with an invite link (or a
 // recovery link if they already exist) → email the link. The link's redirect
-// carries ?setpw=1 so the SPA shows a set-password screen, after which the user
-// lands on the membership page.
+// carries ?setpw=invite so the SPA shows a set-password screen, after which the
+// user lands on the membership page.
 //
 // Auth: any signed-in user who manages the target club, or an admin.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -30,7 +30,11 @@ Deno.serve(async (req) => {
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const appUrl = Deno.env.get('APP_PUBLIC_URL') ?? 'https://nssharpe.github.io/ucg-platform';
-  const redirectTo = `${appUrl}/?setpw=1`;
+  // 'invite' (not the old bare `setpw=1`) so SetPassword.tsx can send this
+  // flow to /membership specifically, distinct from a password-reset link
+  // (Gate.tsx's forgotPassword, `?setpw=reset`), which goes Home instead
+  // (UAT A-07-02 / A-06-01).
+  const redirectTo = `${appUrl}/?setpw=invite`;
 
   const authHeader = req.headers.get('Authorization') ?? '';
   const token = authHeader.replace(/^Bearer\s+/i, '');

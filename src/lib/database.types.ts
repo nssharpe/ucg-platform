@@ -2069,6 +2069,10 @@ export type Database = {
       manages_club: { Args: { cid: string }; Returns: boolean }
       mark_medals_received: { Args: { p_event_id: string }; Returns: undefined }
       my_person_id: { Args: never; Returns: string }
+      post_score: {
+        Args: { p_score: Json; p_expected_updated_at: string | null }
+        Returns: Json
+      }
       redeem_coupon: {
         Args: { p_code: string; p_person_id?: string }
         Returns: boolean

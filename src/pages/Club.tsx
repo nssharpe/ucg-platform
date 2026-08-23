@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useDB, mutate } from '../lib/store';
 import { useCapabilities } from '../lib/capabilities';
 import { clubHasActiveMembership, clubHasActiveMembershipForEvent, seasonForDate, membershipHolds, membershipTypeOf, paidRegistrationClub } from '../lib/capabilities-core';
@@ -12,7 +12,7 @@ import { STATE_REGIONS, SHIRT_SIZES } from '../lib/types';
 import type { Athlete, CartItem, Club, Event, Membership, Registration, Season, WaitlistGroup } from '../lib/types';
 import { fmtMoney } from '../lib/scoring';
 import {
-  newRegistrationEntryTotal, reassignPartners, registrationChangeFee, changeIsEligible,
+  newRegistrationEntryTotal, reassignPartners, registrationChangeFee, changeIsEligible, regsForChangeLine,
   syncSynchroPartnerLevel, findIncomingSynchroPartner, lateFeeApplies, lateFeeAnchor,
   addonPurchaseOpen, initialClubAddonDraft, buildClubAddonCartItems,
 } from '../lib/pricing';
@@ -26,6 +26,7 @@ import {
   syncSynchroPartnerLevelRemote, cancelWaitlistGroup,
 } from '../lib/supabase';
 import { cleanupCrossClubCart } from '../lib/cart-sync';
+import { setCurrentClubId } from '../lib/current-club';
 import { useEventRegistrations, useClubRegistrations, applyLocalRegistrationUpsert, applyLocalRegistrationRemove, mergeUpsertedRegs } from '../lib/registrations-slice';
 import { useClubRosterMemberships, groupAdminMembershipsByPerson } from '../lib/memberships-admin-slice';
 import { usePeopleForClub } from '../lib/people-admin-slice';
@@ -88,6 +89,17 @@ export function ClubPage({ view }: { view: ClubView }) {
   const [editingClub, setEditingClub] = useState(false);
   const [addingAthlete, setAddingAthlete] = useState(false);
   const [addingCoach, setAddingCoach] = useState(false);
+  // UAT round-1 (Z-01-02): keep the "current club" the nav's My Club links
+  // (and the topbar Club Cart button) point at in sync with whichever club
+  // this manager/admin is actually browsing — see current-club.ts. Only for
+  // a viewer who actually manages this club (or is admin); a rank-and-file
+  // member browsing another club's roster shouldn't redirect their OWN
+  // manager links elsewhere. Placed above the `if (!club) return` below
+  // (Rules of Hooks) using the raw `clubId` param rather than the resolved
+  // `club`/`canManage` locals, which aren't computed until after that guard.
+  useEffect(() => {
+    if (clubId && (caps.isAdmin || caps.managedClubIds.includes(clubId))) setCurrentClubId(clubId);
+  }, [clubId, caps.isAdmin, caps.managedClubIds]);
   // Phase 4 (data-layer-scale.md): `db.people` at boot is now scoped to self +
   // managed-club rosters, so a viewer who ISN'T this club's own manager (any
   // signed-in member browsing another club's page, or an admin, whose
@@ -163,9 +175,13 @@ export function ClubPage({ view }: { view: ClubView }) {
       )}
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
-        <Link className="btn ghost small" to="/cart">Club cart & receipts →</Link>
         {canManage && (
           <>
+            {/* UAT round-1 (Z-01-02): this used to link to the personal /cart
+                page (which bundled every managed club's cart underneath the
+                viewer's own) — now a real per-club page. */}
+            <Link className="btn ghost small" to={`/club/${club.id}/cart`}>Club cart →</Link>
+            <Link className="btn ghost small" to={`/club/${club.id}/purchases`}>Club purchases →</Link>
             <button className="btn ghost small" onClick={() => setEditingClub(true)}>Edit club details</button>
             <button className="btn ghost small" data-tip="Ask UCG to sanction an event hosted by your club" onClick={() => alert('Sanction request form — wires to league admin approval queue (post-MVP).')}>Request event sanction</button>
             <button className="btn ghost small" data-tip="Create an account for an athlete and email them a set-password link" onClick={() => setAddingAthlete(true)}>Add athlete</button>
@@ -1041,7 +1057,7 @@ function ClubAddonsCard({ event, clubId, canManage }: { event: Event; clubId: st
       {addonRefundTarget && (
         <RefundRequestDialog
           items={[addonRefundTarget]}
-          eventName={event.name}
+          event={event}
           clubId={clubId}
           onClose={() => setAddonRefundTarget(null)}
           onSubmitted={() => { /* store refresh happens inside the dialog via syncFromSupabase() */ }}
@@ -1058,12 +1074,22 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   const caps = useCapabilities();
   const toast = useToast();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   // Camps are individual self-registration ONLY (spec §G; Julia confirmed
   // 2026-08-19 "block it outright") — managers cannot register athletes for
   // them, so they never appear in this picker. Competitions unchanged.
   const openEvents = db.events.filter((m) =>
     m.eventType !== 'camp' && (eventIsInPhase(m, 'reg-open') || eventIsInPhase(m, 'reg-closed')));
-  const [eventId, setEventId] = useState(openEvents.find((m) => eventIsInPhase(m, 'reg-open'))?.id ?? openEvents[0]?.id);
+  // UAT M-01-03: the Events list's "Register your club" entry point preselects
+  // this club-registrations page's event picker via `?event=<slug>` — read
+  // once at mount (matches the picker's own uncontrolled-initial-state idiom
+  // below); a slug that doesn't match any open event falls through to the
+  // normal default.
+  const preselectSlug = searchParams.get('event');
+  const [eventId, setEventId] = useState(() => {
+    const preselected = preselectSlug ? openEvents.find((m) => m.slug === preselectSlug) : undefined;
+    return preselected?.id ?? openEvents.find((m) => eventIsInPhase(m, 'reg-open'))?.id ?? openEvents[0]?.id;
+  });
   const event = db.events.find((m) => m.id === eventId);
   // Phase 3 (data-layer-scale): the by-event slice, replacing db.registrations
   // throughout this component. Called unconditionally (Rules of Hooks) before
@@ -1389,6 +1415,16 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   // Change-fee label for this event+athlete's club-cart line — also how we
   // detect an already-pending change line to extend in place (M7/H5 fix,
   // mirroring MyRegistrations.tsx's changeFeeLabel/changeFeePending).
+  //
+  // UAT M-10 x Z-04 (2026-08-22 rework): a discipline ADDED alongside a
+  // chargeable edit no longer folds into this change line at all — it gets
+  // its OWN separate entry line (`entryFeePendingItem` below), because
+  // change-fee lines (`refLineType:'change'`) are NEVER refundable (Z-04's
+  // requirements-owner rule) and a combined line would have made the added
+  // discipline's entry-fee portion permanently non-refundable too, plus
+  // booked that revenue under the change-fee accounting code in finance.
+  // This line therefore stays a PURE change fee again — same label, same
+  // exact-match lookup as before M-10-01 ever touched this file.
   const changeFeeLabel = (athlete: Athlete) => `${event.name} change fee — ${athlete.firstName} ${athlete.lastName}`;
   const changeFeePendingItem = (athleteId: string) => {
     const athlete = effectivePeople.find((p) => p.id === athleteId);
@@ -1396,6 +1432,16 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
     const label = changeFeeLabel(athlete);
     return (db.carts[clubId] ?? []).find((c) => c.kind === 'meet-entry' && c.refLineType === 'change' && c.label === label);
   };
+
+  // Already-pending ENTRY line (for a discipline added mid-edit) to extend in
+  // place instead of stacking a second one, mirroring the change-line M7/H5
+  // idiom above. Matched structurally (kind/refLineType/refUserId/refEventId)
+  // rather than by label — unlike the change line, this lookup is new code
+  // with no pre-existing label-matching behavior to preserve, and the label
+  // itself varies by which disciplines are included so it can't serve as a
+  // stable match key.
+  const entryFeePendingItem = (athleteId: string) =>
+    (db.carts[clubId] ?? []).find((c) => c.kind === 'meet-entry' && c.refLineType === 'entry' && c.refUserId === athleteId && c.refEventId === event.id);
 
   // Persist registration changes from RegistrationEditor. `opts.skipEntryFeeLine`
   // is set by `addToCart` below, which handles its OWN entry-fee cart line for a
@@ -1405,8 +1451,9 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   // entry-fee line here instead of silently landing "Registered" for free.
   const saveRegs = (athleteId: string, newRegs: Registration[], opts?: { skipEntryFeeLine?: boolean }) => {
     if (clubMembershipBlocked()) return;
-    // Captured BEFORE the mutate below so it reflects the pre-edit cart state.
+    // Captured BEFORE the mutate below so they reflect the pre-edit cart state.
     const alreadyPendingItem = changeFeePendingItem(athleteId);
+    const alreadyPendingEntryItem = entryFeePendingItem(athleteId);
     let addedEntryFee = 0;
     let chargedChangeFee = 0;
     const applied = mutate((d) => {
@@ -1443,7 +1490,6 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
       const changeFee = changeFeeApplies && eligible
         ? registrationChangeFee(event, { competingClubId: clubId })
         : 0;
-      chargedChangeFee = changeFee;
 
       // Brand-new-discipline entry total (H7): regs in newRegs with NO prior
       // row are disciplines being added right now, regardless of whether the
@@ -1453,6 +1499,21 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
       // for these exact regs.
       const priorById = new Map(existingForAthlete.map((r) => [r.id, r]));
       const newOnlyRegs = newRegs.filter((r) => !priorById.has(r.id));
+      // UAT M-10 x Z-04: regs that were already paid/updated_pending — what
+      // the change fee actually covers (`regsForChangeLine`, pricing.ts).
+      // Deliberately narrower than "has a prior row": a prior row that was
+      // NEVER paid (e.g. a still-unpaid discipline added in an earlier,
+      // not-yet-checked-out edit this session) must NOT land on the change
+      // line — it stays wherever its OWN pending entry line already
+      // references it, and this edit leaves it alone rather than smuggling
+      // it onto the change line (which would silently reconstruct a MIXED
+      // line server-side and double-charge it). Guarded to non-empty before
+      // the change line is pushed below — a fully-swapped discipline set
+      // (every prior PAID row removed and replaced in the same edit, e.g. a
+      // simultaneous club switch) can leave this empty even though
+      // `changeFee > 0`; that rare edge case is left uncharged rather than
+      // pushing a line with no regs to ever flip to paid.
+      const changedRegs = regsForChangeLine(newRegs, priorById);
       const priorDisciplineCount = existingForAthlete.filter((r) => r.apparatus.length > 0).length;
       const editLateAnchor = lateAnchorFor(newOnlyRegs, existingForAthlete);
       const entryTotal = !opts?.skipEntryFeeLine && newOnlyRegs.length > 0
@@ -1463,15 +1524,23 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
             late: editLateAnchor ? { earliestCreatedAtISO: editLateAnchor } : undefined,
           })
         : 0;
+      // Does the added-discipline entry line fire? Whenever there's an entry
+      // total to charge, EXCEPT the narrow pre-existing "change-fee window
+      // open but this event has no configured change fee" quirk
+      // (`changeFeeApplies && changeFee === 0`) — that combination stays a
+      // deliberate no-charge case (reg-estimate.test.ts's "no double-charge
+      // path"), unchanged by this rework.
+      const chargeAddedEntry = entryTotal > 0 && (changeFee > 0 || !changeFeeApplies);
 
       // Which regs get a cart-add capacity hold stamped (event-mgmt v2 P4):
       // exactly the regs that end up referenced by a cart line pushed below —
       // mirrors the change-fee/entry-fee branch conditions further down so
       // the two stay in lockstep. A free edit (no cart line) never stamps.
       const cartLinkedIds = new Set<string>();
-      if (changeFee > 0 && event.changeFee) {
-        for (const r of newRegs) cartLinkedIds.add(r.id);
-      } else if (!changeFeeApplies && entryTotal > 0) {
+      if (changeFee > 0 && event.changeFee && changedRegs.length > 0) {
+        for (const r of changedRegs) cartLinkedIds.add(r.id);
+      }
+      if (chargeAddedEntry) {
         for (const r of newOnlyRegs) cartLinkedIds.add(r.id);
       }
 
@@ -1544,15 +1613,29 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
       // stacking is what let removal delete/resurrect against a stale
       // snapshot. NEVER overwrite an existing snapshot entry: it must stay the
       // ORIGINAL pre-change state from the FIRST edit, not this edit's.
-      if (changeFee > 0 && event.changeFee) {
+      // UAT M-10 x Z-04 (2026-08-22): this used to fold an added discipline's
+      // entry-total INTO the change line as one combined amount (M-10-01).
+      // That was reworked: change-fee lines (`refLineType:'change'`) are
+      // NEVER refundable (Z-04's requirements-owner rule), so a combined
+      // line made the added discipline's entry-fee portion permanently
+      // non-refundable too, and booked that revenue under the change-fee
+      // accounting code in finance. Now the two are ALWAYS separate lines —
+      // a pure change-fee line (`changedRegs`) and, independently, a pure
+      // entry line for whatever was added (`newOnlyRegs`) — so each keeps
+      // its own refund eligibility and accounting code. (The server's
+      // three-way isChange/mixed split in create-checkout-session stays as
+      // defense-in-depth for a forged or legacy cart that still mixes a line
+      // — the client itself never produces one anymore.)
+      if (changeFee > 0 && event.changeFee && changedRegs.length > 0) {
+        chargedChangeFee = changeFee;
         const cart = d.carts[clubId] ?? (d.carts[clubId] = []);
         const athlete = d.people.find((p) => p.id === athleteId)!;
-        const newSnapshotEntries = newRegs.map((r) => priorById.get(r.id)).filter((r): r is Registration => !!r);
+        const newSnapshotEntries = changedRegs.map((r) => priorById.get(r.id)).filter((r): r is Registration => !!r);
         if (alreadyPendingItem) {
           const line = cart.find((c) => c.id === alreadyPendingItem.id);
           if (line) {
             const covered = new Set(line.refRegIds ?? []);
-            line.refRegIds = [...covered, ...newRegs.map((r) => r.id).filter((id) => !covered.has(id))];
+            line.refRegIds = [...covered, ...changedRegs.map((r) => r.id).filter((id) => !covered.has(id))];
             const snapshotCovered = new Set((line.priorRegSnapshot ?? []).map((r) => r.id));
             line.priorRegSnapshot = [
               ...(line.priorRegSnapshot ?? []),
@@ -1566,39 +1649,47 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
             amount: changeFee,
             kind: 'meet-entry',
             refUserId: athleteId,
-            refRegIds: newRegs.map((r) => r.id),
+            refRegIds: changedRegs.map((r) => r.id),
             refEventId: event.id,
             refLineType: 'change',
             priorRegSnapshot: newSnapshotEntries,
           });
         }
         pushCart(clubId, cart, true);
-      } else if (!changeFeeApplies && entryTotal > 0) {
-        // A discipline added via Edit OUTSIDE the change-fee window (or the
-        // athlete has no prior regs at all but wasn't routed through
-        // addToCart), still owes its entry/second-discipline fee (H7) —
-        // queue a line for exactly the newly-added regs. Gated on
-        // `!changeFeeApplies` so that WITHIN a change window (even one whose
-        // fee is $0) an added discipline is governed by the change fee, not a
-        // full entry fee — otherwise a non-host event configured with a $0
-        // change fee would over-charge an added discipline. (Matches
-        // MyRegistrations.tsx, which likewise only charges outside the window.)
+      }
+
+      if (chargeAddedEntry) {
+        // A discipline was ADDED (either outside the change-fee window — H7 —
+        // or alongside a chargeable edit while the window is open, UAT M-10):
+        // it always owes its own entry/second-discipline fee, on a line of
+        // its OWN, never the change line above. `alreadyPendingEntryItem`
+        // extends an already-pending entry line in place (mirroring the
+        // change line's M7/H5 idiom) instead of stacking a second one.
         const cart = d.carts[clubId] ?? (d.carts[clubId] = []);
         const athlete = d.people.find((p) => p.id === athleteId)!;
         addedEntryFee = entryTotal;
         // Camps ask nothing discipline-related — omit the parenthetical
         // (PM feedback 2026-07-23).
         const discParen = event.eventType === 'camp' ? '' : ` (${newOnlyRegs.map((r) => r.discipline).join('+')})`;
-        cart.push({
-          id: `ci-${Date.now()}-${athleteId}`,
-          label: `${event.name} entry — ${athlete.firstName} ${athlete.lastName}${discParen}${lateFeeSuffix(editLateAnchor)}`,
-          amount: entryTotal,
-          kind: 'meet-entry',
-          refUserId: athleteId,
-          refRegIds: newOnlyRegs.map((r) => r.id),
-          refEventId: event.id,
-          refLineType: 'entry',
-        });
+        if (alreadyPendingEntryItem) {
+          const line = cart.find((c) => c.id === alreadyPendingEntryItem.id);
+          if (line) {
+            const covered = new Set(line.refRegIds ?? []);
+            line.refRegIds = [...covered, ...newOnlyRegs.map((r) => r.id).filter((id) => !covered.has(id))];
+            line.amount = (line.amount ?? 0) + entryTotal;
+          }
+        } else {
+          cart.push({
+            id: `ci-${Date.now()}-${athleteId}`,
+            label: `${event.name} entry — ${athlete.firstName} ${athlete.lastName}${discParen}${lateFeeSuffix(editLateAnchor)}`,
+            amount: entryTotal,
+            kind: 'meet-entry',
+            refUserId: athleteId,
+            refRegIds: newOnlyRegs.map((r) => r.id),
+            refEventId: event.id,
+            refLineType: 'entry',
+          });
+        }
         pushCart(clubId, cart, true);
       }
     });
@@ -1606,12 +1697,21 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
 
     setEditingAthleteId(null);
     setRegisterAthleteId(null);
+    // UAT M-10 x Z-04: the two are separate lines now, but the toast still
+    // reports the combined total for a mixed save — "combined total is fine
+    // to display" per the rework's own instructions; only the CART LINES
+    // (and their refund/accounting treatment) need to stay split.
     toast(
-      chargedChangeFee > 0
-        ? 'Registration updated. Change fee added to club cart.'
-        : addedEntryFee > 0
-          ? `Registration updated. ${fmtMoney(addedEntryFee)} entry fee added to club cart.`
-          : 'Registration saved.',
+      chargedChangeFee > 0 && addedEntryFee > 0
+        ? `Registration updated. ${fmtMoney(chargedChangeFee + addedEntryFee)} added to club cart (change fee + entry fee).`
+        : chargedChangeFee > 0
+          ? 'Registration updated. Change fee added to club cart.'
+          : addedEntryFee > 0
+            ? `Registration updated. ${fmtMoney(addedEntryFee)} entry fee added to club cart.`
+            : 'Registration saved.',
+      // UAT M-01-02: point at THIS club's cart, not the personal one — this
+      // save routes through `d.carts[clubId]` above.
+      { action: { label: 'View cart', to: `/club/${clubId}/cart` } },
     );
   };
 
@@ -2170,7 +2270,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
       {refundTarget && (
         <RefundRequestDialog
           items={refundTarget}
-          eventName={event.name}
+          event={event}
           clubId={clubId}
           onClose={() => setRefundTarget(null)}
           onSubmitted={() => { /* store refresh happens inside the dialog via syncFromSupabase() */ }}

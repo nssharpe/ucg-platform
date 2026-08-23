@@ -7,9 +7,10 @@
 // block the UI) and are no-ops when `isSupabaseConfigured` is false.
 import { createClient, type SupabaseClient, type RealtimePostgresChangesPayload, type PostgrestError } from '@supabase/supabase-js';
 import type {
-  AccountInvite, AccountingCode, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, EventAdmin, HostPayout, Invoice, JudgeAccessCode, Level, Event, Membership, MembershipType, Payment, PaymentSnapshotLine, Region, Registration, RefundRequest, SanctionRequest, SanctionVote, Score, Season,
+  AccountInvite, AccountingCode, Athlete, Club, ClubMembership, ClubRequest, Coupon, DB, EventAdmin, EventSession, HostPayout, Invoice, JudgeAccessCode, Level, Event, Membership, MembershipType, Payment, PaymentSnapshotLine, Region, Registration, RefundRequest, SanctionRequest, SanctionVote, Score, Season,
   WaiverDocument, WaiverSignature, WaitlistGroup, SessionRequest, CompetitionOrder, FinalsLineup, EventCheckin,
 } from './types';
+import { diffSessions } from './events-core';
 import { writeQueue, humanizeWriteError, type WriteOp, type ExecResult, type WriteQueueEntry } from './write-queue';
 import { pushToast } from './toast-bus';
 import type { Database } from './database.types';
@@ -581,6 +582,10 @@ export const rowToScore = (r: Row<'scores'>): Score => ({
   ...(r.scratched ? { scratched: true } : {}),
   ...((r as { deductions2?: number | string | null }).deductions2 != null ? { deductions2: Number((r as { deductions2?: number | string | null }).deductions2) } : {}),
   ...((r as { e_score2?: number | string | null }).e_score2 != null ? { eScore2: Number((r as { e_score2?: number | string | null }).e_score2) } : {}),
+  // updated_at (UAT Z-06-01 compare-and-set, 20260822020000) — like
+  // deductions2/e_score2 above, not yet in the generated database.types.ts,
+  // hence the cast. READ-ONLY: never appears in scoreToRow's push mapping.
+  ...((r as { updated_at?: string | null }).updated_at ? { updatedAt: (r as { updated_at?: string | null }).updated_at! } : {}),
 });
 
 // cart_items: one row per item, owner = club_id or person_id
@@ -682,13 +687,17 @@ const rowToRefundRequest = (r: {
   event_id: string; kind: string; reg_id: string | null; invoice_item_id: string | null;
   payment_id: string | null; reason: string; reason_detail: string | null; status: string;
   reviewed_by: string | null; reviewed_at: string | null; refund_amount_cents: number | null;
-  stripe_refund_id: string | null;
+  stripe_refund_id: string | null; request_group_id?: string | null; rejection_reason?: string | null;
 }): RefundRequest => ({
   id: r.id, createdAt: r.created_at, requesterPersonId: r.requester_person_id, clubId: r.club_id,
   eventId: r.event_id, kind: r.kind as RefundRequest['kind'], regId: r.reg_id, invoiceItemId: r.invoice_item_id,
   paymentId: r.payment_id, reason: r.reason as RefundRequest['reason'], reasonDetail: r.reason_detail,
   status: r.status as RefundRequest['status'], reviewedBy: r.reviewed_by, reviewedAt: r.reviewed_at,
   refundAmountCents: r.refund_amount_cents, stripeRefundId: r.stripe_refund_id,
+  // Defensive fallback to `id` — the column is NOT NULL in the DB (T4b
+  // 20260821150000 backfilled every pre-existing row), but this tolerates a
+  // stale generated-types select list that hasn't picked the column up yet.
+  requestGroupId: r.request_group_id ?? r.id, rejectionReason: r.rejection_reason ?? null,
 });
 // waitlist_groups is not yet in the generated database.types.ts (this
 // migration hasn't been applied/regenerated against at write time) — inline
@@ -997,18 +1006,40 @@ export function deleteMembership(personId: string, seasonId: string, type: strin
   remoteDelete('memberships', `${personId}:${seasonId}:${type}`, 'id');
 }
 
-export function pushEvent(m: Event) {
+/** Upsert `event_sessions` rows and delete only the ones genuinely removed —
+ *  see `diffSessions` (events-core.ts) for why this replaced a blanket
+ *  `remoteReplace` (UAT Z-06: that delete-then-insert nulled every
+ *  registration's/score's `session_id` on EVERY session-list save, even a
+ *  same-id round trip, because `ON DELETE SET NULL` fires on the delete
+ *  regardless of what gets reinserted afterward). `previousSessions` is the
+ *  session list as it stood before this edit; defaulting it to `m.sessions`
+ *  makes every caller that never adds/removes a session (event-status
+ *  toggles, `NationalsConfigEditor`, `SquadBuilder`'s squad-only writes) a
+ *  no-op diff — upsert everything, delete nothing — without having to know
+ *  or care about this function's existence. Only EventWizard's session
+ *  editor passes a real previous snapshot (`editEvent.sessions`, captured
+ *  before the in-place `mutate()` reassigns the local copy). */
+function pushEventSessionRows(m: Event, previousSessions: EventSession[]) {
+  const { upsert, deleteIds } = diffSessions(previousSessions, m.sessions);
+  remoteUpsert('event_sessions', upsert.map((s) => sessionToRow(m.id, s)));
+  for (const id of deleteIds) remoteDelete('event_sessions', id);
+}
+
+export function pushEvent(m: Event, previousSessions: EventSession[] = m.sessions) {
   remoteUpsert('events', [eventToRow(m)]);
-  remoteReplace('event_sessions', { event_id: m.id }, m.sessions.map((s) => sessionToRow(m.id, s)));
+  pushEventSessionRows(m, previousSessions);
   for (const s of m.sessions) {
     remoteReplace('squads', { session_id: s.id }, s.squads.map((q, i) => squadToRow(s.id, q, i)));
   }
 }
 
 /** Push only an event's sessions/squads (status/fields unchanged), and the
- *  resulting squad_id placements for that event's registrations. */
-export function pushEventSessions(m: Event, registrations: Registration[]) {
-  remoteReplace('event_sessions', { event_id: m.id }, m.sessions.map((s) => sessionToRow(m.id, s)));
+ *  resulting squad_id placements for that event's registrations.
+ *  `previousSessions` defaults to `m.sessions` because every caller here
+ *  (SquadBuilder) only ever edits squads within an unchanged session list —
+ *  see `pushEventSessionRows` above. */
+export function pushEventSessions(m: Event, registrations: Registration[], previousSessions: EventSession[] = m.sessions) {
+  pushEventSessionRows(m, previousSessions);
   for (const s of m.sessions) {
     remoteReplace('squads', { session_id: s.id }, s.squads.map((q, i) => squadToRow(s.id, q, i)));
   }
@@ -1078,7 +1109,43 @@ export function syncSynchroPartnerLevelRemote(myRegId: string, syLevel: string) 
   }, 'registrations');
 }
 
-export function pushScore(s: Score) { remoteUpsert('scores', [scoreToRow(s)]); }
+export interface PostScoreResult {
+  ok: boolean;
+  conflict?: boolean;
+  /** The row currently in the database — populated on both a conflict (the
+   *  OTHER post that won) and a success (this post's own freshly-stamped
+   *  `updated_at`, for the caller's NEXT expectation). `null`/absent only
+   *  when the RPC itself failed to run (see `error`). */
+  current?: Score | null;
+  error?: string;
+}
+
+/** Compare-and-set score post (UAT Z-06-01) — two judges (one signed in, one
+ *  anonymous via the judge-access unlock) posting the same athlete/apparatus
+ *  seconds apart used to silently overwrite each other: both write paths
+ *  upsert the same deterministic `scores.id` with no version check at all.
+ *  `expectedUpdatedAt` is the `updated_at` the caller last saw for this score
+ *  id — `null` means "I believe no score exists here yet". `post_score`
+ *  (SECURITY INVOKER, so `scores_write`/`event_host_scores_write` RLS still
+ *  applies to a signed-in caller exactly as it did for the old direct
+ *  upsert; a service-role caller — judge-entry — bypasses RLS at the role
+ *  level regardless) row-locks the existing row and returns a conflict
+ *  WITHOUT writing when the expectation is stale, including "a row now
+ *  exists but I expected none" (the two-judges race). judge-entry calls this
+ *  SAME RPC under service role for the anonymous path — one compare-and-set
+ *  implementation, not two. */
+export async function pushScore(s: Score, expectedUpdatedAt: string | null): Promise<PostScoreResult> {
+  if (!supabase) return { ok: false, error: 'Not configured.' };
+  const { data, error } = await supabase.rpc('post_score', {
+    p_score: scoreToRow(s), p_expected_updated_at: expectedUpdatedAt,
+  });
+  if (error) { console.error('[supabase] post_score failed:', error); return { ok: false, error: error.message }; }
+  const result = data as { ok: boolean; conflict?: boolean; current?: Row<'scores'> | null };
+  return {
+    ok: result.ok, conflict: result.conflict,
+    current: result.current ? rowToScore(result.current) : null,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Scores slice-layer reads (Phase 2, docs/specs/2026-07-24-data-layer-scale.md)
@@ -1445,6 +1512,22 @@ export function pushCartItem(ownerKey: string, item: DB['carts'][string][number]
 export function pushInvoice(inv: Invoice) {
   remoteUpsert('invoices', [invoiceToRow(inv)]);
   remoteReplace('invoice_items', { invoice_id: inv.id }, inv.items.map((it) => invoiceItemToRow(inv.id, it)));
+}
+
+/** Claim the next sequential `UCG-YYYY-NNNN` invoice number via the atomic
+ *  `next_invoice_number` RPC (20260821140000; service_role- and
+ *  is_admin()-gated server-side — see the migration). Used by
+ *  Membership.tsx's admin "comp" path, the only CLIENT writer of a real
+ *  invoice (the webhook/free-order paths call the same RPC directly from
+ *  `_shared/fulfill.ts`). Throws rather than falling back to any
+ *  client-guessed number — a duplicate/incorrect invoice number is a money
+ *  correctness bug, not a UX one; callers must catch and abort. */
+export async function nextInvoiceNumber(): Promise<string> {
+  if (!supabase) throw new Error('Not configured.');
+  const { data, error } = await supabase.rpc('next_invoice_number');
+  if (error) { console.error('[supabase] next_invoice_number failed:', error); throw new Error(error.message); }
+  if (typeof data !== 'string' || !data) throw new Error('next_invoice_number returned no number.');
+  return data;
 }
 
 export function pushClubRequest(r: ClubRequest) { remoteUpsert('club_requests', [clubRequestToRow(r)]); }
@@ -2019,6 +2102,56 @@ export interface CheckoutSurveyRequiredError {
   missing: string[];
 }
 
+/** Shape shared by any `create-checkout-session` caller (real OR preview
+ *  mode) that needs to branch on its three structured-rejection codes —
+ *  capacity/session/survey checks all run identically in preview mode (see
+ *  the function's "Gates BOTH the Stripe path and the $0 free-order path"
+ *  comments), so a preview call can 409/400 exactly like a real one. */
+interface CheckoutSessionStructuredError {
+  error: string;
+  capacityError?: CheckoutCapacityError;
+  sessionRequiredError?: CheckoutSessionRequiredError;
+  surveyRequiredError?: CheckoutSurveyRequiredError;
+}
+
+async function parseCheckoutSessionError(error: { message: string }): Promise<CheckoutSessionStructuredError> {
+  const { message, body } = await edgeErrorBody(error);
+  if (body?.code === 'capacity-exceeded') {
+    return {
+      error: message,
+      capacityError: {
+        code: 'capacity-exceeded',
+        eventId: body.eventId as string,
+        eventName: body.eventName as string,
+        violations: (body.violations as CapacityViolation[]) ?? [],
+      },
+    };
+  }
+  if (body?.code === 'session-required') {
+    return {
+      error: message,
+      sessionRequiredError: {
+        code: 'session-required',
+        eventId: body.eventId as string,
+        eventName: body.eventName as string,
+        regIds: (body.regIds as string[]) ?? [],
+      },
+    };
+  }
+  if (body?.code === 'session-survey-required') {
+    return {
+      error: message,
+      surveyRequiredError: {
+        code: 'session-survey-required',
+        eventId: body.eventId as string,
+        eventName: body.eventName as string,
+        missing: (body.missing as string[]) ?? [],
+      },
+    };
+  }
+  return { error: message };
+}
+
 export async function createCheckoutSession(args: {
   cartItemIds: string[];
   couponCode?: string;
@@ -2031,41 +2164,8 @@ export async function createCheckoutSession(args: {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('create-checkout-session', { body: args });
   if (error) {
-    const { message, body } = await edgeErrorBody(error);
-    if (body?.code === 'capacity-exceeded') {
-      return {
-        ok: false, error: message,
-        capacityError: {
-          code: 'capacity-exceeded',
-          eventId: body.eventId as string,
-          eventName: body.eventName as string,
-          violations: (body.violations as CapacityViolation[]) ?? [],
-        },
-      };
-    }
-    if (body?.code === 'session-required') {
-      return {
-        ok: false, error: message,
-        sessionRequiredError: {
-          code: 'session-required',
-          eventId: body.eventId as string,
-          eventName: body.eventName as string,
-          regIds: (body.regIds as string[]) ?? [],
-        },
-      };
-    }
-    if (body?.code === 'session-survey-required') {
-      return {
-        ok: false, error: message,
-        surveyRequiredError: {
-          code: 'session-survey-required',
-          eventId: body.eventId as string,
-          eventName: body.eventName as string,
-          missing: (body.missing as string[]) ?? [],
-        },
-      };
-    }
-    return { ok: false, error: message };
+    const parsed = await parseCheckoutSessionError(error);
+    return { ok: false, ...parsed };
   }
   return data as {
     ok: boolean; clientSecret?: string; sessionId?: string; paymentId?: string; free?: boolean;
@@ -2097,12 +2197,22 @@ export async function previewCartTotal(args: {
   ok: boolean; lines?: CartPreviewLine[];
   amountSubtotal?: number; discountAmount?: number; serviceFee?: number; total?: number;
   error?: string;
+  // UAT M-12-01: capacity/session/survey checks run identically in preview
+  // mode (see parseCheckoutSessionError's doc comment), so a caller that
+  // gates a real checkout attempt on preview first (CartCheckout.tsx) needs
+  // these the same way createCheckoutSession's caller does — the Cart page's
+  // own preview usage (informational "Estimated" pricing) simply ignores them.
+  capacityError?: CheckoutCapacityError; sessionRequiredError?: CheckoutSessionRequiredError;
+  surveyRequiredError?: CheckoutSurveyRequiredError;
 }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('create-checkout-session', {
     body: { ...args, mode: 'preview' },
   });
-  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  if (error) {
+    const parsed = await parseCheckoutSessionError(error);
+    return { ok: false, ...parsed };
+  }
   const res = data as {
     ok?: boolean; preview?: boolean; lines?: CartPreviewLine[];
     amountSubtotal?: number; discountAmount?: number; serviceFee?: number; total?: number;
@@ -2246,15 +2356,118 @@ export async function logClientError(e: {
 }
 
 /** Read recent client errors (admins only, via RLS). Optional text filter is
- *  applied client-side over email/message/context. */
-export async function fetchErrorLogs(limit = 200): Promise<ErrorLogRow[]> {
+ *  applied client-side over email/message/context.
+ *
+ *  `before` is a keyset-pagination cursor (an ISO `createdAt` from a
+ *  previous page — see `nextPageCursor` in `admin-errors-core.ts`) so the
+ *  admin Errors & Problems page's "Load more" button can fetch strictly
+ *  older rows instead of re-fetching everything with a bigger limit. */
+export async function fetchErrorLogs(opts: { limit?: number; before?: string } = {}): Promise<ErrorLogRow[]> {
   if (!supabase) return [];
-  const { data, error } = await supabase.from('error_logs').select('*').order('created_at', { ascending: false }).limit(limit);
+  const limit = opts.limit ?? 200;
+  let q = supabase.from('error_logs').select('*').order('created_at', { ascending: false }).limit(limit);
+  if (opts.before) q = q.lt('created_at', opts.before);
+  const { data, error } = await q;
   if (error) { console.error('[supabase] fetchErrorLogs failed:', error); return []; }
   return (data ?? []).map((r) => ({
     id: r.id, createdAt: r.created_at, email: r.email, personId: r.person_id, context: r.context,
     message: r.message, stack: r.stack, detail: r.detail, url: r.url, userAgent: r.user_agent, appVersion: r.app_version,
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Problem reports — durable, admin-searchable record of "Report a problem"
+// submissions (report-problem inserts with the service role; email stays
+// the alerting path, this table is the review path). Admin-only via RLS.
+// ---------------------------------------------------------------------------
+export interface ProblemReportRow {
+  id: string;
+  createdAt: string;
+  authUserId: string | null;
+  reporterPersonId: string | null;
+  reporterEmail: string | null;
+  reporterName: string | null;
+  category: 'bug' | 'question' | 'unsure';
+  description: string;
+  route: string | null;
+  appVersion: string | null;
+  userAgent: string | null;
+  recentErrors: unknown;
+  attachmentCount: number;
+  status: 'open' | 'resolved';
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+  resolutionNote: string | null;
+}
+
+function rowToProblemReport(r: Record<string, unknown>): ProblemReportRow {
+  return {
+    id: r.id as string,
+    createdAt: r.created_at as string,
+    authUserId: (r.auth_user_id as string | null) ?? null,
+    reporterPersonId: (r.reporter_person_id as string | null) ?? null,
+    reporterEmail: (r.reporter_email as string | null) ?? null,
+    reporterName: (r.reporter_name as string | null) ?? null,
+    category: r.category as ProblemReportRow['category'],
+    description: r.description as string,
+    route: (r.route as string | null) ?? null,
+    appVersion: (r.app_version as string | null) ?? null,
+    userAgent: (r.user_agent as string | null) ?? null,
+    recentErrors: r.recent_errors ?? null,
+    attachmentCount: (r.attachment_count as number | null) ?? 0,
+    status: r.status as ProblemReportRow['status'],
+    resolvedAt: (r.resolved_at as string | null) ?? null,
+    resolvedBy: (r.resolved_by as string | null) ?? null,
+    resolutionNote: (r.resolution_note as string | null) ?? null,
+  };
+}
+
+/** Read problem reports (admin-only, via RLS). Targeted fetch — not
+ *  `loadAll` — per data-layer.md; scoped by `status` server-side (the page
+ *  refetches on a status-tab change rather than filtering a narrower
+ *  server response down further client-side) with keyset pagination via
+ *  `before`/`limit` for "Load more", matching `fetchErrorLogs`. */
+export async function fetchProblemReports(
+  opts: { status?: 'open' | 'resolved'; limit?: number; before?: string } = {},
+): Promise<ProblemReportRow[]> {
+  if (!supabase) return [];
+  const limit = opts.limit ?? 200;
+  let q = supabase.from('problem_reports').select('*').order('created_at', { ascending: false }).limit(limit);
+  if (opts.status) q = q.eq('status', opts.status);
+  if (opts.before) q = q.lt('created_at', opts.before);
+  const { data, error } = await q;
+  if (error) { console.error('[supabase] fetchProblemReports failed:', error); return []; }
+  return (data ?? []).map(rowToProblemReport);
+}
+
+/** Resolve or reopen a problem report. Stamps `resolved_at`/`resolved_by`
+ *  (the caller's own auth uid) on resolve; reopening clears both but keeps
+ *  `resolution_note` as history rather than erasing it. `is_admin()` is
+ *  aal2-gated (auth-and-mfa.md), so an admin whose session hasn't stepped up
+ *  can hit this and have RLS silently filter the row out of the UPDATE —
+ *  PostgREST then returns success with zero rows, not an error. `.select()`
+ *  + treating an empty result as failure is what catches that; without it
+ *  the UI would flip the badge optimistically while nothing changed. */
+export async function updateProblemReportStatus(
+  id: string,
+  status: 'open' | 'resolved',
+  note?: string,
+): Promise<{ ok: boolean; row?: ProblemReportRow; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const patch: Record<string, unknown> = { status };
+  if (status === 'resolved') {
+    const { data: u } = await supabase.auth.getUser();
+    patch.resolved_at = new Date().toISOString();
+    patch.resolved_by = u.user?.id ?? null;
+    if (note !== undefined) patch.resolution_note = note.trim() || null;
+  } else {
+    patch.resolved_at = null;
+    patch.resolved_by = null;
+  }
+  const { data, error } = await supabase.from('problem_reports').update(patch).eq('id', id).select().maybeSingle();
+  if (error) return { ok: false, error: error.message };
+  if (!data) return { ok: false, error: 'Update was blocked — no row matched (check admin access).' };
+  return { ok: true, row: rowToProblemReport(data) };
 }
 
 // ---------------------------------------------------------------------------
@@ -2450,18 +2663,40 @@ export async function judgeUnlock(args: { code?: string; token?: string }): Prom
 /** No-login score submission for a codeless-unlocked device — the server
  *  re-validates everything (token active, registration/apparatus match,
  *  numeric bounds) via judge-entry-core.ts and stamps `entered_by` itself;
- *  nothing here is trusted, this is just the wire shape. */
+ *  nothing here is trusted, this is just the wire shape.
+ *
+ *  Compare-and-set (UAT Z-06-01): `expectedUpdatedAt` is forwarded verbatim
+ *  to the same `post_score` RPC the signed-in path uses (judge-entry calls it
+ *  under service role). A stale/missing expectation against an existing row
+ *  comes back as `conflict: true` with the row that actually won, instead of
+ *  silently overwriting it — the phone UI shows the same Replace/Keep-
+ *  existing dialog as the signed-in page.
+ *
+ *  The conflict response is a 409 — supabase-js v2 routes any non-2xx
+ *  `functions.invoke` response into `error` with `data: null` (why
+ *  `edgeErrorMessage` exists at all), so the structured `{conflict, current}`
+ *  body has to be dug out of `error.context` via `edgeErrorBody`, the SAME
+ *  helper `parseCheckoutSessionError` uses for `create-checkout-session`'s
+ *  structured 4xx rejections (`capacity-exceeded`/`session-required`). */
 export async function judgeSubmitScore(args: {
   token: string; regId: string; apparatus: string;
   sv: number | null; deductions: number | null; eScore?: number | null; final: number | null;
   source?: string; calc?: string; calcState?: unknown; flashed?: boolean; scratched?: boolean;
   /** Second judge panel's raw execution inputs (2026-07-19 scoring config). */
   deductions2?: number | null; eScore2?: number | null;
-}): Promise<{ ok: boolean; error?: string }> {
+  /** The `updated_at` this device last saw for this score id; `null`/absent
+   *  means "I believe no score exists here yet". */
+  expectedUpdatedAt?: string | null;
+}): Promise<{ ok: boolean; conflict?: boolean; current?: Score | null; error?: string }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('judge-entry', { body: { op: 'submit', ...args } });
-  if (error) return { ok: false, error: await edgeErrorMessage(error) };
-  return data as { ok: boolean; error?: string };
+  if (error) {
+    const { message, body } = await edgeErrorBody(error);
+    if (body?.conflict) return { ok: false, conflict: true, current: (body.current as Score | null) ?? null, error: message };
+    return { ok: false, error: message };
+  }
+  const result = data as { ok: boolean; score?: Score };
+  return { ok: true, current: result.score ?? null };
 }
 
 /** Admin/club-manager mints a no-login waiver signing link for a member (tied to
@@ -2476,14 +2711,20 @@ export async function createWaiverLink(args: {
   return data as { ok: boolean; token?: string; link?: string; signerRole?: 'self' | 'guardian'; error?: string };
 }
 
-/** Request a refund on a paid registration entry or a purchased add-on line
- *  (event-mgmt v2 Phase 3, spec §H). Server resolves ownership/authorization
- *  and eligibility (host club must be the league's own — `is_league_host`);
- *  creates a `refund_requests` row and emails the requester + refund managers.
- *  Does NOT itself process the refund — that's the review flow (T6). Pass
- *  `clubId` when requesting on behalf of an athlete from a club-manager
- *  context (the server verifies the caller actually manages that club before
- *  honoring it — a mismatched clubId is simply ignored server-side). */
+/** Request a refund on a paid registration or a purchased add-on line
+ *  (event-mgmt v2 Phase 3, spec §H; grouped-per-registration rewrite, UAT
+ *  Z-04). For `kind: 'registration'`, the server enumerates EVERY refundable
+ *  paid line for that registration across every payment that funded it
+ *  (rule 1) and creates ONE group of `refund_requests` rows tied together by
+ *  `groupId` — never just the first invoice/payment resolved. For
+ *  `kind: 'addon'`, unchanged single-item shape, refused server-side outright
+ *  if the add-on's own purchase deadline has passed (rule 5). Server resolves
+ *  ownership/authorization and eligibility (host club must be the league's
+ *  own — `is_league_host`) and emails the requester + refund managers. Does
+ *  NOT itself process the refund — that's the review flow (T6). Pass `clubId`
+ *  when requesting on behalf of an athlete from a club-manager context (the
+ *  server verifies the caller actually manages that club before honoring it —
+ *  a mismatched clubId is simply ignored server-side). */
 export async function requestRefund(args: {
   kind: 'registration' | 'addon';
   regId?: string;
@@ -2491,28 +2732,52 @@ export async function requestRefund(args: {
   reason: 'injury' | 'illness' | 'bereavement' | 'other';
   reasonDetail?: string;
   clubId?: string;
-}): Promise<{ ok: boolean; requestId?: string; error?: string }> {
+}): Promise<{ ok: boolean; groupId?: string; error?: string }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('request-refund', { body: args });
   if (error) return { ok: false, error: await edgeErrorMessage(error) };
-  return data as { ok: boolean; requestId?: string; error?: string };
+  return data as { ok: boolean; groupId?: string; error?: string };
 }
 
-/** Approve or reject a pending refund request (event-mgmt v2 Phase 3, spec §H,
- *  T6). Refund-manager/admin only, enforced server-side. Approve computes the
- *  refund (100%/75% by the event's `lastDateToEdit`, capped at what's left on
- *  the payment), calls Stripe, and applies the item/registration state change;
- *  reject just declines with no item/registration change (beyond clearing
+/** One SUCCEEDED payment from a grouped `processRefund('approve', …)` call —
+ *  a registration refund can span multiple payments (rule 1); each is
+ *  claimed/refunded independently so one payment's Stripe failure never
+ *  blocks the others. */
+export interface RefundGroupRefunded { paymentId: string; cents: number; stripeRefundId: string | null }
+/** One payment that could NOT be refunded automatically in a grouped approve
+ *  call (e.g. a Stripe failure) — its rows stay 'pending' and a later
+ *  approve on the same group retries exactly these. */
+export interface RefundGroupFailed { paymentId: string; error: string }
+
+/** Approve or reject an entire refund request GROUP (event-mgmt v2 Phase 3,
+ *  spec §H, T6; grouped rewrite UAT Z-04). Refund-manager/admin only,
+ *  enforced server-side. Approve computes the refund PER PAYMENT the group
+ *  references (100%/75% by the event's `lastDateToEdit` for a registration,
+ *  always 100% for an add-on — rule 5), capped at what's left on each
+ *  payment, calls Stripe once per payment, and — only once every payment
+ *  succeeded — applies the item/registration state change; a partial failure
+ *  leaves the registration untouched and retryable. Reject requires a
+ *  free-text `rejectionReason` (rule 6) and declines every still-pending row
+ *  in the group with no item/registration change (beyond clearing
  *  `refund_requested`). Caller should `syncFromSupabase()` afterward to pick
  *  up the new `refund_requests`/registrations/invoice_items state. */
 export async function processRefund(
-  requestId: string,
+  groupId: string,
   action: 'approve' | 'reject',
-): Promise<{ ok: boolean; refundAmountCents?: number; stripeRefundId?: string | null; error?: string }> {
+  rejectionReason?: string,
+): Promise<{ ok: boolean; refunded?: RefundGroupRefunded[]; failed?: RefundGroupFailed[]; error?: string; status?: number }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
-  const { data, error } = await supabase.functions.invoke('process-refund', { body: { requestId, action } });
-  if (error) return { ok: false, error: await edgeErrorMessage(error) };
-  return data as { ok: boolean; refundAmountCents?: number; stripeRefundId?: string | null; error?: string };
+  const { data, error } = await supabase.functions.invoke('process-refund', { body: { groupId, action, rejectionReason } });
+  if (error) {
+    // Rule 7 (UAT Z-04): RefundReview.tsx needs to tell a genuine 409
+    // conflict apart from "someone already decided this the same way I just
+    // did" — both surface as the SAME error message, so the status code is
+    // the only signal. `context` is the raw Response FunctionsHttpError
+    // wraps (see edgeErrorMessage/edgeErrorBody above).
+    const status = (error as { context?: Response }).context?.status;
+    return { ok: false, error: await edgeErrorMessage(error), status };
+  }
+  return data as { ok: boolean; refunded?: RefundGroupRefunded[]; failed?: RefundGroupFailed[]; error?: string };
 }
 
 /** Admin/sanctioning-only waitlist override (event-mgmt v2 P4 T7): 'promote'

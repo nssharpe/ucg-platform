@@ -180,6 +180,42 @@ export function useMyRegistrations(): Registration[] {
   return remote;
 }
 
+/** Force a refetch of the "mine" tier for whichever person is CURRENTLY
+ *  cached, bypassing `ensureMyRegistrationsLoaded`'s same-person no-op guard
+ *  (UAT M-12-02). Needed after a server-side write to a registration's
+ *  `paid`/`updatedPending` state that the client learns about only by
+ *  polling a `payments` row (checkout fulfillment, free or Stripe) rather
+ *  than through `writeRegistration`'s own optimistic
+ *  `applyLocalRegistrationUpsert` — `syncFromSupabase()` does NOT cover this:
+ *  registrations were moved off `loadAll`'s global hydration onto this slice
+ *  layer (Phase 3, data-layer.md), so without this call the "mine" cache
+ *  stays on its pre-payment snapshot until something changes `personId`
+ *  (e.g. a full page reload, which resets this module's state) — exactly
+ *  the "Pending Purchase until hard reload" bug. No-op in demo mode or
+ *  before the "mine" cache has ever loaded a person. */
+export function invalidateMyRegistrations(): void {
+  if (!isSupabaseConfigured || !myRegsPersonId) return;
+  const personId = myRegsPersonId;
+  void fetchRegistrationsForPersonRemote(personId)
+    .then((rows) => { if (personId === myRegsPersonId) myRegsCache = rows; })
+    .catch((e: unknown) => { console.error('[registrations-slice] invalidateMyRegistrations failed:', e); })
+    .finally(() => { notifyMyRegs(); });
+}
+
+/** Force a refetch of one club's cross-event registrations (shape #5) — same
+ *  post-payment staleness gap as `invalidateMyRegistrations`, for a managed
+ *  club's cart checkout. */
+export function invalidateClubRegistrations(clubId: string): void {
+  regsByClubSlice.invalidate(clubId);
+}
+
+/** Force a refetch of one event's registrations (shape #1) — same gap, for
+ *  any event-scoped view (e.g. a club roster page) whose event a
+ *  just-completed checkout's items reference. */
+export function invalidateEventRegistrations(eventId: string): void {
+  regsByEventSlice.invalidate(eventId);
+}
+
 /** Mounted once near the app root (App.tsx), NOT per-page, so the "mine"
  *  cache hydrates at boot the same way the rest of Tier 2 (memberships,
  *  invoices, ...) already does — without adding registrations back to

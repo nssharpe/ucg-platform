@@ -1,8 +1,12 @@
 // process-refund — refund review/processing (event-mgmt v2 Phase 3, spec §H,
-// T6). Approves or rejects a `refund_requests` row (T4 migration; T5's
-// request-refund is the only inserter). Approving computes the refund amount,
-// calls the Stripe Refunds API against the ORIGINAL payment intent, and
-// applies the registration/invoice_item state change.
+// T6; grouped-per-registration rewrite: UAT Z-04-01/02/03 + Nate's Z-04 note,
+// 2026-08-21). Approves or rejects an entire `request_group_id` GROUP of
+// `refund_requests` rows (T4 migration `20260710212356`; T4b
+// `20260821150000` added `request_group_id`/`rejection_reason` — T5's
+// request-refund is the only inserter). Approving computes the refund
+// amount PER PAYMENT the group references, calls the Stripe Refunds API
+// against each payment's own PaymentIntent, and applies ONE
+// registration/invoice_item state change for the whole group.
 //
 // Auth: any signed-in user with the 'refund_manager' or 'admin' role
 // (user_roles), checked server-side and fail-closed — never trusted from the
@@ -10,17 +14,41 @@
 // --no-verify-jwt functions (stripe-webhook, sms-webhook,
 // notify-manager-access-denied).
 //
-// Money-critical — ordering matters:
-//   1. Load + validate the request/item/event/payment (400s only, no writes).
-//   2. Atomically CLAIM the request (status pending -> approved/rejected,
-//      conditional on status='pending') BEFORE calling Stripe, so a second
-//      concurrent reviewer/retry can't double-process.
-//   3. Only THEN call Stripe. On any Stripe failure, best-effort REVERT the
-//      claim back to 'pending' so the request can be retried, and log to
-//      error_logs (there is no remote function-log access for this project).
-//   4. After a successful refund (or a capped-$0 approve with no Stripe call),
-//      apply the invoice_item/registration state change and send emails —
-//      both best-effort; the money movement (or lack of it) is already final.
+// UAT Z-04 confirmed business rules implemented here:
+//   1+2. A registration refund can span MULTIPLE payments (an original entry
+//        invoice + a later "add discipline" invoice) — every payment in the
+//        group is refunded, sequentially, each capped/claimed independently
+//        via `claim_refund_approval` (never batched into one claim call).
+//   3.   The service fee is never refunded — `claim_refund_approval` caps at
+//        `amount_subtotal`, unchanged.
+//   4.   75% after the event's `last_date_to_edit`, applied PER PAYMENT via
+//        `allocateRegistrationRefund` (`_shared/refund-allocation.ts`).
+//   5.   Add-ons are always 100% here — a past-deadline add-on was already
+//        refused at REQUEST time (request-refund), so by construction every
+//        pending add-on request that reaches approval is still in-window.
+//   6.   Reject requires a free-text `rejectionReason`, stored and emailed.
+//
+// Money-critical — ordering matters, same shape as before but per-payment:
+//   1. Load every row in the group (400s only, no writes).
+//   2. For EACH payment the group's still-pending rows reference: atomically
+//      CLAIM one representative ("carrier") row for that payment via
+//      `claim_refund_approval` (status pending -> approved, capped at the
+//      payment's remaining subtotal) BEFORE calling Stripe for that payment.
+//      Any OTHER pending row sharing the same payment is then flipped to
+//      'approved' with refund_amount_cents=0 (the money is fully attributed
+//      to the carrier row; `claim_refund_approval` itself is never asked to
+//      claim more than one row at a time — "call it once per distinct
+//      payment", unchanged).
+//   3. Only THEN call Stripe for that payment. On Stripe failure, best-effort
+//      REVERT that payment's claim (carrier + any zero-cost siblings) back to
+//      'pending' so it can be retried, log to error_logs, and CONTINUE to the
+//      next payment — one payment's Stripe failure must not abandon the
+//      others.
+//   4. Only once EVERY payment in the group succeeded: apply the
+//      registration/invoice_item state change (remove/blank), matching the
+//      pre-existing on-time/past-deadline behavior. A partial failure leaves
+//      the registration untouched and its still-pending rows retryable by a
+//      later approve call on the same group.
 //
 // Secrets: STRIPE_SECRET_KEY, RESEND_API_KEY, RESEND_FROM, APP_PUBLIC_URL
 // (shared/optional with sane fallbacks). Auto-provided: SUPABASE_URL,
@@ -31,6 +59,7 @@ import { getStripe } from '../_shared/stripe.ts';
 import { sendBatch, sendOne, type EmailMessage } from '../_shared/resend.ts';
 import { renderEmail } from '../_shared/email-layout.ts';
 import { requireAalForEnrolledCaller } from '../_shared/aal-guard.ts';
+import { allocateRegistrationRefund, type RefundAllocationLine } from '../_shared/refund-allocation.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -50,8 +79,25 @@ type DB = ReturnType<typeof createClient>;
 
 interface Payload {
   requestId?: string;
+  groupId?: string;
   action?: 'approve' | 'reject';
+  rejectionReason?: string;
 }
+
+interface GroupRow {
+  id: string;
+  kind: 'registration' | 'addon';
+  reg_id: string | null;
+  invoice_item_id: string | null;
+  payment_id: string | null;
+  event_id: string;
+  requester_person_id: string;
+  status: 'pending' | 'approved' | 'rejected';
+  request_group_id: string;
+}
+
+interface RefundedEntry { paymentId: string; cents: number; stripeRefundId: string | null }
+interface FailedEntry { paymentId: string; error: string }
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -100,28 +146,40 @@ Deno.serve(async (req) => {
   } catch {
     return json({ error: 'Invalid JSON body.' }, 400);
   }
-  const requestId = typeof payload.requestId === 'string' ? payload.requestId.trim() : '';
   const action = payload.action;
-  if (!requestId) return json({ error: 'requestId is required.' }, 400);
   if (action !== 'approve' && action !== 'reject') return json({ error: 'action must be "approve" or "reject".' }, 400);
-
-  const { data: reqRow, error: reqErr } = await db
-    .from('refund_requests')
-    .select('id, kind, reg_id, invoice_item_id, payment_id, event_id, requester_person_id, status')
-    .eq('id', requestId)
-    .maybeSingle();
-  if (reqErr) return json({ error: 'Could not look up the refund request.' }, 500);
-  if (!reqRow) return json({ error: 'Refund request not found.' }, 404);
-  const request = reqRow as {
-    id: string; kind: 'registration' | 'addon'; reg_id: string | null; invoice_item_id: string | null;
-    payment_id: string | null; event_id: string; requester_person_id: string; status: string;
-  };
-  if (request.status !== 'pending') {
-    return json({ error: 'This request has already been reviewed.' }, 409);
+  const rejectionReason = typeof payload.rejectionReason === 'string' ? payload.rejectionReason.trim() : '';
+  if (action === 'reject' && !rejectionReason) {
+    return json({ error: 'A rejection reason is required.' }, 400);
   }
 
-  if (action === 'reject') return handleReject(db, request, caller);
-  return handleApprove(db, request, caller);
+  // --- Resolve the group id (either passed directly, or via a single row's
+  // own id — kept for any caller that still only knows a row id). ---
+  let groupId = typeof payload.groupId === 'string' ? payload.groupId.trim() : '';
+  const requestId = typeof payload.requestId === 'string' ? payload.requestId.trim() : '';
+  if (!groupId && !requestId) return json({ error: 'groupId (or requestId) is required.' }, 400);
+  if (!groupId) {
+    const { data: byId, error: byIdErr } = await db
+      .from('refund_requests')
+      .select('request_group_id')
+      .eq('id', requestId)
+      .maybeSingle();
+    if (byIdErr) return json({ error: 'Could not look up the refund request.' }, 500);
+    if (!byId) return json({ error: 'Refund request not found.' }, 404);
+    groupId = (byId as { request_group_id: string }).request_group_id;
+  }
+
+  const { data: groupRows, error: groupErr } = await db
+    .from('refund_requests')
+    .select('id, kind, reg_id, invoice_item_id, payment_id, event_id, requester_person_id, status, request_group_id')
+    .eq('request_group_id', groupId);
+  if (groupErr) return json({ error: 'Could not look up the refund request.' }, 500);
+  const rows = (groupRows ?? []) as GroupRow[];
+  if (rows.length === 0) return json({ error: 'Refund request not found.' }, 404);
+  const kind = rows[0].kind;
+
+  if (action === 'reject') return handleReject(db, groupId, rows, kind, rejectionReason, caller);
+  return handleApprove(db, groupId, rows, kind, caller);
 });
 
 // ---------------------------------------------------------------------------
@@ -129,27 +187,33 @@ Deno.serve(async (req) => {
 // ---------------------------------------------------------------------------
 async function handleReject(
   db: DB,
-  request: { id: string; kind: 'registration' | 'addon'; reg_id: string | null; requester_person_id: string },
+  groupId: string,
+  rows: GroupRow[],
+  kind: 'registration' | 'addon',
+  rejectionReason: string,
   caller: { id: string; email: string; first_name: string; last_name: string },
 ) {
-  const reviewedAt = new Date().toISOString();
-  const { data: claimed, error: claimErr } = await db
-    .from('refund_requests')
-    .update({ status: 'rejected', reviewed_by: caller.id, reviewed_at: reviewedAt })
-    .eq('id', request.id)
-    .eq('status', 'pending')
-    .select('id')
-    .maybeSingle();
-  if (claimErr) return json({ error: 'Could not record the decision.' }, 500);
-  if (!claimed) return json({ error: 'This request has already been reviewed.' }, 409);
+  const pending = rows.filter((r) => r.status === 'pending');
+  if (pending.length === 0) return json({ error: 'This request has already been reviewed.' }, 409);
 
-  if (request.kind === 'registration' && request.reg_id) {
-    const { error: flagErr } = await db.from('registrations').update({ refund_requested: false }).eq('id', request.reg_id);
+  const reviewedAt = new Date().toISOString();
+  const { data: claimed, error: updErr } = await db
+    .from('refund_requests')
+    .update({ status: 'rejected', reviewed_by: caller.id, reviewed_at: reviewedAt, rejection_reason: rejectionReason })
+    .eq('request_group_id', groupId)
+    .eq('status', 'pending')
+    .select('id');
+  if (updErr) return json({ error: 'Could not record the decision.' }, 500);
+  if (!claimed || claimed.length === 0) return json({ error: 'This request has already been reviewed.' }, 409);
+
+  const regId = rows.find((r) => r.reg_id)?.reg_id ?? null;
+  if (kind === 'registration' && regId) {
+    const { error: flagErr } = await db.from('registrations').update({ refund_requested: false }).eq('id', regId);
     if (flagErr) console.warn('process-refund: failed to clear registration.refund_requested', flagErr.message);
   }
 
   try {
-    await sendRejectEmails(db, { requesterId: request.requester_person_id, requestId: request.id });
+    await sendRejectEmails(db, { requesterId: rows[0].requester_person_id, rejectionReason });
   } catch (e) {
     console.warn('process-refund: reject email failed', e instanceof Error ? e.message : String(e));
   }
@@ -162,243 +226,255 @@ async function handleReject(
 // ---------------------------------------------------------------------------
 async function handleApprove(
   db: DB,
-  request: {
-    id: string; kind: 'registration' | 'addon'; reg_id: string | null; invoice_item_id: string | null;
-    payment_id: string | null; event_id: string; requester_person_id: string;
-  },
+  groupId: string,
+  rows: GroupRow[],
+  kind: 'registration' | 'addon',
   caller: { id: string; email: string; first_name: string; last_name: string },
 ) {
-  // --- a. Load the invoice item, event, and (if any) payment. No writes yet. ---
-  if (!request.invoice_item_id) {
-    return json({ error: 'This request has no linked purchase line — cannot auto-process.' }, 400);
-  }
-  const { data: itemRow, error: itemErr } = await db
-    .from('invoice_items')
-    .select('id, invoice_id, label, amount, refunded')
-    .eq('id', request.invoice_item_id)
-    .maybeSingle();
-  if (itemErr) return json({ error: 'Could not look up the purchased item.' }, 500);
-  if (!itemRow) return json({ error: 'The purchased item no longer exists.' }, 400);
-  const item = itemRow as { id: string; invoice_id: string; label: string; amount: number; refunded: boolean };
-  if (item.refunded) return json({ error: 'This item has already been refunded.' }, 400);
+  const pending = rows.filter((r) => r.status === 'pending');
+  if (pending.length === 0) return json({ error: 'This request has already been reviewed.' }, 409);
 
   const { data: eventRow, error: eventErr } = await db
     .from('events')
     .select('id, name, last_date_to_edit')
-    .eq('id', request.event_id)
+    .eq('id', rows[0].event_id)
     .maybeSingle();
   if (eventErr) return json({ error: 'Could not look up the event.' }, 500);
   if (!eventRow) return json({ error: 'Event not found.' }, 404);
   const event = eventRow as { id: string; name: string; last_date_to_edit: string | null };
+  const reviewedAt = new Date().toISOString();
+  // Rule 5: add-ons are always 100% here (a past-deadline add-on never gets
+  // this far — request-refund refuses it up front). Rule 4: registrations
+  // scale to 75% after the event's edit deadline.
+  const onTime = kind === 'addon'
+    || !event.last_date_to_edit
+    || new Date(reviewedAt).getTime() <= new Date(event.last_date_to_edit).getTime();
 
-  let payment: {
-    id: string; amount_subtotal: number | null; stripe_payment_intent_id: string | null;
-    lines_snapshot: { label?: string; amount_cents?: number; paid_cents?: number }[] | null;
-  } | null = null;
-  if (request.payment_id) {
-    const { data: payRow, error: payErr } = await db
-      .from('payments')
-      .select('id, amount_subtotal, stripe_payment_intent_id, lines_snapshot')
-      .eq('id', request.payment_id)
-      .maybeSingle();
-    if (payErr) return json({ error: 'Could not look up the payment.' }, 500);
-    payment = payRow as typeof payment;
+  // --- Load every pending row's invoice_item + payment (no writes yet). ---
+  const itemIds = pending.map((r) => r.invoice_item_id).filter((id): id is string => !!id);
+  const paymentIds = Array.from(new Set(pending.map((r) => r.payment_id).filter((id): id is string => !!id)));
+  if (itemIds.length === 0 || paymentIds.length === 0) {
+    return json({ error: 'This request has no linked purchase line — cannot auto-process.' }, 400);
   }
+  const { data: itemRows, error: itemErr } = await db
+    .from('invoice_items')
+    .select('id, invoice_id, label, amount, ref_line_type, refunded')
+    .in('id', itemIds);
+  if (itemErr) return json({ error: 'Could not look up the purchased item(s).' }, 500);
+  const itemsById = new Map(((itemRows ?? []) as
+    { id: string; invoice_id: string; label: string; amount: number; ref_line_type: string | null; refunded: boolean }[])
+    .map((i) => [i.id, i]));
 
-  // --- b. No traceable payment (host-club $0 entry, or a legacy purchase) ---
-  if (!request.payment_id || !payment) {
+  const { data: payRows, error: payErr } = await db
+    .from('payments')
+    .select('id, amount_subtotal, stripe_payment_intent_id, lines_snapshot')
+    .in('id', paymentIds);
+  if (payErr) return json({ error: 'Could not look up the payment(s).' }, 500);
+  const paymentsById = new Map(((payRows ?? []) as
+    { id: string; amount_subtotal: number | null; stripe_payment_intent_id: string | null; lines_snapshot: { label?: string; amount_cents?: number; paid_cents?: number }[] | null }[])
+    .map((p) => [p.id, p]));
+
+  if (paymentsById.size === 0) {
     return json({
       error: 'This item has no traceable payment (likely a $0 host-club entry or a legacy purchase) — cannot auto-process. Handle it manually in the Stripe Dashboard, then reject or leave this request for record-keeping.',
     }, 400);
   }
 
-  // --- c. Compute the refund: mirrors src/lib/pricing.ts refundAmountCents
-  //     exactly (100% at-or-before event.last_date_to_edit, else 75%, rounded
-  //     to the nearest cent). The service fee is never part of the base, so
-  //     it's never refunded either.
-  //
-  //     Refund BASE: the snapshot line's POST-discount `paid_cents` when the
-  //     payment's lines_snapshot carries it (written by create-checkout-session
-  //     since T6) — `invoice_items.amount` / snapshot `amount_cents` are the
-  //     PRE-coupon list price, and refunding that for a partially-couponed
-  //     line would take other lines' money with it (e.g. a $135 entry
-  //     discounted to $85 + a $30 shirt → amount_subtotal $115; a $135 base
-  //     capped only at the payment level still pays $115 for an $85 line).
-  //     Legacy payments without paid_cents keep the invoice_item amount as
-  //     the base; the payment-level cap in (d) stays the final guard in ALL
-  //     cases. The invoice_item is mapped back to its snapshot line via
-  //     fulfill.ts's deterministic id scheme `ii-${payment.id}-${idx}` (idx =
-  //     snapshot index), validated in-range + label-matched. ---
-  const reviewedAt = new Date().toISOString();
-  let baseAmountCents = Math.round(Number(item.amount) * 100);
-  const snapshot = payment.lines_snapshot;
-  if (snapshot && item.id.startsWith(`ii-${payment.id}-`)) {
-    const idxStr = item.id.slice(`ii-${payment.id}-`.length);
-    const idx = /^\d+$/.test(idxStr) ? Number(idxStr) : NaN;
-    const line = Number.isInteger(idx) && idx >= 0 && idx < snapshot.length ? snapshot[idx] : null;
-    if (line && line.label === item.label && typeof line.paid_cents === 'number') {
-      baseAmountCents = line.paid_cents;
-    }
-  }
-  const onTime = !event.last_date_to_edit || new Date(reviewedAt).getTime() <= new Date(event.last_date_to_edit).getTime();
-  const computedRefundCents = onTime ? baseAmountCents : Math.round(baseAmountCents * 0.75);
-
-  // --- d+e. Cap AND claim, atomically, BEFORE Stripe (2026-07-31 review §8.1).
-  //     These were two separate steps — read the prior-approved sum, then claim
-  //     this request — and that gap was a real race: two DIFFERENT pending
-  //     requests against the SAME payment could both read the same stale
-  //     `available` before either claimed. The per-request claim never covered
-  //     that, because it keys on this request's own id.
-  //
-  //     Stripe's cumulative per-charge ceiling stopped a big over-refund, but
-  //     that ceiling is the CHARGE (`amount_subtotal + service_fee`) while our
-  //     cap is `amount_subtotal` alone — the service fee is never refunded — so
-  //     a concurrent pair landing in that gap slipped through and refunded part
-  //     of the fee.
-  //
-  //     `claim_refund_approval` (20260731210000) now does the sum, the cap and
-  //     the claim inside ONE transaction that holds `select ... for update` on
-  //     the payments row — the same idiom `reserve_coupon` uses, where the lock
-  //     IS the fix. Concurrent approvals against one payment serialize; against
-  //     different payments they don't.
-  //
-  //     Do NOT re-add a client-side availability read here: recomputing the cap
-  //     outside the lock is exactly the bug this replaced. ---
-  const { data: claimRes, error: claimErr } = await db.rpc('claim_refund_approval', {
-    p_request_id: request.id,
-    p_payment_id: payment.id,
-    p_computed_cents: computedRefundCents,
-    p_reviewed_by: caller.id,
-    p_reviewed_at: reviewedAt,
-  });
-  if (claimErr) return json({ error: 'Could not record the decision.' }, 500);
-  const claim = claimRes as
-    | { ok: true; refund_cents: number; available_cents: number; prior_refunded_cents: number }
-    | { ok: false; reason: string }
-    | null;
-  if (!claim) return json({ error: 'Could not record the decision.' }, 500);
-  if (!claim.ok) {
-    if (claim.reason === 'payment_not_found') {
-      return json({ error: 'The payment behind this request no longer exists — cannot auto-process.' }, 400);
-    }
-    return json({ error: 'This request has already been reviewed.' }, 409);
-  }
-  const refundCents = claim.refund_cents;
-
-  let stripeRefundId: string | null = null;
-  if (refundCents > 0) {
-    if (!payment.stripe_payment_intent_id) {
-      // Revert the claim — nothing was charged/refunded, so this must stay
-      // reviewable rather than silently landing as a phantom "approved".
-      await revertClaim(db, request.id);
-      return json({
-        error: 'This payment has no Stripe payment intent on record — cannot auto-process. Handle it manually in the Stripe Dashboard.',
-      }, 400);
-    }
-    try {
-      const stripe = getStripe();
-      const refund = await stripe.refunds.create({
-        payment_intent: payment.stripe_payment_intent_id,
-        amount: refundCents,
-      });
-      stripeRefundId = refund.id;
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      const reverted = await revertClaim(db, request.id);
-      await db.from('error_logs').insert({
-        context: 'process-refund',
-        message: reverted
-          ? `Stripe refund failed, claim reverted to pending: ${message}`
-          : `Stripe refund failed AND reverting the claim also failed — request ${request.id} is STUCK in 'approved' with no Stripe refund. Needs manual fix. Underlying error: ${message}`,
-        detail: { requestId: request.id, paymentId: payment.id, refundCents },
-      }).then(() => {}, () => {});
-      return json({ error: `Could not process the Stripe refund: ${message}` }, 500);
-    }
-  }
-  // refundCents === 0 (e.g. a free $0-total order): no Stripe call needed —
-  // the participant paid $0, so $0 back is correct. stripeRefundId stays null.
-
-  if (stripeRefundId) {
-    const { error: stampErr } = await db.from('refund_requests').update({ stripe_refund_id: stripeRefundId }).eq('id', request.id);
-    if (stampErr) console.warn('process-refund: failed to stamp stripe_refund_id', stampErr.message);
-  }
-
-  // --- f. Item/registration state change. Best-effort from here on — the
-  //     money movement (or deliberate non-movement) above is already final;
-  //     a failure here is logged, not surfaced as a request failure. ---
-  try {
-    const { error: itemUpdErr } = await db.from('invoice_items').update({ refunded: true }).eq('id', item.id);
-    if (itemUpdErr) throw new Error(`invoice_items update failed: ${itemUpdErr.message}`);
-
-    if (request.kind === 'registration' && request.reg_id) {
-      const { data: regRow, error: regErr } = await db
-        .from('registrations')
-        .select('id, apparatus')
-        .eq('id', request.reg_id)
-        .maybeSingle();
-      if (regErr) throw new Error(`registration lookup failed: ${regErr.message}`);
-      if (regRow) {
-        if (onTime) {
-          // Fully removed. `scores` cascade-deletes via its `reg_id` FK
-          // (on delete cascade); `squad_id` is a plain FK ON registrations
-          // itself (not an embedded jsonb list elsewhere), so no separate
-          // squad cleanup is needed — the row disappearing IS the cleanup.
-          const { error: delErr } = await db.from('registrations').delete().eq('id', request.reg_id);
-          if (delErr) throw new Error(`registration delete failed: ${delErr.message}`);
-        } else {
-          // Kept, blanked (matches MyRegistrations.tsx's "retain-but-blank"
-          // shape for a fully-deselected discipline: apparatus: [], no
-          // apparatus_levels/partner).
-          const { error: updErr } = await db.from('registrations').update({
-            refunded: true, keep_listed: true, refund_requested: false,
-            apparatus: [], apparatus_levels: null, partner_athlete_id: null,
-          }).eq('id', request.reg_id);
-          if (updErr) throw new Error(`registration update failed: ${updErr.message}`);
-        }
+  // --- Build the allocation lines: base = post-coupon paid_cents (snapshot),
+  // falling back to invoice_items.amount for a legacy payment with no
+  // snapshot. Mirrors process-refund's pre-existing single-payment
+  // resolution, generalized to N rows. ---
+  const allocationLines: (RefundAllocationLine & { rowId: string })[] = [];
+  for (const row of pending) {
+    if (!row.invoice_item_id || !row.payment_id) continue;
+    const item = itemsById.get(row.invoice_item_id);
+    const payment = paymentsById.get(row.payment_id);
+    if (!item || !payment) continue;
+    let paidCents = Math.round(Number(item.amount) * 100);
+    const snapshot = payment.lines_snapshot;
+    if (snapshot && item.id.startsWith(`ii-${row.payment_id}-`)) {
+      const idxStr = item.id.slice(`ii-${row.payment_id}-`.length);
+      const idx = /^\d+$/.test(idxStr) ? Number(idxStr) : NaN;
+      const line = Number.isInteger(idx) && idx >= 0 && idx < snapshot.length ? snapshot[idx] : null;
+      if (line && line.label === item.label && typeof line.paid_cents === 'number') {
+        paidCents = line.paid_cents;
       }
     }
-  } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    await db.from('error_logs').insert({
-      context: 'process-refund',
-      message: `Refund succeeded (refund ${stripeRefundId ?? '$0/none'}) but the item/registration state update failed: ${message}`,
-      detail: { requestId: request.id, itemId: item.id, regId: request.reg_id },
-    }).then(() => {}, () => {});
+    allocationLines.push({ rowId: row.id, paymentId: row.payment_id, refLineType: item.ref_line_type, paidCents });
+  }
+  if (allocationLines.length === 0) {
+    return json({ error: 'Could not resolve any refundable line for this request.' }, 400);
   }
 
-  // --- g. Emails (best-effort). ---
+  const allocation = kind === 'addon'
+    // Add-ons are never split across payments (single-row group) and never
+    // scaled to 75% (rule 5) — but still routed through the same allocator so
+    // there is exactly one code path, not two, for "compute what to refund".
+    ? allocateRegistrationRefund(allocationLines, { afterDeadline: false })
+    : allocateRegistrationRefund(allocationLines, { afterDeadline: !onTime });
+
+  const refunded: RefundedEntry[] = [];
+  const failed: FailedEntry[] = [];
+
+  for (const { paymentId, cents } of allocation) {
+    const payment = paymentsById.get(paymentId)!;
+    const rowsForPayment = pending.filter((r) => r.payment_id === paymentId);
+    const [carrier, ...siblings] = rowsForPayment;
+
+    // --- Cap AND claim, atomically, BEFORE Stripe — `claim_refund_approval`
+    // (20260731210000) locks the payments row, sums prior approvals, caps,
+    // and claims ONE row, all inside one transaction. Called once per
+    // DISTINCT payment (never re-entered for a sibling row of the same
+    // payment) — unchanged from the pre-grouping shape per money-invariants.md. ---
+    const { data: claimRes, error: claimErr } = await db.rpc('claim_refund_approval', {
+      p_request_id: carrier.id,
+      p_payment_id: paymentId,
+      p_computed_cents: cents,
+      p_reviewed_by: caller.id,
+      p_reviewed_at: reviewedAt,
+    });
+    if (claimErr) { failed.push({ paymentId, error: 'Could not record the decision.' }); continue; }
+    const claim = claimRes as
+      | { ok: true; refund_cents: number; available_cents: number; prior_refunded_cents: number }
+      | { ok: false; reason: string }
+      | null;
+    if (!claim || !claim.ok) {
+      failed.push({ paymentId, error: !claim ? 'Could not record the decision.' : claim.reason });
+      continue;
+    }
+    const refundCents = claim.refund_cents;
+
+    // Any sibling row (a second invoice_item on the SAME payment, e.g. an
+    // entry line + a separate extra-discipline line in one invoice) is
+    // claimed too, but carries $0 — the whole payment's money is attributed
+    // to the carrier row above, so the sum of refund_amount_cents across the
+    // group per payment always equals exactly what was refunded once.
+    if (siblings.length) {
+      await db.from('refund_requests').update({
+        status: 'approved', reviewed_by: caller.id, reviewed_at: reviewedAt, refund_amount_cents: 0,
+      }).eq('request_group_id', carrier.request_group_id).eq('payment_id', paymentId).eq('status', 'pending');
+    }
+
+    if (refundCents > 0) {
+      if (!payment.stripe_payment_intent_id) {
+        await revertClaim(db, paymentId, [carrier.id, ...siblings.map((s) => s.id)]);
+        failed.push({ paymentId, error: 'This payment has no Stripe payment intent on record — handle it manually in the Stripe Dashboard.' });
+        continue;
+      }
+      try {
+        const stripe = getStripe();
+        const refund = await stripe.refunds.create({
+          payment_intent: payment.stripe_payment_intent_id,
+          amount: refundCents,
+        });
+        refunded.push({ paymentId, cents: refundCents, stripeRefundId: refund.id });
+        await db.from('refund_requests').update({ stripe_refund_id: refund.id }).eq('id', carrier.id);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        const reverted = await revertClaim(db, paymentId, [carrier.id, ...siblings.map((s) => s.id)]);
+        await db.from('error_logs').insert({
+          context: 'process-refund',
+          message: reverted
+            ? `Stripe refund failed, claim reverted to pending: ${message}`
+            : `Stripe refund failed AND reverting the claim also failed — payment ${paymentId} (group ${groupId}) is STUCK approved with no Stripe refund. Needs manual fix. Underlying error: ${message}`,
+          detail: { groupId, paymentId, refundCents },
+        }).then(() => {}, () => {});
+        failed.push({ paymentId, error: `Could not process the Stripe refund: ${message}` });
+        continue;
+      }
+    } else {
+      // $0-capped approval (e.g. a free $0-total order, or the payment's
+      // subtotal was already fully refunded elsewhere): no Stripe call
+      // needed, and this payment counts as successfully processed.
+      refunded.push({ paymentId, cents: 0, stripeRefundId: null });
+    }
+  }
+
+  // --- Item/registration state change — ONLY once every payment in this
+  // approve call succeeded. A partial failure leaves the registration alone
+  // and its still-pending rows retryable by a later approve on this group. ---
+  const allSucceeded = failed.length === 0;
+  if (allSucceeded) {
+    try {
+      const { error: itemUpdErr } = await db.from('invoice_items').update({ refunded: true }).in('id', itemIds);
+      if (itemUpdErr) throw new Error(`invoice_items update failed: ${itemUpdErr.message}`);
+
+      const regId = rows.find((r) => r.reg_id)?.reg_id ?? null;
+      if (kind === 'registration' && regId) {
+        const { data: regRow, error: regErr } = await db
+          .from('registrations')
+          .select('id, apparatus')
+          .eq('id', regId)
+          .maybeSingle();
+        if (regErr) throw new Error(`registration lookup failed: ${regErr.message}`);
+        if (regRow) {
+          if (onTime) {
+            // Fully removed. `scores` cascade-deletes via its `reg_id` FK
+            // (on delete cascade); `squad_id` is a plain FK ON registrations
+            // itself (not an embedded jsonb list elsewhere), so no separate
+            // squad cleanup is needed — the row disappearing IS the cleanup.
+            const { error: delErr } = await db.from('registrations').delete().eq('id', regId);
+            if (delErr) throw new Error(`registration delete failed: ${delErr.message}`);
+          } else {
+            // Kept, blanked (matches MyRegistrations.tsx's "retain-but-blank"
+            // shape for a fully-deselected discipline: apparatus: [], no
+            // apparatus_levels/partner).
+            const { error: updErr } = await db.from('registrations').update({
+              refunded: true, keep_listed: true, refund_requested: false,
+              apparatus: [], apparatus_levels: null, partner_athlete_id: null,
+            }).eq('id', regId);
+            if (updErr) throw new Error(`registration update failed: ${updErr.message}`);
+          }
+        }
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      await db.from('error_logs').insert({
+        context: 'process-refund',
+        message: `Refund(s) succeeded but the item/registration state update failed: ${message}`,
+        detail: { groupId, itemIds, regId: rows.find((r) => r.reg_id)?.reg_id ?? null },
+      }).then(() => {}, () => {});
+    }
+  } else {
+    // Partial failure: only mark the invoice_items whose payment actually
+    // succeeded refunded — the rest stay unrefunded, matching their rows
+    // staying 'pending' for retry.
+    const succeededPaymentIds = new Set(refunded.map((r) => r.paymentId));
+    const succeededItemIds = pending
+      .filter((r) => r.payment_id && succeededPaymentIds.has(r.payment_id) && r.invoice_item_id)
+      .map((r) => r.invoice_item_id!);
+    if (succeededItemIds.length) {
+      const { error: itemUpdErr } = await db.from('invoice_items').update({ refunded: true }).in('id', succeededItemIds);
+      if (itemUpdErr) console.warn('process-refund: partial invoice_items.refunded update failed', itemUpdErr.message);
+    }
+  }
+
+  // --- Emails (best-effort). ---
   try {
+    const totalRefundedCents = refunded.reduce((s, r) => s + r.cents, 0);
     await sendApproveEmails(db, {
-      requesterId: request.requester_person_id, itemLabel: item.label, eventName: event.name,
-      refundCents, onTime, kind: request.kind,
+      requesterId: rows[0].requester_person_id,
+      itemLabel: itemsById.get(pending[0].invoice_item_id ?? '')?.label ?? (kind === 'registration' ? 'Registration entry' : 'Add-on'),
+      eventName: event.name, refundCents: totalRefundedCents, onTime, kind, failedCount: failed.length,
     });
   } catch (e) {
     console.warn('process-refund: approve email failed', e instanceof Error ? e.message : String(e));
   }
 
-  return json({ ok: true, refundAmountCents: refundCents, stripeRefundId });
+  return json({ ok: true, refunded, failed });
 }
 
-/** Best-effort revert of an approve claim back to 'pending' so it can be
- *  retried. Returns whether the revert itself succeeded (for error_logs). */
-/** Puts a claimed request back to `pending` when Stripe never moved the money.
- *
- *  Deliberately OUTSIDE the `claim_refund_approval` lock: by the time this runs
- *  the claim has committed, and re-entering the lock would buy nothing — the
- *  money demonstrably did not move.
- *
- *  Known, accepted interaction (2026-07-31): between the claim committing and a
- *  Stripe failure reverting it, a concurrent approval against the same payment
- *  counts this not-yet-reverted amount in its `prior_refunded_cents`. That
- *  caller is therefore capped as if this refund had happened, and can be
- *  UNDER-refunded. It resolves itself — the reverted request goes back to
- *  `pending` and can be re-approved against the restored balance — and it errs
- *  toward refunding too little rather than too much, which is the correct
- *  direction for a money invariant to fail in. */
-async function revertClaim(db: DB, requestId: string): Promise<boolean> {
+/** Reverts a payment's claim (carrier + any $0 siblings) back to 'pending' so
+ *  it can be retried. Deliberately OUTSIDE `claim_refund_approval`'s lock — by
+ *  the time this runs the claim has already committed, and re-entering the
+ *  lock buys nothing since the money demonstrably did not move. Same accepted
+ *  interaction as before grouping (2026-07-31): a concurrent approval against
+ *  the same payment can count this not-yet-reverted amount and be
+ *  UNDER-refunded, which self-resolves and errs in the safe direction. */
+async function revertClaim(db: DB, paymentId: string, rowIds: string[]): Promise<boolean> {
   const { error } = await db.from('refund_requests').update({
     status: 'pending', reviewed_by: null, reviewed_at: null, refund_amount_cents: null,
-  }).eq('id', requestId).eq('status', 'approved');
+  }).eq('payment_id', paymentId).in('id', rowIds).eq('status', 'approved');
   return !error;
 }
 
@@ -414,26 +490,30 @@ async function reviewerRecipients(db: DB): Promise<{ email: string; first_name: 
     .filter((p) => typeof p.email === 'string' && EMAIL_RE.test(p.email.trim()));
 }
 
-async function sendRejectEmails(db: DB, opts: { requesterId: string; requestId: string }) {
+async function sendRejectEmails(db: DB, opts: { requesterId: string; rejectionReason: string }) {
   const { data: requester } = await db.from('people').select('email, first_name, last_name')
     .eq('id', opts.requesterId).maybeSingle();
   const r = requester as { email: string; first_name: string; last_name: string } | null;
-  if (!r || !r.email || !EMAIL_RE.test(r.email)) return;
+  const reasonHtml = `<p><strong>Reason given:</strong> ${esc(opts.rejectionReason)}</p>`;
 
-  const html = renderEmail({
-    heading: 'Refund request reviewed',
-    bodyHtml: `<p>Hi ${esc(r.first_name)},</p>
+  if (r && r.email && EMAIL_RE.test(r.email)) {
+    const html = renderEmail({
+      heading: 'Refund request reviewed',
+      bodyHtml: `<p>Hi ${esc(r.first_name)},</p>
 <p>We reviewed your refund request and it was <strong>not approved</strong>. Your registration/item is unchanged.</p>
+${reasonHtml}
 <p>If you have questions, reply to this email and a league refund manager will follow up.</p>`,
-  });
-  await sendOne({ to: `${r.first_name} ${r.last_name} <${r.email}>`, subject: 'Refund request — not approved', html })
-    .catch((e) => console.warn('process-refund: requester reject email failed', e instanceof Error ? e.message : String(e)));
+    });
+    await sendOne({ to: `${r.first_name} ${r.last_name} <${r.email}>`, subject: 'Refund request — not approved', html })
+      .catch((e) => console.warn('process-refund: requester reject email failed', e instanceof Error ? e.message : String(e)));
+  }
 
   const recipients = await reviewerRecipients(db);
   if (recipients.length === 0) return;
   const summaryHtml = renderEmail({
     heading: 'Refund request rejected',
-    bodyHtml: `<p><strong>${esc(`${r.first_name} ${r.last_name}`)}</strong>'s refund request was reviewed and rejected. No item/registration change was made.</p>`,
+    bodyHtml: `<p><strong>${r ? esc(`${r.first_name} ${r.last_name}`) : 'A member'}</strong>'s refund request was reviewed and rejected. No item/registration change was made.</p>
+${reasonHtml}`,
   });
   const messages: EmailMessage[] = recipients.map((p) => ({
     to: `${p.first_name} ${p.last_name} <${p.email.trim()}>`, subject: 'Refund request rejected', html: summaryHtml,
@@ -442,20 +522,25 @@ async function sendRejectEmails(db: DB, opts: { requesterId: string; requestId: 
 }
 
 async function sendApproveEmails(db: DB, opts: {
-  requesterId: string; itemLabel: string; eventName: string; refundCents: number; onTime: boolean; kind: 'registration' | 'addon';
+  requesterId: string; itemLabel: string; eventName: string; refundCents: number; onTime: boolean;
+  kind: 'registration' | 'addon'; failedCount: number;
 }) {
-  const { requesterId, itemLabel, eventName, refundCents, onTime, kind } = opts;
+  const { requesterId, itemLabel, eventName, refundCents, onTime, kind, failedCount } = opts;
   const { data: requester } = await db.from('people').select('email, first_name, last_name').eq('id', requesterId).maybeSingle();
   const r = requester as { email: string; first_name: string; last_name: string } | null;
 
   const retainedLine = !onTime
     ? '<p style="margin-top:12px;">25% was retained per policy for a refund requested after the event\'s edit deadline. The athlete can no longer compete in this discipline — their name may still appear in printed event materials.</p>'
     : (kind === 'registration' ? '<p style="margin-top:12px;">The registration has been fully removed.</p>' : '');
+  const failedLine = failedCount > 0
+    ? `<p style="margin-top:12px;color:#8a4b12;">${failedCount} payment${failedCount === 1 ? '' : 's'} on this request could not be refunded automatically and will be retried by a refund manager.</p>`
+    : '';
   const bodyHtml = `<p>Hi ${r ? esc(r.first_name) : 'there'},</p>
 <p>Your refund request for <strong>${esc(itemLabel)}</strong> — <strong>${esc(eventName)}</strong> was approved.</p>
 <p><strong>Amount refunded:</strong> ${fmtMoney(refundCents)}</p>
-<p>Refunds return to the original payment method (the club's card for a club-paid entry).</p>
+<p>Service fees are non-refundable. Refunds return to the original payment method (the club's card for a club-paid entry).</p>
 ${retainedLine}
+${failedLine}
 <p style="margin-top:12px;">This refund is reflected in your purchase history under MY UCG purchases.</p>`;
 
   if (r && r.email && EMAIL_RE.test(r.email)) {
@@ -469,7 +554,8 @@ ${retainedLine}
   const summaryHtml = renderEmail({
     heading: 'Refund processed',
     bodyHtml: `<p><strong>${r ? esc(`${r.first_name} ${r.last_name}`) : 'A member'}</strong>'s refund request for <strong>${esc(itemLabel)}</strong> — ${esc(eventName)} was approved and processed.</p>
-<p><strong>Amount refunded:</strong> ${fmtMoney(refundCents)}</p>`,
+<p><strong>Amount refunded:</strong> ${fmtMoney(refundCents)}</p>
+${failedLine}`,
   });
   const messages: EmailMessage[] = recipients.map((p) => ({
     to: `${p.first_name} ${p.last_name} <${p.email.trim()}>`, subject: `Refund processed — ${eventName}`, html: summaryHtml,

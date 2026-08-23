@@ -71,11 +71,16 @@ Invokers unwrap errors via `edgeErrorMessage(error)` (the real JSON message), **
   the `people` row in place when financial/waiver rows reference it, scrubs denormalized names
   from invoice/snapshot labels, keeps waiver_signatures pending counsel; the export side is
   client-only `collectPersonData`/`person-export.ts`), `judge-entry` (anonymous
-  `unlock`/`submit` resolve a `judge_access_codes` code/token to an event and write `scores`
-  server-side; validation in `_shared/judge-entry-core.ts` including size caps on
-  source/calc/calcState), `report-problem` (any signed-in caller; reporter identity resolved
+  `unlock`/`submit` resolve a `judge_access_codes` code/token to an event and post `scores`
+  server-side via the `post_score` compare-and-set RPC (UAT Z-06-01, `20260822020000`) — same RPC
+  the signed-in client's `pushScore` calls, so a stale/absent `expectedUpdatedAt` comes back as
+  `{conflict:true, current}` (409, read client-side via `edgeErrorBody`) instead of silently
+  overwriting a concurrent judge's post; validation in `_shared/judge-entry-core.ts` including size
+  caps on source/calc/calcState), `report-problem` (any signed-in caller; reporter identity resolved
   server-side from the JWT, never the client payload; routes bug/question/unsure to a hardcoded
-  recipient map at the top of the function).
+  recipient map at the top of the function; since `20260822030000` also inserts a `problem_reports`
+  row with the service role BEFORE the email send — insert failure logs to `error_logs` and never
+  blocks the email — powering the admin "Errors & Problems" page's Problem Reports tab).
 - **`scheduled-dispatch`** (pg_cron every 15 min): sanction-vote reminders, event-owner task
   escalations (`owner-task`), waitlist promotion sweep (FIFO promote/requeue/complete), season
   lifecycle nag (`season-launch-nag` — escalating admin emails to CREATE the next season row),

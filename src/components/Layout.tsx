@@ -7,18 +7,27 @@ import { useCapabilities } from '../lib/capabilities';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { offeredMembershipTypes } from '../lib/pricing';
 import { useSession } from '../lib/auth';
+import { clearLegacyMfaNagDismissal } from '../lib/mfa';
 import { TopbarMembership } from './TopbarMembership';
 import { ReportProblemDialog } from './ReportProblemDialog';
 import { useNavHistory, useGoBack, resolveLabel } from '../lib/navHistory';
 import { currentSeason } from '../lib/season-lifecycle';
+import { useCurrentClubId } from '../lib/current-club';
+import { clubCartBadgeCount } from '../lib/purchases';
 
 /** "vSHA · YYYY-MM-DD" build stamp shown at the bottom of the sidebar. */
 const buildStampLabel = `v${__BUILD_INFO__.sha} · ${__BUILD_INFO__.date.slice(0, 10)}`;
 
 interface NavGroup { group: string; items: { to: string; label: string }[] }
 
-/** Build the sidebar from real capabilities (union, not a role toggle). */
-function navFor(caps: ReturnType<typeof useCapabilities>): NavGroup[] {
+/** Build the sidebar from real capabilities (union, not a role toggle).
+ *  `currentClub` (UAT round-1, Z-01-02) is whichever managed club the viewer
+ *  is currently looking at (`current-club.ts`) — resolved by the caller
+ *  (Layout, a component, so it can call the `useCurrentClubId` hook) and
+ *  passed in here rather than hardcoding `managedClubIds[0]`, so a manager of
+ *  several clubs (or a league admin) gets links that follow whichever club
+ *  they're actually viewing. */
+function navFor(caps: ReturnType<typeof useCapabilities>, currentClub: string | null): NavGroup[] {
   const groups: NavGroup[] = [];
   groups.push({ group: 'Browse', items: [
     { to: '/', label: 'Home' },
@@ -31,15 +40,16 @@ function navFor(caps: ReturnType<typeof useCapabilities>): NavGroup[] {
       { to: '/me', label: 'Profile' },
       { to: '/membership', label: 'Membership' },
       { to: '/me/registrations', label: 'My Registrations' },
+      { to: '/cart', label: 'My Cart' },
       { to: '/me/purchases', label: 'Purchase History' },
     ]});
   }
-  if (caps.managedClubIds.length > 0) {
-    const cid = caps.managedClubIds[0];
+  if (caps.managedClubIds.length > 0 && currentClub) {
     groups.push({ group: 'My Club', items: [
-      { to: `/club/${cid}/roster`, label: 'Club Roster' },
-      { to: `/club/${cid}/registrations`, label: 'Club Registrations' },
-      { to: `/club/${cid}/cart`, label: 'Club Cart & Receipts' },
+      { to: `/club/${currentClub}/roster`, label: 'Club Roster' },
+      { to: `/club/${currentClub}/registrations`, label: 'Club Registrations' },
+      { to: `/club/${currentClub}/cart`, label: 'Club Cart' },
+      { to: `/club/${currentClub}/purchases`, label: 'Club Purchases' },
       { to: '/sanction', label: 'Request a Sanction' },
     ]});
   }
@@ -54,7 +64,7 @@ function navFor(caps: ReturnType<typeof useCapabilities>): NavGroup[] {
       { to: '/admin/clubs', label: 'Clubs' },
       { to: '/admin/league', label: 'League Controls' },
       { to: '/admin/communicate', label: 'Communicate' },
-      { to: '/admin/errors', label: 'Error Log' },
+      { to: '/admin/errors', label: 'Errors & Problems' },
       { to: '/admin/refunds', label: 'Refund Requests' },
       { to: '/admin/finance', label: 'Finance' },
     ]});
@@ -84,6 +94,7 @@ export function Layout({ children }: { children: ReactNode }) {
   const topbarRef = useRef<HTMLElement>(null);
   const [navOpen, setNavOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  const currentClub = useCurrentClubId(caps.managedClubIds);
 
   // Close the drawer on navigation. Derive the close from a path change using
   // the store-previous-value pattern (setState during render bails out the
@@ -134,7 +145,7 @@ export function Layout({ children }: { children: ReactNode }) {
             <img src={primaryLogoWhite} alt="United Club Gymnastics" className="brand-mark-logo" />
           </Link>
         </div>
-        {navFor(caps).map((g) => (
+        {navFor(caps, currentClub).map((g) => (
           <nav className="nav-group" key={g.group}>
             <div className="nav-group-label">{g.group}</div>
             {g.items.map((it) => (
@@ -161,6 +172,7 @@ export function Layout({ children }: { children: ReactNode }) {
                 // auto-login (src/lib/dev-auth.ts) doesn't immediately log back
                 // in on the next reload, letting the signed-out gate be tested.
                 if (import.meta.env.DEV) sessionStorage.setItem('ucg-dev-signed-out', '1');
+                clearLegacyMfaNagDismissal();
                 void supabase!.auth.signOut();
               }}
             >
@@ -231,7 +243,23 @@ export function Layout({ children }: { children: ReactNode }) {
             const cartCount = (db.carts[me.id] ?? []).length;
             return (
               <Link to="/cart" className="topbar-user" title="View your cart" style={{ marginRight: 8 }}>
-                🛒 Cart{cartCount > 0 ? ` (${cartCount})` : ''}
+                🛒 <span className="topbar-cart-label">Cart{cartCount > 0 ? ` (${cartCount})` : ''}</span>
+              </Link>
+            );
+          })()}
+          {me && currentClub && (() => {
+            // UAT round-1 (Z-01-02): a SEPARATE badge from the personal cart
+            // above — total lines across every club this person manages, not
+            // just the "current" one, so switching clubs never makes the
+            // count silently drop. Only rendered once there's a current club
+            // to link to (nothing to show for a signed-in member who manages
+            // none). "Club Carts" (plural) when there's a real choice to make
+            // (multiple managed clubs, or admin) — otherwise "Club Cart".
+            const clubCartCount = clubCartBadgeCount(db.carts, caps.managedClubIds);
+            const plural = caps.managedClubIds.length > 1 || caps.isAdmin;
+            return (
+              <Link to={`/club/${currentClub}/cart`} className="topbar-user" title="View your club's cart" style={{ marginRight: 8 }}>
+                🧺 <span className="topbar-cart-label">{plural ? 'Club Carts' : 'Club Cart'}{clubCartCount > 0 ? ` (${clubCartCount})` : ''}</span>
               </Link>
             );
           })()}

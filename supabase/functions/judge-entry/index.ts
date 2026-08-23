@@ -26,11 +26,17 @@
 //     on meet day. The specific reason is kept server-side in error_logs
 //     ('judge-unlock-failed') as the brute-force audit trail.
 //   - submit: `{ token, regId, apparatus, sv, deductions, eScore, final,
-//     source, calc, calcState, flashed, scratched }`. Validates the token is
-//     active, recomputes the score id server-side (never trusts a client
-//     id), validates the registration via judge-entry-core.ts, and upserts
-//     into `scores` with `entered_by = 'judge-code:' + codeRowId` stamped
-//     server-side.
+//     source, calc, calcState, flashed, scratched, expectedUpdatedAt }`.
+//     Validates the token is active, recomputes the score id server-side
+//     (never trusts a client id), validates the registration via
+//     judge-entry-core.ts, and posts through the `post_score` compare-and-set
+//     RPC (UAT Z-06-01) with `entered_by = 'judge-code:' + codeRowId` stamped
+//     server-side — SAME RPC the signed-in client uses, under this
+//     function's service-role client (bypasses RLS at the role level
+//     regardless of the RPC's own SECURITY INVOKER mode). A stale/missing
+//     `expectedUpdatedAt` against an existing row comes back as
+//     `{ ok: false, conflict: true, current }` instead of silently
+//     overwriting a concurrent judge's post.
 //
 // verify_jwt STAYS TRUE (default) — same as record-waiver-signature: the
 // browser's anon-key Authorization header passes the gateway fine for an
@@ -76,6 +82,31 @@ interface Payload {
   calcState?: unknown;
   flashed?: boolean;
   scratched?: boolean;
+  /** Compare-and-set expectation (UAT Z-06-01) — see judge-entry-core.ts. */
+  expectedUpdatedAt?: string | null;
+}
+
+interface ScoreDbRow {
+  id: string; event_id: string; session_id: string | null; reg_id: string | null;
+  apparatus: string; sv: number | null; deductions: number | null; e_score: number | null;
+  deductions2?: number | null; e_score2?: number | null; final: number | null;
+  source: string; entered_by: string | null; entered_at: string; flashed: boolean;
+  scratched: boolean; calc: string | null; calc_state: unknown; updated_at: string;
+}
+
+/** Maps a `scores` DB row (snake_case, as returned by `post_score`'s jsonb
+ *  `current`) to the camelCase shape the client's `Score` type expects —
+ *  mirrors `src/lib/supabase.ts`'s `rowToScore`, kept separate since this
+ *  Edge Function has no access to browser-side modules. */
+function dbRowToClientScore(row: ScoreDbRow) {
+  return {
+    id: row.id, eventId: row.event_id, sessionId: row.session_id ?? '', regId: row.reg_id ?? '',
+    apparatus: row.apparatus, sv: row.sv, deductions: row.deductions, eScore: row.e_score,
+    deductions2: row.deductions2 ?? null, eScore2: row.e_score2 ?? null, final: row.final,
+    source: row.source, enteredBy: row.entered_by, enteredAt: row.entered_at, flashed: row.flashed,
+    scratched: row.scratched, calc: row.calc ?? undefined, calcState: row.calc_state ?? undefined,
+    updatedAt: row.updated_at,
+  };
 }
 
 // One message and one status for EVERY unlock failure (2026-07-31, review §3.3).
@@ -243,12 +274,13 @@ Deno.serve(async (req) => {
       regId: a.regId, apparatus: a.apparatus, sv: a.sv, deductions: a.deductions, eScore: a.eScore,
       deductions2: a.deductions2, eScore2: a.eScore2,
       final: a.final, source: a.source, calc: a.calc, calcState: a.calcState, flashed: a.flashed, scratched: a.scratched,
+      expectedUpdatedAt: a.expectedUpdatedAt,
     };
     const result = validateJudgeSubmit(row.event_id, payload, reg);
     if (!result.ok) return json({ ok: false, error: result.error }, 400);
 
     const now = new Date().toISOString();
-    const { error: upsertErr } = await db.from('scores').upsert({
+    const scoreRow = {
       id: result.score.id, event_id: result.score.eventId, session_id: result.score.sessionId,
       reg_id: result.score.regId, apparatus: result.score.apparatus,
       sv: result.score.sv, deductions: result.score.deductions, e_score: result.score.eScore,
@@ -257,10 +289,27 @@ Deno.serve(async (req) => {
       calc: result.score.calc, calc_state: result.score.calcState,
       entered_by: `judge-code:${row.id}`, entered_at: now, flashed: result.score.flashed,
       scratched: result.score.scratched,
+    };
+    // Compare-and-set (UAT Z-06-01) — SAME RPC the signed-in client calls
+    // (`pushScore`/`post_score`). This service-role client bypasses RLS at
+    // the role level, independent of the RPC's own SECURITY INVOKER mode.
+    const { data: rpcData, error: rpcErr } = await db.rpc('post_score', {
+      p_score: scoreRow, p_expected_updated_at: result.score.expectedUpdatedAt,
     });
-    if (upsertErr) return json({ ok: false, error: upsertErr.message }, 500);
-
-    return json({ ok: true, score: { ...result.score, enteredBy: `judge-code:${row.id}`, enteredAt: now } });
+    if (rpcErr) return json({ ok: false, error: rpcErr.message }, 500);
+    const outcome = rpcData as { ok: boolean; conflict?: boolean; current?: ScoreDbRow | null };
+    if (!outcome.ok) {
+      // 409 (not 200): supabase-js v2 only leaves `error.context` (a Response)
+      // for a non-2xx invoke, and `judgeSubmitScore` (src/lib/supabase.ts)
+      // reads this structured body out of exactly that via `edgeErrorBody` —
+      // the same pattern `create-checkout-session`'s structured rejections use.
+      return json({
+        ok: false, conflict: !!outcome.conflict,
+        current: outcome.current ? dbRowToClientScore(outcome.current) : null,
+        error: 'A score was already posted for this athlete/apparatus.',
+      }, 409);
+    }
+    return json({ ok: true, score: outcome.current ? dbRowToClientScore(outcome.current) : null });
   }
 
   return json({ ok: false, error: 'Unknown operation.' }, 400);

@@ -59,6 +59,14 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
    redesign both of them decided on. Batches, root causes, and the 5 open questions live in
    [plans/2026-08-21-uat-round1-triage.md](plans/2026-08-21-uat-round1-triage.md) — work that
    doc, not this list, until it's drained. The invoice-sequence fix (§3.1) moves into its Batch 1.
+   **Z-04 (refund requests per invoice line instead of per registration) DRAFTED 2026-08-21**,
+   folded together with the D-5 add-on-refund-policy fix (§3 item 4) and rules 6/7 (required
+   rejection reason; silent-refetch on a same-outcome 409) — migration
+   `20260821150000_refund_request_groups.sql`, both `request-refund`/`process-refund` rewritten,
+   `RefundRequestDialog.tsx`/`RefundReview.tsx` rewritten for the new one-request-per-registration
+   shape. Detail in `docs/plans/notes/2026-08-21-uat-round1-notes.md`. **Not yet applied to
+   staging/prod, and the reviewer-tier adversarial review of the diff is still owed** — the
+   controller owns both per the CLAUDE.md money-invariants rule.
 
 
 0. ✅ **Security hardening Phase 3 — COMPLETE 2026-07-26**
@@ -91,17 +99,19 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
   collapse, a NotFound route, and keyboard-accessible Details/Hide toggles.
 
   Residuals deliberately left open:
-   - **Invoice numbering** (O1 spec §3) — two formats coexist; deferred to the
-     pre-launch data sweep per Nate, since all current rows are test data. The
-     generators derive the sequence from a row COUNT, which is not concurrency-safe.
-     **Julia decided 2026-08-19 (UAT D-4):** wipe the whole record before go-live and keep
-     the latest format, `UCG-YYYY-XXXX`. The format question is closed; the DB-sequence
-     concurrency fix below is unchanged.
-     💬 **Recommend reclassifying this as a Stripe go-live gate rather than a quality pass**
-     ([findings §6.4](specs/2026-07-31-review-and-cleanup-findings.md)): the trigger for the
-     concurrency bug isn't a data sweep, it's the first two people checking out at the same
-     time. Duplicate numbers on real financial records are painful to unwind and trivial to
-     prevent beforehand — the fix is a DB sequence.
+   - **Invoice numbering** (O1 spec §3) — two formats coexist. **Julia decided 2026-08-19
+     (UAT D-4):** wipe the whole record before go-live and keep the latest format,
+     `UCG-YYYY-XXXX`; legacy `UCG-I-<epoch>` rows are test data, not renumbered.
+     **The concurrency fix shipped 2026-08-21** (branch `fix/uat-round1`, migration
+     `20260821140000_invoice_number_counters.sql` — see `supabase/README.md`'s row for
+     detail): both generators (`_shared/fulfill.ts`'s webhook/free-order path,
+     `Membership.tsx`'s admin comp path) used to derive the sequence from a row COUNT with
+     no lock, so two concurrent fulfillments could mint the same number. Replaced by the
+     atomic `next_invoice_number` RPC (single insert-on-conflict-returning — the row lock
+     IS the serialization, same idiom as `reserve_coupon`/`claim_refund_approval`), seeded
+     to continue past the live test data. **Not yet applied to staging/prod** — controller
+     `db push`s per the standard staging-then-prod procedure. The pre-launch wipe (D-4) is
+     still open and unaffected by this fix.
    - **Pre-existing 375px overflow on the admin Communicate compose-editor card** —
      found during H5–H7, proven pre-existing via `git stash`, out of scope there.
    - **Keyboard verification of the H7 toggles was click+DOM-based**, not real key
@@ -137,14 +147,17 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
   ⚠️ `eslint-plugin-jsx-a11y` **could not be installed** — no release supports eslint 10 (repo is
   on 10.8.0). Re-check later; it's the cheapest way to stop A1-class regressions at the source.
 3. **New-club-request email** to `newclubinquiries@naigc.org` (transport exists, not wired).
-4. 🤖 **Add-on refund policy per Julia (UAT D-5, 2026-08-19) — code diverges from policy.**
-  Policy: an add-on refunds **in full until that add-on type's order deadline
-  (`lastPurchaseAt`), and not at all after it**. Today `process-refund` applies the
-  registration rule (100% at-or-before `last_date_to_edit`, else 75%) to `kind:'addon'`
-  requests too (index.ts §"computedRefundCents"). Needs: per-add-on deadline lookup in
-  `process-refund`, matching request-dialog messaging, and a refusal path for
-  past-deadline add-on requests. **Money path — sonnet drafts, reviewer-tier reviews the
-  diff before merge** per the CLAUDE.md routing rule.
+4. ✅ **Add-on refund policy per Julia (UAT D-5, 2026-08-19) — DRAFTED 2026-08-21, not yet
+  applied.** Policy: an add-on refunds **in full until that add-on type's order deadline
+  (`lastPurchaseAt`), and not at all after it**. Folded into the Z-04 refund-grouping rewrite
+  (branch `fix/uat-round1`, migration `20260821150000_refund_request_groups.sql` — see
+  `supabase/README.md`'s row for detail): `request-refund` now refuses an add-on request
+  outright at REQUEST time once `addonPurchaseOpen`/`addonLastPurchaseAt` (`_shared/stripe.ts`)
+  says its window has closed, and `process-refund` no longer applies the registration 100%/75%
+  rule to `kind:'addon'` at all — an add-on that reaches approval is always refunded in full
+  (it could only get there while still in-window). Reviewer-tier adversarial review of the
+  full diff (money-invariants.md scope) is still owed before merge/push per the CLAUDE.md
+  routing rule — not yet done.
 5. **PWA production update path** — verify deploys reach users promptly; add a "new
   version available, reload" prompt if not.
 6. **`npm audit` + Dependabot** in CI. **Audited 2026-07-31 — nothing that ships to a user is
@@ -190,9 +203,20 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
   (higher stakes there — it feeds rank/award math, so a dropped score is a wrong placement, not
   a missing row). The empty state is now truthful too (`unplacedScoreCount`). Verified live:
   all 3 prod scores render across 2 sessions with correct ranks.
-  ⚠️ **Still true and worth designing around:** nothing back-fills `session_id`, and
-  `pushEvent` deletes/reinserts `event_sessions`, so a session whose **id** changes on an edit
-  still orphans its registrations — see §4's §L.2 note.
+  ⚠️ Still true: nothing back-fills a `session_id` that's already null — see §4's §L.2 note.
+  The other half — **`pushEvent` deleting/reinserting `event_sessions` on every save, orphaning
+  registrations pointing at the old id — FIXED 2026-08-22** on `fix/uat-round1` (UAT Z-06,
+  relapsed this exact symptom). The sessions editor now preserves each session's id across
+  reorders/adds/removes instead of reassigning ids by array index, and the write path
+  (`pushEvent`/`pushEventSessions`) upserts by id and deletes only genuinely-removed ones
+  (`diffSessions`, `events-core.ts`) instead of a blanket delete-then-insert — the delete was
+  what actually nulled `registrations.session_id`/`scores.session_id` via
+  `on delete set null`, even when the reinsert used the identical id. Removing a session with
+  live registrations is now blocked in the editor, and `sessionResults`/`unplacedScoreCount`
+  fall back to a score's own `sessionId` and render an explicit "Unassigned" group instead of
+  silently dropping anything still unresolved. Detail:
+  [findings §4.4](specs/2026-07-31-review-and-cleanup-findings.md),
+  `docs/plans/notes/2026-08-21-uat-round1-notes.md`.
 9. ✅ **`judge-entry` unlock rate limit — SHIPPED 2026-07-31** (staging + prod, migration
   `20260731180000`, `judge-entry` prod v3). The 6-digit code path's only defense was a
   per-request `sleep(300)`, which parallelism erases — 40 concurrent invalid codes all returned

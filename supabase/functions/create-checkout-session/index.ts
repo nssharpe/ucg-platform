@@ -47,9 +47,11 @@
 // the permanent `used_count` bump at fulfillment time.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
+  addedDisciplineChangeTotalDollars,
   addonLastPurchaseAt,
   addonPriceDollars,
   addonPurchaseOpen,
+  couponEligibleLine,
   getStripe,
   lateFeeAnchor,
   membershipFeeDollars,
@@ -59,6 +61,7 @@ import {
   registrationChangeFeeDollars,
   seasonPurchasableForCheckout,
   toCents,
+  type CouponScope,
   type MembershipRow,
   type MembershipType,
   type RegFeeEvent,
@@ -73,6 +76,7 @@ import {
   type GroupRow,
   type SessionRow,
 } from '../_shared/capacity.ts';
+import { findPaidSibling } from '../_shared/registration-status.ts';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -236,14 +240,20 @@ Deno.serve(async (req) => {
     ...regsByLine.map((r) => r.event_id),
   ]));
   let events = new Map<string, RegFeeEvent>();
+  let eventNames = new Map<string, string>();
   let allEventRegs: RegRow[] = []; // ALL non-refunded regs for the involved events (for prior counts)
   if (eventIds.length) {
     const { data: mr, error: mErr } = await db
       .from('events')
-      .select('id, host_club_id, entry_fee, second_discipline_fee, change_fee, tshirt_addon, banner_addon, banquet, camp_config, reg_closes, late_reg')
+      .select('id, name, host_club_id, entry_fee, second_discipline_fee, change_fee, tshirt_addon, banner_addon, banquet, camp_config, reg_closes, late_reg')
       .in('id', eventIds);
     if (mErr) return json({ ok: false, error: mErr.message }, 500);
     events = new Map((mr ?? []).map((m) => [m.id as string, m as unknown as RegFeeEvent]));
+    // Display-only lookup for the UAT Z-02 duplicate-slot 409 message below —
+    // `RegFeeEvent` (mirrored from `_shared/stripe.ts`, shared with the
+    // webhook) deliberately doesn't carry `name`, so this stays a separate
+    // side map rather than widening that shared type.
+    eventNames = new Map((mr ?? []).map((m) => [m.id as string, ((m as { name?: string | null }).name ?? 'this event')]));
     const { data: amr, error: amErr } = await db
       .from('registrations')
       .select('id, event_id, athlete_id, club_id, refunded, created_at, ' +
@@ -662,7 +672,10 @@ Deno.serve(async (req) => {
   // `scope`/`eventId` are the coupon-matching tags: which "Applies to" category
   // (per the promo-code feature) this line falls under, so a coupon can be
   // scoped to e.g. just athlete memberships or just one specific event.
-  type CouponScope = 'athlete-membership' | 'club-membership' | 'coach-membership' | 'meet-entry';
+  // `CouponScope`/eligibility live in `_shared/stripe.ts` (UAT M-11-01) —
+  // `'change-fee'` and `'addon'` exist precisely so a `'meet-entry'`-scoped
+  // coupon ("Event entries") discounts actual new entries only, never a
+  // change fee or an add-on.
   // `itemId` ties each Stripe line back to its cart item so the POST-discount
   // per-line amount (the coupon allocation below mutates `cents` in place) can
   // be frozen onto the snapshot as `paid_cents` — the refund base (T6).
@@ -757,38 +770,152 @@ Deno.serve(async (req) => {
       }
       const event = events.get(reg.event_id);
       if (!event) return json({ ok: false, error: `Unknown event ${reg.event_id}.` }, 400);
+      // Every reg in one meet-entry line must be the SAME athlete at the SAME
+      // event (reviewer-added with UAT M-10): the prior/added discipline
+      // counts below are derived from `reg` (refRegs[0]), so a crafted line
+      // mixing athlete A's paid reg with athlete B's new reg would price B at
+      // the second-discipline rate instead of a full entry. Fail closed.
+      if (refRegs.some((r) => r.event_id !== reg.event_id || r.athlete_id !== reg.athlete_id)) {
+        return json({ ok: false, error:
+          `"${i.label}" mixes registrations for different athletes or events — remove it from your cart (✕) and add the registrations again.` }, 400);
+      }
+
+      // UAT Z-02 (S1): no athlete can be charged twice for the same
+      // (event, discipline) slot. Two different sessions (e.g. a league
+      // admin and a club manager) can each create their OWN registration row
+      // for the same athlete+event+discipline — client-minted ids
+      // (`RegistrationEditor.tsx`) guarantee the rows never collide on id,
+      // so nothing before this point notices. `allEventRegs` (already loaded
+      // above: every non-refunded reg at every event this checkout touches,
+      // across every club) is exactly the dataset to check against — no
+      // extra query for the paid-sibling half. This is defense in depth
+      // alongside the DB-level `registrations_live_slot_uniq` partial unique
+      // index, which is what actually stops a second duplicate ROW from ever
+      // being created; this check exists for a duplicate row that already
+      // exists (pre-migration data, or a race that briefly created one
+      // before the index applied).
+      const pendingCutoffIso = new Date(Date.now() - CART_HOLD_MINUTES * 60_000).toISOString();
+      for (const r of refRegs) {
+        const paidSibling = findPaidSibling(r, allEventRegs);
+        // Other LIVE (non-refunded) rows at this exact slot, excluding every
+        // reg this very line already references (this line editing/paying
+        // its own regs is never a conflict with itself).
+        const otherSlotRegIds = allEventRegs
+          .filter((s) => s.event_id === r.event_id && s.athlete_id === r.athlete_id && s.discipline === r.discipline)
+          .filter((s) => !refRegs.some((line) => line.id === s.id))
+          .map((s) => s.id);
+        let conflictReason: string | null = null;
+        if (paidSibling) {
+          conflictReason = 'paid';
+        } else if (otherSlotRegIds.length) {
+          // Mid-checkout collision: someone else's UNPAID registration for
+          // this exact slot is referenced by a payment still `pending`
+          // within the last CART_HOLD_MINUTES — i.e. sitting inside an
+          // active, not-yet-completed Stripe Embedded Checkout right now.
+          // Mirrors the CART_HOLD_MINUTES (30 min) soft-hold model used
+          // elsewhere for capacity. `payments.ref_reg_ids` is populated at
+          // insert time below (both the free and Stripe paths) specifically
+          // so this overlap query works — it was otherwise an unpopulated
+          // vestigial column (see money-invariants.md).
+          const { data: pendingPay } = await db.from('payments')
+            .select('id')
+            .eq('status', 'pending')
+            .gte('created_at', pendingCutoffIso)
+            .overlaps('ref_reg_ids', otherSlotRegIds)
+            .limit(1)
+            .maybeSingle();
+          if (pendingPay) conflictReason = 'pending';
+        }
+        if (conflictReason) {
+          const { data: athleteRow } = await db.from('people')
+            .select('first_name, last_name').eq('id', r.athlete_id).maybeSingle();
+          const athleteName = (athleteRow
+            ? `${(athleteRow as { first_name?: string }).first_name ?? ''} ${(athleteRow as { last_name?: string }).last_name ?? ''}`.trim()
+            : '') || 'This athlete';
+          const eventName = eventNames.get(r.event_id) ?? 'this event';
+          const message = conflictReason === 'paid'
+            ? `${athleteName} is already registered for ${r.discipline} at ${eventName} — refresh the page and check the roster before checking out.`
+            : `${athleteName} is already being checked out for ${r.discipline} at ${eventName} by someone else right now — wait a few minutes and check the roster before trying again.`;
+          return json({ ok: false, error: message }, 409);
+        }
+      }
       const competingClubId = reg.club_id ?? '';
-      const isChange = refRegs.every((r) => r.paid === true || r.updated_pending === true);
-      if (isChange) {
-        pushLine(i.id, i.label, registrationChangeFeeDollars(event, { competingClubId }), 'meet-entry', reg.event_id);
-      } else {
-        const lineRegIds = new Set(i.ref_reg_ids ?? []);
+      const lineRegIds = new Set(i.ref_reg_ids ?? []);
+      // All of this athlete's non-refunded regs at this event+club — used both
+      // for prior-discipline counts and as the late-fee anchor's full pool.
+      const athleteEventRegs = allEventRegs.filter((r) =>
+        r.event_id === reg.event_id &&
+        r.athlete_id === reg.athlete_id &&
+        (r.club_id ?? '') === competingClubId,
+      );
+      // Other non-refunded regs for (event, athlete, competing club) NOT in
+      // this line at all (neither changed nor added here).
+      const outsideRegs = athleteEventRegs.filter((r) => !lineRegIds.has(r.id));
+
+      // UAT M-10-01 (S1): entry-vs-change is derived PER-REG, then the line is
+      // split three ways rather than the old binary `every(...)` check — a
+      // line whose refs MIX an already-purchased/re-pended reg with a
+      // brand-new one (adding a discipline to a paid registration) must be
+      // priced as extra-discipline entry fee + change fee, ONE combined line
+      // — never as a cheap change-fee-only line (C4 anti-smuggling: an added
+      // reg is ALWAYS priced by the entry-total logic, never the change fee
+      // alone) and never as a full fresh-entry line (which double-charges the
+      // base entry fee already paid for the first discipline).
+      const changedRegs = refRegs.filter((r) => r.paid === true || r.updated_pending === true);
+      const addedRegs = refRegs.filter((r) => !(r.paid === true || r.updated_pending === true));
+
+      if (addedRegs.length === 0) {
+        // Pure edit (level/apparatus/club change on already-purchased regs,
+        // no new reg row): change-fee only. UAT M-11-01: scoped 'change-fee',
+        // NOT 'meet-entry' — a coupon scoped to "Event entries" must never
+        // discount a change fee.
+        pushLine(i.id, i.label, registrationChangeFeeDollars(event, { competingClubId }), 'change-fee', reg.event_id);
+      } else if (changedRegs.length === 0) {
+        // Every referenced reg is brand-new: full entry-total path, unchanged.
         const newDisciplineCount = refRegs.length;
-        // Prior = other non-refunded regs for (event, athlete, competing club) not in this line.
-        const priorDisciplineCount = allEventRegs.filter((r) =>
-          r.event_id === reg.event_id &&
-          r.athlete_id === reg.athlete_id &&
-          (r.club_id ?? '') === competingClubId &&
-          !lineRegIds.has(r.id),
-        ).length;
+        const priorDisciplineCount = outsideRegs.length;
         // Late-registration fee attachment (emv2 P0 Task 3, corrected): the
         // surcharge attaches ONLY to the line CONTAINING the athlete's
         // earliest-created reg for this event+club (`lateFeeAnchor` returns
         // that line's anchor or null) — otherwise every later entry purchase
         // would re-add a fee already charged with the athlete's first line.
         // MIRRORS src/lib/pricing.ts's `lateFeeAnchor` — keep in sync.
-        const athleteEventRegs = allEventRegs.filter((r) =>
-          r.event_id === reg.event_id &&
-          r.athlete_id === reg.athlete_id &&
-          (r.club_id ?? '') === competingClubId,
-        );
         const lineRegs = athleteEventRegs.filter((r) => lineRegIds.has(r.id));
-        const outsideRegs = athleteEventRegs.filter((r) => !lineRegIds.has(r.id));
         const anchor = lateFeeAnchor(lineRegs, outsideRegs, new Date().toISOString());
         pushLine(i.id, i.label, newRegistrationEntryTotalDollars(event, {
           competingClubId, priorDisciplineCount, newDisciplineCount,
           late: anchor ? { earliestCreatedAtISO: anchor } : undefined,
         }), 'meet-entry', reg.event_id);
+      } else {
+        // Mixed line: a discipline was ADDED alongside an already-purchased/
+        // re-pended one — extra-discipline entry fee + change fee, as ONE
+        // line. `priorDisciplineCount` counts the changed regs in THIS line
+        // (already-registered before) PLUS everything outside the line, so
+        // the added discipline(s) price at the second-discipline rate onward.
+        // The late-fee anchor considers only the ADDED regs as "this line"
+        // (`lineRegs`) against everything else including the changed regs
+        // (`outsideRegs`) — an added discipline can still be a late
+        // registration; an already-paid discipline never re-triggers it.
+        const addedRegIds = new Set(addedRegs.map((r) => r.id));
+        const newDisciplineCount = addedRegs.length;
+        const priorDisciplineCount = changedRegs.length + outsideRegs.length;
+        const lineRegs = athleteEventRegs.filter((r) => addedRegIds.has(r.id));
+        const outsideRegsForAnchor = athleteEventRegs.filter((r) => !addedRegIds.has(r.id));
+        const anchor = lateFeeAnchor(lineRegs, outsideRegsForAnchor, new Date().toISOString());
+        // UAT M-11-01: scoped 'change-fee', not 'meet-entry', even though
+        // this combined amount includes the added discipline's entry-total —
+        // it can't be cleanly split, and the refund path already treats a
+        // MIXED line as `ref_line_type:'change'` (fully non-refundable, see
+        // money-invariants.md's Refunds section) for the same reason. Under-
+        // discounting the entry-total portion here is the safe direction:
+        // it never gives a 'meet-entry' coupon a change fee to eat, matching
+        // "the service fee is never refunded"-style conservatism elsewhere
+        // in this file. This branch is defense-in-depth only — the client no
+        // longer produces a mixed line as of the M-10 x Z-04 rework.
+        pushLine(i.id, i.label, addedDisciplineChangeTotalDollars(event, {
+          competingClubId, priorDisciplineCount, newDisciplineCount,
+          late: anchor ? { earliestCreatedAtISO: anchor } : undefined,
+        }), 'change-fee', reg.event_id);
       }
       continue;
     }
@@ -818,7 +945,9 @@ Deno.serve(async (req) => {
       if (!addonPurchaseOpen(deadline, event.reg_closes, new Date())) {
         return json({ ok: false, error: `The purchase window for the ${typeName} add-on has closed.` }, 400);
       }
-      pushLine(i.id, i.label, price, 'meet-entry', i.ref_event_id);
+      // UAT M-11-01: scoped 'addon', not 'meet-entry' — a coupon scoped to
+      // "Event entries" must never discount a t-shirt/banner/banquet/leo line.
+      pushLine(i.id, i.label, price, 'addon', i.ref_event_id);
       continue;
     }
 
@@ -867,16 +996,11 @@ Deno.serve(async (req) => {
       }
 
       if (valid) {
-        const eligible = lines.filter((l) => {
-          if (appliesTo === 'any') return true;
-          if (appliesTo === 'membership') {
-            return l.scope === 'athlete-membership' || l.scope === 'club-membership' || l.scope === 'coach-membership';
-          }
-          if (appliesTo === 'meet-entry') {
-            return l.scope === 'meet-entry' && (!appliesToEventId || l.eventId === appliesToEventId);
-          }
-          return l.scope === appliesTo;
-        });
+        // UAT M-11-01: eligibility is the shared, unit-tested
+        // `couponEligibleLine` (`_shared/stripe.ts`, mirrored in
+        // src/lib/pricing.ts) rather than an inline filter, so the "which
+        // scope discounts which line" rule lives in exactly one place.
+        const eligible = lines.filter((l) => couponEligibleLine(l, { appliesTo, appliesToEventId }));
         const eligibleCents = eligible.reduce((s, l) => s + l.cents, 0);
         if (eligibleCents > 0) {
           const pctOff = couponRow.pct_off == null ? null : Number(couponRow.pct_off);
@@ -1082,6 +1206,11 @@ Deno.serve(async (req) => {
         service_fee: 0,
         currency: 'usd',
         cart_item_ids: items.map((i) => i.id),
+        // Populated (previously always null — a dormant/vestigial column,
+        // see money-invariants.md) so the UAT Z-02 mid-checkout pending-slot
+        // overlap query above, and admin-delete-person's existing
+        // `ref_reg_ids.ov.{}` scrub filter, both actually work.
+        ref_reg_ids: allRefRegIds.length ? allRefRegIds : null,
         lines_snapshot: linesSnapshot,
         ref_season_id: single?.ref_season_id ?? null,
         ref_type: single?.ref_type ?? null,
@@ -1190,6 +1319,8 @@ Deno.serve(async (req) => {
       service_fee: feeCents,
       currency: 'usd',
       cart_item_ids: items.map((i) => i.id),
+      // See the free-order insert above for why this is populated now.
+      ref_reg_ids: allRefRegIds.length ? allRefRegIds : null,
       lines_snapshot: linesSnapshot,
       ref_season_id: single?.ref_season_id ?? null,
       ref_type: single?.ref_type ?? null,

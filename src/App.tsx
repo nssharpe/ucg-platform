@@ -8,14 +8,14 @@ import { ToastProvider } from './components/ui';
 import { isUnlocked } from './lib/store';
 import { useCapabilities } from './lib/capabilities';
 import { isSupabaseConfigured } from './lib/supabase';
-import { useSession, useAuthLoading, hasLikelySession, hasAuthCallbackInUrl, useRolesLoaded, useAal } from './lib/auth';
+import { useSession, useAuthLoading, hasLikelySession, hasAuthCallbackInUrl, useRolesLoaded, useAal, initialSetPwKind } from './lib/auth';
 import { needsMfaStepUp } from './lib/mfa-core';
+import { useAdminMfaSatisfied } from './lib/mfa';
 import { MyScoresBoot } from './lib/scores-slice';
 import { MyRegistrationsBoot } from './lib/registrations-slice';
 import { Gate } from './pages/Gate';
 import { Home } from './pages/Home';
 import { MfaChallenge } from './pages/MfaChallenge';
-import { AdminMfaNag } from './components/AdminMfaNag';
 
 // McMaster-Carr-style "intelligent bundling": only the shell + home ship in the
 // first chunk; every other page is its own chunk, then ALL of them are
@@ -44,12 +44,6 @@ const ClubRegistrations = lazy(() => loaders.Club().then((m) => ({ default: () =
 function ClubIndexRedirect() {
   const { clubId } = useParams();
   return <Navigate to={`/club/${clubId}/roster`} replace />;
-}
-
-/** Retired route (unified-cart-b2): the per-club cart + receipts page was
- *  merged into the single `/cart` page (a section per managed club there). */
-function ClubCartRedirect() {
-  return <Navigate to="/cart" replace />;
 }
 
 /** Legacy /meets* → /events* redirects (the Meet→Event rename keeps old links
@@ -109,12 +103,14 @@ const ManagerAccessReview = lazy(() => import('./pages/ManagerAccessReview'));
 const SetPassword = lazy(() => import('./pages/SetPassword'));
 const MyRegistrations = lazy(() => import('./pages/MyRegistrations').then((m) => ({ default: m.MyRegistrations })));
 const PurchaseHistory = lazy(() => import('./pages/PurchaseHistory').then((m) => ({ default: m.PurchaseHistory })));
-const ErrorLog = lazy(() => import('./pages/ErrorLog').then((m) => ({ default: m.ErrorLog })));
+const AdminErrors = lazy(() => import('./pages/AdminErrors').then((m) => ({ default: m.AdminErrors })));
 const RefundReview = lazy(() => import('./pages/admin/league/RefundReview').then((m) => ({ default: m.RefundReview })));
 const Finance = lazy(() => import('./pages/admin/league/Finance').then((m) => ({ default: m.Finance })));
 const UcgEvent = lazy(() => import('./pages/admin/UcgEvent').then((m) => ({ default: m.UcgEvent })));
 const Cart = lazy(() => import('./pages/Cart').then((m) => ({ default: m.Cart })));
 const MembershipsCheckout = lazy(() => import('./pages/Cart').then((m) => ({ default: m.MembershipsCheckout })));
+const ClubCartPage = lazy(() => import('./pages/ClubCart').then((m) => ({ default: m.ClubCartPage })));
+const ClubPurchaseHistoryPage = lazy(() => import('./pages/ClubPurchaseHistory').then((m) => ({ default: m.ClubPurchaseHistoryPage })));
 
 /** Prefetch all route chunks once the browser is idle after first paint. */
 function usePrefetchRoutes() {
@@ -163,6 +159,10 @@ function RequireAccount({ children }: { children: ReactNode }) {
 function RequireAdmin({ children }: { children: ReactNode }) {
   const caps = useCapabilities();
   const rolesLoaded = useRolesLoaded();
+  // Always called (hooks can't be conditional) — resolves to `true` (n/a)
+  // for non-admins, so it's cheap/harmless when the isAdmin check below
+  // hasn't even run yet.
+  const mfaSatisfied = useAdminMfaSatisfied();
   if (!caps.signedIn) return <Gate onUnlock={() => {}} />;
   // Roles load async after the session resolves. Until we know them, show the
   // loader rather than flashing "Admin access required" at an actual admin.
@@ -178,7 +178,29 @@ function RequireAdmin({ children }: { children: ReactNode }) {
       </div>
     );
   }
-  return <><AdminMfaNag />{children}</>;
+  // Admin MFA hard gate (UAT A-11-01, S2, decided 2026-08-21): block ALL
+  // admin pages — never a dismissable nag — until the admin has a verified
+  // TOTP factor or is signed in via passkey. `/me` (ProfileMfa, the
+  // enrollment UI) is NOT behind RequireAdmin, so there is always a way out.
+  // Still resolving the factor list — show the loader, not the block panel.
+  if (mfaSatisfied === null) return <PageFallback />;
+  if (!mfaSatisfied) {
+    return (
+      <div style={{ padding: '60px 24px', maxWidth: 480, margin: '0 auto', textAlign: 'center' }}>
+        <div style={{ fontSize: 32, marginBottom: 16 }}>🔒</div>
+        <h2 style={{ marginBottom: 8 }}>Set up two-factor authentication to continue</h2>
+        <p style={{ color: 'var(--ink-soft)' }}>
+          League admin accounts require two-factor authentication (or signing in with a passkey)
+          before reaching admin pages.
+        </p>
+        <div style={{ display: 'flex', gap: 12, justifyContent: 'center', marginTop: 20, flexWrap: 'wrap' }}>
+          <Link className="btn primary" to="/me">Set up two-factor authentication →</Link>
+          <Link className="btn ghost" to="/">Back to Home</Link>
+        </div>
+      </div>
+    );
+  }
+  return <>{children}</>;
 }
 
 /**
@@ -233,27 +255,44 @@ function RequireFinanceAccess({ children }: { children: ReactNode }) {
 
 /**
  * After clicking an invite / set-password email link, Supabase establishes the
- * session from the URL token and cleans the hash. The redirect carries ?setpw=1
- * (which survives that cleanup). This component — mounted INSIDE the router so it
- * can use useNavigate — routes to /set-password once the session is ready (or
- * immediately on an expired-link error), which HashRouter actually follows
- * (history.replaceState alone does not). It then clears the marker.
+ * session from the URL token and cleans the hash. The redirect carries
+ * ?setpw=invite or ?setpw=reset. This component — mounted INSIDE the router so
+ * it can use useNavigate — routes to /set-password once the session is ready
+ * (or immediately on an expired-link error), which HashRouter actually
+ * follows (history.replaceState alone does not).
+ *
+ * Reads the marker via `initialSetPwKind()` (auth.ts), NOT by re-parsing
+ * `window.location.search` here, because the query param gets deleted below
+ * once we land on /set-password — and Supabase's OWN implicit-grant handling
+ * later does a direct `window.location.hash = ''` (auth-js
+ * `_getSessionFromURL`) after its `_getUser` network round trip, which fires
+ * a real hashchange and can bounce HashRouter back to `/` a few hundred ms
+ * into the load. If this effect's re-navigation depended on the (by-then
+ * deleted) query param, that bounce would strand the page on Home with no
+ * way back — exactly Julia's "landed on the signed-out Home page with no
+ * guidance" repro (A-07-02). `initialSetPwKind()` is captured ONCE at module
+ * load (before any of that can happen), so this effect keeps re-navigating
+ * to /set-password no matter how many times the hash gets rewritten out from
+ * under it. See auth-and-mfa.md "HashRouter vs Supabase implicit flow".
  */
 function SetPasswordRedirect() {
   const navigate = useNavigate();
-  const session = useSession();
   const location = useLocation();
+  const setpwKind = initialSetPwKind();
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('setpw') !== '1') return;
+    if (!setpwKind) return;
     if (location.pathname === '/set-password') {
-      const url = new URL(window.location.href);
-      url.searchParams.delete('setpw');
-      window.history.replaceState(null, '', url.toString());
+      if (new URLSearchParams(window.location.search).has('setpw')) {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('setpw');
+        // Preserve history.state (React Router keeps its own entry there)
+        // rather than wiping it with `null`.
+        window.history.replaceState(window.history.state, '', url.toString());
+      }
       return;
     }
     navigate('/set-password', { replace: true });
-  }, [session, location.pathname, navigate]);
+  }, [location.pathname, navigate, setpwKind]);
   return null;
 }
 
@@ -319,7 +358,8 @@ export default function App() {
               <Route path="/club/:clubId" element={<RequireAccount><ClubIndexRedirect /></RequireAccount>} />
               <Route path="/club/:clubId/roster" element={<RequireAccount><ClubRoster /></RequireAccount>} />
               <Route path="/club/:clubId/registrations" element={<RequireAccount><ClubRegistrations /></RequireAccount>} />
-              <Route path="/club/:clubId/cart" element={<ClubCartRedirect />} />
+              <Route path="/club/:clubId/cart" element={<RequireAccount><ClubCartPage /></RequireAccount>} />
+              <Route path="/club/:clubId/purchases" element={<RequireAccount><ClubPurchaseHistoryPage /></RequireAccount>} />
               <Route path="/events/:slug/manage" element={<RequireAccount><EventManage /></RequireAccount>} />
               <Route path="/events/:slug/host" element={<RequireAccount><EventHostPage /></RequireAccount>} />
               <Route path="/events/:slug/communicate" element={<RequireAccount><EventCommunicate /></RequireAccount>} />
@@ -339,7 +379,7 @@ export default function App() {
               <Route path="/admin/league" element={<RequireAdmin><AdminLeague /></RequireAdmin>} />
               <Route path="/admin/ucg-event/:template/:seasonId" element={<RequireAdmin><UcgEvent /></RequireAdmin>} />
               <Route path="/admin/communicate" element={<RequireAdmin><Communicate /></RequireAdmin>} />
-              <Route path="/admin/errors" element={<RequireAdmin><ErrorLog /></RequireAdmin>} />
+              <Route path="/admin/errors" element={<RequireAdmin><AdminErrors /></RequireAdmin>} />
               <Route path="/admin/refunds" element={<RequireRefundAccess><RefundReview /></RequireRefundAccess>} />
               <Route path="/admin/finance" element={<RequireFinanceAccess><Finance /></RequireFinanceAccess>} />
               <Route path="/waiver/sign/:token" element={<WaiverSign />} />

@@ -187,9 +187,12 @@ The single authoritative list is `docs/whats-next.md`.
   (`docs/plans/2026-07-04-uiux-review-fixes.md`). Residuals: invoice numbering (two formats;
   the generators derive the sequence from a row COUNT, which is not concurrency-safe), a
   pre-existing 375px overflow on admin Communicate's compose card.
-- **Two live findings from the 2026-07-31 review** (`docs/specs/2026-07-31-review-and-cleanup-findings.md`):
-  the public Results page hides posted scores when registrations carry no `session_id`, and
-  `judge-entry`'s 6-digit unlock has no real rate limit. Both in `docs/whats-next.md` §3.
+- **Both live findings from the 2026-07-31 review are now RESOLVED**
+  (`docs/specs/2026-07-31-review-and-cleanup-findings.md` §4.4/§3.3): the public Results page
+  hiding posted scores when a registration's `session_id` doesn't resolve — including the UAT
+  Z-06 relapse (`fix/uat-round1`, 2026-08-22) where an event-sessions save minted new ids and
+  silently orphaned live registrations — and `judge-entry`'s 6-digit unlock rate limit (SHIPPED
+  2026-07-31). Detail in `docs/whats-next.md` §3.
 - 👤 **Nate's actions:** grant `refund_manager` to whoever reviews refunds. (Done 2026-08-19:
   Julia's `finance_admin` ✅; "UCG - Main" `is_league_host` ✅ — and that club is now hidden
   from the member-facing Club Directory/Profile pickers.)

@@ -5,7 +5,19 @@
 // subscribes on mount and renders through the SAME toast UI/state as
 // useToast() — this is not a parallel mechanism, just an escape hatch into the
 // existing one.
-export type ToastOptions = { variant?: 'info' | 'error'; persist?: boolean };
+export type ToastOptions = {
+  variant?: 'info' | 'error';
+  persist?: boolean;
+  /** UAT M-01-02: an optional single action rendered on the toast itself —
+   *  e.g. "View cart" on a "Registration saved" toast, so the member doesn't
+   *  have to hunt for the cart link after an edit. `to` is a route path
+   *  (e.g. `/cart`, `/club/<id>/cart`); the toast renderer navigates via
+   *  `window.location.hash` rather than `<Link>`/`useNavigate` because
+   *  `ToastProvider` is mounted OUTSIDE `HashRouter` in App.tsx (so its own
+   *  imperative escape-hatch subscribers — the write-queue, the offline
+   *  gate — can toast without a Router in scope at all). */
+  action?: { label: string; to: string };
+};
 type ToastListener = (msg: string, opts?: ToastOptions) => void;
 
 const listeners = new Set<ToastListener>();

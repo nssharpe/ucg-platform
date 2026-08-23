@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { useSession } from '../lib/auth';
+import { useSession, initialSetPwKind, hasInitialLinkError } from '../lib/auth';
 
 // Reached after clicking an invite / set-password link. Supabase has already
 // established the session from the URL token (detectSessionInUrl) by the time we
-// render, so we just collect a new password and save it, then send the user to
-// the membership page.
+// render, so we just collect a new password and save it, then send the user
+// on: reset links go Home, invite links go to membership (matching the
+// invite email's "you'll land on the membership page" copy).
 const MIN_LEN = 10; // keep in step with the Supabase password policy
 
 export default function SetPassword() {
@@ -21,9 +22,12 @@ export default function SetPassword() {
   // moment before concluding the link is invalid.
   const [grace, setGrace] = useState(true);
   useEffect(() => { const t = setTimeout(() => setGrace(false), 2500); return () => clearTimeout(t); }, []);
-  // Supabase appends an error to the URL for expired/invalid links — detect it so
-  // we can show the "expired" message immediately rather than after the grace wait.
-  const linkError = /error=|otp_expired|access_denied/i.test(window.location.hash + window.location.search);
+  // Captured once at module load (auth.ts) — see SetPasswordRedirect's
+  // comment in App.tsx for why re-parsing the live URL here would be
+  // unreliable (this page's own cleanup, and Supabase's own hash-clear,
+  // both rewrite it after the fact).
+  const setpwKind = initialSetPwKind();
+  const linkError = hasInitialLinkError();
 
   const tooShort = pw.length > 0 && pw.length < MIN_LEN;
   const mismatch = pw2.length > 0 && pw !== pw2;
@@ -37,7 +41,10 @@ export default function SetPassword() {
     setBusy(false);
     if (error) { setErr(error.message); return; }
     setDone(true);
-    setTimeout(() => navigate('/membership'), 1200);
+    // Reset → Home; invite (and legacy pre-marker `?setpw=1` links) →
+    // membership, matching the invite email's "you'll land on the
+    // membership page" copy (UAT A-07-02 / A-06-01).
+    setTimeout(() => navigate(setpwKind === 'reset' ? '/' : '/membership'), 1200);
   };
 
   if (!session && grace && !linkError) {
@@ -53,8 +60,12 @@ export default function SetPassword() {
       <div className="card card-pad" style={{ maxWidth: 480, margin: '40px auto' }}>
         <h2 className="display" style={{ fontSize: 22 }}>This link has expired</h2>
         <p style={{ color: 'var(--ink-soft)' }}>
-          Ask your club manager to resend your invitation, or use “Forgot password” to get a new link.
+          This link has expired or was already used. Ask your club manager to resend your
+          invitation, or request a new one below.
         </p>
+        <button className="btn primary" type="button" onClick={() => navigate('/me')} style={{ marginTop: 14 }}>
+          Request a new link →
+        </button>
       </div>
     );
   }
