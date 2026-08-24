@@ -15,7 +15,8 @@ Status key: ☐ not started · 🔧 in progress · ✅ shipped · ❓ blocked on
 
 Migrations applied + verified with RLS probes and a post_score conflict smoke on staging;
 9 functions deployed to both projects (webhook trio confirmed verify_jwt=false); frontend
-build `b9d4464` live. Only Batch 5 (capacity) remains — at the prototype stage.
+build `b9d4464` live. Only Batch 5 (capacity) remains — engine (T1) and wizard UI (T2) built on
+`feat/capacity-rework` (not yet merged/reviewed/deployed); progress UI (T3) not started.
 
 ### The original pre-ship snapshot (kept for the record)
 
@@ -110,9 +111,29 @@ numbers on entry**; **refuse lowering a cap below current registrations** with t
 message; event summary shows **progress toward caps** (paid only), and in by-session mode a
 per-session progress bar with a detail overlay (per-apparatus spots + waitlist size).
 
-Per CLAUDE.md ("prototype before spec" for prose requirements), I'll put up a clickable
-mock-data prototype of the cap editor + summary before writing the spec. Lane P stays on hold
-until this ships. Z-03-01 (the actual concurrency test) runs after.
+Per CLAUDE.md ("prototype before spec" for prose requirements), a clickable mock-data prototype
+of the cap editor + summary went up before the build (owners clicked through 2026-08-24). Lane P
+stays on hold until the whole batch ships. Z-03-01 (the actual concurrency test) runs after.
+
+Build split into three tasks on `feat/capacity-rework`:
+- **T1 (engine) ✅ shipped `940e825`** — `src/lib/capacity.ts`/`_shared/capacity.ts` reshaped to
+  per-discipline `none`/`discipline`/`perLevel` modes; event-wide `total` cap removed outright
+  (no replacement); `capOf` now whole-number-only (fixes the latent 0-reads-as-a-live-cap bug);
+  `normalizeCapacity()` reads the legacy pre-rework shape on the fly, no migration needed.
+- **T2 (wizard UI) ✅ shipped** — `EventWizard.tsx`'s capacity editor rebuilt on the new engine:
+  "Max total participants" input gone, per-discipline No-cap/discipline/per-level chooser,
+  whole-number + below-current-usage validation, by-session/by-discipline mutually hide each
+  other's capacity/session UI. Pure mapping in new `src/lib/capacity-draft.ts`, unit-tested.
+  Deviations and open questions for Nate/Julia (by-session-mode capacity pass-through vs.
+  force-clear; the one-time notice's dismiss semantics) are in
+  `docs/plans/notes/2026-08-21-uat-round1-notes.md`.
+- **T3 (progress UI) — not started.** Event summary "progress toward caps" (paid-only, via the
+  already-exported `paidUsage()`) and the by-session per-session progress bar + detail overlay
+  (per-apparatus spots + waitlist size) from the decisions above are still to build.
+
+Not yet done regardless of T1–T3: Z-03-01's actual concurrency test, and reviewer-tier review of
+the T1/T2 diff before this merges to `main` (money/capacity-adjacent — CLAUDE.md's model-routing
+rule).
 
 ## Batch 6 — Judging & results
 
