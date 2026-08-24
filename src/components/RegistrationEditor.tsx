@@ -853,13 +853,11 @@ export function RegistrationEditor({
   const sessionName = (sessionId: string) => event.sessions.find((s) => s.id === sessionId)?.name ?? sessionId;
 
   const violationText = (v: CapacityViolation): string => {
-    const scopeLabel = v.scope === 'total'
-      ? 'This event'
-      : v.scope === 'level'
-        ? `Level ${levelName(v.levelId!)}`
-        : v.scope === 'discipline'
-          ? disciplineLabel(v.discipline!)
-          : `${sessionName(v.sessionId!)} (${v.apparatus})`;
+    const scopeLabel = v.scope === 'level'
+      ? `${disciplineLabel(v.discipline!)} — Level ${levelName(v.levelId!)}`
+      : v.scope === 'discipline'
+        ? disciplineLabel(v.discipline!)
+        : `${sessionName(v.sessionId!)} (${v.apparatus})`;
     return `${scopeLabel} has ${v.remaining} spot${v.remaining === 1 ? '' : 's'} left — this selection needs ${v.requested}; checkout will offer a waitlist.`;
   };
 

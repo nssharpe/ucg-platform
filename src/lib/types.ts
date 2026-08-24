@@ -249,6 +249,48 @@ export interface CampSurveyQuestion {
   required: boolean;
 }
 
+/** Per-discipline capacity setting (capacity rework, 2026-08-24 — T1).
+ *  'none' (or the discipline simply absent from `perDiscipline`) = no cap.
+ *  'discipline' = one combined routine cap for the whole discipline (`cap`).
+ *  'perLevel' = a routine cap per level id within the discipline
+ *  (`perLevel`). A cap value only counts when it's a positive integer —
+ *  see `capOf` in `src/lib/capacity.ts`. */
+export interface CapacityDisciplineConfig {
+  mode: 'none' | 'discipline' | 'perLevel';
+  cap?: number | null;
+  perLevel?: Record<string, number | null>;
+}
+
+/** Canonical capacity shape — what `normalizeCapacity()` (`src/lib/capacity.ts`
+ *  / mirrored `_shared/capacity.ts`) always returns, and what the engine
+ *  operates on internally. The event-wide `total` (athlete) cap from the
+ *  pre-2026-08-24 design has NO equivalent here — it was removed outright,
+ *  not migrated. */
+export interface CapacityConfig {
+  perDiscipline?: Partial<Record<Discipline, CapacityDisciplineConfig>>;
+}
+
+/** `Event.capacity` as actually stored/edited. Tolerates the LEGACY flat
+ *  pre-2026-08-24 shape — `total` (event-wide athlete cap, now dead weight),
+ *  `perDiscipline: {D: number}`, and `perLevel: {levelId: number}` — because
+ *  the event wizard has not yet been reworked to WRITE the new nested shape
+ *  (tracked as a follow-up task; it will also need a one-time "your total cap
+ *  was removed" notice for events that had one). A `perDiscipline` value can
+ *  be EITHER the legacy bare number OR an already-migrated
+ *  `CapacityDisciplineConfig` object. **Never branch on these fields
+ *  directly — always call `normalizeCapacity()` first.** */
+export interface CapacityConfigRaw {
+  /** @deprecated Legacy event-wide athlete cap. Always ignored by
+   *  `normalizeCapacity()` — no replacement exists. */
+  total?: number | null;
+  perDiscipline?: Partial<Record<Discipline, number | CapacityDisciplineConfig | null>>;
+  /** @deprecated Legacy flat per-level cap (discipline-independent map,
+   *  historically WAG/MAG). `normalizeCapacity()` fans this out to every
+   *  discipline's `perLevel` (harmless: usage naturally self-scopes per
+   *  registration's own discipline at enforcement time). */
+  perLevel?: Record<string, number | null>;
+}
+
 export interface Event {
   id: string;
   slug: string;
@@ -348,17 +390,17 @@ export interface Event {
   lateReg?: { startsAt: string; fee: number };
   /** Event director contact, general to competitions and camps. */
   director?: { name: string; email: string; ccOnConfirmation: boolean };
-  /** Participant caps (event-mgmt v2 P4). `total` counts ATHLETES (competitions
-   *  AND camps) — one athlete counts once regardless of how many
-   *  disciplines/apparatus they enter. `perDiscipline` (T&T) and `perLevel`
-   *  (WAG/MAG) count ROUTINES, i.e. apparatus entries — one athlete entering 4
-   *  apparatus at a level counts as 4 against that level's cap. Enforced
-   *  server-side at checkout (`src/lib/capacity.ts`). */
-  capacity?: {
-    total?: number;
-    perDiscipline?: Partial<Record<Discipline, number>>;
-    perLevel?: Record<string, number>;
-  };
+  /** Participant caps (capacity rework, 2026-08-24 — T1). Every cap is now
+   *  scoped to a discipline, one mode each: 'none' (no cap), 'discipline'
+   *  (one combined ROUTINE cap, e.g. T&T), or 'perLevel' (a cap per level id
+   *  within the discipline, e.g. WAG/MAG). Routines = apparatus entries — one
+   *  athlete entering 4 apparatus at a level counts as 4 against that
+   *  level's cap. The old event-wide `total` (athlete) cap is GONE — no
+   *  replacement, per owners' approval. Enforced server-side at checkout
+   *  (`src/lib/capacity.ts` / mirrored `supabase/functions/_shared/capacity.ts`).
+   *  Always read via `normalizeCapacity()` — see `CapacityConfigRaw` below for
+   *  why the raw stored value can still look like the old shape. */
+  capacity?: CapacityConfigRaw;
   /** Registration mode (event-mgmt v2 P4). 'by-discipline' (default — today's
    *  behavior) vs 'by-session' (sessions are pre-created with per-apparatus
    *  routine caps and athletes register into a specific session). Absent ⇒

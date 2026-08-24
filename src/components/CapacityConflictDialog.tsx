@@ -157,13 +157,11 @@ export function CapacityConflictDialog({
     (sessionId ? event?.sessions.find((s) => s.id === sessionId)?.name ?? sessionId : '—');
 
   const violationText = (v: CapacityViolation): string => {
-    const scopeLabel = v.scope === 'total'
-      ? eventName
-      : v.scope === 'level'
-        ? `Level ${levelName(v.levelId)}`
-        : v.scope === 'discipline'
-          ? (v.discipline === 'TNT' ? 'T&T' : v.discipline)
-          : `${sessionName(v.sessionId)} (${v.apparatus})`;
+    const scopeLabel = v.scope === 'level'
+      ? `${v.discipline === 'TNT' ? 'T&T' : v.discipline} — Level ${levelName(v.levelId)}`
+      : v.scope === 'discipline'
+        ? (v.discipline === 'TNT' ? 'T&T' : v.discipline)
+        : `${sessionName(v.sessionId)} (${v.apparatus})`;
     return `${scopeLabel}: ${v.remaining} of ${v.cap} spot(s) remain — this order needs ${v.requested}.`;
   };
 

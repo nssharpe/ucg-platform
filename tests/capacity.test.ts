@@ -3,6 +3,8 @@ import {
   regRoutines,
   isOccupying,
   capacityUsage,
+  paidUsage,
+  normalizeCapacity,
   hasCapacityConfig,
   checkCapacity,
   splitFit,
@@ -167,7 +169,7 @@ describe('capacityUsage', () => {
     ];
     const usage = capacityUsage(event, regs, noGroups, NOW);
     expect(usage.totalAthletes).toBe(1); // same athlete, multiple disciplines
-    expect(usage.perLevel['lvl-silver']).toBe(4);
+    expect(usage.perDisciplineLevel.WAG?.['lvl-silver']).toBe(4);
     expect(usage.perDiscipline.WAG).toBe(4);
     expect(usage.perDiscipline.TNT).toBe(1);
   });
@@ -177,7 +179,7 @@ describe('capacityUsage', () => {
     const regs = [baseReg({ id: 'r1', apparatus: [] })];
     const usage = capacityUsage(event, regs, noGroups, NOW);
     expect(usage.totalAthletes).toBe(1);
-    expect(Object.keys(usage.perLevel)).toHaveLength(0);
+    expect(Object.keys(usage.perDisciplineLevel)).toHaveLength(0);
   });
 
   it('tallies per-session per-apparatus routine counts', () => {
@@ -201,15 +203,80 @@ describe('capacityUsage', () => {
   });
 });
 
+describe('normalizeCapacity (legacy read fallback, 2026-08-24 rework)', () => {
+  it('maps legacy flat perDiscipline to mode discipline and drops total', () => {
+    const cfg = normalizeCapacity({ total: 40, perDiscipline: { TNT: 12 } } as never);
+    expect(cfg.perDiscipline?.TNT).toEqual({ mode: 'discipline', cap: 12 });
+    expect(Object.keys(cfg.perDiscipline ?? {})).toEqual(['TNT']);
+  });
+
+  it("maps legacy flat perLevel into that discipline's perLevel mode; perLevel wins when both legacy maps name a discipline", () => {
+    const cfg = normalizeCapacity({
+      perDiscipline: { WAG: 30 },
+      perLevel: { 'lvl-silver': 8 },
+    } as never);
+    // lvl-silver is a WAG level in these fixtures; the stricter perLevel mode wins.
+    expect(cfg.perDiscipline?.WAG?.mode).toBe('perLevel');
+    expect(cfg.perDiscipline?.WAG?.perLevel).toEqual({ 'lvl-silver': 8 });
+  });
+
+  it('passes the new shape through unchanged, including mode none', () => {
+    const next = { perDiscipline: { MAG: { mode: 'none' as const } } };
+    expect(normalizeCapacity(next)).toEqual(next);
+  });
+
+  it('rejects 0 / negative / fractional caps as not-configured (fixes the 0-blocks-everything bug)', () => {
+    const cfg = normalizeCapacity({ perDiscipline: { WAG: { mode: 'discipline', cap: 0 } } });
+    const event = baseEvent({ capacity: cfg as Event['capacity'] });
+    expect(checkCapacity(event, [], [], [baseReg({ id: 'r1', paid: false, holdExpiresAt: FUTURE })], noGroups, NOW)).toEqual([]);
+    const frac = baseEvent({ capacity: { perDiscipline: { WAG: { mode: 'discipline', cap: 2.5 } } } as Event['capacity'] });
+    expect(checkCapacity(frac, [], [], [baseReg({ id: 'r1', paid: false, holdExpiresAt: FUTURE })], noGroups, NOW)).toEqual([]);
+  });
+});
+
+describe('paidUsage (display-only progress tally for the upcoming T3 capacity UI)', () => {
+  it('counts only paid:true regs, excluding live cart holds and promoted-waitlist holds', () => {
+    const event = baseEvent();
+    const regs = [
+      baseReg({ id: 'r1', athleteId: 'a1', paid: true }),
+      baseReg({ id: 'r2', athleteId: 'a2', paid: false, holdExpiresAt: FUTURE }), // live cart hold, unpaid — excluded
+      baseReg({ id: 'r3', athleteId: 'a3', paid: false, updatedPending: true }), // occupies per isOccupying but not literally paid:true — excluded
+    ];
+    const usage = paidUsage(event, regs);
+    expect(usage.totalAthletes).toBe(1);
+    expect(usage.perDiscipline.WAG).toBe(4);
+  });
+
+  it('is a literal paid:true tally, not occupancy — enforcement (checkCapacity) stays on capacityUsage/isOccupying, this is display-only', () => {
+    const event = baseEvent();
+    const regs = [baseReg({ id: 'r1', paid: true, refunded: true, keepListed: true })];
+    const usage = paidUsage(event, regs);
+    expect(usage.totalAthletes).toBe(1);
+  });
+
+  it('empty for no paid regs', () => {
+    const event = baseEvent();
+    const regs = [baseReg({ id: 'r1', paid: false })];
+    expect(paidUsage(event, regs).totalAthletes).toBe(0);
+  });
+});
+
 describe('hasCapacityConfig', () => {
   it('false when no caps set anywhere', () => {
     const event = baseEvent();
     expect(hasCapacityConfig(event, [])).toBe(false);
   });
 
-  it('true when event.capacity.total set', () => {
-    const event = baseEvent({ capacity: { total: 100 } });
+  it('true when a discipline cap (new shape) is set', () => {
+    const event = baseEvent({ capacity: { perDiscipline: { WAG: { mode: 'discipline', cap: 100 } } } });
     expect(hasCapacityConfig(event, [])).toBe(true);
+  });
+
+  // Capacity rework, 2026-08-24 — T1: the event-wide `total` cap is dead —
+  // ignored outright even when set to a real, non-null, positive number.
+  it('a legacy total cap alone configures NOTHING — it is entirely ignored, no replacement', () => {
+    const event = baseEvent({ capacity: { total: 100 } });
+    expect(hasCapacityConfig(event, [])).toBe(false);
   });
 
   it('true when a session has maxRoutines', () => {
@@ -253,10 +320,15 @@ describe('holdStamp', () => {
     expect(holdStamp(event, [], NOW)).toBeUndefined();
   });
 
-  it('stamps now + CART_HOLD_MINUTES when a total cap is set', () => {
-    const event = baseEvent({ capacity: { total: 100 } });
+  it('stamps now + CART_HOLD_MINUTES when a discipline cap (new shape) is set', () => {
+    const event = baseEvent({ capacity: { perDiscipline: { WAG: { mode: 'discipline', cap: 100 } } } });
     const stamp = holdStamp(event, [], NOW);
     expect(stamp).toBe(new Date(NOW + CART_HOLD_MINUTES * 60_000).toISOString());
+  });
+
+  it('undefined when only a legacy total cap is set (dead field, no replacement)', () => {
+    const event = baseEvent({ capacity: { total: 100 } });
+    expect(holdStamp(event, [], NOW)).toBeUndefined();
   });
 
   it('stamps when only a session maxRoutines cap is set', () => {
@@ -275,21 +347,19 @@ describe('holdStamp', () => {
 });
 
 describe('checkCapacity', () => {
-  it('total cap violation with exact used/requested/remaining', () => {
-    const event = baseEvent({ capacity: { total: 2 } });
+  it('LEGACY total cap is ignored entirely (removed by the 2026-08-24 rework)', () => {
+    const event = baseEvent({ capacity: { total: 2 } as unknown as Event['capacity'] });
     const existing = [
       baseReg({ id: 'r1', athleteId: 'a1' }),
       baseReg({ id: 'r2', athleteId: 'a2' }),
     ];
     const incoming = [baseReg({ id: 'r3', athleteId: 'a3', paid: false, holdExpiresAt: FUTURE })];
     const violations = checkCapacity(event, [], existing, incoming, noGroups, NOW);
-    expect(violations).toEqual([
-      { scope: 'total', cap: 2, used: 2, requested: 1, remaining: 0 },
-    ]);
+    expect(violations).toEqual([]);
   });
 
-  it('multiple simultaneous violations (total + level)', () => {
-    const event = baseEvent({ capacity: { total: 2, perLevel: { 'lvl-silver': 6 } } });
+  it('LEGACY {total, perLevel}: total is dropped, perLevel maps into the discipline per-level mode', () => {
+    const event = baseEvent({ capacity: { total: 2, perLevel: { 'lvl-silver': 6 } } as unknown as Event['capacity'] });
     const existing = [
       baseReg({ id: 'r1', athleteId: 'a1' }),
       baseReg({ id: 'r2', athleteId: 'a2' }),
@@ -298,13 +368,9 @@ describe('checkCapacity', () => {
       baseReg({ id: 'r3', athleteId: 'a3', paid: false, holdExpiresAt: FUTURE }),
     ];
     const violations = checkCapacity(event, [], existing, incoming, noGroups, NOW);
-    expect(violations).toHaveLength(2);
-    const total = violations.find((v) => v.scope === 'total');
-    const level = violations.find((v) => v.scope === 'level');
-    expect(total).toEqual({ scope: 'total', cap: 2, used: 2, requested: 1, remaining: 0 });
-    expect(level).toEqual({
-      scope: 'level', levelId: 'lvl-silver', cap: 6, used: 8, requested: 4, remaining: 0,
-    });
+    expect(violations).toEqual([{
+      scope: 'level', discipline: 'WAG', levelId: 'lvl-silver', cap: 6, used: 8, requested: 4, remaining: 0,
+    }]);
   });
 
   it('per-session per-apparatus cap violation', () => {
@@ -356,7 +422,7 @@ describe('checkCapacity', () => {
     ];
     const violations = checkCapacity(event, [], [], incoming, noGroups, NOW);
     expect(violations).toEqual([
-      { scope: 'level', levelId: 'lvl-gold', cap: 3, used: 0, requested: 4, remaining: 3 },
+      { scope: 'level', discipline: 'WAG', levelId: 'lvl-gold', cap: 3, used: 0, requested: 4, remaining: 3 },
     ]);
   });
 
@@ -385,12 +451,12 @@ describe('checkCapacity', () => {
     const incoming = [baseReg({ id: 'r2', athleteId: 'a2', apparatus: ['VT'], paid: false, holdExpiresAt: PAST })];
     const violations = checkCapacity(event, [], existing, incoming, noGroups, NOW);
     expect(violations).toEqual([
-      { scope: 'level', levelId: 'lvl-silver', cap: 4, used: 4, requested: 1, remaining: 0 },
+      { scope: 'level', discipline: 'WAG', levelId: 'lvl-silver', cap: 4, used: 4, requested: 1, remaining: 0 },
     ]);
   });
 
-  it('incoming waitlisted reg with a notified-but-LAPSED group hold still counts against a full cap', () => {
-    const event = baseEvent({ capacity: { total: 1 } });
+  it('incoming waitlisted reg with a notified-but-LAPSED group hold still counts against a full discipline cap', () => {
+    const event = baseEvent({ capacity: { perDiscipline: { WAG: { mode: 'discipline', cap: 1 } } } });
     const groups: Record<string, WaitlistGroup> = {
       g1: {
         id: 'g1', eventId: 'evt1', discipline: 'WAG', status: 'notified',
@@ -401,7 +467,8 @@ describe('checkCapacity', () => {
     const incoming = [baseReg({ id: 'r2', athleteId: 'a2', paid: false, waitlisted: true, waitlistGroupId: 'g1' })];
     const violations = checkCapacity(event, [], existing, incoming, groups, NOW);
     expect(violations).toEqual([
-      { scope: 'total', cap: 1, used: 1, requested: 1, remaining: 0 },
+      // Routine-counting (P4 semantic, kept): r1 = 4 apparatus = 4 used; r2 adds 4.
+      { scope: 'discipline', discipline: 'WAG', cap: 1, used: 4, requested: 4, remaining: 0 },
     ]);
   });
 
@@ -438,8 +505,9 @@ describe('checkCapacity', () => {
 });
 
 describe('splitFit', () => {
-  it('greedily admits in order, waitlisting only what overflows total cap', () => {
-    const event = baseEvent({ capacity: { total: 2 } });
+  it('greedily admits in order, waitlisting only what overflows the discipline cap', () => {
+    // Each baseReg = 4 routines; cap 8 admits exactly two athletes.
+    const event = baseEvent({ capacity: { perDiscipline: { WAG: { mode: 'discipline', cap: 8 } } } });
     const incoming = [
       baseReg({ id: 'r1', athleteId: 'a1', paid: false, holdExpiresAt: FUTURE }),
       baseReg({ id: 'r2', athleteId: 'a2', paid: false, holdExpiresAt: FUTURE }),
@@ -451,7 +519,7 @@ describe('splitFit', () => {
   });
 
   it('reg that fits on total but not on level goes to overflow while a later one that fits both is admitted', () => {
-    const event = baseEvent({ capacity: { total: 10, perLevel: { 'lvl-gold': 4 } } });
+    const event = baseEvent({ capacity: { total: 10, perLevel: { 'lvl-gold': 4 } } as unknown as Event['capacity'] });
     const incoming = [
       // Uses all 4 gold routine slots.
       baseReg({ id: 'r1', athleteId: 'a1', levelId: 'lvl-gold', apparatus: ['VT', 'UB', 'BB', 'FX'], paid: false, holdExpiresAt: FUTURE }),
@@ -466,7 +534,8 @@ describe('splitFit', () => {
   });
 
   it('expired-hold incoming regs still consume fit slots in order (no skipping)', () => {
-    const event = baseEvent({ capacity: { total: 2 } });
+    // Each baseReg = 4 routines; cap 8 = two slots of four.
+    const event = baseEvent({ capacity: { perDiscipline: { WAG: { mode: 'discipline', cap: 8 } } } });
     const incoming = [
       baseReg({ id: 'r1', athleteId: 'a1', paid: false, holdExpiresAt: FUTURE }), // live hold
       baseReg({ id: 'r2', athleteId: 'a2', paid: false, holdExpiresAt: PAST }), // expired hold — must still take slot 2
@@ -509,13 +578,14 @@ describe('waitlistGroupKeyFor', () => {
 });
 
 describe('regsAffectedByViolations', () => {
-  it('total violation implicates every non-refunded reg', () => {
+  it('discipline violation implicates every non-refunded reg of that discipline only', () => {
     const regs = [
       baseReg({ id: 'r1' }),
       baseReg({ id: 'r2', levelId: 'other' }),
       baseReg({ id: 'r3', refunded: true }),
+      baseReg({ id: 'r4', discipline: 'MAG', levelId: 'lvl-dev' }),
     ];
-    const violations: CapacityViolation[] = [{ scope: 'total', cap: 2, used: 2, requested: 1, remaining: 0 }];
+    const violations: CapacityViolation[] = [{ scope: 'discipline', discipline: 'WAG', cap: 2, used: 2, requested: 1, remaining: 0 }];
     expect(regsAffectedByViolations(regs, violations).map((r) => r.id)).toEqual(['r1', 'r2']);
   });
 
@@ -524,7 +594,7 @@ describe('regsAffectedByViolations', () => {
       baseReg({ id: 'r1', levelId: 'lvl-gold' }),
       baseReg({ id: 'r2', levelId: 'lvl-silver' }),
     ];
-    const violations: CapacityViolation[] = [{ scope: 'level', levelId: 'lvl-gold', cap: 4, used: 4, requested: 4, remaining: 0 }];
+    const violations: CapacityViolation[] = [{ scope: 'level', discipline: 'WAG', levelId: 'lvl-gold', cap: 4, used: 4, requested: 4, remaining: 0 }];
     expect(regsAffectedByViolations(regs, violations).map((r) => r.id)).toEqual(['r1']);
   });
 
