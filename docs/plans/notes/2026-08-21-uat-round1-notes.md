@@ -1917,3 +1917,102 @@ above recorded).
 brief's "do NOT run any supabase CLI command." `withdraw-registration` is not deployed. Both need a
 `migration-push`-skill staging-then-prod pass and a `supabase functions deploy withdraw-registration`
 before this feature is live.
+
+## Capacity rework T2 — wizard per-discipline cap editor (2026-08-24)
+
+Branch `feat/capacity-rework`, on top of T1 (`940e825` — the engine reshape: per-discipline
+`none`/`discipline`/`perLevel` modes, `total` removed, `capOf` whole-number-only). T2 is the
+`EventWizard.tsx` UI: new files `src/lib/capacity-draft.ts` (pure state<->config mapping,
+unit-tested) and its edits inside `EventWizard.tsx`.
+
+**What changed, by area:**
+- **State** (`EventWizard.tsx` ~344-362): `capacityTotal`/`capacityPerDiscipline`/
+  `capacityPerLevel` string-map states replaced by one `capacityDraft: CapacityDraft` (from
+  `capacity-draft.ts`), seeded via `capacityDraftFromEvent(seedEvt?.capacity, DISCIPLINES)` for
+  all three disciplines (not just the currently-selected ones) so toggling a discipline off/on
+  doesn't drop what was typed for it. `legacyTotal`/`legacyCapNoticeDismissed` drive the
+  migration notice, read straight off the RAW `seedEvt?.capacity?.total` (never normalized —
+  `normalizeCapacity` drops it on purpose).
+- **UI**: the "Max total participants" input is gone. Each of the event's disciplines gets its
+  own card: a 3-way radio (No cap / One cap for the whole discipline / Per-level caps) driving
+  either nothing, one `Field` input, or one input per level (levels = `db.levels` filtered to
+  that discipline and intersected with `allCompetingLevelIds`, same resolution the old per-level
+  grid used). Labels read "Cap (routines)" with hint "One athlete on 4 apparatus counts as 4." —
+  both routed through two module-level constants (`CAPACITY_UNIT_LABEL`/`CAPACITY_UNIT_HINT`) so
+  a later athletes-vs-routines decision from the owners is a one-line change. Legacy-total notice
+  uses the `--warn-50`/`--warn-200` box style already established in `Home.tsx`'s "Needs
+  attention" card (dark `--ink` text on a light warm fill — resolved values checked, no
+  same-color-on-same-color risk).
+- **By-session mode hides the per-discipline chooser** (task's explicit instruction — session
+  `maxRoutines` caps are the only knob there): the capacity section renders a one-line explainer
+  instead of the discipline cards. **By-discipline mode hides the session-template editor**
+  instead (sessions still exist underneath for results/squads, and by-discipline per-level caps
+  still read their levels from those sessions) — replaced with a one-line explainer pointing at
+  the "By session" toggle. Session STATE and its auto-seeding (`toggleDiscipline` /
+  `defaultSessions`, still called regardless of mode) were untouched — only the JSX exposing the
+  session cards is now gated on `registrationMode === 'by-session'`.
+- **Validation** (submit function, `!isCamp && registrationMode === 'by-discipline'` branch):
+  gates on `wizardRegsStatus === 'ready'` when editing (same guard idiom as the existing
+  `canRemoveSession`), then calls `validateCapacityDraft(capacityDraft, usage, levelName)`.
+  `usage` is `capacityUsage(editEvent, wizardEventRegs, groupsById, Date.now())` — the
+  ENFORCEMENT tally (paid + live cart holds + live promoted-waitlist holds), deliberately NOT
+  `paidUsage()`, per the brief: validating against paid-only usage would let a save undercut a
+  spot already promised by a live hold, which then 409s that athlete's own checkout later.
+  `groupsById` comes from `db.waitlistGroups` (a Tier-3 table, always loaded via `loadAll`/
+  `syncFromSupabase` even though it's never persisted to localStorage — confirmed in
+  `data-layer.md`/`store.ts`, no new fetch needed). `wizardEventRegs`/`wizardRegsStatus` were
+  already in scope (existing `useEventRegistrations(editEvent?.id)` call feeding
+  `canRemoveSession`) — no new data-fetching added to the wizard.
+- **Write-out**: camps always write `capacity: undefined` (camps have no discipline/level to
+  scope a cap to). By-session mode writes nothing for `capacity` at all — the
+  `...(editEvent ?? template ?? {})` spread at the top of the saved `Event` object already
+  carries forward whatever `capacity` the event had, since the chooser that would edit it is
+  hidden in that mode. By-discipline mode writes `capacity: capacityConfigFromDraft(capacityDraft)`,
+  which can be `undefined` (every discipline "No cap") or `{perDiscipline: {...}}` in the new
+  shape only — never a `total` key.
+
+**Deviations / judgment calls (flagging for review):**
+- **Discipline "No cap" writes by OMISSION, not an explicit `{mode:'none'}` object.**
+  `normalizeCapacity` reads both identically (a discipline absent from the map, or present with
+  `mode:'none'`, both resolve to no configured cap), so this was a free choice — omission keeps
+  the persisted jsonb smaller and never writes a stale `{mode:'none'}` object for a discipline
+  nobody touched this save.
+- **By-session mode capacity is pass-through, not cleared.** The alternative (wiping
+  `perDiscipline` the moment an admin flips to by-session) risked silently discarding
+  already-configured discipline/level caps on an accidental radio click, with no UI to see or
+  undo it. This means a by-session event CAN still carry old `perDiscipline` caps enforced
+  server-side alongside its session `maxRoutines` caps (T1's engine already treats these two
+  dimensions independently — this predates T2 and isn't a new coupling). If the owners want
+  by-session mode to force-clear discipline caps instead, that's a one-line change
+  (`{ capacity: undefined }` instead of `{}`) in the write-out ternary.
+  **Flagging for Nate/Julia**: is pass-through the right call, or should switching to by-session
+  force-clear any existing per-discipline/per-level caps?
+- **Per-discipline mode requires a value; per-level mode requires at least one filled level.**
+  Selecting "One cap for the whole discipline" or "Per-level caps" and leaving every input blank
+  is rejected at save time ("Enter a whole-number cap... or choose No cap" / "Enter at least one
+  level cap... or choose No cap") rather than silently treated as equivalent to "No cap" — chosen
+  so a mode selection is never a silent no-op that looks configured in the UI but enforces
+  nothing.
+- **Legacy-total notice is a plain `useState` dismiss (session-scoped), not persisted.** The task
+  called it "one-time dismissible"; since the wizard is a modal/page instance freshly mounted
+  each time it's opened, "one-time" was read as "goes away once you've seen and dismissed it in
+  this edit session," not "never show again even next time you reopen this event's wizard" — the
+  underlying legacy `total` value is still sitting in the stored jsonb until the admin actually
+  re-enters caps below and saves (which overwrites `capacity` with the new shape and removes
+  `total` for good), so re-showing it on a future open of the same still-unmigrated event seemed
+  more correct than a localStorage flag that could outlive the thing it's warning about.
+
+**Verification.** `npm run build` — succeeded, no TS errors. `npx eslint src/components/EventWizard.tsx
+src/lib/capacity-draft.ts` — zero errors/warnings. `npx vitest run` — 1301/1301 passed across 83
+files (+16 from the new `tests/capacity-draft.test.ts`: round-trip through `normalizeCapacity`,
+legacy-shape mapping incl. the perLevel-wins-over-bare-number rule, 0/negative/fractional
+rejection, missing-value-when-mode-selected rejection, and below-usage refusal with the exact
+`{discipline, levelId?, used, message}` data for both discipline- and level-scoped caps).
+
+**Not verified this session (controller's responsive sweep, per the brief):** the new
+per-discipline capacity cards and the by-session/by-discipline collapse at 375/768/1280px,
+contrast of the legacy-cap notice box in dark mode (`index.css` has no dark-mode override block
+at all currently — worth confirming this app doesn't support a dark theme before treating that as
+a gap), and an actual click-through of switching `registrationMode` back and forth to confirm the
+draft/session state truly survives the round trip (unit tests cover the pure mapping only, not
+the wizard's React state wiring).
