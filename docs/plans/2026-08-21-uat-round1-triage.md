@@ -157,6 +157,14 @@ Where "Report a problem" submissions live today is being verified (email-only vs
 "load more" past the 200-row cap) and **Problem Reports** (description, page, build, reporter,
 screenshots, open/resolved; search/sort/filter; Resolve toggle).
 
+## Policy calls answered 2026-08-23 (follow-ups from the refund/pricing rework)
+
+| # | Question | Answer | Status |
+|---|---|---|---|
+| P-1 | 100%/75% refund cutoff judged at request time or review time? | **Request time** — a slow review must not cost the athlete 25% | ✅ shipped (`8ced289`, process-refund redeployed) |
+| P-2 | $0 / non-UCG registrations need a self-serve exit? | **Yes — a Withdraw flow**: before `lastDateToEdit` = removed from the event (athlete confirmation + host notification); after = remains registered with all apparatus scratched (late-withdrawal email incl. freebies note). Non-UCG events: withdraw always offered, refund sentence points at the host club's email — omitted when the athlete competes for the host club. UCG-hosted paid regs keep the refund flow; UCG-hosted $0 regs get Withdraw instead | 🔧 `feat/athlete-withdrawal` in progress |
+| P-3 | Change fee on never-paid edits? | **No fee** — editing something never purchased is editing a cart; the new paid-state-filtered behavior stands | ✅ nothing to do |
+
 ## 👤 Nate actions
 
 - Stripe Dashboard public business name → UCG (M-07-01), test and live. **Deliberately deferred to 2026-09-20** (rebrand announcement day — Stripe requires a live site and unitedclubgymnastics.org is empty until then). Not a bug; don't re-file.
