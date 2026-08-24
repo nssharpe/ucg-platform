@@ -56,7 +56,7 @@ for i, m in enumerate(matches):
 
 total_steps = sum(len(l["steps"]) for l in lanes)
 print("parsed lanes:", len(lanes), "steps:", total_steps)
-assert total_steps == 240, f"expected 240 steps, parsed {total_steps}"
+assert total_steps == 244, f"expected 244 steps, parsed {total_steps}"
 
 # ------------------------------------------------------------------- page pieces
 def lane_html(l):
@@ -551,7 +551,7 @@ ul.cards span {{ color: var(--soft); font-size: .9rem; }}
 
   <h3>Channel 2 — the shared Google Sheet, for everything including passes</h3>
   <p>The Sheet is the coverage record — it answers “did anyone actually try this?”, which the in-app reports can’t. Fill a Result for <strong>every</strong> step; a PASS takes two seconds and is what makes the untested gaps visible. It’s also the only channel for UX feedback, wording, “works but wrong”, and requirement disagreements.</p>
-  <div class="callout"><p><strong>One shared Google Sheet — <a href="https://docs.google.com/spreadsheets/d/1tBHmut8OCmJXrcH3zaY0g0_GcHvj0T44DDfu1YAIcq0/edit" target="_blank" rel="noopener">UCG Preflight Feedback</a>.</strong> A Findings tab per tester (Julia&nbsp;Findings / Nate&nbsp;Findings), all 240 steps pre-filled with dropdowns, plus README and the answered Decisions tab. Work only in your own tab.</p></div>
+  <div class="callout"><p><strong>One shared Google Sheet — <a href="https://docs.google.com/spreadsheets/d/1tBHmut8OCmJXrcH3zaY0g0_GcHvj0T44DDfu1YAIcq0/edit" target="_blank" rel="noopener">UCG Preflight Feedback</a>.</strong> A Findings tab per tester (Julia&nbsp;Findings / Nate&nbsp;Findings), all 244 steps pre-filled with dropdowns, plus README and the answered Decisions tab. Work only in your own tab.</p></div>
 
   <h3>IDs and screenshots</h3>
   <p>Step ID is <code>LANE-NN</code> (<code>M-07</code>). Finding ID adds a sequence — <code>M-07-01</code>. Something not tied to a step uses <code>X</code>: <code>M-X-01</code>.</p>

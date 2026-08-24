@@ -526,6 +526,10 @@ different people (that's the point).*
 | R-12 | Refund an order that a coupon covered **100%** | Processes as a $0 no-op through the same flow, with a receipt |
 | R-13 | Request more than remains refundable | Capped at the remainder, not refused outright |
 | R-14 | Check `#/admin/finance` after all refunds | Refund totals reflect every one of the above |
+| R-15 | **NEW (2026-08-24): Withdraw** from a UCG-hosted event where your registration cost **$0** (100% promo), **before** `lastDateToEdit` — the Withdraw button replaces the refund option on My Registrations | Confirm dialog → you are **removed from the event entirely**; you get a confirmation email; the event host gets a withdrawal notification |
+| R-16 | **NEW: Withdraw after** `lastDateToEdit` (any withdrawable registration) | You **stay registered with all apparatus scratched** and a "Withdrawn" badge; the email says you remain listed due to the late timing and still get any event freebies (attend or send a friend) |
+| R-17 | **NEW: Withdraw from a NON-UCG event** (refunds are handled off-platform by the host club) | Withdraw is always offered there (never a refund button). Your email includes "to request a refund, contact the host club at <their email>" — **unless you compete for the host club**, in which case that sentence is omitted. Host gets notified either way |
+| R-18 | **NEW: Check the refund-vs-withdraw button logic** across your registrations | UCG event + paid > $0 → **Request a refund** only. UCG event + $0 → **Withdraw** only. Non-UCG event → **Withdraw** only. Never both |
 
 ---
 
