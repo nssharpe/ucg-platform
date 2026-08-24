@@ -98,7 +98,7 @@
         <span class="lbl" style="margin:0">Show</span>
         <div class="seg" id="sum-filter">
           <button aria-pressed="true" data-f="all">All athletes</button>
-          <button aria-pressed="false" data-f="wag-beg">WAG · Beginner</button>
+          <button aria-pressed="false" data-f="wag-beg">WAG · Xcel Silver</button>
           <button aria-pressed="false" data-f="mag-adv">MAG · Advanced</button>
         </div>
       </div>
@@ -119,14 +119,18 @@
 
 <script>
 const DISCS = [
-  { id:'WAG', name:'WAG', levels:['Beginner','Intermediate','Advanced'], regd:{Beginner:18,Intermediate:11,Advanced:6}, mode:'level', caps:{Beginner:'24',Intermediate:'16',Advanced:'8'}, dcap:'' },
-  { id:'MAG', name:'MAG', levels:['Developmental','Intermediate','Advanced'], regd:{Developmental:9,Intermediate:7,Advanced:5}, mode:'disc', caps:{}, dcap:'30' },
-  { id:'TNT', name:'T&T', levels:['Novice','Intermediate','Advanced'], regd:{Novice:4,Intermediate:3,Advanced:2}, mode:'none', caps:{}, dcap:'' },
+  { id:'WAG', name:'WAG', levels:['Xcel Silver','Xcel Platinum','Xcel Diamond','Level 9','Open Scoring','Masters'],
+    regd:{'Xcel Silver':14,'Xcel Platinum':11,'Xcel Diamond':7,'Level 9':3,'Open Scoring':5,'Masters':2},
+    mode:'level', caps:{'Xcel Silver':'18','Xcel Platinum':'14','Xcel Diamond':'10','Level 9':'6','Open Scoring':'8','Masters':'6'}, dcap:'' },
+  { id:'MAG', name:'MAG', levels:['Developmental','Intermediate','Advanced','Masters'],
+    regd:{Developmental:9,Intermediate:7,Advanced:5,Masters:2}, mode:'disc', caps:{}, dcap:'30' },
+  { id:'TNT', name:'T&T', levels:['New Flyers','Intermediate Flyers','High Flyers'],
+    regd:{'New Flyers':4,'Intermediate Flyers':3,'High Flyers':2}, mode:'none', caps:{}, dcap:'' },
 ];
 const SESSIONS = [
-  { id:'s1', name:'Session 1 — Sat AM · WAG Beg/Int', total:120, used:97, wl:0,
+  { id:'s1', name:'Session 1 — Sat AM · WAG Silver/Platinum', total:120, used:97, wl:0,
     app:[['Vault',30,26],['Bars',30,25],['Beam',30,24],['Floor',30,22]], regs:41 },
-  { id:'s2', name:'Session 2 — Sat PM · WAG Adv + MAG', total:120, used:120, wl:6,
+  { id:'s2', name:'Session 2 — Sat PM · WAG Diamond+ / MAG', total:120, used:120, wl:6,
     app:[['Vault',30,30],['Bars',30,30],['Beam',30,30],['Floor',30,30]], regs:44 },
   { id:'s3', name:'Session 3 — Sun · T&T + open', total:90, used:31, wl:0,
     app:[['Trampoline',30,14],['Tumbling',30,10],['Double-mini',30,7]], regs:16 },
@@ -181,7 +185,9 @@ function sesEditor(){
   for (const s of SESSIONS){
     const div=document.createElement('div'); div.className='sesrow'; div.style.cursor='default';
     div.innerHTML=`<span class="nm">${s.name}</span><span class="regd">${s.app.map(a=>`${a[0]} ${a[1]}`).join(' · ')}</span>
-      <button class="btn ghost" data-del="${s.id}" style="margin-left:auto">Remove</button>`;
+      <button class="btn ghost" data-edit="${s.id}" style="margin-left:auto">Edit</button>
+      <button class="btn ghost" data-del="${s.id}">Remove</button>`;
+    div.querySelector('[data-edit]').addEventListener('click',()=>editSession(s));
     div.querySelector('[data-del]').addEventListener('click',()=>{
       if (s.regs>0) toast(`Can't remove "${s.name}" — ${s.regs} athletes are assigned. Move them first.`);
       else toast('Removed (mock).');
@@ -191,6 +197,22 @@ function sesEditor(){
 }
 $('#add-ses').addEventListener('click',()=>toast('New session added (mock) — it keeps its id forever, so athletes never lose their assignment.'));
 
+function editSession(s){
+  $('#ovl-h').textContent = `Edit — ${s.name}`;
+  $('#ovl-body').innerHTML = `<p class="hint" style="margin-top:0">Routine caps per apparatus. Whole numbers; can't go below what's already used.</p><div class="edit-rows"></div>
+    <hr class="divider"><button class="btn" id="ses-save">Save session</button>`;
+  const rows = $('#ovl-body .edit-rows');
+  for (const a of s.app){
+    const row = capRow(a[0], String(a[1]), a[2], v=>{ a[1]=Number(v)||a[1]; });
+    rows.appendChild(row);
+  }
+  $('#ses-save').addEventListener('click',()=>{
+    $('#ovl').classList.remove('open');
+    sesEditor(); sumSess();
+    toast(`"${s.name}" caps updated (mock) — the session keeps its id, so nobody loses their assignment.`);
+  });
+  $('#ovl').classList.add('open'); $('#ovl-x').focus();
+}
 function bar(used,total){
   const pct = total? Math.min(100, Math.round(used/total*100)) : 0;
   const cls = pct>=100?'full':pct>=85?'warn':'';

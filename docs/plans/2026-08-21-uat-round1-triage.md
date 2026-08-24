@@ -159,5 +159,5 @@ screenshots, open/resolved; search/sort/filter; Resolve toggle).
 
 ## 👤 Nate actions
 
-- Stripe Dashboard public business name → UCG (M-07-01), test and live.
+- Stripe Dashboard public business name → UCG (M-07-01), test and live. **Deliberately deferred to 2026-09-20** (rebrand announcement day — Stripe requires a live site and unitedclubgymnastics.org is empty until then). Not a bug; don't re-file.
 - Send the screenshot folders.
