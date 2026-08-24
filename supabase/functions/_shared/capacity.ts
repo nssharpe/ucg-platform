@@ -46,14 +46,41 @@ export interface GroupRow {
   hold_expires_at: string | null;
 }
 
+/** Mirrors `CapacityDisciplineConfig` (src/lib/types.ts). */
+export interface CapacityDisciplineConfig {
+  mode: 'none' | 'discipline' | 'perLevel';
+  cap?: number | null;
+  perLevel?: Record<string, number | null>;
+}
+
+/** Mirrors `CapacityConfig` (src/lib/types.ts) — canonical, post-normalize. */
+export interface CapacityConfig {
+  perDiscipline?: Record<string, CapacityDisciplineConfig>;
+}
+
+/** Mirrors `CapacityConfigRaw` (src/lib/types.ts) — `Event.capacity` as
+ *  actually stored, legacy-flat-shape tolerant. Never branch on these fields
+ *  directly; always go through `normalizeCapacity`. */
+export interface CapacityConfigRaw {
+  /** @deprecated legacy event-wide athlete cap — always ignored. */
+  total?: number | null;
+  perDiscipline?: Record<string, number | CapacityDisciplineConfig | null>;
+  /** @deprecated legacy flat per-level cap, discipline-independent. */
+  perLevel?: Record<string, number | null>;
+}
+
 export interface CapacityEventRow {
   id: string;
-  capacity: {
-    total?: number;
-    perLevel?: Record<string, number>;
-    perDiscipline?: Record<string, number>;
-  } | null;
+  capacity: CapacityConfigRaw | null;
+  /** 'by-discipline' (default) | 'by-session' — discipline/level caps apply
+   *  only in by-discipline mode. Optional so older callers that never select
+   *  it keep today's (by-discipline) behavior. */
+  registration_mode?: string | null;
 }
+
+/** Mirrors `DISCIPLINES` (src/lib/types.ts) — keep the three literal values in
+ *  sync by hand. */
+const DISCIPLINES = ['MAG', 'WAG', 'TNT'] as const;
 
 /** One routine (apparatus entry) a registration contributes toward capacity,
  *  attributed to whichever level actually governs that apparatus. */
@@ -73,18 +100,67 @@ export function regRoutines(reg: RegRow): Routine[] {
   }));
 }
 
-/** A cap value read from jsonb config is only a cap if it's a finite number —
- *  a config UI clearing a field can persist explicit nulls (`{"total": null}`,
- *  a per-level map with null values), which must read as "not configured",
- *  never as a live cap (`combined > null` coerces to `> 0` and would 409
- *  every checkout for the event). */
+/** A cap value read from jsonb config is only a LIVE cap if it's a positive
+ *  integer — a config UI clearing a field can persist explicit nulls
+ *  (`{"total": null}`, a per-level map with null values), which must read as
+ *  "not configured", never as a live cap (`combined > null` coerces to
+ *  `> 0` and would 409 every checkout for the event). Also rejects 0 and
+ *  negative/non-integer values (capacity rework, 2026-08-24 — T1: 0 used to
+ *  read as a live cap and would block every checkout for the event, since
+ *  any non-negative usage count is `> 0`). */
 function capOf(v: unknown): number | undefined {
-  return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+  return typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : undefined;
 }
 
-/** True if any value in a cap map is a real (finite-number) cap. */
+/** True if any value in a cap map is a real (positive-integer) cap. */
 function hasAnyCap(map: Record<string, unknown> | null | undefined): boolean {
   return !!map && Object.values(map).some((v) => capOf(v) !== undefined);
+}
+
+/**
+ * Reshapes `CapacityEventRow.capacity` (which may still be the legacy flat
+ * pre-2026-08-24 shape) into the canonical per-discipline `CapacityConfig`.
+ * Mirrors `normalizeCapacity` in src/lib/capacity.ts — KEEP IN LOCKSTEP,
+ * including the legacy-mapping rules documented there (in short: `total` is
+ * ignored outright; `perDiscipline: {D: number}` becomes `{mode:
+ * 'discipline', cap: number}`; `perLevel: {levelId: number}` fans out
+ * identically to every discipline's `perLevel` since usage naturally
+ * self-scopes per registration's own discipline at enforcement time; a
+ * discipline present in both legacy maps has `perLevel` win, the stricter
+ * reading).
+ */
+export function normalizeCapacity(raw: CapacityConfigRaw | null | undefined): CapacityConfig {
+  if (!raw) return {};
+
+  const legacyPerLevel: Record<string, number> = {};
+  if (raw.perLevel) {
+    for (const [levelId, v] of Object.entries(raw.perLevel)) {
+      const cap = capOf(v);
+      if (cap !== undefined) legacyPerLevel[levelId] = cap;
+    }
+  }
+  const hasLegacyPerLevel = Object.keys(legacyPerLevel).length > 0;
+
+  const perDiscipline: Record<string, CapacityDisciplineConfig> = {};
+  for (const d of DISCIPLINES) {
+    const existing = raw.perDiscipline?.[d];
+    if (existing && typeof existing === 'object' && 'mode' in existing) {
+      // Already the new shape — pass through unchanged.
+      perDiscipline[d] = existing;
+      continue;
+    }
+    if (hasLegacyPerLevel) {
+      perDiscipline[d] = { mode: 'perLevel', perLevel: { ...legacyPerLevel } };
+      continue;
+    }
+    const legacyCap = capOf(existing);
+    if (legacyCap !== undefined) {
+      perDiscipline[d] = { mode: 'discipline', cap: legacyCap };
+    }
+    // else: no cap configured for this discipline (mode 'none' implicit).
+  }
+
+  return Object.keys(perDiscipline).length ? { perDiscipline } : {};
 }
 
 function parseTime(value: string | null | undefined): number | null {
@@ -134,8 +210,11 @@ export function isOccupying(
 /** Aggregated capacity usage across a set of registrations for one event. */
 export interface CapacityUsage {
   totalAthletes: number;
-  perLevel: Record<string, number>;
   perDiscipline: Record<string, number>;
+  /** perDisciplineLevel[discipline][levelId] = routine count, scoped to that
+   *  discipline's OWN registrations — see `normalizeCapacity`'s legacy
+   *  fan-out doc comment for why this scoping matters. */
+  perDisciplineLevel: Record<string, Record<string, number>>;
   /** perSession[sessionId][apparatusCode] = routine count. */
   perSession: Record<string, Record<string, number>>;
 }
@@ -152,16 +231,18 @@ function tallyUsage(
   const occupying = regs.filter((r) => r.event_id === eventId && isCounted(r));
 
   const athleteIds = new Set<string>();
-  const perLevel: Record<string, number> = {};
   const perDiscipline: Record<string, number> = {};
+  const perDisciplineLevel: Record<string, Record<string, number>> = {};
   const perSession: Record<string, Record<string, number>> = {};
 
   for (const reg of occupying) {
     athleteIds.add(reg.athlete_id);
 
     for (const routine of regRoutines(reg)) {
-      perLevel[routine.levelId] = (perLevel[routine.levelId] ?? 0) + 1;
       perDiscipline[reg.discipline] = (perDiscipline[reg.discipline] ?? 0) + 1;
+
+      const levelCounts = perDisciplineLevel[reg.discipline] ?? (perDisciplineLevel[reg.discipline] = {});
+      levelCounts[routine.levelId] = (levelCounts[routine.levelId] ?? 0) + 1;
 
       if (reg.session_id) {
         const sessionCounts = perSession[reg.session_id] ?? (perSession[reg.session_id] = {});
@@ -170,12 +251,12 @@ function tallyUsage(
     }
   }
 
-  return { totalAthletes: athleteIds.size, perLevel, perDiscipline, perSession };
+  return { totalAthletes: athleteIds.size, perDiscipline, perDisciplineLevel, perSession };
 }
 
 /** Tallies LIVE occupying-registration usage (via `isOccupying`):
- *  `totalAthletes` = distinct occupying athletes; `perLevel`/`perDiscipline`/
- *  `perSession` = routine (apparatus entry) counts. */
+ *  `totalAthletes` = distinct occupying athletes; `perDiscipline`/
+ *  `perDisciplineLevel`/`perSession` = routine (apparatus entry) counts. */
 export function capacityUsage(
   eventId: string,
   regs: RegRow[],
@@ -185,16 +266,31 @@ export function capacityUsage(
   return tallyUsage(eventId, regs, (r) => isOccupying(r, groupsById, now));
 }
 
+/** Tallies PAID-only usage (`paid === true`) — display-only, for the capacity
+ *  progress UI (upcoming T3). Enforcement (`checkCapacity`) always keeps
+ *  counting paid + live holds via `isOccupying`/`capacityUsage`; this is a
+ *  separate, narrower view for showing hosts/managers how much of a cap is
+ *  spoken for by completed purchases alone. */
+export function paidUsage(eventId: string, regs: RegRow[]): CapacityUsage {
+  return tallyUsage(eventId, regs, (r) => r.paid === true);
+}
+
 /** True if the event has ANY capacity configuration set — drives whether
  *  holds/countdowns are needed at all. */
 export function hasCapacityConfig(event: CapacityEventRow, sessions: SessionRow[]): boolean {
-  if (capOf(event.capacity?.total) !== undefined) return true;
-  if (hasAnyCap(event.capacity?.perLevel)) return true;
-  if (hasAnyCap(event.capacity?.perDiscipline)) return true;
+  const cfg = (event.registration_mode ?? 'by-discipline') === 'by-discipline'
+    ? normalizeCapacity(event.capacity) : {};
+  const anyDisciplineCap = Object.values(cfg.perDiscipline ?? {}).some((entry) => {
+    if (!entry) return false;
+    if (entry.mode === 'discipline') return capOf(entry.cap) !== undefined;
+    if (entry.mode === 'perLevel') return hasAnyCap(entry.perLevel);
+    return false;
+  });
+  if (anyDisciplineCap) return true;
   return sessions.some((s) => hasAnyCap(s.max_routines));
 }
 
-export type CapacityViolationScope = 'total' | 'level' | 'discipline' | 'session';
+export type CapacityViolationScope = 'level' | 'discipline' | 'session';
 
 export interface CapacityViolation {
   scope: CapacityViolationScope;
@@ -250,60 +346,53 @@ export function checkCapacity(
   const baselineUsage = tallyUsage(event.id, baseline, baselinePredicate);
   const combinedUsage = tallyUsage(event.id, [...baseline, ...incoming], combinedPredicate);
 
-  // Total (athletes).
-  const totalCap = capOf(event.capacity?.total);
-  if (totalCap !== undefined) {
-    const used = baselineUsage.totalAthletes;
-    const requested = combinedUsage.totalAthletes - baselineUsage.totalAthletes;
-    if (combinedUsage.totalAthletes > totalCap) {
-      violations.push({
-        scope: 'total',
-        cap: totalCap,
-        used,
-        requested,
-        remaining: Math.max(0, totalCap - used),
-      });
-    }
-  }
+  // Per-discipline, one of two modes (capacity rework, 2026-08-24 — T1: the
+  // old event-wide `total` athlete cap is GONE, no replacement).
+  const cfg = (event.registration_mode ?? 'by-discipline') === 'by-discipline'
+    ? normalizeCapacity(event.capacity) : {};
+  for (const [discipline, entry] of Object.entries(cfg.perDiscipline ?? {})) {
+    if (!entry) continue;
 
-  // Per-level (routines).
-  const perLevelCap = event.capacity?.perLevel ?? {};
-  for (const [levelId, rawCap] of Object.entries(perLevelCap)) {
-    const cap = capOf(rawCap);
-    if (cap === undefined) continue;
-    const used = baselineUsage.perLevel[levelId] ?? 0;
-    const combined = combinedUsage.perLevel[levelId] ?? 0;
-    const requested = combined - used;
-    if (combined > cap) {
-      violations.push({
-        scope: 'level',
-        levelId,
-        cap,
-        used,
-        requested,
-        remaining: Math.max(0, cap - used),
-      });
+    if (entry.mode === 'discipline') {
+      const cap = capOf(entry.cap);
+      if (cap === undefined) continue;
+      const used = baselineUsage.perDiscipline[discipline] ?? 0;
+      const combined = combinedUsage.perDiscipline[discipline] ?? 0;
+      const requested = combined - used;
+      if (combined > cap) {
+        violations.push({
+          scope: 'discipline',
+          discipline,
+          cap,
+          used,
+          requested,
+          remaining: Math.max(0, cap - used),
+        });
+      }
+      continue;
     }
-  }
 
-  // Per-discipline (routines; T&T).
-  const perDisciplineCap = event.capacity?.perDiscipline ?? {};
-  for (const [discipline, rawCap] of Object.entries(perDisciplineCap)) {
-    const cap = capOf(rawCap);
-    if (cap === undefined) continue;
-    const used = baselineUsage.perDiscipline[discipline] ?? 0;
-    const combined = combinedUsage.perDiscipline[discipline] ?? 0;
-    const requested = combined - used;
-    if (combined > cap) {
-      violations.push({
-        scope: 'discipline',
-        discipline,
-        cap,
-        used,
-        requested,
-        remaining: Math.max(0, cap - used),
-      });
+    if (entry.mode === 'perLevel') {
+      for (const [levelId, rawCap] of Object.entries(entry.perLevel ?? {})) {
+        const cap = capOf(rawCap);
+        if (cap === undefined) continue;
+        const used = baselineUsage.perDisciplineLevel[discipline]?.[levelId] ?? 0;
+        const combined = combinedUsage.perDisciplineLevel[discipline]?.[levelId] ?? 0;
+        const requested = combined - used;
+        if (combined > cap) {
+          violations.push({
+            scope: 'level',
+            discipline,
+            levelId,
+            cap,
+            used,
+            requested,
+            remaining: Math.max(0, cap - used),
+          });
+        }
+      }
     }
+    // mode 'none': no cap for this discipline.
   }
 
   // Per-session per-apparatus (by-session mode).

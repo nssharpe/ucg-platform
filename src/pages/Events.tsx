@@ -14,6 +14,7 @@ import { useToast, useFmtDate, type ToastOptions } from '../components/ui-hooks'
 import { EventWizard } from '../components/EventWizard';
 import { RegistrationEditor } from '../components/RegistrationEditor';
 import { EventCheckinAdminCard } from '../components/EventCheckinCard';
+import { CapacityProgressCard } from '../components/CapacityProgressCard';
 import { EventStatusBadge } from './Home';
 import { APPARATUS, SHIRT_SIZES } from '../lib/types';
 import type { Athlete, CartItem, Discipline, Event, EventAdmin, EventSession, JudgeAccessCode, Registration } from '../lib/types';
@@ -42,7 +43,7 @@ import {
   buildAddonCartItems, type AddonDraft,
   campSurveyQuestionsOf, campSurveyAnswersValid, campSurveyToStored, campSurveySummary, campSurveyAnswerLabel,
 } from '../lib/pricing';
-import { holdStamp } from '../lib/capacity';
+import { hasCapacityConfig, holdStamp } from '../lib/capacity';
 import { OWNER_TASKS, ownerTaskDueDate } from '../../supabase/functions/_shared/owner-checklist';
 import type { OwnerChecklist, OwnerChecklistEntry, OwnerTaskId } from '../../supabase/functions/_shared/owner-checklist';
 
@@ -423,6 +424,16 @@ export function EventDetail() {
           admin/sanctioning (manage-waitlist's server-returned canManage,
           re-checked server-side on every action — hosts see it read-only). */}
       {canManage && <WaitlistCard event={event} toast={toast} />}
+
+      {/* Capacity progress summary (capacity rework 2026-08-24, T3): host/admin
+          view of how full every capped discipline/level (by-discipline mode)
+          or session (by-session mode) is. Competitions only — camps carry no
+          discipline/level/apparatus config to show progress against — and
+          only when the event actually has some capacity config at all
+          (`hasCapacityConfig`, the same predicate enforcement itself uses). */}
+      {canManage && event.eventType !== 'camp' && hasCapacityConfig(event, event.sessions) && (
+        <CapacityProgressCard event={event} regs={regs} />
+      )}
 
       {/* Camp overnight-accommodations survey responses (PM requirement
           2026-07-22): reviewable by hosts/admins individually and as

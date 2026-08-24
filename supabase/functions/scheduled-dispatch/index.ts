@@ -554,7 +554,7 @@ async function sweepEvent(
 
   const { data: eventRow, error: eventErr } = await db
     .from('events')
-    .select('id, name, capacity, last_date_to_edit')
+    .select('id, name, capacity, registration_mode, last_date_to_edit')
     .eq('id', eventId)
     .maybeSingle();
   if (eventErr) throw new Error(`event load failed: ${eventErr.message}`);
@@ -663,18 +663,21 @@ async function sweepEvent(
   return { promoted, requeued, completed };
 }
 
-/** The cap DIMENSIONS a group's own (waitlisted) regs touch: 'total' always
- *  (a global cap applies to every group), plus a `discipline:<code>` key per
- *  reg's discipline, a `level:<id>` key per routine's attributed level, and a
- *  `session:<id>:<apparatus>` key per routine with a session assigned. Mirrors
- *  `regTouchesViolation`'s attribution rules in src/lib/capacity.ts /
- *  _shared/capacity.ts (kept in sync by hand — that function isn't exported). */
+/** The cap DIMENSIONS a group's own (waitlisted) regs touch: a
+ *  `discipline:<code>` key per reg's discipline, a `level:<discipline>:<id>`
+ *  key per routine's attributed level (capacity rework, 2026-08-24 — T1: a
+ *  level cap is now scoped to its discipline, and there is no more
+ *  event-wide 'total' dimension — the athlete cap it backed was removed
+ *  outright), and a `session:<id>:<apparatus>` key per routine with a session
+ *  assigned. Mirrors `regTouchesViolation`'s attribution rules in
+ *  src/lib/capacity.ts / _shared/capacity.ts (kept in sync by hand — that
+ *  function isn't exported). */
 function groupDimensionKeys(groupRegs: RegRow[]): Set<string> {
-  const keys = new Set<string>(['total']);
+  const keys = new Set<string>();
   for (const r of groupRegs) {
     keys.add(`discipline:${r.discipline}`);
     for (const routine of regRoutines(r)) {
-      keys.add(`level:${routine.levelId}`);
+      keys.add(`level:${r.discipline}:${routine.levelId}`);
       if (r.session_id) keys.add(`session:${r.session_id}:${routine.apparatus}`);
     }
   }
@@ -682,8 +685,7 @@ function groupDimensionKeys(groupRegs: RegRow[]): Set<string> {
 }
 
 function violationDimensionKey(v: CapacityViolation): string {
-  if (v.scope === 'total') return 'total';
-  if (v.scope === 'level') return `level:${v.levelId}`;
+  if (v.scope === 'level') return `level:${v.discipline}:${v.levelId}`;
   if (v.scope === 'discipline') return `discipline:${v.discipline}`;
   return `session:${v.sessionId}:${v.apparatus}`;
 }

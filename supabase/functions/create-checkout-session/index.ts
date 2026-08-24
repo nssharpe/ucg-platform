@@ -498,14 +498,11 @@ Deno.serve(async (req) => {
         const violations = checkCapacity(capEvent, sessions, allEventRegs, incomingForEvent, groupsById, nowMs);
         if (violations.length) {
           const describe = (v: (typeof violations)[number]) => {
-            if (v.scope === 'total') {
-              return `"${capEvent.name}" is at capacity: ${v.remaining} of ${v.cap} spot(s) remain (this order needs ${v.requested}).`;
-            }
             if (v.scope === 'level') {
-              return `Level ${v.levelId} at "${capEvent.name}" is over its routine cap: ${v.remaining} of ${v.cap} spot(s) remain (this order needs ${v.requested}).`;
+              return `Level ${v.levelId} in ${v.discipline} at "${capEvent.name}" is full (${v.used} of ${v.cap}).`;
             }
             if (v.scope === 'discipline') {
-              return `${v.discipline} at "${capEvent.name}" is over its routine cap: ${v.remaining} of ${v.cap} spot(s) remain (this order needs ${v.requested}).`;
+              return `${v.discipline} at "${capEvent.name}" is full (${v.used} of ${v.cap}).`;
             }
             return `Apparatus ${v.apparatus} in session ${v.sessionId} at "${capEvent.name}" is over its routine cap: ${v.remaining} of ${v.cap} spot(s) remain (this order needs ${v.requested}).`;
           };

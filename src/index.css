@@ -83,6 +83,9 @@
   --ink-soft: #5a6a78;
   --warn: #b45309; /* amber warning text — ~4.9:1 on --surface, AA for small text */
   --line: #c8d8db;
+  --sunk: #eef1f4; /* recessed track surface (progress-bar tracks) — fill-only,
+                      never text; capacity rework T3. Distinct from --surface
+                      (white cards) so a fill reads against it at a glance. */
   --radius: 10px;
   --radius-sm: 6px;
   --shadow: 0 1px 2px rgba(20, 32, 44, 0.06), 0 8px 24px -12px rgba(20, 32, 44, 0.18);

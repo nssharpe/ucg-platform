@@ -10,11 +10,27 @@ import { eventCreationBlocked } from '../lib/season-lifecycle';
 import { buildNationalsSessions, singleLeagueHostClubId } from '../lib/ucg-event-templates';
 import { normalizeExternalUrl } from '../lib/url';
 import { campSurveyQuestionsOf } from '../lib/pricing';
+import { capacityUsage } from '../lib/capacity';
+import {
+  capacityConfigFromDraft,
+  capacityDraftFromEvent,
+  validateCapacityDraft,
+  type CapacityDraft,
+  type DisciplineCapacityDraft,
+} from '../lib/capacity-draft';
 import { Combo, Field, Modal } from './ui';
 import { useToast } from './ui-hooks';
 import { APPARATUS, DISCIPLINES, SHIRT_SIZES, STATE_REGIONS } from '../lib/types';
 import { timezoneForState } from '../lib/timezone';
 import type { CampSurveyQuestion, Discipline, Level, Event, EventSession, EventStatus, ScoringConfig } from '../lib/types';
+
+// Capacity input unit — currently "routines" (apparatus entries, the P4
+// semantic `capacity.ts` enforces: one athlete on 4 apparatus counts as 4).
+// The owners are separately deciding whether they'd rather cap athletes
+// instead (2026-08-24) — every capacity-unit string in this file is routed
+// through these two constants so that decision is a one-line change.
+const CAPACITY_UNIT_LABEL = 'routines';
+const CAPACITY_UNIT_HINT = 'One athlete on 4 apparatus counts as 4.';
 
 const slugify = (name: string) => name.toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
@@ -336,19 +352,27 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
   const [directorName, setDirectorName] = useState(seedEvt?.director?.name ?? '');
   const [directorEmail, setDirectorEmail] = useState(seedEvt?.director?.email ?? '');
   const [directorCc, setDirectorCc] = useState(seedEvt?.director?.ccOnConfirmation ?? false);
-  // Capacity (event-mgmt v2 §A): enforced server-side at checkout (src/lib/capacity.ts
-  // mirrored in supabase/functions/_shared/capacity.ts).
-  const [capacityTotal, setCapacityTotal] = useState(String(seedEvt?.capacity?.total ?? ''));
-  const [capacityPerDiscipline, setCapacityPerDiscipline] = useState<Partial<Record<Discipline, string>>>(
-    () => Object.fromEntries(
-      DISCIPLINES.map((d) => [d, seedEvt?.capacity?.perDiscipline?.[d] != null ? String(seedEvt.capacity.perDiscipline[d]) : '']),
-    ) as Partial<Record<Discipline, string>>,
+  // Capacity (capacity rework, 2026-08-24 — T2): per-discipline draft editor,
+  // enforced server-side at checkout (src/lib/capacity.ts mirrored in
+  // supabase/functions/_shared/capacity.ts). The old event-wide `total`
+  // (athlete) cap is gone outright (T1) — `legacyTotal` below is read
+  // straight off the RAW stored value (never normalized, since
+  // `normalizeCapacity` drops `total` on purpose) and used ONLY to drive the
+  // one-time migration notice; it never feeds back into the draft or the save.
+  const legacyTotal = seedEvt?.capacity?.total ?? null;
+  const [legacyCapNoticeDismissed, setLegacyCapNoticeDismissed] = useState(false);
+  // Seeded for all three disciplines (not just the event's currently-selected
+  // ones) so toggling a discipline off and back on doesn't lose whatever the
+  // admin already typed for it.
+  const [capacityDraft, setCapacityDraft] = useState<CapacityDraft>(
+    () => capacityDraftFromEvent(seedEvt?.capacity, DISCIPLINES),
   );
-  const [capacityPerLevel, setCapacityPerLevel] = useState<Record<string, string>>(
-    () => Object.fromEntries(
-      Object.entries(seedEvt?.capacity?.perLevel ?? {}).map(([id, n]) => [id, String(n)]),
-    ),
-  );
+  const updateCapacityDraft = (d: Discipline, patch: Partial<DisciplineCapacityDraft>) => {
+    setCapacityDraft((prev) => ({
+      ...prev,
+      [d]: { ...(prev[d] ?? { mode: 'none', cap: '', perLevel: {} }), ...patch },
+    }));
+  };
   // Confirmation email override (event-mgmt v2 §A)
   const [hasConfirmationEmail, setHasConfirmationEmail] = useState(!!seedEvt?.confirmationEmail || isNationalsCreate);
   const [confirmationBodyHtml, setConfirmationBodyHtml] = useState(seedEvt?.confirmationEmail?.bodyHtml ?? '');
@@ -672,23 +696,32 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
       if (!lateRegStartsAt) return setError('Late registration needs a start date/time.');
     }
     if (directorEmail.trim() && !directorName.trim()) return setError('Director name is required if a director email is set.');
-    if (capacityTotal.trim()) {
-      const t = Number(capacityTotal);
-      if (!Number.isFinite(t) || t < 0) return setError('Max total participants must be a valid number.');
-    }
-    for (const d of effectiveDisciplines) {
-      const v = capacityPerDiscipline[d];
-      if (v && v.trim()) {
-        const n = Number(v);
-        if (!Number.isFinite(n) || n < 0) return setError(`${discLabel(d)} capacity must be a valid number.`);
+    // Capacity (T2): the per-discipline chooser is hidden entirely in
+    // by-session mode (session maxRoutines caps are the only knob there), so
+    // its draft is never validated or written in that mode — whatever
+    // capacity the event already had passes through unchanged (see the
+    // write-out below).
+    if (!isCamp && registrationMode === 'by-discipline') {
+      // `wizardEventRegs` (already fetched above for the session-removal
+      // guard) never resolves for a brand-new event (`isEdit` false), so only
+      // gate on freshness when editing — same guard as `canRemoveSession`.
+      if (isEdit && wizardRegsStatus !== 'ready') {
+        return setError('Registrations are still loading — try again in a moment.');
       }
-    }
-    for (const levelId of allCompetingLevelIds) {
-      const v = capacityPerLevel[levelId];
-      if (v && v.trim()) {
-        const n = Number(v);
-        if (!Number.isFinite(n) || n < 0) return setError('Per-level capacity must be a valid number.');
-      }
+      const groupsById = Object.fromEntries((db.waitlistGroups ?? []).map((g) => [g.id, g]));
+      // ENFORCEMENT tally (paid + live holds) via capacityUsage — never
+      // paidUsage — so a save can't undercut a spot already promised by a
+      // live cart hold or a promoted waitlist group. A brand-new event has no
+      // registrations yet, so usage is all zero.
+      const usage = editEvent
+        ? capacityUsage(editEvent, wizardEventRegs, groupsById, Date.now())
+        : { totalAthletes: 0, perDiscipline: {}, perDisciplineLevel: {}, perSession: {} };
+      const levelName = (levelId: string) => {
+        const l = db.levels.find((x) => x.id === levelId);
+        return l ? `${discLabel(l.discipline)} ${l.name}` : levelId;
+      };
+      const issues = validateCapacityDraft(capacityDraft, usage, levelName);
+      if (issues.length > 0) return setError(issues[0].message);
     }
     if (!useGymsUi) {
       for (const s of sessions) {
@@ -801,27 +834,19 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
       ...(directorName.trim()
         ? { director: { name: directorName.trim(), email: directorEmail.trim(), ccOnConfirmation: directorCc } }
         : { director: undefined }),
-      ...((capacityTotal.trim() || effectiveDisciplines.some((d) => capacityPerDiscipline[d]?.trim()) || allCompetingLevelIds.some((id) => capacityPerLevel[id]?.trim()))
-        ? {
-            capacity: {
-              ...(capacityTotal.trim() ? { total: Number(capacityTotal) } : {}),
-              ...(effectiveDisciplines.some((d) => capacityPerDiscipline[d]?.trim())
-                ? {
-                    perDiscipline: Object.fromEntries(
-                      effectiveDisciplines.filter((d) => capacityPerDiscipline[d]?.trim()).map((d) => [d, Number(capacityPerDiscipline[d])]),
-                    ) as Partial<Record<Discipline, number>>,
-                  }
-                : {}),
-              ...(allCompetingLevelIds.some((id) => capacityPerLevel[id]?.trim())
-                ? {
-                    perLevel: Object.fromEntries(
-                      allCompetingLevelIds.filter((id) => capacityPerLevel[id]?.trim()).map((id) => [id, Number(capacityPerLevel[id])]),
-                    ),
-                  }
-                : {}),
-            },
-          }
-        : { capacity: undefined }),
+      // Capacity (T2): camps never have caps (session-less/level-less —
+      // there's no discipline/level to scope one to). By-session mode hides
+      // the per-discipline chooser entirely, so this save leaves whatever
+      // `capacity` the event already had untouched (the `...(editEvent ??
+      // template ?? {})` spread at the top of this object already carries it
+      // forward — no explicit key needed here). By-discipline mode writes
+      // ONLY the new per-discipline shape straight from the draft, dropping
+      // `total`/legacy keys entirely.
+      ...(isCamp
+        ? { capacity: undefined }
+        : registrationMode === 'by-session'
+          ? {}
+          : { capacity: capacityConfigFromDraft(capacityDraft) }),
       ...(hasConfirmationEmail
         ? {
             confirmationEmail: {
@@ -1322,11 +1347,23 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
                   sessions (below) must be created before registration opens.
                 </p>
               </div>
-              {sessions.length === 0 && <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '4px 0' }}>Pick a discipline to load its default session templates — then add, remove, or edit sessions.</p>}
-              {sessions.map((s, i) => {
-                // Exclude retired levels from the session level pickers
-                const discLevels = db.levels.filter((l) => l.discipline === s.discipline && !l.retired).sort((a, b) => a.order - b.order);
-                return (
+              {registrationMode === 'by-discipline' ? (
+                // Sessions still exist underneath (results/squads use them,
+                // and by-discipline capacity's per-level caps read the
+                // levels they were seeded with) — this mode just doesn't
+                // expose the session-template editor, since athletes never
+                // pick a session at registration here.
+                <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '0 0 10px' }}>
+                  Session templates are hidden in by-discipline mode (athletes register by discipline, not by
+                  session). Switch to "By session" above to edit them.
+                </p>
+              ) : (
+                <>
+                  {sessions.length === 0 && <p style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '4px 0' }}>Pick a discipline to load its default session templates — then add, remove, or edit sessions.</p>}
+                  {sessions.map((s, i) => {
+                    // Exclude retired levels from the session level pickers
+                    const discLevels = db.levels.filter((l) => l.discipline === s.discipline && !l.retired).sort((a, b) => a.order - b.order);
+                    return (
                   <div key={s.key} className="card card-pad" style={{ marginBottom: 10 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
                       <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--ink-soft)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Session {i + 1} · {discLabel(s.discipline)}</span>
@@ -1379,16 +1416,18 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
                       </div>
                     </div>
                   </div>
-                );
-              })}
-              {disciplines.length > 0 && (
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
-                  {disciplines.map((d) => (
-                    <button key={d} className="btn small ghost" onClick={() => setSessions([...sessions, { key: nextKey(), discipline: d, label: `${discLabel(d)} `, date: startDate, time: '09:00', levelIds: [], phase: 'prelim', maxRoutines: {} }])}>
-                      + Add {discLabel(d)} session
-                    </button>
-                  ))}
-                </div>
+                    );
+                  })}
+                  {disciplines.length > 0 && (
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
+                      {disciplines.map((d) => (
+                        <button key={d} className="btn small ghost" onClick={() => setSessions([...sessions, { key: nextKey(), discipline: d, label: `${discLabel(d)} `, date: startDate, time: '09:00', levelIds: [], phase: 'prelim', maxRoutines: {} }])}>
+                          + Add {discLabel(d)} session
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </>
           )}
@@ -1396,49 +1435,98 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
       )}
 
       {sectionTitle('Capacity')}
-      <div className="grid cols-3">
-        <Field label="Max total participants" hint={isCamp ? undefined : 'Counts athletes — one per person, regardless of how many disciplines they enter.'}>
-          <input className="input" type="number" min={0} step={1} value={capacityTotal} onChange={(e) => setCapacityTotal(e.target.value)} />
-        </Field>
-      </div>
-      {!isCamp && effectiveDisciplines.length > 0 && (
-        <>
-          <div style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '4px 0 6px' }}>
-            Per-discipline caps (optional) — counts routines (apparatus entries), T&amp;T only
-          </div>
-          <div className="grid cols-3" style={{ marginBottom: 8 }}>
-            {effectiveDisciplines.map((d) => (
-              <Field key={d} label={`${discLabel(d)} cap`}>
-                <input
-                  className="input" type="number" min={0} step={1}
-                  value={capacityPerDiscipline[d] ?? ''}
-                  onChange={(e) => setCapacityPerDiscipline((prev) => ({ ...prev, [d]: e.target.value }))}
-                />
-              </Field>
-            ))}
-          </div>
-        </>
+      {legacyTotal != null && !legacyCapNoticeDismissed && (
+        <div
+          style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8,
+            marginBottom: 10, padding: '10px 12px', borderRadius: 6,
+            background: 'var(--warn-50, #fff8f0)', border: '1px solid var(--warn-200, #f9d87a)',
+          }}
+          role="status"
+        >
+          <p style={{ margin: 0, fontSize: 13 }}>
+            This event had an overall participant cap of {legacyTotal} — that cap type was removed.
+            Re-enter it below as per-discipline or per-level caps if you still want limits.
+          </p>
+          <button
+            type="button" className="btn small ghost" style={{ flexShrink: 0 }}
+            onClick={() => setLegacyCapNoticeDismissed(true)}
+          >Dismiss</button>
+        </div>
       )}
-      {!isCamp && allCompetingLevelIds.length > 0 && (
-        <>
-          <div style={{ fontSize: 13, color: 'var(--ink-soft)', margin: '4px 0 6px' }}>
-            Per-level caps (optional) — counts routines (apparatus entries), WAG/MAG
-          </div>
-          <div className="grid cols-3" style={{ marginBottom: 8 }}>
-            {db.levels
-              .filter((l) => allCompetingLevelIds.includes(l.id))
-              .sort((a, b) => a.discipline.localeCompare(b.discipline) || a.order - b.order)
-              .map((l) => (
-                <Field key={l.id} label={`${discLabel(l.discipline)} ${l.name}`}>
+      {isCamp ? (
+        <p style={{ fontSize: 13, color: 'var(--ink-soft)' }}>Camps have no participant caps.</p>
+      ) : registrationMode === 'by-session' ? (
+        <p style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
+          By-session mode caps routines per session instead (see "Max routines per apparatus" on each
+          session above) — the per-discipline chooser doesn't apply here.
+        </p>
+      ) : effectiveDisciplines.length === 0 ? (
+        <p style={{ fontSize: 13, color: 'var(--ink-soft)' }}>Select a discipline above to configure its cap.</p>
+      ) : (
+        effectiveDisciplines.map((d) => {
+          const draftEntry = capacityDraft[d] ?? { mode: 'none', cap: '', perLevel: {} };
+          // Same level set the by-session editor's own per-session pickers
+          // use for this discipline: every non-retired level the event's
+          // sessions were seeded/authored with (see `allCompetingLevelIds`).
+          const discLevels = db.levels
+            .filter((l) => l.discipline === d && allCompetingLevelIds.includes(l.id))
+            .sort((a, b) => a.order - b.order);
+          return (
+            <div key={d} className="card card-pad" style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>{discLabel(d)} cap</div>
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 8 }}>
+                <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
                   <input
-                    className="input" type="number" min={0} step={1}
-                    value={capacityPerLevel[l.id] ?? ''}
-                    onChange={(e) => setCapacityPerLevel((prev) => ({ ...prev, [l.id]: e.target.value }))}
-                  />
-                </Field>
-              ))}
-          </div>
-        </>
+                    type="radio" name={`capMode-${d}`} checked={draftEntry.mode === 'none'}
+                    onChange={() => updateCapacityDraft(d, { mode: 'none' })}
+                  /> No cap
+                </label>
+                <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
+                  <input
+                    type="radio" name={`capMode-${d}`} checked={draftEntry.mode === 'discipline'}
+                    onChange={() => updateCapacityDraft(d, { mode: 'discipline' })}
+                  /> One cap for the whole discipline
+                </label>
+                <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
+                  <input
+                    type="radio" name={`capMode-${d}`} checked={draftEntry.mode === 'perLevel'}
+                    onChange={() => updateCapacityDraft(d, { mode: 'perLevel' })}
+                  /> Per-level caps
+                </label>
+              </div>
+              {draftEntry.mode === 'discipline' && (
+                <div className="grid cols-3">
+                  <Field label={`Cap (${CAPACITY_UNIT_LABEL})`} hint={CAPACITY_UNIT_HINT}>
+                    <input
+                      className="input" type="number" min={1} step={1}
+                      value={draftEntry.cap}
+                      onChange={(e) => updateCapacityDraft(d, { cap: e.target.value })}
+                    />
+                  </Field>
+                </div>
+              )}
+              {draftEntry.mode === 'perLevel' && (
+                <div className="grid cols-3">
+                  {discLevels.length === 0 && (
+                    <p style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>
+                      No levels configured for {discLabel(d)} yet — add a session with levels above.
+                    </p>
+                  )}
+                  {discLevels.map((l) => (
+                    <Field key={l.id} label={`${l.name} cap (${CAPACITY_UNIT_LABEL})`} hint={CAPACITY_UNIT_HINT}>
+                      <input
+                        className="input" type="number" min={1} step={1}
+                        value={draftEntry.perLevel[l.id] ?? ''}
+                        onChange={(e) => updateCapacityDraft(d, { perLevel: { ...draftEntry.perLevel, [l.id]: e.target.value } })}
+                      />
+                    </Field>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })
       )}
 
       {kind === 'nationals' && (
