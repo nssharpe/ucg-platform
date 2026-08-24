@@ -66,6 +66,11 @@ Invokers unwrap errors via `edgeErrorMessage(error)` (the real JSON message), **
   caller only; cc = one copy message).
 - **Money:** `create-checkout-session`, `stripe-webhook`, `request-refund`, `process-refund`,
   `reconcile-payments` (admin/finance_admin + AAL).
+- **`withdraw-registration`** (athlete self-serve WITHDRAWAL, owners' spec 2026-08-23; self-only,
+  no club-manager branch): removes (before `last_date_to_edit`) or keeps-and-scratches (at/after
+  it, stamping `registrations.withdrawn_at` — never `refunded`) every one of the caller's own
+  non-refunded rows for one (event, club). Shown instead of `request-refund` wherever that flow
+  isn't offered — see `supabase/README.md`'s function inventory for the full rule.
 - **Ops:** `manage-waitlist` (`promote`/`requeue` = admin/sanctioning only; `list` = +
   host-club managers/event-admin grantees), `admin-delete-person` (admin-only + AAL; tombstones
   the `people` row in place when financial/waiver rows reference it, scrubs denormalized names

@@ -4,7 +4,8 @@ import { useToast } from './ui-hooks';
 import { requestRefund } from '../lib/supabase';
 import { syncFromSupabase, useDB } from '../lib/store';
 import { addonConfig, addonPurchaseOpen } from '../lib/pricing';
-import type { Event, InvoiceItem } from '../lib/types';
+import { registrationLines } from '../lib/registration-status';
+import type { Event } from '../lib/types';
 
 /** One item to request a refund for — either a paid registration (rule 1:
  *  ONE request per registration, covering every payment that funded it — the
@@ -31,19 +32,6 @@ const REASON_OPTIONS: { value: 'injury' | 'illness' | 'bereavement' | 'other'; l
 ];
 
 const fmt = (n: number) => `$${n.toFixed(2)}`;
-
-/** Every refundable line for a registration-kind item: entry + extra-
- *  discipline fee lines only (kind='meet-entry'), excluding change-fee lines
- *  outright (rule 2 — never refundable, even when a change fee is combined
- *  with an added discipline into one 'change'-tagged line, M-10-01). Scans
- *  every invoice this caller can see (`db.invoices`, Tier 2 boot-scoped to
- *  self + managed-club rows) since a registration may be paid across TWO
- *  invoices (rule 1). Client-side ESTIMATE only — the server always
- *  recomputes at approval time and this may read lower once a coupon is
- *  applied, same disclaimer RefundReview.tsx already carries. */
-function registrationLines(allItems: InvoiceItem[], regId: string): InvoiceItem[] {
-  return allItems.filter((it) => it.kind === 'meet-entry' && it.refLineType !== 'change' && (it.refRegIds ?? []).includes(regId));
-}
 
 interface ItemSummary {
   item: RefundRequestItem;

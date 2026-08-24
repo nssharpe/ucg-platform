@@ -66,7 +66,15 @@ regs. `updatedPending` marks a paid reg edited back to pending by a change fee.
 `MyRegistrations.tsx` embeds the shared `RegistrationEditor`, targets the member's OWN cart,
 same paid/`updatedPending` semantics as `Club.tsx`. **But the member side NEVER deletes a
 registration** — a fully deselected discipline is retained-but-blanked. Deletion stays a refund
-action.
+action **through the editor's own save path** (`saveRegs`/`RegistrationEditor`) — this rule is
+about *that* path only.
+
+**Deliberate carve-out (owners' withdrawal spec 2026-08-23):** the new "Withdraw" button/dialog
+(`WithdrawDialog.tsx`) is a SEPARATE, explicit self-serve delete path via its own edge function
+(`withdraw-registration`) — confirm dialog, immediate, emails both sides — not a side effect of
+an ordinary editor save. It deletes on-time (before `last_date_to_edit`) exactly like an on-time
+refund approval, or keeps+scratches (stamping `withdrawn_at`, never `refunded`) after. Don't read
+this as license to add deletion to the editor's own save flow — that rule stands unchanged.
 
 `RegistrationEditor`'s optional `originalClubId` prop makes a club-only switch chargeable; other
 callers omit it.

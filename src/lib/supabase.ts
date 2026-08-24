@@ -69,7 +69,7 @@ function chunk<T>(rows: T[], size = CHUNK_SIZE): T[][] {
  *  camp_survey use the scoped `fetchCampSurveys` RPC instead (self / club
  *  manager / event host) or `fetchEventHostRoster` (host workbook — already
  *  scoped, unaffected by this). */
-const REGISTRATION_COLUMNS_NO_SURVEY = 'id, event_id, athlete_id, club_id, discipline, level_id, apparatus, apparatus_levels, session_id, squad_id, refunded, refund_requested, keep_listed, partner_athlete_id, paid, updated_pending, created_at, waitlisted, waitlist_group_id, hold_expires_at' as const;
+const REGISTRATION_COLUMNS_NO_SURVEY = 'id, event_id, athlete_id, club_id, discipline, level_id, apparatus, apparatus_levels, session_id, squad_id, refunded, refund_requested, keep_listed, partner_athlete_id, paid, updated_pending, created_at, waitlisted, waitlist_group_id, hold_expires_at, withdrawn_at' as const;
 
 /** Fetch every row from a table, paging past PostgREST's default row cap
  *  (1000) — used by every `loadAll` table read (not just `people`, which is
@@ -551,6 +551,12 @@ const rowToRegistration = (r: RegistrationRowMaybeSurvey): Registration => ({
   ...((r as { waitlisted?: boolean | null }).waitlisted ? { waitlisted: true } : {}),
   ...((r as { waitlist_group_id?: string | null }).waitlist_group_id ? { waitlistGroupId: (r as { waitlist_group_id?: string | null }).waitlist_group_id } : {}),
   ...((r as { hold_expires_at?: string | null }).hold_expires_at ? { holdExpiresAt: (r as { hold_expires_at?: string | null }).hold_expires_at } : {}),
+  // withdrawn_at: READ-ONLY here, like createdAt — written ONLY by the
+  // withdraw-registration edge function's targeted UPDATE (migration
+  // 20260824100000), never by this row's own registrationToRow upsert
+  // mapping, so an ordinary registration edit/save can never silently clear
+  // it back to null.
+  ...((r as { withdrawn_at?: string | null }).withdrawn_at ? { withdrawnAt: (r as { withdrawn_at?: string | null }).withdrawn_at } : {}),
   // squad_id: read-only here for SquadBuilder's athleteRegIds bootstrap
   // (Phase 3 Stage 4 — see Registration.squadId's doc comment). Writes still
   // go through registrationToRow's separate squadId parameter, unchanged.
@@ -2709,6 +2715,28 @@ export async function createWaiverLink(args: {
   const { data, error } = await supabase.functions.invoke('create-waiver-link', { body: args });
   if (error) return { ok: false, error: await edgeErrorMessage(error) };
   return data as { ok: boolean; token?: string; link?: string; signerRole?: 'self' | 'guardian'; error?: string };
+}
+
+/** Athlete self-serve WITHDRAWAL (product owners' spec 2026-08-23):
+ *  athlete-only (no club-manager branch, unlike `requestRefund`) — the
+ *  server resolves every one of the caller's own non-refunded registration
+ *  rows for `regId`'s (event, club) — a multi-discipline athlete withdraws
+ *  from the whole event in one call — and either deletes them (before the
+ *  event's `lastDateToEdit`) or keeps them with every apparatus scratched +
+ *  `withdrawnAt` stamped (at/after it). Immediate — no review step. Emails
+ *  the athlete + the event host. Idempotent: withdrawing an already-
+ *  withdrawn/refunded registration 404/409s with a clear message. Caller
+ *  should `invalidateMyRegistrations()` on success. */
+export async function withdrawRegistration(args: { regId: string }): Promise<{
+  ok: boolean; plan?: 'remove' | 'scratch'; regIds?: string[]; error?: string; status?: number;
+}> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  const { data, error } = await supabase.functions.invoke('withdraw-registration', { body: args });
+  if (error) {
+    const status = (error as { context?: Response }).context?.status;
+    return { ok: false, error: await edgeErrorMessage(error), status };
+  }
+  return data as { ok: boolean; plan?: 'remove' | 'scratch'; regIds?: string[]; error?: string };
 }
 
 /** Request a refund on a paid registration or a purchased add-on line

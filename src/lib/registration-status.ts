@@ -4,7 +4,7 @@
 // "Registration paid-state") — never a `refRegIds`-scanning heuristic, which
 // belongs to checkout/webhook fulfillment only. No React/store/Supabase
 // imports; unit-tested in tests/lib/registration-status.test.ts.
-import type { Registration } from './types';
+import type { InvoiceItem, Registration } from './types';
 
 export type RegPaymentStatus = 'paid' | 'pending-purchase' | 'change-pending';
 
@@ -88,4 +88,20 @@ export function findPaidSibling<T extends SlotRegLike>(reg: SlotRegLike, allRegs
     !r.refunded &&
     r.paid === true,
   ) ?? null;
+}
+
+/**
+ * Every refundable line for a registration: entry + extra-discipline fee
+ * lines only (`kind='meet-entry'`), excluding change-fee lines outright
+ * (money-invariants.md "Refunds" — never refundable, even when a change fee
+ * is combined with an added discipline into one 'change'-tagged line,
+ * M-10-01). Pulled out of `RefundRequestDialog.tsx` (a component file, which
+ * can't export a plain function without tripping `react-refresh/only-export-
+ * components`) so `MyRegistrations.tsx`'s refund-vs-withdraw decision (owners'
+ * withdrawal spec 2026-08-23, rule 2: only a registration with refundable
+ * paid cents keeps "Request a refund" — a $0 one gets Withdraw instead) can
+ * share the exact same total instead of re-deriving it.
+ */
+export function registrationLines(allItems: InvoiceItem[], regId: string): InvoiceItem[] {
+  return allItems.filter((it) => it.kind === 'meet-entry' && it.refLineType !== 'change' && (it.refRegIds ?? []).includes(regId));
 }

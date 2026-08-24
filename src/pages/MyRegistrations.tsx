@@ -18,6 +18,7 @@ import { fmtMoney } from '../lib/scoring';
 import type { Athlete, Club, Level, Event, Registration, Season, WaitlistGroup } from '../lib/types';
 import { canStillEditRegistration, eventIsInPhase, eventIsRefundEligible } from '../lib/events-core';
 import { RefundRequestDialog, type RefundRequestItem } from '../components/RefundRequestDialog';
+import { WithdrawDialog } from '../components/WithdrawDialog';
 import { SessionRequestSurveyCard } from '../components/SessionRequestSurvey';
 import { NationalsDashboard } from '../components/NationalsDashboard';
 import { EventCheckinCard } from '../components/EventCheckinCard';
@@ -26,7 +27,7 @@ import { EventCheckinCard } from '../components/EventCheckinCard';
 // another event" below.
 import { SelfRegModal } from './Events';
 import { currentSeason } from '../lib/season-lifecycle';
-import { regGroupPaymentStatusInfo } from '../lib/registration-status';
+import { regGroupPaymentStatusInfo, registrationLines } from '../lib/registration-status';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -72,6 +73,9 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   const [expanded, setExpanded] = useState<string | null>(() => deepLinkedEvent?.id ?? null);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [refundTarget, setRefundTarget] = useState<{ event: Event; item: RefundRequestItem } | null>(null);
+  // Athlete self-serve withdrawal (product owners' spec 2026-08-23) — shown
+  // instead of the refund flow wherever that isn't offered (rules 2–3).
+  const [withdrawTarget, setWithdrawTarget] = useState<{ event: Event; regId: string; label: string } | null>(null);
   // "Register for another event" (UAT M-01-03): the event currently opened in
   // the self-registration modal, and a separate search box for that section
   // (independent of the main list's `q` above).
@@ -88,6 +92,12 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
   // (editingEventRegs) keyed on whichever event is currently being edited.
   const myRegs = useMyRegistrations();
   const { rows: editingEventRegs, status: editingEventRegsStatus } = useEventRegistrations(editingEventId);
+  // Refundable-lines lookup shared by the refund-vs-withdraw decision below
+  // (rule 2: a paid>$0 registration on a refund-eligible event keeps
+  // "Request a refund"; a $0 one — 100% promo, or a non-refund-eligible
+  // event entirely — gets Withdraw instead), mirroring
+  // RefundRequestDialog's own `allInvoiceItems` computation.
+  const allInvoiceItems = useMemo(() => db.invoices.flatMap((inv) => inv.items), [db.invoices]);
 
   const lvlName = (id?: string) => db.levels.find((l) => l.id === id)?.name ?? '—';
   const nameOf = (id: string) => {
@@ -765,7 +775,17 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                           const base = r.apparatus.join(', ');
                           const evts = r.apparatus.includes('SY') && r.partnerAthleteId
                             ? `${base} (synchro w/ ${nameOf(r.partnerAthleteId)})` : base;
-                          const canRequestRefund = refundEligible && r.paid === true && !r.refunded && !r.refundRequested;
+                          // Rule 2 (owners' withdrawal spec 2026-08-23): a
+                          // refund-eligible event only keeps "Request a
+                          // refund" for a registration that actually has
+                          // refundable paid cents — a $0 one (100% promo, or
+                          // simply never charged) gets Withdraw instead, same
+                          // as every registration on a non-refund-eligible
+                          // event. Mirrors RefundRequestDialog's own
+                          // registrationLines total.
+                          const refundableDollars = registrationLines(allInvoiceItems, r.id).reduce((s, l) => s + l.amount, 0);
+                          const canRequestRefund = refundEligible && r.paid === true && !r.refunded && !r.refundRequested && refundableDollars > 0;
+                          const canWithdraw = !r.refunded && !r.refundRequested && !r.waitlisted && !r.withdrawnAt && !canRequestRefund;
                           return (
                             <tr key={r.id}>
                               <td>{r.discipline === 'TNT' ? 'T&T' : r.discipline}</td>
@@ -774,6 +794,8 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                               <td style={{ textAlign: 'right' }}>
                                 {r.refunded ? (
                                   <Badge tone="info">Refunded</Badge>
+                                ) : r.withdrawnAt ? (
+                                  <Badge tone="info">Withdrawn</Badge>
                                 ) : r.refundRequested ? (
                                   <Badge tone="warn">Refund requested</Badge>
                                 ) : r.waitlisted ? (
@@ -803,6 +825,18 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                                     })}
                                   >
                                     Request refund
+                                  </button>
+                                ) : canWithdraw ? (
+                                  <button
+                                    className="btn ghost small"
+                                    style={{ color: 'var(--coral-500)' }}
+                                    onClick={() => setWithdrawTarget({
+                                      event,
+                                      regId: r.id,
+                                      label: `${r.discipline === 'TNT' ? 'T&T' : r.discipline} — ${lvlName(r.levelId)}`,
+                                    })}
+                                  >
+                                    Withdraw
                                   </button>
                                 ) : null}
                               </td>
@@ -971,6 +1005,16 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
           event={refundTarget.event}
           onClose={() => setRefundTarget(null)}
           onSubmitted={() => { /* store refresh happens inside the dialog via syncFromSupabase() */ }}
+        />
+      )}
+
+      {withdrawTarget && (
+        <WithdrawDialog
+          event={withdrawTarget.event}
+          regId={withdrawTarget.regId}
+          label={withdrawTarget.label}
+          onClose={() => setWithdrawTarget(null)}
+          onWithdrawn={() => { /* store refresh happens inside the dialog via invalidateMyRegistrations() */ }}
         />
       )}
     </div>
