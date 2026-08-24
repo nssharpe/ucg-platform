@@ -72,6 +72,10 @@ export interface CapacityConfigRaw {
 export interface CapacityEventRow {
   id: string;
   capacity: CapacityConfigRaw | null;
+  /** 'by-discipline' (default) | 'by-session' — discipline/level caps apply
+   *  only in by-discipline mode. Optional so older callers that never select
+   *  it keep today's (by-discipline) behavior. */
+  registration_mode?: string | null;
 }
 
 /** Mirrors `DISCIPLINES` (src/lib/types.ts) — keep the three literal values in
@@ -274,7 +278,8 @@ export function paidUsage(eventId: string, regs: RegRow[]): CapacityUsage {
 /** True if the event has ANY capacity configuration set — drives whether
  *  holds/countdowns are needed at all. */
 export function hasCapacityConfig(event: CapacityEventRow, sessions: SessionRow[]): boolean {
-  const cfg = normalizeCapacity(event.capacity);
+  const cfg = (event.registration_mode ?? 'by-discipline') === 'by-discipline'
+    ? normalizeCapacity(event.capacity) : {};
   const anyDisciplineCap = Object.values(cfg.perDiscipline ?? {}).some((entry) => {
     if (!entry) return false;
     if (entry.mode === 'discipline') return capOf(entry.cap) !== undefined;
@@ -343,7 +348,8 @@ export function checkCapacity(
 
   // Per-discipline, one of two modes (capacity rework, 2026-08-24 — T1: the
   // old event-wide `total` athlete cap is GONE, no replacement).
-  const cfg = normalizeCapacity(event.capacity);
+  const cfg = (event.registration_mode ?? 'by-discipline') === 'by-discipline'
+    ? normalizeCapacity(event.capacity) : {};
   for (const [discipline, entry] of Object.entries(cfg.perDiscipline ?? {})) {
     if (!entry) continue;
 

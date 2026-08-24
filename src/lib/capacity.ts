@@ -238,7 +238,11 @@ export function paidUsage(event: Event, regs: Registration[]): CapacityUsage {
 /** True if the event has ANY capacity configuration set — drives whether
  *  holds/countdowns are needed at all. */
 export function hasCapacityConfig(event: Event, sessions: EventSession[]): boolean {
-  const cfg = normalizeCapacity(event.capacity);
+  // Discipline/level caps exist only in by-discipline mode (owners' spec
+  // 2026-08-24): a by-session event may still CARRY stale legacy caps in its
+  // jsonb, but they must neither enforce nor trigger soft holds.
+  const byDiscipline = (event.registrationMode ?? 'by-discipline') === 'by-discipline';
+  const cfg = byDiscipline ? normalizeCapacity(event.capacity) : {};
   const anyDisciplineCap = Object.values(cfg.perDiscipline ?? {}).some((entry) => {
     if (!entry) return false;
     if (entry.mode === 'discipline') return capOf(entry.cap) !== undefined;
@@ -306,8 +310,11 @@ export function checkCapacity(
   const combinedUsage = tallyUsage(event, [...baseline, ...incoming], combinedPredicate);
 
   // Per-discipline, one of two modes (capacity rework, 2026-08-24 — T1: the
-  // old event-wide `total` athlete cap is GONE, no replacement).
-  const cfg = normalizeCapacity(event.capacity);
+  // old event-wide `total` athlete cap is GONE, no replacement). Discipline/
+  // level caps apply ONLY in by-discipline mode — a by-session event with
+  // stale legacy caps in its jsonb must not double-enforce (T2 review).
+  const cfg = (event.registrationMode ?? 'by-discipline') === 'by-discipline'
+    ? normalizeCapacity(event.capacity) : {};
   for (const [discipline, entry] of Object.entries(cfg.perDiscipline ?? {}) as [Discipline, CapacityDisciplineConfig | undefined][]) {
     if (!entry) continue;
 

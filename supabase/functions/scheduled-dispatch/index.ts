@@ -554,7 +554,7 @@ async function sweepEvent(
 
   const { data: eventRow, error: eventErr } = await db
     .from('events')
-    .select('id, name, capacity, last_date_to_edit')
+    .select('id, name, capacity, registration_mode, last_date_to_edit')
     .eq('id', eventId)
     .maybeSingle();
   if (eventErr) throw new Error(`event load failed: ${eventErr.message}`);

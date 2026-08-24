@@ -203,6 +203,33 @@ describe('capacityUsage', () => {
   });
 });
 
+describe('registration-mode gate (T2 review): discipline/level caps only apply in by-discipline mode', () => {
+  it('a by-session event with stale legacy level caps enforces ONLY its session caps', () => {
+    const session: EventSession = {
+      id: 's1', name: 'Session 1', discipline: 'WAG', date: '2026-08-15', time: '09:00',
+      levelIds: ['lvl-silver'], squads: [], maxRoutines: { VT: 1 },
+    };
+    const event = baseEvent({
+      registrationMode: 'by-session',
+      capacity: { perLevel: { 'lvl-silver': 1 } } as unknown as Event['capacity'],
+    });
+    const incoming = [
+      baseReg({ id: 'r1', athleteId: 'a1', sessionId: 's1', apparatus: ['VT'], paid: false, holdExpiresAt: FUTURE }),
+      baseReg({ id: 'r2', athleteId: 'a2', sessionId: 's1', apparatus: ['VT'], paid: false, holdExpiresAt: FUTURE }),
+    ];
+    const violations = checkCapacity(event, [session], [], incoming, noGroups, NOW);
+    expect(violations.map((v) => v.scope)).toEqual(['session']);
+  });
+
+  it('a by-session event with stale caps and no session caps has no capacity config at all', () => {
+    const event = baseEvent({
+      registrationMode: 'by-session',
+      capacity: { perDiscipline: { WAG: { mode: 'discipline', cap: 1 } } } as Event['capacity'],
+    });
+    expect(hasCapacityConfig(event, [])).toBe(false);
+  });
+});
+
 describe('normalizeCapacity (legacy read fallback, 2026-08-24 rework)', () => {
   it('maps legacy flat perDiscipline to mode discipline and drops total', () => {
     const cfg = normalizeCapacity({ total: 40, perDiscipline: { TNT: 12 } } as never);
