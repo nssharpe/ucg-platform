@@ -66,6 +66,17 @@ even when the ids you're about to reinsert are identical to what's there now.
 
 ## Column-revoke × whole-row-upsert trap (broke prod 2026-07-17 → 23)
 
+**ADD COLUMN × column-level grants (incident 2026-08-24):** `registrations` has COLUMN-LEVEL
+SELECT grants (because of the deliberate `camp_survey` revoke), so `alter table … add column`
+does NOT extend them — a new column the client selects breaks EVERY signed-in registrations
+read with 42501 the moment the frontend ships. `withdrawn_at` (20260824100000) did exactly this
+to staging AND prod until hot-granted; `20260824180000` records the grant. Any migration adding
+a client-read column to `registrations` (or any other column-granted table — check
+`information_schema.column_privileges`) MUST include the matching
+`grant select (col) on <table> to authenticated;` in the same file, and the post-apply
+non-admin probe MUST include a select of the new column.
+
+
 A column-scoped SELECT lockdown (`revoke select on <table>` + `grant select (<cols>)`) breaks
 EVERY whole-row upsert that writes the revoked column. PostgREST compiles upserts to
 `ON CONFLICT DO UPDATE SET col = EXCLUDED.col`, and Postgres requires SELECT privilege on

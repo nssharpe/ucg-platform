@@ -1,0 +1,18 @@
+-- registrations.withdrawn_at SELECT grant for authenticated (INCIDENT FIX,
+-- 2026-08-24).
+--
+-- `registrations` carries COLUMN-LEVEL grants (the camp_survey revoke trap,
+-- supabase-migrations.md), so ALTER TABLE ADD COLUMN does NOT extend the
+-- existing per-column SELECT grant. Migration 20260824100000 added
+-- `withdrawn_at` and the frontend shipped selecting it -> every signed-in
+-- registration read (My Registrations, club grids, event slices) failed with
+-- 42501 "permission denied for table registrations" on staging AND prod until
+-- this grant was hot-applied (2026-08-24 evening, both projects). This
+-- migration records that grant durably; GRANT is idempotent, so re-applying
+-- over the hotfix is a no-op.
+--
+-- Rule of thumb this enforces going forward (also added to
+-- .claude/rules/supabase-migrations.md): ANY new column on `registrations`
+-- that the client reads needs an explicit `grant select (col)` in the same
+-- migration that adds it.
+grant select (withdrawn_at) on registrations to authenticated;
