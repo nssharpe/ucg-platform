@@ -15,8 +15,8 @@ Status key: ☐ not started · 🔧 in progress · ✅ shipped · ❓ blocked on
 
 Migrations applied + verified with RLS probes and a post_score conflict smoke on staging;
 9 functions deployed to both projects (webhook trio confirmed verify_jwt=false); frontend
-build `b9d4464` live. Only Batch 5 (capacity) remains — engine (T1) and wizard UI (T2) built on
-`feat/capacity-rework` (not yet merged/reviewed/deployed); progress UI (T3) not started.
+build `b9d4464` live. Only Batch 5 (capacity) remains — engine (T1), wizard UI (T2), and progress
+UI (T3) all built on `feat/capacity-rework` (not yet merged/reviewed/deployed to staging/prod).
 
 ### The original pre-ship snapshot (kept for the record)
 
@@ -127,12 +127,25 @@ Build split into three tasks on `feat/capacity-rework`:
   Deviations and open questions for Nate/Julia (by-session-mode capacity pass-through vs.
   force-clear; the one-time notice's dismiss semantics) are in
   `docs/plans/notes/2026-08-21-uat-round1-notes.md`.
-- **T3 (progress UI) — not started.** Event summary "progress toward caps" (paid-only, via the
-  already-exported `paidUsage()`) and the by-session per-session progress bar + detail overlay
-  (per-apparatus spots + waitlist size) from the decisions above are still to build.
+- **T3 (progress UI) ✅ built `dfec3e7`** — `CapacityProgressCard.tsx` (new) rendered on the event
+  page for hosts/event-admins/league-admins, competitions only, gated on `hasCapacityConfig`. Pure
+  math in new `src/lib/capacity-progress.ts` (`disciplineProgress`/`sessionProgress`): by-discipline
+  mode shows ATHLETES, worst-case (owners' 2026-08-24 decision) — registered = distinct paid
+  athletes, total = registered + floor(remaining paid routine capacity / AA apparatus count),
+  with a muted routine-level sub-line ("R of C routines used (+H in carts/holds)") so a host can
+  see why checkout blocked before the athlete bar looked full; by-session mode shows a per-session
+  % of routines available (paid + live holds) with a `Modal` overlay of per-apparatus spots +
+  waitlist size. 14 new unit tests incl. the worked WAG 30/21/6→"6 of 8" example, MAG÷6, TNT÷3
+  (T&T's SY event counts toward the cap but not the AA divisor), holds delta, and per-level
+  attribution. Deviations (signature shape vs. the brief, why the waitlist queue reads through
+  `fetchEventWaitlist` rather than `db.waitlistGroups`, the new `--sunk` token) are in
+  `docs/plans/notes/2026-08-21-uat-round1-notes.md`. Not done: a controller responsive-sweep pass
+  at 375/768/1280px, and a live click-through (skipped — the local dev server points at PROD
+  Supabase and the only two seeded live events have no capacity config; mutating one just to
+  screenshot seemed like the wrong tradeoff for a UI-only check).
 
 Not yet done regardless of T1–T3: Z-03-01's actual concurrency test, and reviewer-tier review of
-the T1/T2 diff before this merges to `main` (money/capacity-adjacent — CLAUDE.md's model-routing
+the T1/T2/T3 diff before this merges to `main` (money/capacity-adjacent — CLAUDE.md's model-routing
 rule).
 
 ## Batch 6 — Judging & results
