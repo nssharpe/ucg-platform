@@ -102,7 +102,11 @@ lists registrable events; admin event pages show event details first, then Event
 Waitlist / Competition Order, then the owner checklist. Build as described; discipline icons
 stay on wide screens and hide below 860px rather than being removed (responsive-sweep applies).
 
-## Batch 5 — Capacity rework (Z-03, design → prototype → build)
+## Batch 5 — Capacity rework — ✅ SHIPPED 2026-08-24 (evening)
+
+Prototype approved by both owners → built as T1 engine (`940e825`), T2 wizard (`44241a0` + mode-gate fix `5e65137`), T3 progress card (`dfec3e7`); merged, functions (`create-checkout-session`, `scheduled-dispatch`) deployed staging+prod atomically, frontend live. Display units per Nate 2026-08-24: worst-case ATHLETES on the progress card; caps entered/enforced in routines. Lane P re-tested via reworked P-01..P-03 + new P-14..P-17; Z-03 unheld.
+
+### Original batch notes (kept for the record)
 
 Decisions already made by both of you: **remove "Max total participants"**; per discipline choose
 **per-discipline OR per-level** caps, with an explicit **No cap** option; by-session mode shows

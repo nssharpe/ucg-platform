@@ -182,7 +182,7 @@ def build(md_path, out_path):
     md = open(md_path, encoding="utf-8").read()
     lanes = parse_lanes(md)
     total = sum(len(s) for _, _, s in lanes)
-    assert total == 244, f"expected 244 steps, parsed {total}"
+    assert total == 248, f"expected 248 steps, parsed {total}"
 
     wb = Workbook()
     ws = wb.active

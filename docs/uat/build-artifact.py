@@ -56,7 +56,7 @@ for i, m in enumerate(matches):
 
 total_steps = sum(len(l["steps"]) for l in lanes)
 print("parsed lanes:", len(lanes), "steps:", total_steps)
-assert total_steps == 244, f"expected 244 steps, parsed {total_steps}"
+assert total_steps == 248, f"expected 248 steps, parsed {total_steps}"
 
 # ------------------------------------------------------------------- page pieces
 def lane_html(l):
@@ -515,9 +515,9 @@ ul.cards span {{ color: var(--soft); font-size: .9rem; }}
 
 <section class="block">
   <div class="callout" style="border-left:4px solid var(--accent)">
-    <p><strong>Round-2 status (2026-08-23): every round-1 fix is LIVE in production.</strong>
+    <p><strong>Round-2 status (2026-08-24 evening): EVERYTHING is live — including the capacity rework.</strong>
     <b>Do now:</b> everything except lane P — including the R refund lane (new per-registration model), the M re-test (coupons scoped + on receipts, $0 confirm, separate cart/purchases pages), and the Z-02/Z-04/Z-06 + A-11/A-07/A-06 re-tests.
-    <b>Still on hold:</b> P + Z-03 — the capacity redesign is a clickable prototype awaiting your comments.
+    <b>Nothing is on hold:</b> lane P is reworked (P-01–P-03 updated, new P-14–P-17) and Z-03 is unheld — the per-discipline cap model, wizard editor, and host progress card are deployed.
     Don’t re-file what’s in the triage doc; new symptoms on the same screens are welcome.</p>
   </div>
   <h2>Read this first</h2>
@@ -551,7 +551,7 @@ ul.cards span {{ color: var(--soft); font-size: .9rem; }}
 
   <h3>Channel 2 — the shared Google Sheet, for everything including passes</h3>
   <p>The Sheet is the coverage record — it answers “did anyone actually try this?”, which the in-app reports can’t. Fill a Result for <strong>every</strong> step; a PASS takes two seconds and is what makes the untested gaps visible. It’s also the only channel for UX feedback, wording, “works but wrong”, and requirement disagreements.</p>
-  <div class="callout"><p><strong>One shared Google Sheet — <a href="https://docs.google.com/spreadsheets/d/1tBHmut8OCmJXrcH3zaY0g0_GcHvj0T44DDfu1YAIcq0/edit" target="_blank" rel="noopener">UCG Preflight Feedback</a>.</strong> A Findings tab per tester (Julia&nbsp;Findings / Nate&nbsp;Findings), all 244 steps pre-filled with dropdowns, plus README and the answered Decisions tab. Work only in your own tab.</p></div>
+  <div class="callout"><p><strong>One shared Google Sheet — <a href="https://docs.google.com/spreadsheets/d/1tBHmut8OCmJXrcH3zaY0g0_GcHvj0T44DDfu1YAIcq0/edit" target="_blank" rel="noopener">UCG Preflight Feedback</a>.</strong> A Findings tab per tester (Julia&nbsp;Findings / Nate&nbsp;Findings), all 248 steps pre-filled with dropdowns, plus README and the answered Decisions tab. Work only in your own tab.</p></div>
 
   <h3>IDs and screenshots</h3>
   <p>Step ID is <code>LANE-NN</code> (<code>M-07</code>). Finding ID adds a sequence — <code>M-07-01</code>. Something not tied to a step uses <code>X</code>: <code>M-X-01</code>.</p>

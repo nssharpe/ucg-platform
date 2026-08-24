@@ -308,7 +308,7 @@ call together and count down out loud.*
 |---|---|---|
 | Z-01 | **Simultaneous checkout.** Both of you get a cart ready with a *different* item. Count down 3-2-1 and click Pay at the same moment. **Then write down both invoice numbers, verbatim, exactly as shown.** | Two payments, two receipts, **two different invoice numbers**. ⚠️ Invoice numbers are currently derived from a row count, which is not concurrency-safe — **a duplicate here is the reproduction we want**, and it is exactly the failure that matters on the first busy morning of registration. Repeat this 3 times |
 | Z-02 | **Simultaneous registration of the same athlete.** Nate (as admin) and Julia (as club manager) both register the *same* athlete for the *same* event at the same moment | Exactly one registration, or a clear conflict message. Not two |
-| Z-03 | ⏸ **HOLD until the capacity rework ships** (your Z-03-02/03 decisions). Then: **simultaneous capacity fill** — set a cap where you'll collide, both check out at once | The cap holds. Total registered never exceeds it. The loser gets an error naming the level and the overage (spec §F) |
+| Z-03 | ✅ **UNHELD 2026-08-24 — the capacity rework is live.** Simultaneous capacity fill: set a per-discipline or per-level cap where you'll collide, both check out at once | The cap holds — total spots never exceed the cap; the loser gets the waitlist offer, not a charge |
 | Z-04 | **Simultaneous refund approval.** Both approve the same refund request at the same moment | One refund. Not two. Total refunded never exceeds what was paid |
 | Z-05 | **Edit collision.** Both open the same event's settings and save different changes | Last-write-wins is acceptable — **silent data loss with no warning is not**. Note what actually happened |
 | Z-06 | **Judge collision.** Both enter a different score for the same athlete/apparatus at the same time | One wins visibly, or you're warned. Note which |
@@ -437,9 +437,9 @@ phone**, not just desktop.
 
 | ID | Do this | Expected |
 |---|---|---|
-| P-01 | Set a **total participant cap**; fill it | Registration blocks in real time once full (spec §F) — one athlete counts once, however many apparatus they enter |
-| P-02 | Set a **per-level cap** (WAG/MAG); fill it | Blocks. Note: per-level caps count **routines** (apparatus entries), so one athlete on 4 apparatus consumes 4 |
-| P-03 | Set a **per-discipline cap** (T&T); fill it | Blocks |
+| P-01 | **REWORKED 2026-08-24:** confirm the old **total participant cap is gone** from the wizard (a legacy-cap notice appears on events that had one), then set a **per-discipline cap** and fill it | Registration blocks in real time once full. Caps are in **routines** — an AA athlete on 4 apparatus counts 4 |
+| P-02 | **Per-level caps** via the new per-discipline chooser (**No cap / one cap for the discipline / per-level caps**); fill one level; try the explicit **No cap** option on another discipline | The filled level blocks; the no-cap discipline never does. Per-level caps count **routines** |
+| P-03 | **T&T: one cap for the whole discipline**; fill it | Blocks (each T&T event = 1 routine; an athlete doing all three counts 3) |
 | P-04 | **Partial fit**: cap has 2 spots, try to register 3 athletes at one level | Checkout blocks with an error **naming the level and the overage** ("Level 5 is 1 over capacity") and offers: waitlist the whole group, a different session, or an explicit split. Never silently partial (spec §F) |
 | P-05 | Choose "waitlist the group" | The whole level group is waitlisted together |
 | P-06 | **Free up space** (refund/withdraw/raise the cap) | Waitlisted group is auto-notified by email when enough space exists **for the whole group** (spec §F). Allow up to ~15 min — promotion runs on a scheduled sweep, not instantly |
@@ -450,6 +450,10 @@ phone**, not just desktop.
 | P-11 | Edit a registration to **move sessions** | Allowed; normal change fee applies |
 | P-12 | Change an athlete's **level** to one that doesn't fit their session | Forces a session change rather than leaving an invalid combination |
 | P-13 | Start a checkout that reserves capacity, then **abandon** it. Wait ~30 min | The soft hold releases and the spots come back (spec §F) |
+| P-14 | **NEW:** cap inputs refuse 0 / negatives / fractions at entry; try lowering a cap **below current registrations** | Refused, with the current count in the message |
+| P-15 | **NEW: capacity progress card** (host/admin, event page) | Per-discipline/per-level bars in **worst-case athletes** — cap 30 routines with 21 used by 6 athletes reads "6 of 8" (assumes remaining registrants are AA) — plus a muted routines + carts/holds sub-line |
+| P-16 | **NEW: by-session progress** — click a session bar | %-routines-available bars; the overlay shows per-apparatus spots left + waitlist size; the session **Edit** button changes caps without losing athlete assignments |
+| P-17 | **NEW:** a by-session event with leftover discipline/level caps in its old config | They are **ignored** — no phantom "full" errors (only session caps enforce) |
 
 ---
 
