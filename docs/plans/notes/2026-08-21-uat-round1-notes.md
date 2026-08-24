@@ -1817,3 +1817,103 @@ src/pages/ClubPurchaseHistory.tsx tests/receipt.test.ts` — zero errors/warning
 baseline the M-01-03 section above recorded). Manually re-rendered all three document
 types (4 sample PDFs incl. a paid/unpaid receipt variant) via a throwaway,
 never-committed script and read them back — see the minus-sign bug above.
+
+## Athlete self-serve withdrawal (owners' spec 2026-08-23, branch `feat/athlete-withdrawal`)
+
+**What shipped.** New edge function `withdraw-registration` (`supabase/functions/withdraw-registration/index.ts`,
+`verify_jwt` stays true): an authenticated athlete withdraws THEMSELVES (no club-manager branch,
+unlike `request-refund`) from an event. Resolves every one of their own non-refunded/
+non-waitlisted/not-yet-withdrawn/non-refund-requested rows for the given `regId`'s (event, club) —
+matching `request-refund`'s per-registration grouping, so a multi-discipline athlete withdraws
+from the whole event in one call — then applies `withdrawalPlan` (new pure module
+`src/lib/withdrawal.ts`, mirrored `supabase/functions/_shared/withdrawal.ts`, tested in
+`tests/withdrawal.test.ts`): before the event's `lastDateToEdit` (or none set) → DELETE every
+matched row (same shape as an on-time refund approval, scores cascade via FK); at/after it → KEEP
+every row with `apparatus: []`/`apparatus_levels: null`/`partner_athlete_id: null` and stamp the
+new `registrations.withdrawn_at` column (migration `20260824100000_registrations_withdrawn_at.sql`)
+— deliberately never `refunded: true`, since no money moved. Idempotent: an already-removed regId
+404s; already-withdrawn/refunded/refund-requested/waitlisted 409s/400s with a clear message. Both
+the delete and the update are scoped by the SAME `refunded=false AND withdrawn_at IS NULL`
+predicate as the group read, so a double-submit race resolves to "already withdrawn" instead of a
+double-apply. Emails (best-effort): the athlete (`withdrawalEmailVariant` — 'plain' on a
+refund-eligible event since a withdrawable reg there is by construction the $0 case, per rule 2;
+'refund-contact' pointing at the host club's email on a non-eligible event; 'host-club' — same
+body as 'plain', kept as a separate enum value per the brief's literal contract — when the athlete
+competes for the host club) and the host (`events.director.email` first, falling back to the host
+club's `clubs.email`, same resolution `_shared/fulfill.ts`'s cc-director uses).
+
+Client: `withdrawRegistration()` invoker in `src/lib/supabase.ts` (mirrors `requestRefund`'s
+shape). `WithdrawDialog.tsx` (new) — confirm dialog via the shared `Modal` primitive (no dedicated
+`ConfirmDialog` component exists in this codebase; used `Modal` directly, same as
+`RefundRequestDialog`), showing the late-withdrawal explanation when `now > lastDateToEdit`.
+`MyRegistrations.tsx`: per-row decision — `canRequestRefund` now ALSO requires refundable paid
+cents > 0 (rule 2: a $0 registration, e.g. a 100%-promo entry, no longer shows "Request a refund"
+even on a refund-eligible event); `canWithdraw` is the fallback whenever refund isn't shown, minus
+refunded/refundRequested/waitlisted/already-withdrawn rows. A withdrawn-but-kept row renders a
+"Withdrawn" badge (parallel to the existing "Refunded" badge). The refundable-cents check reuses
+`registrationLines` — pulled out of `RefundRequestDialog.tsx` into `src/lib/registration-status.ts`
+(a component file can't export a plain function without tripping
+`react-refresh/only-export-components`; also gives it a proper pure-module home) and now imported
+by both call sites.
+
+`Registration.withdrawnAt` added to `types.ts` (read-only, documented as such) and to
+`REGISTRATION_COLUMNS_NO_SURVEY`/`rowToRegistration` in `supabase.ts` — deliberately EXCLUDED from
+`registrationToRow`'s upsert mapping (like `camp_survey`, though for a different reason: not a
+column-privilege revoke, but so an ordinary registration edit/save can never silently clear it back
+to null). `database.types.ts` was NOT regenerated (no `supabase` CLI use this session, per brief) —
+`withdrawn_at` is read via the same explicit-cast pattern already used for `waitlisted`/
+`waitlist_group_id`/`hold_expires_at`, which are also absent from that generated file today.
+
+**Deviations / judgment calls.**
+- **"UCG-hosted" in the brief's rules 2/3/6 was read as `eventIsRefundEligible`'s flag**, not a
+  literal `events.ucg_hosted` truthy check. The brief's own "Context" line ("only UCG-hosted events
+  offer in-app refunds") doesn't match the actual eligibility function, which ALSO offers refunds
+  for a regular event hosted by the `is_league_host`-flagged club — not just FlipFest/Nationals.
+  Reusing `eventIsRefundEligible`'s exact boolean (mirrored server-side, same inline block
+  `request-refund` already uses) keeps the withdraw-vs-refund decision in lockstep with whichever
+  events actually show "Request a refund" today, rather than introducing a second, narrower
+  "UCG-hosted" concept that would silently disagree with it. `withdrawalEmailVariant`'s param is
+  still literally named `ucgHosted` to match the brief's stated function signature.
+  **Flagging for Nate/Julia**: if "UCG-hosted" was meant more narrowly (only FlipFest/Nationals,
+  excluding a regular event a league-host club runs), a one-line change swaps the fed boolean.
+- **Ownership check omits a distinct "guardian account" branch.** The brief says "athlete
+  themselves or their guardian account" — this codebase has no separate guardian-login concept for
+  a registration's `athlete_id` (waivers have a `signer_role: 'self'|'guardian'` distinction, but
+  that's about who SIGNS, not a second account that owns a minor's registrations). Implemented as
+  a literal `caller.id === reg.athlete_id` check, identical to `request-refund`'s own `isSelf`
+  branch minus its club-manager branch — there is no other ownership concept in the codebase to
+  diverge from.
+- **Waitlisted rows are excluded from Withdraw** (400 server-side, hidden client-side) — "Leave
+  waitlist" already covers cancelling those, and a waitlisted row isn't a live slot to remove/
+  scratch in the first place.
+- **A pending refund request blocks withdrawal** (409) rather than silently proceeding — not
+  explicit in the brief, but withdrawing out from under an in-review refund request would leave
+  `refund_requests` pointing at a row that's been deleted or reshaped; simpler to require the
+  refund request be resolved (approved/rejected) first.
+- **Late-withdrawal roster/results rendering**: verified rather than assumed. A blanked
+  (`apparatus: []`), non-refunded row is IDENTICAL in shape to the existing refunded-but-kept row
+  minus the `refunded` flag — `Club.tsx`'s `hasActiveReg`/`priorDisciplineCount` and `Results.tsx`'s
+  per-apparatus filters already key off `apparatus`/`refunded` in ways that render this acceptably
+  (still "registered" for roster purposes per rule 5; contributes nothing to any apparatus ranking
+  since `apparatus` is empty). No other surface needed a code change; `withdrawn_at` exists purely
+  so a future surface COULD distinguish the two cases if that's ever asked for.
+- **No `error_logs` audit row** — per the brief, withdrawals are tracked only via the email flow
+  (both sides get a copy) and, for the late case, the persisted `withdrawn_at` timestamp itself.
+
+**Verification.** `npm run build` — succeeded (no TS errors; `supabase/functions/**` is outside
+`tsconfig.app.json`'s `include`, so it's checked by eslint + Deno's own type-checking at deploy
+time, not `tsc`, same as every other edge function in this repo). `npx eslint` on every touched/
+new file (`src/lib/withdrawal.ts src/lib/supabase.ts src/lib/types.ts
+src/lib/registration-status.ts src/components/WithdrawDialog.tsx
+src/components/RefundRequestDialog.tsx src/pages/MyRegistrations.tsx
+supabase/functions/withdraw-registration/index.ts supabase/functions/_shared/withdrawal.ts
+tests/withdrawal.test.ts`) — zero errors/warnings (one `react-refresh/only-export-components`
+error surfaced mid-work from the first `registrationLines` export attempt, fixed by relocating the
+function rather than suppressing the rule). `npx vitest run` — 1276/1276 passed across 82 files
+(+8 from the new `tests/withdrawal.test.ts`, on top of the 1268/81 baseline the receipt-PDF section
+above recorded).
+
+**Not applied**: migration `20260824100000_registrations_withdrawn_at.sql` — drafted only, per the
+brief's "do NOT run any supabase CLI command." `withdraw-registration` is not deployed. Both need a
+`migration-push`-skill staging-then-prod pass and a `supabase functions deploy withdraw-registration`
+before this feature is live.

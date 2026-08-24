@@ -200,6 +200,15 @@ Eligible only for events hosted by an `is_league_host`-flagged club, OR any UCG-
 mirror check `ucgHosted` first, and `ucg_hosted` is admin-only writable via guard trigger
 `20260722220449` precisely because it grants eligibility).
 
+**Sibling flow — Withdrawal (owners' spec 2026-08-23):** every registration NOT eligible for
+"Request a refund" (a $0 registration on a refund-eligible event, or ANY registration on a
+non-eligible one — the latter's refunds are handled entirely outside this system by the host
+club) instead gets a self-serve **Withdraw** button (`withdraw-registration` edge function,
+`WithdrawDialog.tsx`). It moves no money — never sets `refunded`; a late withdrawal (after
+`last_date_to_edit`) stamps `registrations.withdrawn_at` instead. See `supabase/README.md`'s
+function inventory and `.claude/rules/registrations-and-camps.md`'s "Member self-edit divergence"
+carve-out note.
+
 **Grouped per registration, not per invoice line (UAT Z-04, `20260821150000`).** A refund
 REQUEST is one per registration, covering every paid line across every payment that funded it —
 a reg paid by an original invoice plus a later "add discipline" invoice has TWO Stripe payments,

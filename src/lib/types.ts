@@ -488,6 +488,14 @@ export interface Registration {
   refunded?: boolean;
   refundRequested?: boolean; // athlete/club asked for a refund; admin reviews
   keepListed?: boolean; // refunded but keep for shirt/gift
+  /** Set when the athlete self-withdrew (product owners' spec 2026-08-23)
+   *  AFTER the event's `lastDateToEdit` — kept-but-blanked (apparatus: []),
+   *  `refunded` stays false since no money moved. Distinguishes this case
+   *  from an ordinary blanked row or a post-deadline REFUND approval
+   *  (which uses `refunded: true` instead). READ-ONLY: written only by the
+   *  `withdraw-registration` edge function, never by an ordinary
+   *  registration save (see `supabase.ts`'s `registrationToRow`). */
+  withdrawnAt?: string | null;
   /** Synchro trampoline partner (any athlete w/ membership). A synchro event
    *  cannot go live until every synchro entry has a partner assigned. */
   partnerAthleteId?: string | null;
