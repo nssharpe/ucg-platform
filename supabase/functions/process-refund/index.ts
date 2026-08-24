@@ -94,6 +94,7 @@ interface GroupRow {
   requester_person_id: string;
   status: 'pending' | 'approved' | 'rejected';
   request_group_id: string;
+  created_at: string;
 }
 
 interface RefundedEntry { paymentId: string; cents: number; stripeRefundId: string | null }
@@ -171,7 +172,7 @@ Deno.serve(async (req) => {
 
   const { data: groupRows, error: groupErr } = await db
     .from('refund_requests')
-    .select('id, kind, reg_id, invoice_item_id, payment_id, event_id, requester_person_id, status, request_group_id')
+    .select('id, kind, reg_id, invoice_item_id, payment_id, event_id, requester_person_id, status, request_group_id, created_at')
     .eq('request_group_id', groupId);
   if (groupErr) return json({ error: 'Could not look up the refund request.' }, 500);
   const rows = (groupRows ?? []) as GroupRow[];
@@ -246,9 +247,15 @@ async function handleApprove(
   // Rule 5: add-ons are always 100% here (a past-deadline add-on never gets
   // this far — request-refund refuses it up front). Rule 4: registrations
   // scale to 75% after the event's edit deadline.
+  // The 100%-vs-75% cutoff is judged at REQUEST time, not review time (Nate,
+  // 2026-08-23): the athlete controls when they ask, not how fast the review
+  // happens — a slow review must not cost them 25%. The group's earliest
+  // created_at is the request moment (all rows in a group are inserted
+  // together by request-refund).
+  const requestedAt = rows.reduce((min, r) => (r.created_at < min ? r.created_at : min), rows[0].created_at);
   const onTime = kind === 'addon'
     || !event.last_date_to_edit
-    || new Date(reviewedAt).getTime() <= new Date(event.last_date_to_edit).getTime();
+    || new Date(requestedAt).getTime() <= new Date(event.last_date_to_edit).getTime();
 
   // --- Load every pending row's invoice_item + payment (no writes yet). ---
   const itemIds = pending.map((r) => r.invoice_item_id).filter((id): id is string => !!id);
