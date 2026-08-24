@@ -2016,3 +2016,84 @@ at all currently — worth confirming this app doesn't support a dark theme befo
 a gap), and an actual click-through of switching `registrationMode` back and forth to confirm the
 draft/session state truly survives the round trip (unit tests cover the pure mapping only, not
 the wizard's React state wiring).
+
+## T3 — host/admin capacity progress summary (2026-08-24)
+
+New pure module `src/lib/capacity-progress.ts` (`disciplineProgress`, `sessionProgress`,
+`aaApparatusCount`) + new component `src/components/CapacityProgressCard.tsx`, wired into
+`Events.tsx` right after `WaitlistCard`, same `canManage` gate, plus `event.eventType !== 'camp'`
+and `hasCapacityConfig(event, event.sessions)` (competitions only, and only when there's actually
+something to show progress against).
+
+**Deviations from the brief, and why:**
+- **Function signatures differ from the brief's literal `disciplineProgress(event, sessions, regs,
+  groups, now)`.** `disciplineProgress` doesn't take `sessions` at all (by-discipline math never
+  touches sessions) and takes `levels: Level[]` instead, so per-level rows can carry a real
+  display name (`levels.find(l => l.id === levelId)?.name ?? levelId`) rather than a raw levelId
+  — a pure function can't otherwise know level names, and `capacity.ts`'s own precedent ("pure
+  modules take rows as parameters") made an extra plain-data parameter the natural fix rather than
+  inventing a name lookup at the call site. `groups` is `groupsById: Record<string, WaitlistGroup>`
+  (not an array) to match `capacityUsage`/`checkCapacity`'s own signature exactly — every existing
+  caller in the codebase (`EventWizard.tsx`, `CapacityConflictDialog.tsx`,
+  `RegistrationEditor.tsx`) already builds and passes it that shape.
+- **`capOf`/`hasAnyCap` in `capacity.ts` are now `export`ed** (were private) so
+  `capacity-progress.ts` validates caps with the exact same predicate as enforcement, rather than
+  a hand-duplicated copy that could drift. No behavior change to either function.
+- **The waitlist queue is read via `fetchEventWaitlist` (the same RLS-safe source
+  `WaitlistCard` already uses), never a raw `db.waitlistGroups` read.** `waitlist_groups`' RLS
+  (`20260711135842`) only exposes a group to its own club/person plus admins — a host-club
+  manager (not also an admin) viewing THIS card would get an incomplete `db.waitlistGroups`,
+  silently undercounting other clubs' promoted-hold routines in the "+H in carts/holds" sub-line
+  and the by-session waitlist badge/overlay count. This is exactly the bug class `WaitlistCard`'s
+  own doc comment already calls out; reusing its data source (`fetchEventWaitlist` →
+  `queueRowToWaitlistGroup` adapter → `groupsById`) was cheaper and more correct than shipping a
+  host-facing card with a known RLS-shaped undercount.
+- **The AA-apparatus divisor excludes TNT's `SY` via an explicit exclusion set
+  (`NON_AA_APPARATUS`), not a separate "AA apparatus list" data source.** `APPARATUS.TNT` has 4
+  entries (TR/DM/TU/SY) but the brief's own worked numbers want 3 — SY (Synchro Trampoline) is a
+  partnered team event within TNT, not an individual all-around event, mirroring
+  `RegistrationEditor.tsx`'s existing "SY is an event within TNT, not its own discipline" comment.
+  SY routines still count toward `paidRoutines`/the cap itself — only the *divisor* excludes them
+  (tested: `TNT divisor 3: SY routines count toward the cap but not the AA divisor`).
+- **The "assumes all-around" hint is shown ONCE per by-discipline section, not once per
+  discipline block.** The brief said "include a small hint" per bar/discipline; with up to 3
+  disciplines × several levels each, repeating identical boilerplate that many times seemed like
+  worse UX than one hint at the top of the whole by-discipline view — the wording is generic
+  enough ("totals assume every remaining registrant competes all-around") that it doesn't need
+  per-row context.
+- **`--sunk` didn't exist as a real token** — it only appeared in `docs/uat/build-artifact.py` /
+  `docs/uat/ucg-preflight.html` (a separate UAT-report generator's own CSS, not this app's design
+  system). Added it to `src/index.css` (`#eef1f4`, matching the approved prototype's own `.bar`
+  background) as a proper token — recessed track surface, fill-only, documented — rather than
+  either inventing an unrelated name or reaching for an existing ice/line token that wasn't quite
+  right (`--ice-100` reads too close to `--surface` white; `--line` is a 1px-border weight, not a
+  bar-sized fill). Bar fill: `--navy-800` normally, `--coral-600` at/over 100% (both fills-only per
+  the brand rule — no text is ever rendered on top of either).
+- **Percentage semantics:** by-session bars show "`{100 - pctUsed}`% of routines available" as the
+  headline number (matches the brief's literal "62% of routines available" example) with a muted
+  "`{routinesLeft}` routines left of `{totalCap}` · includes carts/holds" sub-line; the bar itself
+  fills by `pctUsed` (conventional "fuller bar = more used"), not by the available percentage.
+
+**Verification.** `npm run build` — succeeded, no TS errors. `npx eslint src/lib/capacity-progress.ts
+src/components/CapacityProgressCard.tsx src/pages/Events.tsx src/lib/capacity.ts
+tests/capacity-progress.test.ts` — zero errors/warnings (one intermediate `react-hooks/purity`
+error caught and fixed: `Date.now()` can't be called directly in a component's render body —
+switched to the `useState(() => Date.now())` lazy-initializer idiom already used by
+`Cart.tsx`'s `HoldCountdown` / `Finance.tsx`). `npx vitest run` — 1317/1317 passed across 84 files
+(+14 new in `tests/capacity-progress.test.ts`: the worked WAG 30/21/6→"6 of 8" example,
+partial-apparatus mixes, MAG÷6, TNT÷3 with SY counted toward the cap but not the divisor, no-cap
+discipline omission, holds delta, by-session-mode discipline-row suppression, per-level rows incl.
+per-apparatus level-override attribution, a refunded-but-kept reg never counting as paid, and
+session-row canonical apparatus ordering / omission-when-uncapped / enforcement-tally usage).
+
+**Not verified this session (controller's responsive sweep, per the brief):** the by-discipline
+and by-session card layouts at 375/768/1280px. Also not done: an actual signed-in click-through
+against a live event — the local dev server's `.env.local` points at **prod** Supabase
+(`wkyerxlgricfphopocoz`), and the only two seeded events with real registrants (Miscellaneous
+Open 2026, UCG Nationals 2027) have no capacity config today; setting one just to screenshot the
+card would have meant mutating a live event's registration behavior, which seemed like the wrong
+tradeoff for a UI-only verification step. Contrast was checked by direct token/hex comparison
+instead (`--ink`/`--ink-soft` on `--surface` white are pre-existing pairings used everywhere in
+this app; `--coral-700` for error/negative text matches `WaitlistCard`'s own `loadError` styling
+verbatim; the two progress-bar fills, `--navy-800`/`--coral-600`, never have text rendered on top
+of them, so their own text-contrast rating doesn't apply).

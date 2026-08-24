@@ -51,13 +51,16 @@ export function regRoutines(reg: Registration): Routine[] {
  *  `> 0` and would 409 every checkout for the event). Also rejects 0 and
  *  negative/non-integer values (capacity rework, 2026-08-24 — T1: 0 used to
  *  read as a live cap and would block every checkout for the event, since
- *  any non-negative usage count is `> 0`). */
-function capOf(v: unknown): number | undefined {
+ *  any non-negative usage count is `> 0`).
+ *
+ *  Exported (T3) so `capacity-progress.ts`'s display math validates caps
+ *  identically to enforcement here — never re-implement this predicate. */
+export function capOf(v: unknown): number | undefined {
   return typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : undefined;
 }
 
 /** True if any value in a cap map is a real (positive-integer) cap. */
-function hasAnyCap(map: Record<string, unknown> | undefined | null): boolean {
+export function hasAnyCap(map: Record<string, unknown> | undefined | null): boolean {
   return !!map && Object.values(map).some((v) => capOf(v) !== undefined);
 }
 
