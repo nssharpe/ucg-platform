@@ -740,6 +740,30 @@ export function buildClubAddonCartItems(
   return items;
 }
 
+// --- Purchased add-on unit ordering (UAT round 2, M-01-05) -----------------
+// The club-manager "Add-Ons" tab's "Purchased add-ons" list used to render in
+// whatever order `db.invoices`/`inv.items` happened to iterate in. Julia's
+// spec: sort by add-on TYPE first, then alphabetically by assignee within a
+// type. Only banquet units carry a real assignee (tshirt/banner units don't
+// — see `buildClubAddonCartItems` above), so `assigneeName` is simply `''`
+// for those and they sort together, in a stable relative order, ahead of any
+// named assignee (empty string sorts first).
+const ADDON_TYPE_ORDER: Record<string, number> = { tshirt: 0, banquet: 1, banner: 2, leo: 3 };
+
+/** Pure comparator for `Array.prototype.sort` — the caller resolves each
+ *  unit's own `refLineType` and a display `assigneeName` (already looked up
+ *  from a roster id, or `''` when the type has no assignee) before calling
+ *  this; it does no lookups of its own so it stays trivially unit-testable. */
+export function addonUnitSort(
+  a: { refLineType?: string; assigneeName: string },
+  b: { refLineType?: string; assigneeName: string },
+): number {
+  const ta = ADDON_TYPE_ORDER[a.refLineType ?? ''] ?? 99;
+  const tb = ADDON_TYPE_ORDER[b.refLineType ?? ''] ?? 99;
+  if (ta !== tb) return ta - tb;
+  return a.assigneeName.localeCompare(b.assigneeName);
+}
+
 // --- Change-fee eligibility (3h) -------------------------------------------
 // A pure predicate: given the BEFORE and AFTER state of an athlete's
 // registration for an event, is the change "meaningful" enough to be chargeable

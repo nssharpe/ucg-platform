@@ -19,6 +19,7 @@ import {
   anyAddonWindowOpen,
   initialClubAddonDraft,
   buildClubAddonCartItems,
+  addonUnitSort,
   campSurveyQuestionsOf,
   campSurveyAnswersValid,
   campSurveyToStored,
@@ -569,6 +570,42 @@ describe('club-manager per-unit add-on draft (emv2 P2 T4)', () => {
 
   it('produces no lines from an all-empty draft', () => {
     expect(buildClubAddonCartItems(clubEvent, { shirtUnits: [], banquetUnits: [], bannerText: '' }, nameOf, 4000)).toHaveLength(0);
+  });
+});
+
+describe('addonUnitSort (UAT round 2, M-01-05 — Add-Ons tab purchased-unit ordering)', () => {
+  it('orders by type first: tshirt, then banquet, then banner, then leo', () => {
+    const leo = { refLineType: 'leo', assigneeName: '' };
+    const banner = { refLineType: 'banner', assigneeName: '' };
+    const banquet = { refLineType: 'banquet', assigneeName: '' };
+    const tshirt = { refLineType: 'tshirt', assigneeName: '' };
+    const shuffled = [leo, banner, banquet, tshirt];
+    expect(shuffled.slice().sort(addonUnitSort)).toEqual([tshirt, banquet, banner, leo]);
+  });
+
+  it('within the same type, sorts alphabetically by assignee name', () => {
+    const zoe = { refLineType: 'banquet', assigneeName: 'Zoe Adams' };
+    const alex = { refLineType: 'banquet', assigneeName: 'Alex Kim' };
+    const jamie = { refLineType: 'banquet', assigneeName: 'Jamie Lee' };
+    expect([zoe, alex, jamie].slice().sort(addonUnitSort)).toEqual([alex, jamie, zoe]);
+  });
+
+  it('an empty assignee name (tshirt/banner units, or an unassigned "extra" banquet ticket) sorts before named ones in the same type', () => {
+    const extra = { refLineType: 'banquet', assigneeName: '' };
+    const named = { refLineType: 'banquet', assigneeName: 'Alex Kim' };
+    expect([named, extra].slice().sort(addonUnitSort)).toEqual([extra, named]);
+  });
+
+  it('type ordering wins over assignee name even when the later type would sort first alphabetically', () => {
+    const bannerUnit = { refLineType: 'banner', assigneeName: 'AAA' };
+    const tshirtUnit = { refLineType: 'tshirt', assigneeName: 'ZZZ' };
+    expect([bannerUnit, tshirtUnit].slice().sort(addonUnitSort)).toEqual([tshirtUnit, bannerUnit]);
+  });
+
+  it('an unrecognized/legacy type sorts after every known type', () => {
+    const known = { refLineType: 'leo', assigneeName: '' };
+    const unknown = { refLineType: 'mystery-addon', assigneeName: '' };
+    expect([unknown, known].slice().sort(addonUnitSort)).toEqual([known, unknown]);
   });
 });
 

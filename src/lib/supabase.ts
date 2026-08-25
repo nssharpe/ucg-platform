@@ -2179,7 +2179,12 @@ export async function createCheckoutSession(args: {
   };
 }
 
-/** One server-priced line from a `mode:'preview'` call, keyed to a cart item. */
+/** One server-priced line from a `mode:'preview'` call, keyed to a cart item.
+ *  `amountCents` is the PRE-discount list price (UAT round 2, M-02-03
+ *  fix-of-the-fix) — same convention as `amount_cents`/`invoice_items.amount`
+ *  elsewhere (money-invariants.md): a coupon is its own separate
+ *  `discountAmount`, never baked into a line's own amount, so
+ *  Σ(lines[].amountCents) === the sibling `amountSubtotal`, both pre-discount. */
 export interface CartPreviewLine {
   itemId: string;
   label: string;

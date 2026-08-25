@@ -1069,14 +1069,24 @@ Deno.serve(async (req) => {
     // path below, which never calls processingFee on a $0 subtotal).
     const previewFeeCents = subtotalCents > 0 ? processingFee(subtotalCents) : 0;
     // One entry per ORIGINAL cart item (incl. $0 host-club/covered lines),
-    // priced at what the payer would actually be charged post-discount —
-    // exactly `paidCentsByItem`'s convention, same as `lines_snapshot.paid_cents`
-    // would freeze on a real checkout. This is only what clicking "Check out"
-    // would already reveal — no new information disclosure.
+    // priced at the PRE-discount list price (`serverCentsByItem` — the same
+    // convention `amount_cents`/`invoice_items.amount` use elsewhere,
+    // money-invariants.md), NOT `paidCentsByItem`'s post-discount cents (UAT
+    // round 2, M-02-03 fix-of-the-fix): `amountSubtotal` returned below is
+    // ALSO pre-discount (`preDiscountSubtotalCents`), with the coupon shown
+    // as its own separate `discountAmount` — exactly how the receipt/invoice
+    // already render (a real discount is its own negative row, never baked
+    // into a line's own amount). Using the post-discount cents here made
+    // Σ(line amounts) disagree with the rendered Subtotal by exactly the
+    // discount the moment a coupon was applied — caught before any client
+    // shipped against this, since CartCheckout.tsx didn't render per-line
+    // amounts at all until this same round. `previewCartTotal`'s caller in
+    // Cart.tsx never passes a coupon code, so this is a no-op for that
+    // consumer (paid === server cents whenever discountCents is 0).
     const previewLines = items.map((i) => ({
       itemId: i.id,
       label: i.label,
-      amountCents: paidCentsByItem.get(i.id) ?? serverCentsByItem.get(i.id) ?? 0,
+      amountCents: serverCentsByItem.get(i.id) ?? 0,
     }));
     return json({
       ok: true,
