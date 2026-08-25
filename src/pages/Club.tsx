@@ -14,7 +14,7 @@ import { fmtMoney } from '../lib/scoring';
 import {
   newRegistrationEntryTotal, reassignPartners, registrationChangeFee, changeIsEligible, regsForChangeLine,
   syncSynchroPartnerLevel, findIncomingSynchroPartner, lateFeeApplies, lateFeeAnchor,
-  addonPurchaseOpen, initialClubAddonDraft, buildClubAddonCartItems, addonUnitSort,
+  addonPurchaseOpen, anyAddonWindowOpen, initialClubAddonDraft, buildClubAddonCartItems, addonUnitSort,
 } from '../lib/pricing';
 import type { RegChangeState, ClubAddonDraft } from '../lib/pricing';
 import { holdStamp, waitlistPosition } from '../lib/capacity';
@@ -1203,14 +1203,25 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   // league's own club — gates the per-athlete "Request refund" action below.
   const refundEligible = eventIsRefundEligible(event, db.clubs);
 
-  // UAT round 2 (M-01-05, spec §D): "Competition Order" tab should not render
-  // for camps. `openEvents` above already excludes camps from the picker
-  // entirely (registrations-and-camps.md: camps are individual self-reg
-  // only), so `event.eventType` can't actually BE 'camp' here today — this
-  // mirrors `clubMembershipBlocked`'s own "belt-and-suspenders" carve-out
-  // just below rather than relying solely on that upstream filter.
-  const showOrderTab = event.eventType !== 'camp';
-  const activeTab = tab === 'order' && !showOrderTab ? 'reg' : tab;
+  // UAT round 2 (M-01-05, spec §D): tabs that would land the manager on
+  // literally nothing (reviewer catch, after the first pass shipped a tab
+  // button pointing at a blank pane) aren't offered at all — mirrors each
+  // card's own internal "nothing to show" early-return so the tab and its
+  // content agree.
+  //
+  // "Competition Order" should not render for camps either way. `openEvents`
+  // above already excludes camps from the picker entirely
+  // (registrations-and-camps.md: camps are individual self-reg only), so
+  // `event.eventType` can't actually BE 'camp' here today — this mirrors
+  // `clubMembershipBlocked`'s own "belt-and-suspenders" carve-out just below
+  // rather than relying solely on that upstream filter.
+  const showAddonsTab = canManage && anyAddonWindowOpen(event, new Date());
+  const hasMagWagRegsForOrder = eventRegs.some((r) =>
+    r.eventId === event.id && r.clubId === clubId
+      && (r.discipline === 'MAG' || r.discipline === 'WAG')
+      && !r.refunded && !r.waitlisted);
+  const showOrderTab = event.eventType !== 'camp' && canManage && hasMagWagRegsForOrder;
+  const activeTab = tab === 'order' && !showOrderTab ? 'reg' : tab === 'addons' && !showAddonsTab ? 'reg' : tab;
 
   // Gate: the club must hold an active membership for the event's season before
   // registering any athlete. Returns true (and toasts) when blocked. Waived for
@@ -1928,8 +1939,8 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
 
   const tabItems: { id: 'reg' | 'addons' | 'order'; label: string }[] = [
     { id: 'reg', label: 'Athlete Registrations' },
-    { id: 'addons', label: 'Add-Ons' },
   ];
+  if (showAddonsTab) tabItems.push({ id: 'addons', label: 'Add-Ons' });
   if (showOrderTab) tabItems.push({ id: 'order', label: 'Competition Order' });
 
   return (
@@ -1973,8 +1984,17 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
         onChange={setTab}
       />
 
-      {activeTab === 'reg' && (
-        <>
+      {/* All three panes stay MOUNTED and toggle via `display: none` rather
+          than conditional `&&` rendering (reviewer catch): `ClubAddonsCard`
+          and `CompetitionOrderCard` each hold local in-progress draft state
+          (the add-on unit picker, the chosen competition-order level) that a
+          tab switch must not blow away — unmount/remount would reset it to
+          `initialClubAddonDraft()`/no level every time, same class of bug
+          `key={event.id}` deliberately avoids on an EVENT switch. This tab's
+          own cards are stateless, but kept in the same pattern for
+          consistency and to skip re-running their data hooks on every
+          switch. */}
+      <div style={{ display: activeTab === 'reg' ? undefined : 'none' }}>
           {/* Nationals session-planning survey (event-mgmt v2 Phase 5, A2): one
               card per required WAG-level/combined-MAG/combined-T&T key, derived
               from this club's non-refunded regs at this event. Read db.sessionRequests
@@ -2229,21 +2249,32 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
               </table>
             </div>
           )}
-        </>
-      )}
+      </div>
 
-      {activeTab === 'addons' && (
-        <ClubAddonsCard key={event.id} event={event} clubId={clubId} canManage={canManage} />
+      {/* Tab omitted entirely (not just hidden) when there's nothing to show
+          — mirrors ClubAddonsCard's own `!tshirtOpen && !banquetOpen &&
+          !bannerOpen` early-return (reviewer catch: a clickable tab button
+          pointing at a blank pane is a dead end). Mounted (not conditional on
+          `activeTab`) whenever shown at all, so the draft survives switching
+          away and back — see the comment above the Athlete Registrations
+          pane. */}
+      {showAddonsTab && (
+        <div style={{ display: activeTab === 'addons' ? undefined : 'none' }}>
+          <ClubAddonsCard key={event.id} event={event} clubId={clubId} canManage={canManage} />
+        </div>
       )}
 
       {/* Set Competition Order (event-mgmt v2 Phase 5 B2, spec §E6): MAG/WAG
           drag-and-drop competing order per apparatus/level, gated view-only
-          once locked (unless the viewer is an admin). Internal early-return
-          handles the "nothing to show" cases (no MAG/WAG regs, not a
-          manager) — mirrors ClubAddonsCard's gating convention above. Never
-          rendered for camps (M-01-05). */}
-      {activeTab === 'order' && showOrderTab && (
-        <CompetitionOrderCard event={event} clubId={clubId} canManage={canManage} isAdmin={caps.isAdmin} />
+          once locked (unless the viewer is an admin). `showOrderTab` already
+          folds in CompetitionOrderCard's own "nothing to show" conditions
+          (no MAG/WAG regs, not a manager) plus the camp carve-out (M-01-05) —
+          same reasoning as the Add-Ons tab just above, including staying
+          mounted-but-hidden while active elsewhere. */}
+      {showOrderTab && (
+        <div style={{ display: activeTab === 'order' ? undefined : 'none' }}>
+          <CompetitionOrderCard event={event} clubId={clubId} canManage={canManage} isAdmin={caps.isAdmin} />
+        </div>
       )}
 
       {/* Edit registration modal */}

@@ -2414,8 +2414,9 @@ server-side; the currently-deployed function still 400s an omitted clubId).
 
 ## UAT round 2 (2026-08-25): checkout line-item amounts + Club Registrations tabs (M-02-03, M-01-05)
 
-Branch `fix/uat-round2-ui`, cut from `main`. No `create-checkout-session` changes and no
-migration — both fixes are client-only.
+Branch `fix/uat-round2-ui`, cut from `main`. No migration. **`create-checkout-session` DOES need
+redeploying** — a reviewer pass on the first draft (below) caught a real coupon-math bug in its
+preview branch; see M-02-03.
 
 ### M-02-03 (S3): checkout summary line item with no amount
 
@@ -2448,11 +2449,47 @@ a preview taken at that instant would show. Added `lines: CartPreviewLine[]` to 
 / `checkout` / `free` `Stage` variants; the actual item-list JSX now maps `stage.lines` (`itemId`,
 `label`, `amountCents`) with `fmtMoney(amountCents / 100)` instead of `items`.
 
-**No function change needed** — the preview response was already complete, so
-**`create-checkout-session` does NOT need redeploying** for this fix. No new pure logic was
-introduced (the fix is plumbing an existing typed array through component state and rendering
-it), so no new vitest file was added for this half — coverage stays at the existing
-build+eslint+full-suite pass.
+**Reviewer catch (this is the part that DOES need a function deploy):** the first draft above
+took `previewLines[].amountCents` verbatim from the preview response's existing
+`paidCentsByItem.get(i.id) ?? serverCentsByItem.get(i.id) ?? 0` — which is POST-discount (the
+coupon-allocation loop mutates `lines[].cents` in place before `paidCentsByItem` is built from
+it). But the summary block's `Subtotal` row renders `amountSubtotal` = `preDiscountSubtotalCents`
+— PRE-discount — with the coupon shown as its own separate `−Coupon` row. So with a coupon
+applied, Σ(rendered line amounts) = Subtotal − Discount, and the UI then shows the discount
+subtracted a SECOND time visually: the lines no longer sum to the Subtotal figure directly above
+them. The Total stayed correct throughout (it's computed from the three aggregate fields, never
+from summing the lines) — this was purely a breakdown-legibility bug, but exactly the kind Julia's
+ticket was about, and it was invisible before this fix simply because no line showed an amount at
+all. Only reachable via the "Apply" promo-code path (the mount-time preview never carries a
+coupon), which is exactly the path M-02-03 is about.
+
+**Real fix:** `create-checkout-session`'s preview branch (`index.ts`, inside `if (isPreview)`) now
+returns `serverCentsByItem.get(i.id) ?? 0` — the PRE-discount list price — instead of
+`paidCentsByItem`'s post-discount cents. This matches the convention already established
+elsewhere for `amount_cents`/`invoice_items.amount` (money-invariants.md: a coupon is its own
+negative row, never baked into a line's own amount) and is what the receipt/invoice modals already
+render. Verified this is a safe, non-breaking change for the ONE other consumer of this same field:
+`Cart.tsx`'s own per-line `pricedAmount()` (the /cart page's own line list, separate from
+`CartCheckout`) reads `preview.lines[itemId].amountCents` too, via a `previewCartTotal()` call that
+**never passes a `couponCode`** (`Cart.tsx:327`) — so `serverCentsByItem === paidCentsByItem` for
+every line on that call regardless of this change; `diffCartLinePrices` sees the same unaffected
+values. `CartPreviewLine`'s doc comment (`src/lib/supabase.ts`) now states the pre-discount
+convention explicitly. `CartCheckout.tsx`'s per-line render also now shows "Included" instead of
+"$0.00" for a $0 line (host-club free entry, or the non-dearest type in a grouped membership
+purchase) — a one-line addition once the amounts were rendering in the first place.
+
+**This touches a money-invariants.md-scoped file** (`create-checkout-session`), so per CLAUDE.md
+model routing this diff needs the controller's own reviewer-tier adversarial review before
+merge/deploy — not delegable to this sonnet session. **`create-checkout-session` needs
+redeploying to prod (and ideally verified on staging first)** before this fix is live; until then,
+the coupon-applied breakdown-math bug above is still live in prod, and the client CHANGE alone
+(already on this branch) would otherwise ship a per-line display that's wrong whenever a coupon is
+applied — the two need to land together.
+
+No new pure logic was introduced for this half of the fix (the discount-vs-list-price selection is
+a one-line change to code inline in the edge function, mirroring an existing convention rather than
+adding a new one) — coverage stays at build+eslint+full-suite pass; no edge-function-level test
+harness exists in this repo to add a targeted unit test to.
 
 ### M-01-05 (D, approved): Club Registrations page → three tabs
 
@@ -2464,19 +2501,40 @@ CSS needed) rather than hand-rolling a new tab pattern.
 
 Three tabs, `useState<'reg' | 'addons' | 'order'>('reg')`, default `'reg'`:
 - **Athlete Registrations:** Registered, Ready to register, No athlete membership cards, in that
-  order — unchanged content/gating, just moved inside `{activeTab === 'reg' && (...)}`.
+  order — unchanged content/gating.
 - **Add-Ons:** `ClubAddonsCard`, still `key={event.id}` (unchanged — resets the in-progress draft
   on event switch).
 - **Competition Order:** `CompetitionOrderCard`. Gated off entirely for camps
-  (`showOrderTab = event.eventType !== 'camp'`, tab button omitted from `tabItems` and the
-  content check both), per the spec. **This is currently unreachable dead code in practice** —
-  `openEvents` (this same file, just above) already filters `eventType !== 'camp'` out of the
-  picker entirely (registrations-and-camps.md: camps are individual self-registration only), so
-  `event` can never actually resolve to a camp on this page today. Added the gate anyway per the
-  explicit spec line, as a belt-and-suspenders match to `clubMembershipBlocked`'s own carve-out
-  comment just above it in the same file. `activeTab` derives from `tab`, clamping `'order'` back
-  to `'reg'` if `showOrderTab` ever went false out from under a selected tab (defensive; can't
-  currently happen given the `openEvents` filter, same reasoning).
+  (`event.eventType !== 'camp'` is one of three `showOrderTab` conditions), per the spec. **The
+  camp half of this gate is currently unreachable dead code in practice** — `openEvents` (this
+  same file, just above) already filters `eventType !== 'camp'` out of the picker entirely
+  (registrations-and-camps.md: camps are individual self-registration only), so `event` can never
+  actually resolve to a camp on this page today. Added anyway per the explicit spec line, as a
+  belt-and-suspenders match to `clubMembershipBlocked`'s own carve-out comment just above it in the
+  same file.
+
+**Reviewer catch #1 — tab switch was blowing away in-progress drafts.** The first draft used
+plain `{activeTab === 'x' && (<Card/>)}` conditional rendering, which UNMOUNTS a tab's content the
+moment you leave it. `ClubAddonsCard` and `CompetitionOrderCard` each hold real local state (the
+add-on unit picker's `draft`; the chosen competition-order `levelId`) — a manager who picks six
+shirt sizes and banquet assignees, glances at another tab, and comes back would find
+`initialClubAddonDraft()` again. Fixed by keeping all panes MOUNTED once shown at all and toggling
+visibility with `style={{ display: activeTab === 'x' ? undefined : 'none' }}` instead — same
+pattern applied to the Athlete Registrations pane too for consistency (its cards are stateless, so
+this is a perf/simplicity choice there, not a correctness fix).
+
+**Reviewer catch #2 — a tab button could point at an empty pane.** `ClubAddonsCard` already
+self-gates to `null` when no add-on purchase window is open; `CompetitionOrderCard` self-gates to
+`null` when the club has no non-refunded MAG/WAG registrations at this event (or the viewer isn't
+a manager). The first draft still always showed both tab buttons regardless — a manager could
+click into a genuinely blank pane. Fixed by computing `showAddonsTab`/`showOrderTab` in
+`EventRegGrid` itself, mirroring each card's own gating condition (`anyAddonWindowOpen(event, now)`
+for Add-Ons; a `MAG`/`WAG`/non-refunded/non-waitlisted `clubRegs` check mirroring
+`CompetitionOrderCard`'s own `levels.length === 0` early-return, for Competition Order) and
+omitting the tab button from `tabItems` entirely — not just hiding its content — when there's
+nothing to show. `activeTab` clamps back to `'reg'` if the currently-selected tab's `show*Tab`
+flips false out from under it (e.g. the manager leaves the page open across an add-on purchase
+window closing).
 
 **Deep links:** grepped every entry point into this page
 (`grep -rn "club/.*registrations" src`) — the ONLY one that targets anything more specific than
@@ -2507,22 +2565,38 @@ Pure, no lookups of its own — `Club.tsx` resolves each item's `assigneeName` v
 
 ### Verification
 
+Two passes: the initial implementation, then a reviewer pass (advisor tool) that caught the
+coupon-math bug and the two tab-mounting issues documented above. Numbers below are from AFTER
+those fixes.
+
 `npm run build` (`tsc -b && vite build`) — succeeded, zero TypeScript errors.
 
-`npx eslint src/components/CartCheckout.tsx src/pages/Club.tsx src/lib/pricing.ts
-tests/pricing.test.ts` — zero errors/warnings.
+`npx eslint src/components/CartCheckout.tsx src/pages/Club.tsx src/lib/pricing.ts src/lib/supabase.ts
+tests/pricing.test.ts supabase/functions/create-checkout-session/index.ts` — zero
+errors/warnings.
 
 `npx vitest run` — 1334/1334 passed across 85 files (+5 from this ticket, all in
 `tests/pricing.test.ts`'s new `addonUnitSort` describe block; `pricing.test.ts` itself now 141
 tests).
 
+**`create-checkout-session` needs a reviewer-tier adversarial review (money-invariants.md — not
+delegable to this session) AND a deploy to prod before the M-02-03 fix is actually correct in
+production** — right now only the client half of the fix is live on this branch; deploying the
+client alone without the function change would make the coupon-applied line-math bug WORSE (a
+customer would see per-line amounts that visibly don't sum to the Subtotal, where before they saw
+no per-line amounts at all).
+
 **Could not be verified here (no Browser pane available to this session):** the actual rendered
-checkout summary (real cart, real Stripe test-mode session) and the tabs' visual/responsive
-behavior at 375/768/1280px, including tab-bar wrapping and content preserved across a tab switch
-— flagged for the controller's own responsive-sweep pass. Routes to check:
-`/club/:clubId/registrations` (tabs — try a MAG/WAG event for all three tabs, a T&T-only event to
-confirm Competition Order still self-gates via `CompetitionOrderCard`'s own no-MAG/WAG-regs
-early-return, and ideally a nationals event to eyeball the blind-spot placement above) and `/cart`
-+ `/club/:id/cart` (both route through the same `CartScope`/`CartCheckout`, so either surfaces the
-M-02-03 fix — a cart with a $0 host-club line is worth checking specifically, since that line
-should now show "$0.00" rather than being silently absent).
+checkout summary against a live coupon (real cart, real Stripe test-mode session, a code that
+discounts one of several lines) — the exact scenario the coupon-math bug lived in — and the tabs'
+visual/responsive behavior at 375/768/1280px, including tab-bar wrapping and that a draft survives
+a tab switch. Flagged for the controller's own responsive-sweep pass. Routes to check:
+`/club/:clubId/registrations` (tabs — try a MAG/WAG event for all three tabs including switching
+away from and back to Add-Ons mid-draft, a T&T-only event to confirm the Competition Order TAB
+BUTTON itself is now absent rather than just its content, an event with no open add-on window to
+confirm the same for Add-Ons, and ideally a nationals event to eyeball the blind-spot placement
+above) and `/cart` + `/club/:id/cart` (both route through the same `CartScope`/`CartCheckout`, so
+either surfaces the M-02-03 fix — a cart with a $0 host-club line is worth checking specifically
+(should read "Included"), and — once `create-checkout-session` is redeployed — a cart with a
+partial-discount coupon applied, to confirm the line amounts now sum to the Subtotal row above
+them).
