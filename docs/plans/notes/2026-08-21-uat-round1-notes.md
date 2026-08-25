@@ -2600,3 +2600,37 @@ either surfaces the M-02-03 fix — a cart with a $0 host-club line is worth che
 (should read "Included"), and — once `create-checkout-session` is redeployed — a cart with a
 partial-discount coupon applied, to confirm the line amounts now sum to the Subtotal row above
 them).
+
+### M-01-05 spec-mismatch fix (2026-08-25, branch `fix/addons-tab-visibility`, off merged main)
+
+Controller review of the merged M-01-05 work found one more gap: `showAddonsTab = canManage &&
+anyAddonWindowOpen(event, now)` hid the Add-Ons tab entirely once every purchase window closed —
+but Julia's spec explicitly includes the ALREADY-PURCHASED units view (sorted by type then
+assignee), which a manager still needs after an event's windows close (e.g. to see what the club
+bought for "Miscellaneous Open 2026" after Sep 4).
+
+Extracted `ClubAddonsCard`'s existing "Purchased add-ons" derivation into a new pure
+`clubPurchasedAddonUnits(invoices, clubId, eventId)` (`src/lib/pricing.ts`) rather than inventing
+a second one — `EventRegGrid`'s `showAddonsTab` now also passes when this returns a non-empty
+array. `db.invoices` is boot-scoped (not a fetch-on-mount slice), so `EventRegGrid` could call it
+directly with no extra fetch.
+
+**Found a second instance of the same bug while wiring this up:** `ClubAddonsCard`'s OWN early
+return (`if (!canManage || (!tshirtOpen && !banquetOpen && !bannerOpen)) return null;`) had the
+identical flaw — even with the tab now visible, the card itself would still render nothing once
+every window closed, since its bail-out never considered purchased units either. Moved the
+`purchasedItems` computation above that early return (it doesn't need `nameOf`/`effectivePeople`,
+only the later sort does) and added `&& purchasedItems.length === 0` to the bail condition. The
+purchase/add affordances (`SizedAddonPicker`, the banner text field, "Add to cart") are each
+already individually gated on their own `tshirtOpen`/`banquetOpen`/`bannerOpen` flag inside the
+render — untouched by this fix, so they still disappear correctly once their window closes; only
+the card's outer visibility changed.
+
+**Minor residual, not fixed:** the card's static intro copy ("Purchase t-shirts, banquet tickets,
+and a club banner for this event.") still shows even in the window-closed/purchased-only state,
+where it reads a little oddly since nothing is purchasable anymore. Left as-is — out of scope for
+this fix, flagging for a future pass if it bothers anyone in practice.
+
+Verification: `npm run build` (zero TS errors), `npx eslint src/pages/Club.tsx src/lib/pricing.ts
+tests/pricing.test.ts` (zero errors/warnings), `npx vitest run` — 1340/1340 passed across 85 files
+(+6 new `clubPurchasedAddonUnits` cases in `tests/pricing.test.ts`).

@@ -15,6 +15,7 @@ import {
   newRegistrationEntryTotal, reassignPartners, registrationChangeFee, changeIsEligible, regsForChangeLine,
   syncSynchroPartnerLevel, findIncomingSynchroPartner, lateFeeApplies, lateFeeAnchor,
   addonPurchaseOpen, anyAddonWindowOpen, initialClubAddonDraft, buildClubAddonCartItems, addonUnitSort,
+  clubPurchasedAddonUnits,
 } from '../lib/pricing';
 import type { RegChangeState, ClubAddonDraft } from '../lib/pricing';
 import { holdStamp, waitlistPosition } from '../lib/capacity';
@@ -866,7 +867,24 @@ function ClubAddonsCard({ event, clubId, canManage }: { event: Event; clubId: st
   const banquetOpen = !!event.banquet && addonPurchaseOpen(event.banquet, event.regCloses, now);
   const bannerOpen = !!event.bannerAddon && addonPurchaseOpen(event.bannerAddon, event.regCloses, now);
 
-  if (!canManage || (!tshirtOpen && !banquetOpen && !bannerOpen)) return null;
+  // Purchased (non-refunded) add-on invoice lines for this club+event — cheap
+  // to derive client-side since RLS already restricts db.invoices to invoices
+  // this manager can see (their own club's). Shared with EventRegGrid's
+  // `showAddonsTab` (M-01-05 spec-mismatch fix) via `clubPurchasedAddonUnits`
+  // (pricing.ts) so the tab-visibility check can't drift from this list.
+  // Computed BEFORE the early return below (moved up from its old spot) so
+  // that return can keep the card visible for its "Purchased add-ons" list
+  // even once every purchase window has closed — a manager still needs to
+  // see what the club already bought.
+  const purchasedItems: CartItem[] = clubPurchasedAddonUnits(db.invoices, clubId, event.id);
+
+  // Controller review (2026-08-25): used to bail out entirely once every
+  // window closed, which also hid the already-purchased units — Julia's spec
+  // includes that view regardless of window state. The purchase/add
+  // affordances below stay individually window-gated (`tshirtOpen`/
+  // `banquetOpen`/`bannerOpen` each still gate their own picker) — only this
+  // early return changed.
+  if (!canManage || (!tshirtOpen && !banquetOpen && !bannerOpen && purchasedItems.length === 0)) return null;
 
   const roster = effectivePeople.filter(
     (p) => p.mainClubId === clubId && (p.roles ? (p.roles.athlete || p.roles.coach) : (p.kind === 'athlete' || p.kind === 'coach')),
@@ -879,13 +897,6 @@ function ClubAddonsCard({ event, clubId, canManage }: { event: Event; clubId: st
 
   const clubCart: CartItem[] = db.carts[clubId] ?? [];
   const cartAddonsForEvent = clubCart.filter((c) => c.kind === 'addon' && c.refEventId === event.id);
-
-  // Purchased (non-refunded) add-on invoice lines for this club+event — cheap
-  // to derive client-side since RLS already restricts db.invoices to invoices
-  // this manager can see (their own club's).
-  const purchasedItems: CartItem[] = db.invoices
-    .filter((inv) => inv.clubId === clubId)
-    .flatMap((inv) => inv.items.filter((it) => it.kind === 'addon' && it.refEventId === event.id && !it.refunded));
 
   // UAT round 2 (M-01-05, spec §D): "Purchased add-ons" sorts by type then
   // alphabetically by assignee — pure comparator `addonUnitSort` (pricing.ts)
@@ -1215,7 +1226,20 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   // `event.eventType` can't actually BE 'camp' here today — this mirrors
   // `clubMembershipBlocked`'s own "belt-and-suspenders" carve-out just below
   // rather than relying solely on that upstream filter.
-  const showAddonsTab = canManage && anyAddonWindowOpen(event, new Date());
+  // Controller review (2026-08-25): a closed purchase window used to hide the
+  // Add-Ons tab entirely — but Julia's spec includes the ALREADY-PURCHASED
+  // units view (sorted by type then assignee), which managers still need
+  // after windows close (e.g. to see what the club bought once an event's
+  // add-on sale period ends). Visible when either a window is still open OR
+  // the club owns at least one purchased unit for this event — `purchase`/
+  // `add` affordances inside the card stay window-gated as before; only tab
+  // VISIBILITY changes. `clubPurchasedAddonUnits` is the exact same
+  // derivation `ClubAddonsCard` uses for its own "Purchased add-ons" list
+  // (`db.invoices` is boot-scoped, so no extra fetch is needed here).
+  const showAddonsTab = canManage && (
+    anyAddonWindowOpen(event, new Date())
+    || clubPurchasedAddonUnits(db.invoices, clubId, event.id).length > 0
+  );
   const hasMagWagRegsForOrder = eventRegs.some((r) =>
     r.eventId === event.id && r.clubId === clubId
       && (r.discipline === 'MAG' || r.discipline === 'WAG')

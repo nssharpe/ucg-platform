@@ -20,6 +20,7 @@ import {
   initialClubAddonDraft,
   buildClubAddonCartItems,
   addonUnitSort,
+  clubPurchasedAddonUnits,
   campSurveyQuestionsOf,
   campSurveyAnswersValid,
   campSurveyToStored,
@@ -32,7 +33,7 @@ import {
   shrinkOrDropCartLines,
   diffCartLinePrices,
 } from '../src/lib/pricing';
-import type { AddonPricingEvent, AddonDraftEvent, ClubAddonDraftEvent, PartnerReg, RegFeeEvent, SynchroReg } from '../src/lib/pricing';
+import type { AddonPricingEvent, AddonDraftEvent, ClubAddonDraftEvent, PartnerReg, RegFeeEvent, SynchroReg, PurchasedAddonInvoice } from '../src/lib/pricing';
 import type { CampSurveyQuestion, CartItem, Coupon, Membership, Season } from '../src/lib/types';
 
 const season: Season = {
@@ -606,6 +607,46 @@ describe('addonUnitSort (UAT round 2, M-01-05 — Add-Ons tab purchased-unit ord
     const known = { refLineType: 'leo', assigneeName: '' };
     const unknown = { refLineType: 'mystery-addon', assigneeName: '' };
     expect([unknown, known].slice().sort(addonUnitSort)).toEqual([known, unknown]);
+  });
+});
+
+describe('clubPurchasedAddonUnits (M-01-05 spec-mismatch fix — Add-Ons tab visibility after windows close)', () => {
+  const addonItem = (overrides: Partial<CartItem> = {}): CartItem => ({
+    id: 'ci-1', label: 'test addon', amount: 20, kind: 'addon', refEventId: 'ev-1', refLineType: 'tshirt',
+    ...overrides,
+  });
+
+  it('returns non-refunded addon units for this club+event, across every invoice', () => {
+    const invoices: PurchasedAddonInvoice[] = [
+      { clubId: 'c1', items: [addonItem({ id: 'i1' })] },
+      { clubId: 'c1', items: [addonItem({ id: 'i2', refLineType: 'banner' })] },
+    ];
+    const result = clubPurchasedAddonUnits(invoices, 'c1', 'ev-1');
+    expect(result.map((i) => i.id).sort()).toEqual(['i1', 'i2']);
+  });
+
+  it('excludes a different club\'s invoices', () => {
+    const invoices: PurchasedAddonInvoice[] = [{ clubId: 'c2', items: [addonItem()] }];
+    expect(clubPurchasedAddonUnits(invoices, 'c1', 'ev-1')).toEqual([]);
+  });
+
+  it('excludes a different event\'s addon lines', () => {
+    const invoices: PurchasedAddonInvoice[] = [{ clubId: 'c1', items: [addonItem({ refEventId: 'ev-2' })] }];
+    expect(clubPurchasedAddonUnits(invoices, 'c1', 'ev-1')).toEqual([]);
+  });
+
+  it('excludes a non-addon line (e.g. meet-entry) even if club/event match', () => {
+    const invoices: PurchasedAddonInvoice[] = [{ clubId: 'c1', items: [addonItem({ kind: 'meet-entry' })] }];
+    expect(clubPurchasedAddonUnits(invoices, 'c1', 'ev-1')).toEqual([]);
+  });
+
+  it('excludes a refunded addon line', () => {
+    const invoices: PurchasedAddonInvoice[] = [{ clubId: 'c1', items: [addonItem({ refunded: true })] }];
+    expect(clubPurchasedAddonUnits(invoices, 'c1', 'ev-1')).toEqual([]);
+  });
+
+  it('returns an empty array for a club with no invoices at all', () => {
+    expect(clubPurchasedAddonUnits([], 'c1', 'ev-1')).toEqual([]);
   });
 });
 
