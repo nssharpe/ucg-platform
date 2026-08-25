@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { fmtMoney } from '../lib/scoring';
 import {
   createCheckoutSession, fetchPaymentStatus, previewCartTotal,
+  type CartPreviewLine,
   type CheckoutCapacityError, type CheckoutSessionRequiredError, type CheckoutSurveyRequiredError,
 } from '../lib/supabase';
 import { checkoutMode } from '../lib/pricing';
@@ -24,10 +25,22 @@ type Stage =
       // that happens — never auto-advance out of it.
       kind: 'confirm-free';
       amountSubtotal: number; discountAmount: number; couponCode?: string; submitting: boolean;
+      lines: CartPreviewLine[];
     }
   | {
       kind: 'checkout'; clientSecret: string; paymentId: string;
       amountSubtotal: number; discountAmount: number; serviceFee: number; couponCode?: string;
+      // UAT round 2 (M-02-03): the per-item breakdown below is rendered from
+      // THIS — the server-priced `lines` a preview call already returned —
+      // never from the `items` prop, which only carries the client's own
+      // display-only `.amount` (money-invariants.md: never trusted, and this
+      // component never actually rendered it at all — a plain label-only
+      // oversight). `createCheckoutSession`'s real (non-preview) response has
+      // no `lines` field of its own, so this is threaded through from
+      // whichever `mode:'preview'` call preceded this real session — same
+      // items/coupon, same deterministic pricing recompute, so it's exactly
+      // what a preview taken at this instant would show too.
+      lines: CartPreviewLine[];
     }
   | {
       // Free-order path (emv2 P3): a coupon covered the entire cost. The server
@@ -37,6 +50,7 @@ type Stage =
       // let the parent's onPaid own the success UI, same as the paid path.
       kind: 'free'; paymentId: string;
       amountSubtotal: number; discountAmount: number; couponCode?: string;
+      lines: CartPreviewLine[];
     };
 
 /** The three structured rejections either endpoint (preview or real) can
@@ -119,19 +133,26 @@ export function CartCheckout({
   // Deliberately does NOT touch `stage` before resolving in case (b): the
   // confirm-free card stays on screen with its button disabled
   // (stage.submitting) rather than flashing to the generic loading card.
-  const startRealSession = (couponCode?: string) => {
+  //
+  // `lines` (UAT round 2, M-02-03): the real endpoint's response carries no
+  // per-line breakdown of its own, only aggregate amounts — so the caller
+  // passes through the `lines` array from whichever `mode:'preview'` call
+  // (always run first — see startPreview/confirmFree) already priced these
+  // exact items/coupon, and it's forwarded onto the resulting stage so the
+  // item list below can show every line's server-computed amount.
+  const startRealSession = (couponCode: string | undefined, lines: CartPreviewLine[]) => {
     void createCheckoutSession({ cartItemIds: items.map((i) => i.id), couponCode })
       .then((r) => {
         if (r.ok && r.free && r.paymentId && r.amountSubtotal != null) {
           setStage({
             kind: 'free', paymentId: r.paymentId,
-            amountSubtotal: r.amountSubtotal, discountAmount: r.discountAmount ?? 0, couponCode,
+            amountSubtotal: r.amountSubtotal, discountAmount: r.discountAmount ?? 0, couponCode, lines,
           });
         } else if (r.ok && r.clientSecret && r.paymentId && r.amountSubtotal != null && r.serviceFee != null) {
           setStage({
             kind: 'checkout', clientSecret: r.clientSecret, paymentId: r.paymentId,
             amountSubtotal: r.amountSubtotal, discountAmount: r.discountAmount ?? 0,
-            serviceFee: r.serviceFee, couponCode,
+            serviceFee: r.serviceFee, couponCode, lines,
           });
         } else {
           handleRejection(r);
@@ -157,11 +178,11 @@ export function CartCheckout({
           if (checkoutMode(r.total) === 'free-confirm') {
             setStage({
               kind: 'confirm-free', amountSubtotal: r.amountSubtotal,
-              discountAmount: r.discountAmount ?? 0, couponCode, submitting: false,
+              discountAmount: r.discountAmount ?? 0, couponCode, submitting: false, lines: r.lines,
             });
             setCouponBusy(false);
           } else {
-            startRealSession(couponCode);
+            startRealSession(couponCode, r.lines);
           }
         } else {
           handleRejection(r);
@@ -207,7 +228,7 @@ export function CartCheckout({
   const confirmFree = () => {
     if (stage.kind !== 'confirm-free' || stage.submitting) return;
     setStage({ ...stage, submitting: true });
-    startRealSession(stage.couponCode);
+    startRealSession(stage.couponCode, stage.lines);
   };
 
   const handleError = (msg: string) => {
@@ -340,9 +361,19 @@ export function CartCheckout({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div className="card card-pad">
         <h3 className="card-title" style={{ marginTop: 0 }}>{title}</h3>
+        {/* UAT round 2 (M-02-03): rendered from `stage.lines` (server-priced,
+            one entry per original cart item including $0 host-club/covered
+            lines) rather than the `items` prop — the prior render showed only
+            `i.label`, no amount, for every line (not a regression, just never
+            wired up). See the `checkout` stage's own doc comment above for
+            why this is safe to use even after the real (non-preview) session
+            response, which carries no `lines` of its own. */}
         <ul style={{ margin: '10px 0', paddingLeft: 18, fontSize: 14 }}>
-          {items.map((i) => (
-            <li key={i.id}><span>{i.label}</span></li>
+          {stage.lines.map((l) => (
+            <li key={l.itemId} style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+              <span>{l.label}</span>
+              <span>{fmtMoney(l.amountCents / 100)}</span>
+            </li>
           ))}
         </ul>
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginTop: 6 }}>
