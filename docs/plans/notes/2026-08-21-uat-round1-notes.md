@@ -2411,3 +2411,118 @@ behavior end-to-end (requires a real WebAuthn ceremony); A-01-02's cross-device 
 confirmation (requires two actual browsers/devices) and the `/me` landing after a real email
 click. `invite-account` needs redeploying before A-07-01 works in prod (clubId is now optional
 server-side; the currently-deployed function still 400s an omitted clubId).
+
+## UAT round 2 (2026-08-25): checkout line-item amounts + Club Registrations tabs (M-02-03, M-01-05)
+
+Branch `fix/uat-round2-ui`, cut from `main`. No `create-checkout-session` changes and no
+migration — both fixes are client-only.
+
+### M-02-03 (S3): checkout summary line item with no amount
+
+**Root cause:** `CartCheckout.tsx`'s item list (the one rendered above the Subtotal/Coupon/
+Service fee/Total block) was a plain label-only render —
+`items.map((i) => <li><span>{i.label}</span></li>)` — with no amount span at all, for ANY line,
+ever. Confirmed via `git log -p` on the file: this was never a regression, the amount was simply
+never wired up (`git log --all -p -- src/components/CartCheckout.tsx | grep 'i\.amount\|i\.label'`
+shows only the bare `i.label` render across every version of the file). Julia's screenshot showing
+"one line with no amount, subtotal/fee/total correct" is consistent with a cart that happened to
+have one line item — the bug isn't line-kind-specific, it's the whole list.
+
+The server side (`create-checkout-session`'s `PREVIEW BRANCH POINT` return, `index.ts:1076-1080`)
+was already complete: `previewLines = items.map((i) => ({ itemId, label, amountCents }))` — one
+entry per ORIGINAL cart item, including $0 host-club/already-covered lines, priced exactly as a
+real checkout would charge. `CartPreviewLine` (`src/lib/supabase.ts`) already typed this
+correctly. So no line kind was actually missing its per-line cents on the wire — the client just
+never read them.
+
+**Fix:** `CartCheckout.tsx` now threads the preview's `lines: CartPreviewLine[]` through to
+render, instead of the `items` prop (client-only, display-only `.amount` — money-invariants.md
+already forbids treating it as authoritative, and it was never even rendered). Wrinkle: the REAL
+(non-preview) `createCheckoutSession` response carries no `lines` field of its own, only
+aggregate `amountSubtotal`/`discountAmount`/`serviceFee` — by design, since only preview mode
+returns a per-line breakdown. Since this component ALWAYS calls `mode:'preview'` first (UAT
+M-12-01's `startPreview`) before ever calling the real endpoint, `startRealSession` now takes the
+already-fetched `lines` as a parameter and carries it onto the resulting `checkout`/`free` stage
+— same items, same coupon, same deterministic server-side pricing recompute, so it's exactly what
+a preview taken at that instant would show. Added `lines: CartPreviewLine[]` to the `confirm-free`
+/ `checkout` / `free` `Stage` variants; the actual item-list JSX now maps `stage.lines` (`itemId`,
+`label`, `amountCents`) with `fmtMoney(amountCents / 100)` instead of `items`.
+
+**No function change needed** — the preview response was already complete, so
+**`create-checkout-session` does NOT need redeploying** for this fix. No new pure logic was
+introduced (the fix is plumbing an existing typed array through component state and rendering
+it), so no new vitest file was added for this half — coverage stays at the existing
+build+eslint+full-suite pass.
+
+### M-01-05 (D, approved): Club Registrations page → three tabs
+
+`Club.tsx`'s `EventRegGrid` (`/club/:clubId/registrations`) used to stack every card in one long
+scroll. Reused the existing `Tabs` component (`src/components/ui.tsx`, the same one
+`AdminErrors.tsx` uses for its Problem Reports/Error Log tabs — plain button-based `.tabs`/`.tab`
+classes, already `flex-wrap: wrap` in `index.css` so 375px wraps rather than overflowing; no new
+CSS needed) rather than hand-rolling a new tab pattern.
+
+Three tabs, `useState<'reg' | 'addons' | 'order'>('reg')`, default `'reg'`:
+- **Athlete Registrations:** Registered, Ready to register, No athlete membership cards, in that
+  order — unchanged content/gating, just moved inside `{activeTab === 'reg' && (...)}`.
+- **Add-Ons:** `ClubAddonsCard`, still `key={event.id}` (unchanged — resets the in-progress draft
+  on event switch).
+- **Competition Order:** `CompetitionOrderCard`. Gated off entirely for camps
+  (`showOrderTab = event.eventType !== 'camp'`, tab button omitted from `tabItems` and the
+  content check both), per the spec. **This is currently unreachable dead code in practice** —
+  `openEvents` (this same file, just above) already filters `eventType !== 'camp'` out of the
+  picker entirely (registrations-and-camps.md: camps are individual self-registration only), so
+  `event` can never actually resolve to a camp on this page today. Added the gate anyway per the
+  explicit spec line, as a belt-and-suspenders match to `clubMembershipBlocked`'s own carve-out
+  comment just above it in the same file. `activeTab` derives from `tab`, clamping `'order'` back
+  to `'reg'` if `showOrderTab` ever went false out from under a selected tab (defensive; can't
+  currently happen given the `openEvents` filter, same reasoning).
+
+**Deep links:** grepped every entry point into this page
+(`grep -rn "club/.*registrations" src`) — the ONLY one that targets anything more specific than
+the bare route is the Events-list "Register your club" / "Edit" flow's `?event=<slug>` query
+param (`Events.tsx`), which preselects which EVENT shows, not a card. No hash/anchor/scroll target
+exists into any specific card. Default tab `'reg'` already matches where that flow always landed
+(the registration cards were always first on the page), so no extra routing logic was needed to
+satisfy "deep links must land on the right tab."
+
+**Blind spot flagged, not asked about beforehand (spec didn't name these):** three cards render
+only for `event.kind === 'nationals'` and weren't in Julia's three-tab/five-card list —
+`SessionRequestSurveyCard` (session-planning survey, gates checkout), `NationalsDashboard`
+(read-only team/session planning summary), `EventCheckinCard` (nationals check-in), plus the
+"Waitlist spots opened!" promoted-group banner (not nationals-specific). All four were placed in
+the **Athlete Registrations** tab, in their original relative order, ahead of the Registered card
+— they're all either registration-blocking or registration-adjacent for this club's athletes.
+Flagging this call explicitly since it wasn't spec'd: if the intent was e.g. `NationalsDashboard`
+belonging with Competition Order instead (it does surface "assigned sessions"), that's a one-tab
+move.
+
+**New pure logic:** `addonUnitSort` (`src/lib/pricing.ts`) — the Add-Ons tab's "Purchased
+add-ons" list now sorts by type (tshirt, banquet, banner, leo — unknown types sort last) then
+alphabetically by assignee name within a type, per spec. Only banquet units carry a real assignee
+(`addonAssigneeId`); tshirt/banner units resolve to `''` for the comparator and group together.
+Pure, no lookups of its own — `Club.tsx` resolves each item's `assigneeName` via the existing
+`nameOf` helper before calling it. 5 new tests in `tests/pricing.test.ts`'s new
+`describe('addonUnitSort ...')` block.
+
+### Verification
+
+`npm run build` (`tsc -b && vite build`) — succeeded, zero TypeScript errors.
+
+`npx eslint src/components/CartCheckout.tsx src/pages/Club.tsx src/lib/pricing.ts
+tests/pricing.test.ts` — zero errors/warnings.
+
+`npx vitest run` — 1334/1334 passed across 85 files (+5 from this ticket, all in
+`tests/pricing.test.ts`'s new `addonUnitSort` describe block; `pricing.test.ts` itself now 141
+tests).
+
+**Could not be verified here (no Browser pane available to this session):** the actual rendered
+checkout summary (real cart, real Stripe test-mode session) and the tabs' visual/responsive
+behavior at 375/768/1280px, including tab-bar wrapping and content preserved across a tab switch
+— flagged for the controller's own responsive-sweep pass. Routes to check:
+`/club/:clubId/registrations` (tabs — try a MAG/WAG event for all three tabs, a T&T-only event to
+confirm Competition Order still self-gates via `CompetitionOrderCard`'s own no-MAG/WAG-regs
+early-return, and ideally a nationals event to eyeball the blind-spot placement above) and `/cart`
++ `/club/:id/cart` (both route through the same `CartScope`/`CartCheckout`, so either surfaces the
+M-02-03 fix — a cart with a $0 host-club line is worth checking specifically, since that line
+should now show "$0.00" rather than being silently absent).

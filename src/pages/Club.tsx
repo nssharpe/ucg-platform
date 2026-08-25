@@ -5,7 +5,7 @@ import { useCapabilities } from '../lib/capabilities';
 import { clubHasActiveMembership, clubHasActiveMembershipForEvent, seasonForDate, membershipHolds, membershipTypeOf, paidRegistrationClub } from '../lib/capabilities-core';
 import { purchasableSeasons, isFutureSeason, currentSeason } from '../lib/season-lifecycle';
 import { eventIsInPhase, canStillEditRegistration, eventIsRefundEligible } from '../lib/events-core';
-import { Badge, Combo, Field, Modal } from '../components/ui';
+import { Badge, Combo, Field, Modal, Tabs } from '../components/ui';
 import { RefundRequestDialog, type RefundRequestItem } from '../components/RefundRequestDialog';
 import { useToast, useFmtDate } from '../components/ui-hooks';
 import { STATE_REGIONS, SHIRT_SIZES } from '../lib/types';
@@ -14,7 +14,7 @@ import { fmtMoney } from '../lib/scoring';
 import {
   newRegistrationEntryTotal, reassignPartners, registrationChangeFee, changeIsEligible, regsForChangeLine,
   syncSynchroPartnerLevel, findIncomingSynchroPartner, lateFeeApplies, lateFeeAnchor,
-  addonPurchaseOpen, initialClubAddonDraft, buildClubAddonCartItems,
+  addonPurchaseOpen, initialClubAddonDraft, buildClubAddonCartItems, addonUnitSort,
 } from '../lib/pricing';
 import type { RegChangeState, ClubAddonDraft } from '../lib/pricing';
 import { holdStamp, waitlistPosition } from '../lib/capacity';
@@ -887,6 +887,16 @@ function ClubAddonsCard({ event, clubId, canManage }: { event: Event; clubId: st
     .filter((inv) => inv.clubId === clubId)
     .flatMap((inv) => inv.items.filter((it) => it.kind === 'addon' && it.refEventId === event.id && !it.refunded));
 
+  // UAT round 2 (M-01-05, spec §D): "Purchased add-ons" sorts by type then
+  // alphabetically by assignee — pure comparator `addonUnitSort` (pricing.ts)
+  // does the actual ordering; only a banquet unit has a real assignee
+  // (`addonAssigneeId`), so tshirt/banner units resolve to '' and group
+  // together within their own type.
+  const sortedPurchasedItems = [...purchasedItems].sort((a, b) => addonUnitSort(
+    { refLineType: a.refLineType, assigneeName: a.refLineType === 'banquet' && a.addonAssigneeId && a.addonAssigneeId !== 'extra' ? nameOf(a.addonAssigneeId) : '' },
+    { refLineType: b.refLineType, assigneeName: b.refLineType === 'banquet' && b.addonAssigneeId && b.addonAssigneeId !== 'extra' ? nameOf(b.addonAssigneeId) : '' },
+  ));
+
   // event-mgmt v2 Phase 3 (§H): per-item refund requests on purchased add-ons.
   // Refunds are only offered for events hosted by the league's own club, and
   // only for one already pending/approved request per item at a time.
@@ -1031,7 +1041,7 @@ function ClubAddonsCard({ event, clubId, canManage }: { event: Event; clubId: st
         <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
           <h4 style={{ margin: '0 0 6px', fontSize: 14 }}>Purchased add-ons ({purchasedItems.length})</h4>
           <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: 'var(--ink-soft)' }}>
-            {purchasedItems.map((it) => {
+            {sortedPurchasedItems.map((it) => {
               const requested = addonRefundRequestedIds.has(it.id);
               return (
                 <li key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
@@ -1128,6 +1138,12 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   const [editingAthleteId, setEditingAthleteId] = useState<string | null>(null);
   const [registerAthleteId, setRegisterAthleteId] = useState<string | null>(null);
   const [refundTarget, setRefundTarget] = useState<RefundRequestItem[] | null>(null);
+  // UAT round 2 (M-01-05, spec §D): the page used to stack every card in one
+  // long scroll — split into three tabs. Default 'reg' so the Events-list
+  // "Register your club" `?event=` deep link (the only card-targeting entry
+  // point into this page — grepped, no other hash/anchor exists) still lands
+  // where it always has, on the registration cards.
+  const [tab, setTab] = useState<'reg' | 'addons' | 'order'>('reg');
 
   // NOT memoized on `db` — same M6 in-place-mutation trap as Roster's
   // allRoster above (mutate() never reassigns db.people, so a useMemo keyed
@@ -1186,6 +1202,15 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   // event-mgmt v2 Phase 3 (§H): refunds only offered for events hosted by the
   // league's own club — gates the per-athlete "Request refund" action below.
   const refundEligible = eventIsRefundEligible(event, db.clubs);
+
+  // UAT round 2 (M-01-05, spec §D): "Competition Order" tab should not render
+  // for camps. `openEvents` above already excludes camps from the picker
+  // entirely (registrations-and-camps.md: camps are individual self-reg
+  // only), so `event.eventType` can't actually BE 'camp' here today — this
+  // mirrors `clubMembershipBlocked`'s own "belt-and-suspenders" carve-out
+  // just below rather than relying solely on that upstream filter.
+  const showOrderTab = event.eventType !== 'camp';
+  const activeTab = tab === 'order' && !showOrderTab ? 'reg' : tab;
 
   // Gate: the club must hold an active membership for the event's season before
   // registering any athlete. Returns true (and toasts) when blocked. Waived for
@@ -1901,6 +1926,12 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
   const editingAthlete = editingAthleteId ? effectivePeople.find((p) => p.id === editingAthleteId) : null;
   const registerAthlete = registerAthleteId ? effectivePeople.find((p) => p.id === registerAthleteId) : null;
 
+  const tabItems: { id: 'reg' | 'addons' | 'order'; label: string }[] = [
+    { id: 'reg', label: 'Athlete Registrations' },
+    { id: 'addons', label: 'Add-Ons' },
+  ];
+  if (showOrderTab) tabItems.push({ id: 'order', label: 'Competition Order' });
+
   return (
     <div>
       {/* Event selector */}
@@ -1933,264 +1964,286 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
         </div>
       )}
 
-      <ClubAddonsCard key={event.id} event={event} clubId={clubId} canManage={canManage} />
+      {/* UAT round 2 (M-01-05, spec §D): three tabs replace one long scroll.
+          Tab content below preserves every card's existing gating/behavior
+          unchanged — only the grouping/visibility is new. */}
+      <Tabs
+        tabs={tabItems}
+        active={activeTab}
+        onChange={setTab}
+      />
 
-      {/* Nationals session-planning survey (event-mgmt v2 Phase 5, A2): one
-          card per required WAG-level/combined-MAG/combined-T&T key, derived
-          from this club's non-refunded regs at this event. Read db.sessionRequests
-          directly each render (M6 in-place-mutation trap — mutate() never
-          reassigns the array on an update). Editable until the event's edit
-          deadline; read-only after (mirrors canStillEdit above). */}
-      {event.kind === 'nationals' && (
-        <SessionRequestSurveyCard
-          eventId={event.id}
-          sessions={event.sessions}
-          keys={requiredSessionRequests(event, allRegs, 'club')}
-          existing={(db.sessionRequests ?? []).filter((r) => r.eventId === event.id && r.clubId === clubId)}
-          owner={{ clubId }}
-          editable={canStillEdit}
-          showSeparateGyms
-          labelFor={(key) => (key.levelId ? `WAG — ${lvlName(key.levelId)}` : (key.discipline === 'TNT' ? 'T&T' : key.discipline))}
-        />
+      {activeTab === 'reg' && (
+        <>
+          {/* Nationals session-planning survey (event-mgmt v2 Phase 5, A2): one
+              card per required WAG-level/combined-MAG/combined-T&T key, derived
+              from this club's non-refunded regs at this event. Read db.sessionRequests
+              directly each render (M6 in-place-mutation trap — mutate() never
+              reassigns the array on an update). Editable until the event's edit
+              deadline; read-only after (mirrors canStillEdit above). Kept in the
+              Athlete Registrations tab (not spec'd explicitly) since it gates
+              checkout for these same registrations. */}
+          {event.kind === 'nationals' && (
+            <SessionRequestSurveyCard
+              eventId={event.id}
+              sessions={event.sessions}
+              keys={requiredSessionRequests(event, allRegs, 'club')}
+              existing={(db.sessionRequests ?? []).filter((r) => r.eventId === event.id && r.clubId === clubId)}
+              owner={{ clubId }}
+              editable={canStillEdit}
+              showSeparateGyms
+              labelFor={(key) => (key.levelId ? `WAG — ${lvlName(key.levelId)}` : (key.discipline === 'TNT' ? 'T&T' : key.discipline))}
+            />
+          )}
+
+          {/* Nationals summary dashboard (event-mgmt v2 Phase 5 D1, spec §L.3):
+              read-only planning aggregation (eligible teams, decathlon/omnithon,
+              coaches, banquet gap, assigned sessions) scoped to this club. Kept
+              in this tab (not spec'd explicitly) as an athlete/roster-readiness
+              overview, alongside the survey and check-in cards. */}
+          {canManage && event.kind === 'nationals' && (
+            <NationalsDashboard eventId={event.id} scope={{ clubId }} />
+          )}
+
+          {/* Nationals check-in (event-mgmt v2 Phase 5 E1, spec §L.4): gated on
+              event.kind === 'nationals' to keep check-in scoped to P5, though
+              the underlying feature isn't nationals-specific per spec. */}
+          {canManage && event.kind === 'nationals' && (
+            <EventCheckinCard eventId={event.id} scope={{ clubId }} />
+          )}
+
+          {/* Promoted waitlist groups (event-mgmt v2 P4 T7): a 'notified' group
+              holds reserved spots until its deadline — surface it prominently
+              with the Complete-checkout action. */}
+          {canManage && (db.waitlistGroups ?? [])
+            .filter((g) => g.eventId === event.id && g.clubId === clubId && g.status === 'notified')
+            .map((g) => {
+              const groupRegs = eventRegs.filter((r) => r.waitlistGroupId === g.id && r.waitlisted);
+              if (groupRegs.length === 0) return null;
+              const names = [...new Set(groupRegs.map((r) => nameOf(r.athleteId)))].join(', ');
+              return (
+                <div key={g.id} className="card card-pad" style={{ marginBottom: 18, borderLeft: '4px solid var(--coral-500)' }}>
+                  <h3 className="card-title">Waitlist spots opened!</h3>
+                  <p style={{ margin: '0 0 10px', fontSize: 14 }}>
+                    Spots are being held for <strong>{names}</strong>
+                    {g.holdExpiresAt && <> until <strong>{new Date(g.holdExpiresAt).toLocaleString()}</strong></>}.
+                    Complete checkout before then or the group returns to the end of the waitlist.
+                  </p>
+                  <button className="btn primary small" onClick={() => completeWaitlistCheckout(g)}>
+                    Complete checkout →
+                  </button>
+                </div>
+              );
+            })}
+
+          {/* Card 1: Already registered */}
+          <div className="card card-pad" style={{ marginBottom: 18 }}>
+            <h3 className="card-title">Registered ({registered.length})</h3>
+            {registered.length === 0 ? (
+              <p style={{ color: 'var(--ink-soft)', fontSize: 14 }}>No club members registered yet.</p>
+            ) : (
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>Athlete</th>
+                    <th>Registration</th>
+                    <th>Status</th>
+                    {canManage && <th />}
+                  </tr>
+                </thead>
+                <tbody>
+                  {registered.map((a) => {
+                    const regs = regsFor(a.id);
+                    const anyRefundReq = regs.some((r) => r.refundRequested);
+                    const anyRefunded = regs.some((r) => r.refunded);
+                    const allRefunded = regs.length > 0 && regs.every((r) => r.refunded);
+                    const anyPaidRefundable = refundEligible && regs.some((r) => r.paid === true && !r.refunded && !r.refundRequested);
+                    // H7: undefined-safe. `paid` defaults falsy on a new reg but a
+                    // strict `=== false` check lets `undefined` slip through and
+                    // render the green "Registered" badge for a reg nothing has
+                    // ever stamped paid — treat anything that isn't `true` as unpaid.
+                    const anyUnpaid = regs.some((r) => r.paid !== true);
+                    const anyUpdatedPending = regs.some((r) => r.paid !== true && r.updatedPending);
+                    // Waitlisted regs (event-mgmt v2 P4 T6): no cart line, not yet
+                    // occupying a spot — distinct from "Pending purchase" (which
+                    // implies a cart line is waiting to be paid).
+                    const anyWaitlisted = regs.some((r) => r.waitlisted);
+                    const allWaitlisted = regs.length > 0 && regs.every((r) => r.waitlisted || r.refunded);
+                    // Queue position (T7): 1-based rank among this event's
+                    // 'waiting' groups — undefined once notified/promoted.
+                    const wlGroupId = regs.find((r) => r.waitlisted)?.waitlistGroupId ?? undefined;
+                    const wlPos = wlGroupId ? waitlistPosition(wlGroupId, db.waitlistGroups ?? []) : undefined;
+                    const summary = regSummary(a.id);
+                    return (
+                      <tr key={a.id}>
+                        <td><strong>{a.firstName} {a.lastName}</strong></td>
+                        <td style={{ fontSize: 13 }}>{summary}</td>
+                        <td style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                          {anyRefundReq
+                            ? <Badge tone="warn">Refund requested</Badge>
+                            : allRefunded
+                              ? null
+                              : allWaitlisted
+                                ? <Badge tone="info">Waitlisted</Badge>
+                                : anyUpdatedPending
+                                  ? <Badge tone="warn">Updated pending purchase</Badge>
+                                  : anyUnpaid
+                                    ? <Badge tone="warn">Pending purchase</Badge>
+                                    : <Badge tone="ok">Registered</Badge>}
+                          {!allWaitlisted && anyWaitlisted && <Badge tone="info">Partly waitlisted</Badge>}
+                          {anyWaitlisted && wlPos !== undefined && (
+                            <span style={{ fontSize: 12, color: 'var(--ink-soft)', alignSelf: 'center' }}>#{wlPos} in line</span>
+                          )}
+                          {anyRefunded && <Badge tone="info">Refunded</Badge>}
+                        </td>
+                        {canManage && (
+                          <td style={{ whiteSpace: 'nowrap', display: 'flex', gap: 6 }}>
+                            {!regClosed && canStillEdit && (
+                              <button
+                                className="btn small ghost"
+                                onClick={() => setEditingAthleteId(a.id)}
+                              >
+                                Edit
+                              </button>
+                            )}
+                            {!regClosed && !canStillEdit && (
+                              <span
+                                style={{ fontSize: 12, color: 'var(--ink-soft)' }}
+                                data-tip="This event's edit deadline has passed; only an admin or the host club can still edit."
+                              >
+                                Edit locked
+                              </span>
+                            )}
+                            {anyPaidRefundable && (
+                              <button
+                                className="btn small ghost"
+                                style={{ color: 'var(--coral-500)' }}
+                                onClick={() => openRefundDialog(a.id)}
+                              >
+                                Request refund
+                              </button>
+                            )}
+                            {anyWaitlisted && (
+                              <button
+                                className="btn small ghost"
+                                style={{ color: 'var(--coral-500)' }}
+                                onClick={() => leaveWaitlist(a.id)}
+                              >
+                                Leave waitlist
+                              </button>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {/* Card 2: Members with membership, not yet registered */}
+          {canManage && (
+            <div className="card card-pad" style={{ marginBottom: 18 }}>
+              <h3 className="card-title">Ready to register ({unregisteredWithMembership.length})</h3>
+              <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 12 }}>
+                Active members not yet registered for this event.
+              </p>
+              {unregisteredWithMembership.length === 0 ? (
+                <p style={{ color: 'var(--ink-soft)', fontSize: 14 }}>All members with memberships are registered.</p>
+              ) : (
+                <table className="tbl">
+                  <thead>
+                    <tr>
+                      <th>Athlete</th>
+                      <th>Disciplines available</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {unregisteredWithMembership.map((a) => {
+                      const lockedTo = lockedToClubShortName(a.id);
+                      return (
+                        <tr key={a.id}>
+                          <td><strong>{a.firstName} {a.lastName}</strong></td>
+                          <td style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
+                            {lockedTo
+                              ? <span style={{ color: 'var(--warn)' }}>Already registered with {lockedTo}</span>
+                              : event.disciplines.map((d) => (d === 'TNT' ? 'T&T' : d)).join(', ')}
+                          </td>
+                          <td>
+                            <button
+                              className="btn small primary"
+                              disabled={regClosed || !!lockedTo}
+                              title={lockedTo ? `Already registered with ${lockedTo} for this event` : undefined}
+                              onClick={() => setRegisterAthleteId(a.id)}
+                            >
+                              Register
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+
+          {/* Card 3: Members without membership */}
+          {canManage && withoutMembership.length > 0 && (
+            <div className="card card-pad" style={{ marginBottom: 18 }}>
+              <h3 className="card-title">No athlete membership ({withoutMembership.length})</h3>
+              <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 12 }}>
+                These athletes need an active ATHLETE membership before they can register for an event — a coach
+                membership alone doesn't qualify.{' '}
+                <Link to="/membership">View membership options →</Link>
+              </p>
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>Athlete</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {withoutMembership.map((a) => (
+                    <tr key={a.id}>
+                      <td><strong>{a.firstName} {a.lastName}</strong></td>
+                      <td>
+                        <button
+                          className="btn small ghost"
+                          onClick={() => {
+                            sendClubInvite({ clubId, kind: 'membership', email: a.email, name: `${a.firstName} ${a.lastName}` })
+                              .then((res) => toast(res.ok
+                                ? `Membership invite sent to ${a.email}.`
+                                : `Invite failed: ${res.error ?? 'unknown error'}.`));
+                          }}
+                        >
+                          Invite to purchase membership
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+
+      {activeTab === 'addons' && (
+        <ClubAddonsCard key={event.id} event={event} clubId={clubId} canManage={canManage} />
       )}
 
       {/* Set Competition Order (event-mgmt v2 Phase 5 B2, spec §E6): MAG/WAG
           drag-and-drop competing order per apparatus/level, gated view-only
           once locked (unless the viewer is an admin). Internal early-return
           handles the "nothing to show" cases (no MAG/WAG regs, not a
-          manager) — mirrors ClubAddonsCard's gating convention above. */}
-      <CompetitionOrderCard event={event} clubId={clubId} canManage={canManage} isAdmin={caps.isAdmin} />
-
-      {/* Nationals summary dashboard (event-mgmt v2 Phase 5 D1, spec §L.3):
-          read-only planning aggregation (eligible teams, decathlon/omnithon,
-          coaches, banquet gap, assigned sessions) scoped to this club. */}
-      {canManage && event.kind === 'nationals' && (
-        <NationalsDashboard eventId={event.id} scope={{ clubId }} />
-      )}
-
-      {/* Nationals check-in (event-mgmt v2 Phase 5 E1, spec §L.4): gated on
-          event.kind === 'nationals' to keep check-in scoped to P5, though
-          the underlying feature isn't nationals-specific per spec. */}
-      {canManage && event.kind === 'nationals' && (
-        <EventCheckinCard eventId={event.id} scope={{ clubId }} />
-      )}
-
-      {/* Card 1: Already registered */}
-      {/* Promoted waitlist groups (event-mgmt v2 P4 T7): a 'notified' group
-          holds reserved spots until its deadline — surface it prominently
-          with the Complete-checkout action. */}
-      {canManage && (db.waitlistGroups ?? [])
-        .filter((g) => g.eventId === event.id && g.clubId === clubId && g.status === 'notified')
-        .map((g) => {
-          const groupRegs = eventRegs.filter((r) => r.waitlistGroupId === g.id && r.waitlisted);
-          if (groupRegs.length === 0) return null;
-          const names = [...new Set(groupRegs.map((r) => nameOf(r.athleteId)))].join(', ');
-          return (
-            <div key={g.id} className="card card-pad" style={{ marginBottom: 18, borderLeft: '4px solid var(--coral-500)' }}>
-              <h3 className="card-title">Waitlist spots opened!</h3>
-              <p style={{ margin: '0 0 10px', fontSize: 14 }}>
-                Spots are being held for <strong>{names}</strong>
-                {g.holdExpiresAt && <> until <strong>{new Date(g.holdExpiresAt).toLocaleString()}</strong></>}.
-                Complete checkout before then or the group returns to the end of the waitlist.
-              </p>
-              <button className="btn primary small" onClick={() => completeWaitlistCheckout(g)}>
-                Complete checkout →
-              </button>
-            </div>
-          );
-        })}
-
-      <div className="card card-pad" style={{ marginBottom: 18 }}>
-        <h3 className="card-title">Registered ({registered.length})</h3>
-        {registered.length === 0 ? (
-          <p style={{ color: 'var(--ink-soft)', fontSize: 14 }}>No club members registered yet.</p>
-        ) : (
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th>Athlete</th>
-                <th>Registration</th>
-                <th>Status</th>
-                {canManage && <th />}
-              </tr>
-            </thead>
-            <tbody>
-              {registered.map((a) => {
-                const regs = regsFor(a.id);
-                const anyRefundReq = regs.some((r) => r.refundRequested);
-                const anyRefunded = regs.some((r) => r.refunded);
-                const allRefunded = regs.length > 0 && regs.every((r) => r.refunded);
-                const anyPaidRefundable = refundEligible && regs.some((r) => r.paid === true && !r.refunded && !r.refundRequested);
-                // H7: undefined-safe. `paid` defaults falsy on a new reg but a
-                // strict `=== false` check lets `undefined` slip through and
-                // render the green "Registered" badge for a reg nothing has
-                // ever stamped paid — treat anything that isn't `true` as unpaid.
-                const anyUnpaid = regs.some((r) => r.paid !== true);
-                const anyUpdatedPending = regs.some((r) => r.paid !== true && r.updatedPending);
-                // Waitlisted regs (event-mgmt v2 P4 T6): no cart line, not yet
-                // occupying a spot — distinct from "Pending purchase" (which
-                // implies a cart line is waiting to be paid).
-                const anyWaitlisted = regs.some((r) => r.waitlisted);
-                const allWaitlisted = regs.length > 0 && regs.every((r) => r.waitlisted || r.refunded);
-                // Queue position (T7): 1-based rank among this event's
-                // 'waiting' groups — undefined once notified/promoted.
-                const wlGroupId = regs.find((r) => r.waitlisted)?.waitlistGroupId ?? undefined;
-                const wlPos = wlGroupId ? waitlistPosition(wlGroupId, db.waitlistGroups ?? []) : undefined;
-                const summary = regSummary(a.id);
-                return (
-                  <tr key={a.id}>
-                    <td><strong>{a.firstName} {a.lastName}</strong></td>
-                    <td style={{ fontSize: 13 }}>{summary}</td>
-                    <td style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                      {anyRefundReq
-                        ? <Badge tone="warn">Refund requested</Badge>
-                        : allRefunded
-                          ? null
-                          : allWaitlisted
-                            ? <Badge tone="info">Waitlisted</Badge>
-                            : anyUpdatedPending
-                              ? <Badge tone="warn">Updated pending purchase</Badge>
-                              : anyUnpaid
-                                ? <Badge tone="warn">Pending purchase</Badge>
-                                : <Badge tone="ok">Registered</Badge>}
-                      {!allWaitlisted && anyWaitlisted && <Badge tone="info">Partly waitlisted</Badge>}
-                      {anyWaitlisted && wlPos !== undefined && (
-                        <span style={{ fontSize: 12, color: 'var(--ink-soft)', alignSelf: 'center' }}>#{wlPos} in line</span>
-                      )}
-                      {anyRefunded && <Badge tone="info">Refunded</Badge>}
-                    </td>
-                    {canManage && (
-                      <td style={{ whiteSpace: 'nowrap', display: 'flex', gap: 6 }}>
-                        {!regClosed && canStillEdit && (
-                          <button
-                            className="btn small ghost"
-                            onClick={() => setEditingAthleteId(a.id)}
-                          >
-                            Edit
-                          </button>
-                        )}
-                        {!regClosed && !canStillEdit && (
-                          <span
-                            style={{ fontSize: 12, color: 'var(--ink-soft)' }}
-                            data-tip="This event's edit deadline has passed; only an admin or the host club can still edit."
-                          >
-                            Edit locked
-                          </span>
-                        )}
-                        {anyPaidRefundable && (
-                          <button
-                            className="btn small ghost"
-                            style={{ color: 'var(--coral-500)' }}
-                            onClick={() => openRefundDialog(a.id)}
-                          >
-                            Request refund
-                          </button>
-                        )}
-                        {anyWaitlisted && (
-                          <button
-                            className="btn small ghost"
-                            style={{ color: 'var(--coral-500)' }}
-                            onClick={() => leaveWaitlist(a.id)}
-                          >
-                            Leave waitlist
-                          </button>
-                        )}
-                      </td>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      {/* Card 2: Members with membership, not yet registered */}
-      {canManage && (
-        <div className="card card-pad" style={{ marginBottom: 18 }}>
-          <h3 className="card-title">Ready to register ({unregisteredWithMembership.length})</h3>
-          <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 12 }}>
-            Active members not yet registered for this event.
-          </p>
-          {unregisteredWithMembership.length === 0 ? (
-            <p style={{ color: 'var(--ink-soft)', fontSize: 14 }}>All members with memberships are registered.</p>
-          ) : (
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>Athlete</th>
-                  <th>Disciplines available</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {unregisteredWithMembership.map((a) => {
-                  const lockedTo = lockedToClubShortName(a.id);
-                  return (
-                    <tr key={a.id}>
-                      <td><strong>{a.firstName} {a.lastName}</strong></td>
-                      <td style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
-                        {lockedTo
-                          ? <span style={{ color: 'var(--warn)' }}>Already registered with {lockedTo}</span>
-                          : event.disciplines.map((d) => (d === 'TNT' ? 'T&T' : d)).join(', ')}
-                      </td>
-                      <td>
-                        <button
-                          className="btn small primary"
-                          disabled={regClosed || !!lockedTo}
-                          title={lockedTo ? `Already registered with ${lockedTo} for this event` : undefined}
-                          onClick={() => setRegisterAthleteId(a.id)}
-                        >
-                          Register
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-        </div>
-      )}
-
-      {/* Card 3: Members without membership */}
-      {canManage && withoutMembership.length > 0 && (
-        <div className="card card-pad" style={{ marginBottom: 18 }}>
-          <h3 className="card-title">No athlete membership ({withoutMembership.length})</h3>
-          <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginBottom: 12 }}>
-            These athletes need an active ATHLETE membership before they can register for an event — a coach
-            membership alone doesn't qualify.{' '}
-            <Link to="/membership">View membership options →</Link>
-          </p>
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th>Athlete</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {withoutMembership.map((a) => (
-                <tr key={a.id}>
-                  <td><strong>{a.firstName} {a.lastName}</strong></td>
-                  <td>
-                    <button
-                      className="btn small ghost"
-                      onClick={() => {
-                        sendClubInvite({ clubId, kind: 'membership', email: a.email, name: `${a.firstName} ${a.lastName}` })
-                          .then((res) => toast(res.ok
-                            ? `Membership invite sent to ${a.email}.`
-                            : `Invite failed: ${res.error ?? 'unknown error'}.`));
-                      }}
-                    >
-                      Invite to purchase membership
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+          manager) — mirrors ClubAddonsCard's gating convention above. Never
+          rendered for camps (M-01-05). */}
+      {activeTab === 'order' && showOrderTab && (
+        <CompetitionOrderCard event={event} clubId={clubId} canManage={canManage} isAdmin={caps.isAdmin} />
       )}
 
       {/* Edit registration modal */}
