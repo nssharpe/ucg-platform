@@ -764,6 +764,28 @@ export function addonUnitSort(
   return a.assigneeName.localeCompare(b.assigneeName);
 }
 
+/** Minimal `Invoice` slice `clubPurchasedAddonUnits` needs. */
+export type PurchasedAddonInvoice = { clubId: string | null; items: CartItem[] };
+
+/** The club's non-refunded, already-purchased add-on units for one event —
+ *  the SAME derivation `ClubAddonsCard` uses for its "Purchased add-ons" list
+ *  (Club.tsx), lifted here (M-01-05 spec-mismatch fix) so `EventRegGrid` can
+ *  ALSO use it to decide whether the Add-Ons tab should be visible at all:
+ *  the tab must stay visible once every add-on purchase window has closed as
+ *  long as the club actually bought something, even though the card's own
+ *  purchase/add affordances stay window-gated. `db.invoices` is boot-scoped
+ *  and RLS-restricted to invoices the caller can see, so this is cheap to
+ *  call from either component without an extra fetch. */
+export function clubPurchasedAddonUnits(
+  invoices: PurchasedAddonInvoice[],
+  clubId: string,
+  eventId: string,
+): CartItem[] {
+  return invoices
+    .filter((inv) => inv.clubId === clubId)
+    .flatMap((inv) => inv.items.filter((it) => it.kind === 'addon' && it.refEventId === eventId && !it.refunded));
+}
+
 // --- Change-fee eligibility (3h) -------------------------------------------
 // A pure predicate: given the BEFORE and AFTER state of an athlete's
 // registration for an event, is the change "meaningful" enough to be chargeable
