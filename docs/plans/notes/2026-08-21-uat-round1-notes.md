@@ -2097,3 +2097,118 @@ instead (`--ink`/`--ink-soft` on `--surface` white are pre-existing pairings use
 this app; `--coral-700` for error/negative text matches `WaitlistCard`'s own `loadError` styling
 verbatim; the two progress-bar fills, `--navy-800`/`--coral-600`, never have text rendered on top
 of them, so their own text-contrast rating doesn't apply).
+
+## D-09 (whats-next §3.5): PWA "new version available" refresh prompt
+
+**Why.** `vite.config.ts`'s `VitePWA` used `registerType: 'autoUpdate'` with the plugin's
+default injected register script, which activates a newly-installed service worker (and
+reloads the tab) with no notice at all, and gives a long-lived tab no way to learn about a new
+deploy short of a manual full reload. On 2026-08-25 this cost the event owners a testing
+session: the live site was 3 builds ahead of what their installed PWA showed.
+
+**What changed.**
+- `vite.config.ts`: `registerType: 'prompt'` (was `'autoUpdate'`) — a new worker now installs
+  and waits; nothing activates it automatically. Left `workbox.skipWaiting`/`clientsClaim`
+  unset (they default false for `generateSW`, and the plugin only force-sets them true when
+  `registerType === 'autoUpdate'` — confirmed by reading `resolveOptions` in
+  `node_modules/vite-plugin-pwa/dist/index.js`, not just the docs).
+- New `src/lib/pwa-update.ts`: registers via `import { registerSW } from 'virtual:pwa-register'`
+  and calls it once. `onNeedRefresh` pushes a toast ("A new version is available." + a
+  "Refresh now" action calling `updateSW(true)`, which tells the waiting worker to
+  `skipWaiting`+`clients.claim` then reloads). `onRegisteredSW` sets a `setInterval` calling
+  `registration.update()` every 60 minutes, plus a `visibilitychange` listener that calls it
+  immediately whenever the tab/PWA becomes visible again. `onOfflineReady` is wired but
+  deliberately a no-op — a "ready to work offline" toast on a member's very first visit would
+  be noise, not news, for an app most people use online; the hook is left in place rather than
+  omitted in case that changes. `onRegisterError` forwards to the existing `reportError` sink
+  (the durable, admin-searchable error log) instead of a bare `console.error`.
+- `src/main.tsx`: calls `initPwaUpdatePrompt()` once at boot, alongside the existing
+  `initFocusRefresh()` call — same "runs once for the app's lifetime, not per-render" shape.
+- `src/vite-env.d.ts`: added `/// <reference types="vite-plugin-pwa/client" />` so
+  `virtual:pwa-register` type-checks.
+- `src/lib/toast-bus.ts`: `ToastOptions['action']` widened from `{ label: string; to: string }`
+  to `{ label: string; to: string } | { label: string; onClick: () => void }` — the refresh
+  action needs to run a callback (`updateSW(true)`), not navigate to a route. Safe to pass a
+  function through `pushToast`/`subscribeToast`: the bus is in-memory pub/sub (direct listener
+  calls), never a serialized channel, so a closure survives the trip intact.
+- `src/components/ui.tsx`: `ToastItem.action` now aliases `ToastOptions['action']`; the
+  existing action-button `onClick` branches on `'onClick' in t.action` vs falling through to
+  the pre-existing `window.location.hash = t.action.to` route-hop. Styling (the `--ice-200`
+  link-on-navy text, bold+underline) is untouched — reused as-is, since the new action renders
+  through the exact same button markup as the existing "View cart" action.
+- **No `sticky`/`persist` extension needed.** Checked `toast-bus.ts`/`ui.tsx` first per the
+  brief's suggestion — toasts already never auto-dismiss (a UAT-era change: "the older `persist`
+  option is accepted but now a no-op," per the comment already in `ui.tsx`). The update toast
+  gets this for free.
+- **No injectRegister change needed.** `vite-plugin-pwa` auto-detects an import from
+  `virtual:pwa-register` anywhere in the client bundle and resolves its own `injectRegister:
+  'auto'` default to `false`/`null` (no injected script tag) once it sees that import —
+  confirmed in the build output: `dist/index.html` has no injected register script, and a new
+  `workbox-window.prod.es5-*.js` chunk appears (the plugin's client runtime, pulled in because
+  `main.tsx` now imports the virtual module). No manual `injectRegister` override was added to
+  `vite.config.ts`.
+- Extracted no pure decision logic to a testable module — there isn't any here. The only
+  "decision" is which SW lifecycle callback fires, which is owned entirely by the browser's
+  Service Worker/Workbox implementation, not app code; a unit test would just be re-asserting
+  that `registerSW`'s options object has the keys it has. `npx vitest run` stayed at
+  1317/1317 (no new test file).
+
+**Verification.** `npm run build` — succeeded; `dist/sw.js` generated, precache **88 entries
+(3537.25 KiB)**; confirmed `dist/sw.js` only calls `self.skipWaiting()` in response to an
+explicit `SKIP_WAITING` postMessage (the `updateSW(true)` path), never unconditionally. `npx
+eslint src/lib/pwa-update.ts src/lib/toast-bus.ts src/components/ui.tsx src/main.tsx
+src/vite-env.d.ts vite.config.ts` — zero errors/warnings. `npx vitest run` — 1317/1317 passed
+across 84 files (unchanged from the pre-existing baseline this notes file already recorded
+above — no pure logic to add tests for).
+
+**Confirmed the "Refresh now" mechanism actually reloads, not just guessed from docs.** Read
+`node_modules/vite-plugin-pwa/dist/client/build/register.js` (the template the plugin compiles
+into the `virtual:pwa-register` module): in non-`autoUpdate` mode, `showSkipWaitingPrompt`
+registers a `wb.addEventListener('controlling', …)` handler — that calls
+`window.location.reload()` on an update — **before** calling `onNeedRefresh()`. So
+`updateSW()` posting `SKIP_WAITING` (confirmed separately: `dist/sw.js` only calls
+`self.skipWaiting()` inside that message handler, never unconditionally) triggers the waiting
+worker to activate, which fires `controlling`, which reloads the tab — the reload is wired by
+the plugin's own listener, not by the `true` argument to `updateSW()` (that argument is
+accepted for API compatibility but is a no-op in the installed version, `1.3.0`). Fixed the
+code comment in `pwa-update.ts` to describe this chain accurately instead of just asserting
+"activates + reloads" without saying how.
+
+**Also added, past what the brief asked for, after tracing the same template file:** Workbox
+re-fires its `waiting` event (which drives `onNeedRefresh`) for every new worker that reaches
+the waiting state — a tab left open across two deploys without acting on the first prompt would
+otherwise stack two identical sticky toasts, since toasts never auto-dismiss. `pwa-update.ts`
+now guards with a `refreshPrompted` flag so it only prompts once per page load. Also throttled
+the `visibilitychange` → `registration.update()` check to once per 5 minutes
+(`VISIBILITY_CHECK_MIN_GAP_MS`) — deliberately much shorter than `focus-refresh.ts`'s 60s
+`REFRESH_THRESHOLD_MS` since that module guards a real Supabase resync and this guards one
+small conditional-GET, but alt-tabbing shouldn't fire a network request on every flip either.
+
+**Cannot be verified locally — flagging plainly.** The SW update dance (install → waiting →
+prompt → activate → reload) needs two real deploys of the built app served over the actual
+`/ucg-platform/` scope; `vite dev`/`vite preview` against a single build never exercises the
+"a second, newer SW registration exists" path at all.
+
+**Important pre-condition the controller must not skip:** every install running today predates
+this change entirely (the old `autoUpdate` bundle has no `pwa-update.ts`, no toast, nothing to
+prompt with) — it will pick up this deploy itself silently (auto-reload, old behavior, one last
+time) rather than showing the new "A new version is available." toast. **The first
+post-deploy check has to confirm the client is running THIS build** (sidebar build stamp,
+`Layout.tsx:19`, should read this commit's short SHA) before testing the prompt path at all —
+otherwise step 2 below tests from a stale install and "no toast appeared" gets misread as a bug
+in this change rather than as an expected one-time transition. **Manual verification the
+controller should do after this ships to `main` and deploys:** (1) load the live site, confirm
+the build stamp matches this deploy and `navigator.serviceWorker.controller` is set — this
+IS the prompt-capable build now; (2) push a trivial follow-up change and let it deploy; (3)
+either wait up to 60 minutes or bring the already-open tab back into focus at least 5 minutes
+after the last check (covers the `visibilitychange` path without waiting the full hour); (4)
+confirm the "A new version is available." toast appears once and stays until dismissed or acted
+on (reload the tab and refocus again to confirm it does NOT reappear a second time for the same
+waiting worker); (5) click "Refresh now" and confirm the tab reloads onto the new build (compare
+the build-stamp SHA before/after). Also worth a manual check that a checkout in progress is
+untouched by an update becoming available in the background — the whole point of `'prompt'`
+over `'autoUpdate'` is that nothing forces a reload out from under that flow.
+
+**Not touched:** `docs/plans/2026-08-21-uat-round1-triage.md` — grepped for `D-09` and found no
+reference; this ticket originates from `whats-next.md` §3 item 5, not from the UAT triage list,
+so there was nothing there to update.

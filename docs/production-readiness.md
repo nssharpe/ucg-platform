@@ -136,10 +136,10 @@ loading/empty/error-state consistency across pages.
   form-error association, full contrast pass. Fix to WCAG 2.1 AA.
 - 🤖 Standardize **loading / empty / error** states across pages.
 - 🤖 Microcopy / error-message review (plain, actionable, on-brand).
-- 🤖 Verify the **PWA update path** in production: the service worker's
-  stale-bundle behavior is documented as a dev trap, but the same mechanism
-  governs how real users receive deploys — add a "new version available, reload"
-  prompt if updates don't land promptly.
+- ✅ **PWA update path — SHIPPED 2026-08-25** (D-09, `docs/whats-next.md` §3 item 5): a
+  "new version is available" toast + "Refresh now" action, plus hourly and
+  on-refocus update checks, so a long-lived tab/PWA learns about a deploy
+  without a manual reload.
 - 👤 A short **real-user test** at a club/meet (5 people, core flows) — the
   highest-value UX signal available.
 

@@ -158,8 +158,19 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
   (it could only get there while still in-window). Reviewer-tier adversarial review of the
   full diff (money-invariants.md scope) is still owed before merge/push per the CLAUDE.md
   routing rule — not yet done.
-5. **PWA production update path** — verify deploys reach users promptly; add a "new
-  version available, reload" prompt if not.
+5. ✅ **PWA "new version available" refresh prompt — SHIPPED 2026-08-25** (branch
+  `fix/pwa-update-prompt`, D-09). `vite.config.ts`'s `VitePWA` now uses `registerType: 'prompt'`
+  (was `'autoUpdate'`, which activated a new worker — and reloaded the tab — with no notice,
+  and gave no way for a long-lived tab to learn about a deploy at all short of a manual
+  reload). `src/lib/pwa-update.ts` registers via `virtual:pwa-register` at boot (`main.tsx`):
+  `onNeedRefresh` surfaces a sticky toast ("A new version is available." + "Refresh now",
+  calling the `updateSW(true)` the registration returns); `onRegisteredSW` polls
+  `registration.update()` hourly and on every `visibilitychange` back to visible. `toast-bus.ts`'s
+  `action` gained a second shape (`{ label, onClick }` alongside the existing `{ label, to }`
+  route action) so the toast can trigger an arbitrary callback, not just a route hop — toasts
+  were already sticky-by-default (no change needed there). Manual verification (deploy N, load,
+  deploy N+1, wait/refocus, expect the toast) is still owed post-deploy — not reproducible
+  locally. Notes: `docs/plans/notes/2026-08-21-uat-round1-notes.md`.
 6. **`npm audit` + Dependabot** in CI. **Audited 2026-07-31 — nothing that ships to a user is
   vulnerable today**, so this is now about automation, not a backlog of fixes. 22 findings
   (18 high), and the triage is what matters:
