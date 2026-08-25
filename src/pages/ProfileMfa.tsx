@@ -11,6 +11,7 @@ import type { Factor } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { refreshAal } from '../lib/auth';
 import { TOTP_FRIENDLY_NAME } from '../lib/mfa-core';
+import { notifyMfaEnrollmentChanged } from '../lib/mfa';
 import { Modal } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 
@@ -106,6 +107,7 @@ export function MfaSection() {
     setCode('');
     await loadFactors();
     await refreshAal();
+    notifyMfaEnrollmentChanged(); // UAT round 2 A-11-02: unlock admin pages immediately
   };
 
   const removeFactor = async (f: Factor) => {
@@ -118,6 +120,7 @@ export function MfaSection() {
     toast(`Removed "${f.friendly_name ?? f.factor_type}".`);
     await loadFactors();
     await refreshAal();
+    notifyMfaEnrollmentChanged(); // UAT round 2 A-11-02: re-gate admin pages immediately
   };
 
   return (

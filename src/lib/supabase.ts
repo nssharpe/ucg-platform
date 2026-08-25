@@ -2280,13 +2280,20 @@ export async function sendClubInvite(args: {
 }
 
 /** Create an account for someone (club manager / admin) and email them a
- *  set-password link. Caller must manage the club (the function re-checks). */
+ *  set-password link. Caller must manage the club (the function re-checks).
+ *  `personId` (optional) targets an EXISTING person row exactly, instead of
+ *  the function's default "oldest unclaimed row matching email" lookup —
+ *  pass it whenever the caller already has a specific person in hand
+ *  (AdminMembers.tsx's per-row invite/resend), since duplicate-email people
+ *  are a real, supported case (there's an admin "Merge duplicates" tool for
+ *  exactly that) and an email-only match could silently link the wrong row. */
 export async function inviteAccount(args: {
   clubId: string;
   email: string;
   firstName: string;
   lastName: string;
   kind?: 'athlete' | 'coach';
+  personId?: string;
 }): Promise<{ ok: boolean; sentCount?: number; error?: string }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('invite-account', { body: args });

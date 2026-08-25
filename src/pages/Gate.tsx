@@ -128,6 +128,12 @@ function AuthGate() {
     } else {
       // Stash name + kind so auth.ts can pass them to link_or_create_person on
       // the first authenticated load (after email confirmation + sign-in).
+      // ALSO passed as signUp's user_metadata (options.data) below — UAT round
+      // 2 A-01-02: the localStorage stash only survives if the confirmation
+      // link is clicked on this SAME device/browser; user_metadata lives on
+      // the auth user server-side and is read as a fallback in auth.ts's
+      // stashedName/stashedKind whenever the stash is missing (a different
+      // device, a cleared localStorage, or private browsing).
       localStorage.setItem('ucg-signup-name', JSON.stringify([first.trim(), last.trim()]));
       localStorage.setItem('ucg-signup-kind', kind);
 
@@ -138,7 +144,10 @@ function AuthGate() {
       const { data, error } = await supabase.auth.signUp({
         email,
         password: pw,
-        options: { emailRedirectTo: redirectTo },
+        options: {
+          emailRedirectTo: redirectTo,
+          data: { first_name: first.trim(), last_name: last.trim(), kind },
+        },
       });
       setBusy(false);
       if (error) { setErr(error.message); return; }

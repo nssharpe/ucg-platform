@@ -7,9 +7,8 @@ import { PersonForm } from '../../components/PersonForm';
 import { STATE_REGIONS } from '../../lib/types';
 import type { AccountInvite, Athlete, Membership, MembershipType, Registration } from '../../lib/types';
 import { randomPromoCode } from '../../lib/pricing';
-import { fetchAllRoles, pushAccountInvite, pushClubManager, pushMembership, pushRegistration, pushUserRole, deleteRegistration, sendEmail, pushPerson, deletePerson, adminResetMfa, fetchMembershipsForPersonRemote, fetchPersonRemote, type SendEmailResult } from '../../lib/supabase';
+import { fetchAllRoles, pushAccountInvite, pushClubManager, pushMembership, pushRegistration, pushUserRole, deleteRegistration, inviteAccount, pushPerson, deletePerson, adminResetMfa, fetchMembershipsForPersonRemote, fetchPersonRemote } from '../../lib/supabase';
 import { fetchRegistrationsForPerson, applyLocalRegistrationUpsert, applyLocalRegistrationRemove } from '../../lib/registrations-slice';
-import { escapeHtml } from '../../lib/sanitize-html';
 import { useCapabilities } from '../../lib/capabilities';
 import { membershipTypeOf } from '../../lib/capabilities-core';
 import { currentSeason } from '../../lib/season-lifecycle';
@@ -436,19 +435,30 @@ export function AdminMembers() {
     toast(grant ? `${p.firstName} is now a league admin.` : `Removed admin from ${p.firstName}.`);
   };
 
-  // Branded account-setup invite. Claiming is by email-match at signup
-  // (link_or_create_person), so the link just routes to signup and the copy
-  // tells them to use THIS email. Admin-only path → reuses sendEmail.
-  const sendInviteEmail = async (p: Athlete): Promise<SendEmailResult> => {
-    const appUrl = window.location.origin + import.meta.env.BASE_URL.replace(/\/$/, '');
-    const link = `${appUrl}/#/?signup=1`;
-    const subject = 'Set up your United Club Gymnastics account';
-    const html = `<p>Hi ${escapeHtml(p.firstName)},</p>
-<p>An account has been created for you on the United Club Gymnastics platform.
-To activate it, sign up using <strong>this email address</strong> (${escapeHtml(p.email)}):</p>
-<p><a href="${link}">Create your account &rarr;</a></p>
-<p>Use the same email shown above so your existing record is linked automatically.</p>`;
-    return sendEmail(subject, html, [{ email: p.email, name: `${p.firstName} ${p.lastName}` }]);
+  // Branded account-setup invite via the invite-account edge function — the
+  // SAME path Club.tsx's manager-side "add athlete" uses (UAT round 2
+  // A-07-01: this used to be a plain-text generic signup-link email via
+  // sendEmail, landing on a generic signup screen instead of a real
+  // set-password link). clubId is the person's own mainClubId when they have
+  // one (kept in sync, never reassigned — see invite-account/index.ts's
+  // "only touch main_club_id when clubId is supplied" guard); omitted for an
+  // Independent Athlete, which the edge function treats as an admin-only
+  // no-club invite.
+  const sendInviteEmail = async (p: Athlete): Promise<{ ok: boolean; sentCount: number; error?: string }> => {
+    const res = await inviteAccount({
+      clubId: p.mainClubId ?? '',
+      email: p.email,
+      firstName: p.firstName,
+      lastName: p.lastName,
+      kind: p.kind === 'coach' ? 'coach' : 'athlete',
+      // Target THIS exact person row, not the function's default "oldest
+      // unclaimed row matching email" lookup — duplicate-email people are a
+      // real, supported case on this very page (see "Merge duplicates…"
+      // above), and an email-only match could stamp auth_user_id onto the
+      // wrong one.
+      personId: p.id,
+    });
+    return { ok: res.ok, sentCount: res.sentCount ?? 0, error: res.error };
   };
 
   // W13 task 5: create account invite for person with no authUserId.
@@ -681,11 +691,13 @@ To activate it, sign up using <strong>this email address</strong> (${escapeHtml(
           person={editing === 'new' ? undefined : editing}
           onClose={() => setEditing(null)}
           // UAT A-07-01 (Nate): "+ New Person" can optionally fire the same
-          // account-setup invite as the per-person "Send account invite"
-          // row action. This is the signup-link flow (createAccountInvite:
-          // an accountInvites row + a generic sendEmail signup link) — NOT
-          // the invite-account edge function's branded set-password email
-          // used by Club.tsx's manager-side "add athlete".
+          // account-setup invite as the per-person "Invite" row action —
+          // createAccountInvite, which (as of UAT round 2) sends the SAME
+          // invite-account edge function branded set-password email Club.tsx's
+          // manager-side "add athlete" uses. The `accountInvites` row it also
+          // writes is bookkeeping only now (pending-invite dedup on this page,
+          // GDPR export in person-data.ts) — it no longer carries its own
+          // separate email.
           onCreated={(created, sendInvite) => { if (sendInvite) void createAccountInvite(created); }}
         />
       )}

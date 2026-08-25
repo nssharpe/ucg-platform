@@ -2212,3 +2212,202 @@ over `'autoUpdate'` is that nothing forces a reload out from under that flow.
 **Not touched:** `docs/plans/2026-08-21-uat-round1-triage.md` — grepped for `D-09` and found no
 reference; this ticket originates from `whats-next.md` §3 item 5, not from the UAT triage list,
 so there was nothing there to update.
+
+## UAT round 2 (2026-08-25): four related auth fixes (A-01-02, A-06-02, A-07-01, A-11-02)
+
+Branch `fix/uat-round2-auth`, cut from `main` after the controller had already fixed the
+Supabase dashboard redirect allow-list (a bare `**` glob doesn't match a URL carrying a query
+string, so `?setpw=invite`/`?setpw=reset` was being silently stripped in prod). This ticket makes
+the client robust to that class of failure recurring, plus three adjacent findings.
+
+### A-06-02: marker-independent reset/invite discrimination + the stranded-page bug
+
+**Root cause #1 (defensive — the allow-list bug itself).** `SetPassword.tsx` trusted the
+`?setpw=...` query marker alone to pick reset-vs-invite. New pure helper
+`resolveSetPasswordFlavor(marker, sawPasswordRecoveryEvent)` (`src/lib/set-password-core.ts`,
+tested in `tests/lib/set-password-core.test.ts`, 9 cases) adds a second signal for when the
+marker is MISSING: `auth.ts` now captures whether a Supabase `PASSWORD_RECOVERY`
+`onAuthStateChange` event fired this page load (new module-level flag `sawPasswordRecoveryEvent`,
+exposed via `hasSeenPasswordRecoveryEvent()`). **Precedence, corrected on advisor review before
+merge:** an explicit marker ALWAYS wins over the event, in either direction — `'invite'`/`'legacy'`
+→ `'invite'`; `'reset'` → `'reset'`; only when there's no marker at all does the event fill in
+`'reset'`. A first draft let the event override an explicit marker (matching the brief's literal
+wording), which broke a real path: `invite-account` falls back to a Supabase RECOVERY-type link
+(still marked `?setpw=invite`) whenever the invitee's auth user already exists, so a genuine
+`PASSWORD_RECOVERY` event fires for a link that is legitimately an invite — overriding the marker
+there would have silently sent that person Home after an email that told them they'd land on
+Membership. Caught by the advisor before commit; two tests were flipped to encode the corrected
+precedence and one added (`reset marker unaffected by the event either way`). **The
+no-signal-at-all default still changed from `'invite'`/membership to `'reset'`/Home** — that part
+of the original design was correct and is what actually fixes Julia's point of confusion.
+
+**Root cause #2 (a REAL bug, independent of the allow-list — this is the actual "flash then
+stranded" mechanism).** Traced `SetPasswordRedirect` (`App.tsx`) line by line: it force-navigates
+to `/set-password` whenever `initialSetPwKind()` is truthy and the route isn't already
+`/set-password`. `initialSetPwKind()` reads a page-load-scoped module constant that **never
+clears itself once used**. So the moment `SetPassword.tsx`'s post-`updateUser()`
+`navigate('/membership')` (or `/`) landed on the new route, this SAME effect's dependency-array
+re-run saw "not on `/set-password`, marker still truthy" and immediately re-navigated BACK to
+`/set-password` with `replace: true` — remounting `SetPassword` fresh (blank `pw`/`pw2`, `done:
+false`) a few hundred ms after the "✓ Password set — taking you to membership…" flash. This
+reproduces on EVERY real invite/reset link regardless of the allow-list bug — it was simply never
+noticed before because nobody watched the page for another ~1.2s after the success flash
+appeared. It was never a race in `SetPassword.tsx`'s own timeout/navigate call (confirmed by
+reading — that call always fires correctly); the bug was entirely in `SetPasswordRedirect`
+re-navigating back one render later. **Fixed** with a `reachedRef` guard: once the effect has
+legitimately landed on `/set-password`, it never force-navigates back to it again for the rest of
+that page load.
+
+Also added `SetPassword.tsx`'s `navigate(..., { replace: true })` on the post-success call (was a
+plain push before) — belt-and-suspenders once `SetPasswordRedirect` no longer fights it, and
+consistent with treating that navigation as a one-way exit.
+
+`.claude/rules/auth-and-mfa.md`'s "HashRouter vs Supabase implicit flow" section updated in place
+with both mechanisms.
+
+### A-07-01: all invite paths send the branded invite-account email
+
+`AdminMembers.tsx`'s per-person "Invite"/"Resend" row action and the "+ New person" checkbox
+(`onCreated` → `createAccountInvite`) used a separate `sendInviteEmail` that called the generic
+`sendEmail` edge function with a plain-text signup-link body — landing on a generic signup screen,
+not a real set-password link. `src/lib/supabase.ts` already had an `inviteAccount()` wrapper for
+the `invite-account` edge function (used by `Club.tsx`'s manager-side "add athlete") — no new
+wrapper needed. Rewired `sendInviteEmail` (AdminMembers.tsx) to call `inviteAccount()` instead,
+mapping `p.mainClubId ?? ''` → `clubId`, `p.kind` → `kind`.
+
+**Deviation the brief anticipated but got backwards for AdminMembers specifically:** the
+`invite-account` edge function required `clubId` unconditionally (400 without one), but
+AdminMembers can invite an **Independent Athlete** (`mainClubId: null` — a real, common case per
+`PersonForm.tsx`'s "No club" checkbox). Made `clubId` conditional in
+`supabase/functions/invite-account/index.ts`: a club-manager caller (not admin) still MUST supply
+one (it's the only thing their authorization check can run against); an admin caller may omit it
+entirely. When updating an EXISTING unclaimed person row, `main_club_id` is only touched when a
+`clubId` was actually supplied — omitting it (independent invite) never clears a club affiliation
+the caller doesn't know about. Email copy/subject adapted to read naturally with `club: null`
+(drops the "(short_name)" suffix and the "sent to club cart" clause).
+
+**Kept, not removed:** `pushAccountInvite`/`db.accountInvites`/the `AccountInvite` type. Grepped
+every reference — `person-data.ts`'s `collectPersonData` (GDPR export) and
+`person-export.ts`'s "Account invites: N" line both read `db.accountInvites` for a person's data
+export, so the table isn't dead. It's now bookkeeping only (pending-invite dedup + the
+Invite/Resend button swap on the Members page) — the row it writes no longer carries its own
+separate email; `sendInviteEmail`/`inviteAccount()` handles that entirely.
+
+**Second bug caught on advisor review: email-only person resolution could hit the wrong row.**
+`invite-account`'s existing person lookup was "oldest unclaimed row matching this email" — fine
+for `Club.tsx`'s manager-side "add athlete" (no specific person in hand yet), wrong for
+AdminMembers.tsx, which already has an exact `Athlete` row (`p`) and can pass its id.
+Duplicate-email people are explicitly a real, supported case (the schema migration's own comment,
+plus the fact this very page ships a "Merge duplicates…" tool) — email-only matching could
+silently stamp `auth_user_id` onto a DIFFERENT row than the one the admin clicked "Invite" on,
+leaving `p` still showing "No account" while the toast claims success. Fixed: `inviteAccount()`
+(`src/lib/supabase.ts`) gained an optional `personId`; `AdminMembers.tsx`'s `sendInviteEmail`
+passes `p.id`; `invite-account/index.ts` resolves the exact row by id when supplied, falling back
+to the email lookup only when it's absent (Club.tsx's call site, unchanged).
+
+**Third issue caught on review: `SignupLandingRedirect`'s guard could make the A-01-02 landing
+fix silently inert.** First draft latched its `doneRef` at the moment `navigate('/me')` was
+CALLED, not when the app actually arrived there. `auth-and-mfa.md`'s own documented mechanism
+(auth-js's `window.location.hash = ''`, fired after its `_getUser` network round trip, bouncing
+HashRouter back to `/`) can land AFTER this effect first runs — if that bounce arrived before the
+guard's `navigate` call was ever observed to take effect, the effect would see `doneRef.current`
+already true and never retry, landing back on Home with the fix having done nothing. Fixed to
+match `SetPasswordRedirect`'s own shape exactly: the ref latches on OBSERVED ARRIVAL at `/me`
+(`location.pathname === '/me'`), not on dispatch — `navigate()` updates `location.pathname` on
+the very next render, well before the network-bound bounce could land, so the effect reliably
+latches first; even in a race, latching on arrival rather than dispatch means a bounce back to
+`/` before that observation just lets the effect fire `navigate('/me')` again instead of getting
+permanently stuck.
+
+**Fourth issue caught on review: an unguarded `Promise.all` could wedge every admin page behind
+an infinite loader.** `useAdminMfaSatisfied`'s new `Promise.all([listFactors(), passkey.list()])`
+had a `.then()` but no `.catch()` — if either call REJECTED (rather than resolving `{error}}`,
+which auth-js's own methods normally do, but a network-level throw is possible), `hasTotp`/
+`hasPasskeyCredential` would stay `null` forever, and the hook returning `null` forever makes
+`RequireAdmin` render `<PageFallback/>` forever on every `/admin/*` route — directly contradicting
+the surrounding comment's own stated invariant ("an indefinite spinner ... is not [escapable]").
+Added a `.catch()` that resolves both to `false` (same as the existing `{error}` branches), so a
+hard failure degrades to "show the block panel" (escapable — links to `/me` and Home), never to
+an infinite loader.
+
+**Functions to deploy:** `invite-account` (clubId now optional; personId now accepted).
+
+### A-11-02: enrolling a passkey unlocks admin pages immediately
+
+`useAdminMfaSatisfied` (`src/lib/mfa.ts`) computed `hasPasskey` off
+`aal.methods.includes(PASSKEY_AMR_METHOD)` ONLY — the CURRENT session's sign-in method. Enrolling
+a NEW passkey via `ProfilePasskeys.tsx` while still signed in with a password doesn't change how
+that session authenticated, so the gate stayed blocked until sign-out/sign-in with the passkey —
+exactly Julia's report.
+
+**Fix, two parts:**
+1. New pure `hasPasskeySatisfaction(hasPasskeyCredential, authMethods)` (`src/lib/mfa-core.ts`,
+   tested — 4 new cases in `tests/lib/mfa-core.test.ts`): true if
+   `supabase.auth.passkey.list()` (the SAME list `ProfilePasskeys.tsx` already renders) returns
+   any credential, OR the session AMR exemption. `useAdminMfaSatisfied` now fetches
+   `mfa.listFactors()` and `passkey.list()` in parallel and combines them through this function —
+   still a pure CONSUMER of mfa-core.ts, never reimplementing the check.
+2. New `notifyMfaEnrollmentChanged()` signal (`mfa.ts`, `useSyncExternalStore`-based, mirrors the
+   listener-set idioms already in `auth.ts` — no polling): `ProfileMfa.tsx` calls it after TOTP
+   verify/unenroll, `ProfilePasskeys.tsx` after passkey add/remove. `useAdminMfaSatisfied`
+   subscribes and re-runs its fetch effect on every bump. This matters because `RequireAdmin`
+   (and the hook inside it) only remounts on navigating AWAY from and back to an admin route —
+   without the signal, enrolling in `/me` in a second tab while `/admin/*` stays open in the
+   first would never pick up the change at all, remount or not.
+
+### A-01-02: signup name reaches the person row; post-confirmation lands on Profile
+
+Traced `link_or_create_person` (`supabase/migrations/20260601000005_account_foundation.sql`):
+defaults an empty `p_first`/`p_last` to `'New'`/`'Member'` — that's the literal source of "New
+Member" people. `Gate.tsx` already stashed the entered name in localStorage before calling
+`signUp()`, and `auth.ts`'s `onAuthenticated()` already read it — so the mechanism worked when
+sign-up and confirmation happen on the SAME device/browser. The gap: the confirmation link opened
+on a DIFFERENT device/browser (a mail app that opens a different default browser, a different
+device entirely, private browsing) never had the localStorage stash to begin with, so it silently
+fell through to the RPC's "New"/"Member" default.
+
+**Fix (no DB migration needed):** `Gate.tsx`'s `signUp()` call now ALSO passes
+`options.data: { first_name, last_name, kind }` — Supabase stores this as `user_metadata` on the
+auth user server-side, already present on the session's `user` object with zero extra round
+trips. `auth.ts`'s `stashedName()`/`stashedKind()` now accept the `user` and fall back to
+`user.user_metadata` when the localStorage stash is missing, before ever reaching the RPC's
+`'New'/'Member'` default.
+
+**Landing page:** a brand-new signup confirmation lands with `#access_token=...&type=signup` and
+previously fell through to Home with zero special handling — but Gate.tsx's sign-up form never
+collects dob/state/club/etc., so the profile is ALWAYS incomplete right after confirmation.
+`initialAuthCallbackType()` (new export, `auth.ts`) captures the hash's `type=` param once at
+module load (same once-only rationale as the existing `initialSetPwKind`); new
+`SignupLandingRedirect` (`App.tsx`, mirrors `SetPasswordRedirect`'s "reached-once" `useRef` guard
+shape, mounted as its sibling outside `<Routes>`) sends a `type === 'signup'` landing to `/me`
+once instead of Home. Reset/invite links never carry `type=signup` (they use the app's own
+`?setpw=...` marker via a custom `redirectTo`), so the two redirect components never compete.
+
+### Verification
+
+Two full passes: once after the initial implementation, once after the advisor review caught the
+four issues documented above (precedence flip, `personId` targeting, `SignupLandingRedirect`'s
+latch timing, the unguarded `Promise.all`) and they were fixed. Final numbers below are from the
+second pass.
+
+`npm run build` (`tsc -b && vite build`) — succeeded, zero TypeScript errors. `npx eslint
+src/lib/auth.ts src/App.tsx src/pages/SetPassword.tsx src/lib/set-password-core.ts
+src/pages/admin/AdminMembers.tsx src/pages/Gate.tsx src/lib/mfa-core.ts src/lib/mfa.ts
+src/pages/ProfileMfa.tsx src/pages/ProfilePasskeys.tsx src/lib/supabase.ts
+supabase/functions/invite-account/index.ts tests/lib/mfa-core.test.ts
+tests/lib/set-password-core.test.ts` — zero errors/warnings. `npx vitest run` — 1329/1329 passed
+across 85 files (+13 from this ticket: 5 in `tests/lib/mfa-core.test.ts`'s new
+`hasPasskeySatisfaction` describe block, 8 in the new `tests/lib/set-password-core.test.ts`,
+including the corrected precedence cases and the added "reset marker unaffected by the event
+either way" case).
+
+**Flows that need a live email round-trip and could NOT be verified here** (no live Supabase
+project attached to this session; the controller/owners will re-test): A-06-02's actual invite
+and reset email links end-to-end (marker survival post-allow-list-fix, the PASSWORD_RECOVERY
+event firing, the no-longer-stranding redirect); A-07-01's AdminMembers "Invite"/"Resend"/"+ New
+person" buttons actually sending the branded `invite-account` email (independent-athlete case
+especially, since that's the new code path); A-11-02's passkey-enrollment-unlocks-admin-pages
+behavior end-to-end (requires a real WebAuthn ceremony); A-01-02's cross-device signup
+confirmation (requires two actual browsers/devices) and the `/me` landing after a real email
+click. `invite-account` needs redeploying before A-07-01 works in prod (clubId is now optional
+server-side; the currently-deployed function still 400s an omitted clubId).
