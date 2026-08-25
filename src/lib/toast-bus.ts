@@ -15,8 +15,13 @@ export type ToastOptions = {
    *  `window.location.hash` rather than `<Link>`/`useNavigate` because
    *  `ToastProvider` is mounted OUTSIDE `HashRouter` in App.tsx (so its own
    *  imperative escape-hatch subscribers — the write-queue, the offline
-   *  gate — can toast without a Router in scope at all). */
-  action?: { label: string; to: string };
+   *  gate — can toast without a Router in scope at all).
+   *  D-09 (2026-08-25): a second action shape, `onClick`, for callers that
+   *  need to run an arbitrary callback instead of a route hop — e.g. the PWA
+   *  update prompt's "Refresh now" invoking `updateSW(true)`. Safe to pass a
+   *  function through `pushToast` because this bus is in-memory pub/sub, not
+   *  a serialized channel. */
+  action?: { label: string; to: string } | { label: string; onClick: () => void };
 };
 type ToastListener = (msg: string, opts?: ToastOptions) => void;
 

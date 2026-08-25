@@ -7,7 +7,7 @@ import { subscribeToast } from '../lib/toast-bus';
 // Toasts persist until the user dismisses them (✕) — they never auto-expire, so
 // errors and confirmations can be read and screenshotted. `variant: 'error'`
 // adds a coral accent. (The older `persist` option is accepted but now a no-op.)
-type ToastItem = { id: number; msg: string; variant: 'info' | 'error'; action?: { label: string; to: string } };
+type ToastItem = { id: number; msg: string; variant: 'info' | 'error'; action?: ToastOptions['action'] };
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
@@ -54,7 +54,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                   {' '}
                   <button
                     type="button"
-                    onClick={() => { window.location.hash = t.action!.to; remove(t.id); }}
+                    onClick={() => {
+                      if ('onClick' in t.action!) t.action!.onClick();
+                      else window.location.hash = t.action!.to;
+                      remove(t.id);
+                    }}
                     style={{
                       background: 'none', border: 'none', padding: 0, cursor: 'pointer',
                       color: 'var(--ice-200)', fontWeight: 700, textDecoration: 'underline',

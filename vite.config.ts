@@ -72,7 +72,14 @@ export default defineConfig({
     inlineCss(),
     preloadFonts(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // 'prompt' (NOT 'autoUpdate'): a new SW installs and waits — it must
+      // never activate itself. An autoUpdate reload firing mid-checkout would
+      // be worse than the staleness it fixes. src/lib/pwa-update.ts is the
+      // only place that activates the waiting worker (a member clicking
+      // "Refresh now" on the update toast). Don't force workbox.skipWaiting/
+      // clientsClaim true here — that would activate the waiting worker
+      // immediately on install, defeating the prompt.
+      registerType: 'prompt',
       manifest: {
         name: 'UCG Registration & Scoring',
         short_name: 'UCG',
