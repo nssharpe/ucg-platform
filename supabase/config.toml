@@ -23,6 +23,14 @@ additional_redirect_urls = [
   "http://localhost:5173/",
   "https://nssharpe.github.io/ucg-platform/**",
   "http://localhost:5173/**",
+  # UAT A-06/A-07 (2026-08-25): the `**` glob does NOT match a bare
+  # query-string URL (verified empirically via generate_link — a
+  # non-allow-listed redirect_to is silently replaced with site_url, no
+  # error). The set-password flavor markers must be listed EXACTLY:
+  "https://nssharpe.github.io/ucg-platform/?setpw=reset",
+  "https://nssharpe.github.io/ucg-platform/?setpw=invite",
+  "http://localhost:5173/?setpw=reset",
+  "http://localhost:5173/?setpw=invite",
 ]
 jwt_expiry = 3600
 enable_refresh_token_rotation = true
