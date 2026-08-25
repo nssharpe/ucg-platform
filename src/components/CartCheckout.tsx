@@ -367,12 +367,18 @@ export function CartCheckout({
             `i.label`, no amount, for every line (not a regression, just never
             wired up). See the `checkout` stage's own doc comment above for
             why this is safe to use even after the real (non-preview) session
-            response, which carries no `lines` of its own. */}
+            response, which carries no `lines` of its own.
+            `amountCents` is the PRE-discount list price (`CartPreviewLine`'s
+            doc comment) — these rows sum to the Subtotal below, with the
+            coupon shown as its own separate line, matching how the receipt
+            renders a discount. A $0 line (host-club free entry, or the
+            non-dearest type in a grouped membership purchase) reads
+            "Included" rather than "$0.00". */}
         <ul style={{ margin: '10px 0', paddingLeft: 18, fontSize: 14 }}>
           {stage.lines.map((l) => (
             <li key={l.itemId} style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
               <span>{l.label}</span>
-              <span>{fmtMoney(l.amountCents / 100)}</span>
+              <span>{l.amountCents > 0 ? fmtMoney(l.amountCents / 100) : 'Included'}</span>
             </li>
           ))}
         </ul>
