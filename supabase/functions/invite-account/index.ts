@@ -122,9 +122,20 @@ Deno.serve(async (req) => {
   // where no specific person is in hand yet). Never clobber an
   // already-linked person's club.
   const { data: existing } = personId
-    ? await db.from('people').select('id, auth_user_id').eq('id', personId).maybeSingle()
+    ? await db.from('people').select('id, auth_user_id, email').eq('id', personId).maybeSingle()
     : await db.from('people')
-        .select('id, auth_user_id').eq('email', email).order('created_at', { ascending: true }).limit(1).maybeSingle();
+        .select('id, auth_user_id, email').eq('email', email).order('created_at', { ascending: true }).limit(1).maybeSingle();
+  // Reviewer-added (round 2): a personId-targeted invite must be for that
+  // row's OWN email. Without this, any authorized caller (including a club
+  // manager, who can pass personId alongside their clubId) could bind a
+  // fresh auth account on an ARBITRARY email to someone else's unclaimed
+  // person row — cross-club identity capture. Fail closed on mismatch.
+  if (personId && existing && (existing.email ?? '').trim().toLowerCase() !== email.trim().toLowerCase()) {
+    return json({ ok: false, error: 'That person has a different email on file — update their profile email first, then resend the invite.' }, 409);
+  }
+  if (personId && !existing) {
+    return json({ ok: false, error: 'Person not found.' }, 404);
+  }
   // roles must match the invited kind — the people.roles column defaults to
   // athlete-only, so a coach insert that omits it would show as an athlete.
   const roles = kind === 'coach' ? { athlete: false, coach: true } : { athlete: true, coach: false };
