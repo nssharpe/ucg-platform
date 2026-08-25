@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { useSession, initialSetPwKind, hasInitialLinkError } from '../lib/auth';
+import { useSession, initialSetPwKind, hasInitialLinkError, hasSeenPasswordRecoveryEvent } from '../lib/auth';
+import { resolveSetPasswordFlavor } from '../lib/set-password-core';
 
 // Reached after clicking an invite / set-password link. Supabase has already
 // established the session from the URL token (detectSessionInUrl) by the time we
 // render, so we just collect a new password and save it, then send the user
 // on: reset links go Home, invite links go to membership (matching the
-// invite email's "you'll land on the membership page" copy).
+// invite email's "you'll land on the membership page" copy). The flavor is
+// resolved marker-independently (UAT round 2 A-06-02) — see
+// `resolveSetPasswordFlavor` and `.claude/rules/auth-and-mfa.md`.
 const MIN_LEN = 10; // keep in step with the Supabase password policy
 
 export default function SetPassword() {
@@ -28,6 +31,11 @@ export default function SetPassword() {
   // both rewrite it after the fact).
   const setpwKind = initialSetPwKind();
   const linkError = hasInitialLinkError();
+  // Marker-independent flavor (UAT round 2 A-06-02): a PASSWORD_RECOVERY
+  // event is authoritative for 'reset' regardless of whether the `?setpw=...`
+  // marker survived the redirect; falls back to 'reset' (not the old
+  // 'invite'/membership default) when there's no signal at all.
+  const flavor = resolveSetPasswordFlavor(setpwKind, hasSeenPasswordRecoveryEvent());
 
   const tooShort = pw.length > 0 && pw.length < MIN_LEN;
   const mismatch = pw2.length > 0 && pw !== pw2;
@@ -43,8 +51,15 @@ export default function SetPassword() {
     setDone(true);
     // Reset → Home; invite (and legacy pre-marker `?setpw=1` links) →
     // membership, matching the invite email's "you'll land on the
-    // membership page" copy (UAT A-07-02 / A-06-01).
-    setTimeout(() => navigate(setpwKind === 'reset' ? '/' : '/membership'), 1200);
+    // membership page" copy (UAT A-07-02 / A-06-01). `replace: true` matters
+    // here: without it, App.tsx's SetPasswordRedirect (still mounted,
+    // watching every navigation) sees a NEW history entry that isn't
+    // `/set-password` and force-navigates right back to it — the earlier
+    // "flash then stranded on a blank form" bug. SetPasswordRedirect's own
+    // fix (a "reached /set-password once" ref guard) is the real fix for
+    // that; `replace` here is just consistent with how this page always
+    // treats its post-success navigation as a one-way exit.
+    setTimeout(() => navigate(flavor === 'reset' ? '/' : '/membership', { replace: true }), 1200);
   };
 
   if (!session && grace && !linkError) {
@@ -74,7 +89,7 @@ export default function SetPassword() {
     return (
       <div className="card card-pad" style={{ maxWidth: 480, margin: '40px auto' }}>
         <h2 className="display" style={{ fontSize: 22 }}>✓ Password set</h2>
-        <p style={{ color: 'var(--ink-soft)' }}>Taking you to membership…</p>
+        <p style={{ color: 'var(--ink-soft)' }}>{flavor === 'reset' ? 'Taking you home…' : 'Taking you to membership…'}</p>
       </div>
     );
   }

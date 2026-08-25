@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { HashRouter, Routes, Route, Navigate, Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Layout } from './components/Layout';
@@ -8,7 +8,7 @@ import { ToastProvider } from './components/ui';
 import { isUnlocked } from './lib/store';
 import { useCapabilities } from './lib/capabilities';
 import { isSupabaseConfigured } from './lib/supabase';
-import { useSession, useAuthLoading, hasLikelySession, hasAuthCallbackInUrl, useRolesLoaded, useAal, initialSetPwKind } from './lib/auth';
+import { useSession, useAuthLoading, hasLikelySession, hasAuthCallbackInUrl, useRolesLoaded, useAal, initialSetPwKind, initialAuthCallbackType } from './lib/auth';
 import { needsMfaStepUp } from './lib/mfa-core';
 import { useAdminMfaSatisfied } from './lib/mfa';
 import { MyScoresBoot } from './lib/scores-slice';
@@ -261,6 +261,20 @@ function RequireFinanceAccess({ children }: { children: ReactNode }) {
  * (or immediately on an expired-link error), which HashRouter actually
  * follows (history.replaceState alone does not).
  *
+ * A `reachedRef` guard (UAT round 2 A-06-02) stops this effect from
+ * force-navigating BACK to /set-password after a legitimate post-success
+ * departure. `setpwKind` is a page-load-scoped constant that never clears
+ * itself once "consumed," so without the guard: SetPassword.tsx's
+ * post-`updateUser()` `navigate('/membership')` (or `/`) lands on the new
+ * route, this effect's dependency-array re-run sees `location.pathname !==
+ * '/set-password'` with `setpwKind` still truthy, and it immediately
+ * `navigate('/set-password', { replace: true })`s right back — remounting
+ * SetPassword fresh (blank fields, `done: false`) a few hundred ms after the
+ * "✓ Password set — taking you to membership…" flash. That IS the reported
+ * "flash then stranded on a blank set-password screen" symptom: it was never
+ * a race in SetPassword.tsx's own timeout/navigate call (that always fired
+ * correctly) — it was THIS component re-navigating back, one render later.
+ *
  * Reads the marker via `initialSetPwKind()` (auth.ts), NOT by re-parsing
  * `window.location.search` here, because the query param gets deleted below
  * once we land on /set-password — and Supabase's OWN implicit-grant handling
@@ -279,9 +293,18 @@ function SetPasswordRedirect() {
   const navigate = useNavigate();
   const location = useLocation();
   const setpwKind = initialSetPwKind();
+  // Persists across every route change for the life of this page load — this
+  // component is mounted once, as a sibling of <Layout> inside <HashRouter>,
+  // never inside <Routes>, so it never unmounts/remounts on navigation. Once
+  // we've legitimately reached /set-password, further navigation AWAY (the
+  // post-success redirect to Home/Membership) must never be treated as "the
+  // marker hasn't been used yet" again. See this component's doc comment
+  // above for the exact "flash then stranded" mechanism this prevents.
+  const reachedRef = useRef(false);
   useEffect(() => {
     if (!setpwKind) return;
     if (location.pathname === '/set-password') {
+      reachedRef.current = true;
       if (new URLSearchParams(window.location.search).has('setpw')) {
         const url = new URL(window.location.href);
         url.searchParams.delete('setpw');
@@ -291,8 +314,52 @@ function SetPasswordRedirect() {
       }
       return;
     }
+    if (reachedRef.current) return; // already used this marker — let the app navigate freely
     navigate('/set-password', { replace: true });
   }, [location.pathname, navigate, setpwKind]);
+  return null;
+}
+
+/** UAT round 2 A-01-02: a brand-new self-signup's email confirmation lands
+ *  with `#access_token=...&type=signup` — nothing routes that anywhere
+ *  special today, so it falls through to Home even though Gate.tsx's sign-up
+ *  form never collects dob/state/club/etc., meaning the profile is always
+ *  incomplete at this point. Sends a first-time confirmation to `/me`
+ *  (Profile) instead, once.
+ *
+ *  The `reachedRef` guard latches on ARRIVAL at `/me`, not on the moment
+ *  `navigate()` is called — mirroring SetPasswordRedirect above exactly,
+ *  and for the same reason: `auth-and-mfa.md`'s "HashRouter vs Supabase
+ *  implicit flow" documents that auth-js's own `window.location.hash = ''`
+ *  (fired after its `_getUser` network round trip) can bounce HashRouter
+ *  back to `/` a few hundred ms into the load, i.e. AFTER this effect first
+ *  runs. If the guard were set at dispatch time instead of on confirmed
+ *  arrival, that later bounce would land back on `/` with the guard already
+ *  "used" and nothing to retry it — the fix would silently do nothing. Since
+ *  `navigate()` updates `location.pathname` on the very next render (long
+ *  before that network-bound bounce can land), the effect reliably observes
+ *  `/me` and latches before the bounce ever has a chance to undo it — but
+ *  even if it somehow raced, latching on arrival rather than dispatch means
+ *  a bounce-back to `/` before that observation would simply let this
+ *  effect fire `navigate('/me')` again, never getting stuck.
+ *
+ *  Sits outside <Routes> (mounted once, as HashRouter's sibling), so it
+ *  never unmounts/remounts on navigation. Reset/invite links never carry
+ *  `type=signup` — they use the app's own `?setpw=...` marker via a custom
+ *  `redirectTo`, handled entirely by SetPasswordRedirect above, so the two
+ *  never compete for the same navigation. */
+function SignupLandingRedirect() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const isSignupConfirmation = initialAuthCallbackType() === 'signup';
+  const reachedRef = useRef(false);
+  useEffect(() => {
+    if (!isSignupConfirmation) return;
+    if (location.pathname === '/me') { reachedRef.current = true; return; }
+    if (reachedRef.current) return; // already redirected once — don't hijack subsequent navigation away from /me
+    if (location.pathname !== '/') return; // wait until settled on Home (Supabase's own hash-clear bounce lands here)
+    navigate('/me', { replace: true });
+  }, [isSignupConfirmation, location.pathname, navigate]);
   return null;
 }
 
@@ -331,6 +398,7 @@ export default function App() {
       <MyRegistrationsBoot />
       <HashRouter>
         <SetPasswordRedirect />
+        <SignupLandingRedirect />
         <Layout>
           <RouteErrorBoundary>
           <Suspense fallback={<PageFallback />}>

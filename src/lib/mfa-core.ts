@@ -59,3 +59,24 @@ export function adminMfaGate({ isAdmin, hasTotp, hasPasskey }: AdminMfaGateInput
   if (!isAdmin) return 'allow';
   return hasTotp || hasPasskey ? 'allow' : 'block';
 }
+
+/** Passkey satisfaction for the admin-pages gate (UAT round 2 A-11-02): true
+ *  if the account has ANY enrolled passkey CREDENTIAL (persists across
+ *  sign-in method — `supabase.auth.passkey.list()`, the same list
+ *  ProfilePasskeys.tsx renders) OR the CURRENT session was established via
+ *  passkey sign-in (the AMR exemption `needsMfaStepUp` also uses).
+ *
+ *  Split out as its own pure function because `useAdminMfaSatisfied`
+ *  (mfa.ts) used to derive `hasPasskey` from the session's AMR ONLY —
+ *  enrolling a passkey via ProfilePasskeys.tsx does not change how the
+ *  CURRENT session signed in, so an admin who enrolled a passkey mid-session
+ *  stayed gated until they signed out and back in with it. Credential
+ *  enrollment is the durable signal; AMR is kept as a fallback for the (rare)
+ *  case a passkey credential was later removed but the still-live session
+ *  that signed in with it should stay exempt. */
+export function hasPasskeySatisfaction(
+  hasPasskeyCredential: boolean,
+  authMethods: readonly string[] | null | undefined,
+): boolean {
+  return hasPasskeyCredential || !!authMethods?.includes(PASSKEY_AMR_METHOD);
+}

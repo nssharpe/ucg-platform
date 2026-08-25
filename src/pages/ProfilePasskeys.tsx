@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import type { PasskeyListItem } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { passkeyRegisterErrorMessage, defaultPasskeyFriendlyName } from '../lib/passkey-core';
+import { notifyMfaEnrollmentChanged } from '../lib/mfa';
 import { Modal } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 
@@ -65,6 +66,7 @@ export function PasskeysSection() {
     setAddBusy(false);
     toast('Passkey added — you can use it at sign-in.');
     await loadPasskeys();
+    notifyMfaEnrollmentChanged(); // UAT round 2 A-11-02: unlock admin pages immediately
   };
 
   const startRename = (pk: PasskeyListItem) => {
@@ -93,6 +95,7 @@ export function PasskeysSection() {
     if (error) { toast(`Could not remove: ${error.message}`, { variant: 'error' }); return; }
     toast(`Removed "${pk.friendly_name ?? 'passkey'}".`);
     await loadPasskeys();
+    notifyMfaEnrollmentChanged(); // UAT round 2 A-11-02: re-gate admin pages if that was their last credential
   };
 
   return (

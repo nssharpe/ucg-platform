@@ -56,22 +56,35 @@ export async function refreshAal(): Promise<void> {
 function notify() { listeners.forEach((l) => l()); }
 function notifyRoles() { roleListeners.forEach((l) => l()); }
 
-/** Read first/last name stashed by the sign-up form (Gate.tsx). */
-function stashedName(): [string, string] {
+/** Read first/last name for a brand-new signup. Prefers the localStorage
+ *  stash (Gate.tsx, same device/tab — set synchronously right before
+ *  `signUp()`, so it's available the instant this runs), falling back to the
+ *  `user_metadata` Gate.tsx ALSO passes via `signUp()`'s `options.data` (UAT
+ *  round 2 A-01-02). The metadata lives on the auth user server-side (already
+ *  present on the session's `user` object with no extra round trip), so it's
+ *  the only signal that survives a confirmation link clicked on a DIFFERENT
+ *  device/browser than the one sign-up started on — the localStorage stash
+ *  never existed there to begin with, which produced the "New Member"
+ *  default (`link_or_create_person`'s empty-args fallback) whenever that
+ *  happened. */
+function stashedName(user: Session['user']): [string, string] {
   try {
     const raw = localStorage.getItem('ucg-signup-name');
     if (raw) { const [f, l] = JSON.parse(raw); return [f ?? '', l ?? '']; }
   } catch { /* ignore */ }
-  return ['', ''];
+  const meta = user.user_metadata as { first_name?: string; last_name?: string } | undefined;
+  return [meta?.first_name ?? '', meta?.last_name ?? ''];
 }
 
-/** Read the person kind stashed by the sign-up form (Gate.tsx). */
-function stashedKind(): 'athlete' | 'coach' | null {
+/** Read the person kind for a brand-new signup — same stash-then-metadata
+ *  fallback as `stashedName` above, and for the same cross-device reason. */
+function stashedKind(user: Session['user']): 'athlete' | 'coach' | null {
   try {
     const raw = localStorage.getItem('ucg-signup-kind');
     if (raw === 'athlete' || raw === 'coach') return raw;
   } catch { /* ignore */ }
-  return null;
+  const meta = user.user_metadata as { kind?: string } | undefined;
+  return meta?.kind === 'athlete' || meta?.kind === 'coach' ? meta.kind : null;
 }
 
 /** Once per signed-in user: link/create their person row, then load roles. */
@@ -80,8 +93,8 @@ async function onAuthenticated(user: Session['user']) {
   linkedUserId = user.id;
   rolesLoaded = false; // new user — roles unknown until fetchMyRoles resolves below
   notifyRoles();
-  const [first, last] = stashedName();
-  const signupKind = stashedKind();
+  const [first, last] = stashedName(user);
+  const signupKind = stashedKind(user);
   const personId = await linkOrCreatePerson(first, last);
   if (personId) {
     localStorage.removeItem('ucg-signup-name');
@@ -137,12 +150,25 @@ function applySession(next: Session | null) {
   void refreshAal();
 }
 
+// True once a PASSWORD_RECOVERY auth event has been observed this page load
+// (UAT round 2 A-06-02). This event only ever fires for a genuine Supabase
+// recovery-type link — it's authoritative for "this is a password reset,"
+// independent of whether the `?setpw=reset` marker (initialSetPwKind below)
+// survived the redirect. It has to be a module-level flag (not derived from
+// `session`) because it's a transient EVENT, not a durable session property —
+// by the time SetPassword.tsx reads it, the onAuthStateChange callback that
+// set it has already returned.
+let sawPasswordRecoveryEvent = false;
+
 if (isSupabaseConfigured && supabase) {
   const bootSession = supabase.auth.getSession().then(({ data }) => {
     applySession(data.session);
     return data.session;
   });
-  supabase.auth.onAuthStateChange((_event, newSession) => applySession(newSession));
+  supabase.auth.onAuthStateChange((event, newSession) => {
+    if (event === 'PASSWORD_RECOVERY') sawPasswordRecoveryEvent = true;
+    applySession(newSession);
+  });
   // DEV-ONLY seeded auto-login. Dynamic import behind `import.meta.env.DEV` so
   // the dev-auth module (and its VITE_DEV_AUTH_* literals) is dead-code
   // eliminated from production builds — it is never bundled when DEV is false.
@@ -277,4 +303,35 @@ export function initialSetPwKind(): 'invite' | 'reset' | 'legacy' | null {
  *  used link) — captured once for the same reason as `initialSetPwKind`. */
 export function hasInitialLinkError(): boolean {
   return initialLinkError;
+}
+
+/** True once a PASSWORD_RECOVERY auth event has fired this page load. See the
+ *  module-level `sawPasswordRecoveryEvent` flag's comment above — this is the
+ *  authoritative reset signal `resolveSetPasswordFlavor` (set-password-core.ts)
+ *  uses ahead of the (possibly-stripped) `?setpw=reset` marker. Non-reactive:
+ *  callers that need to react to it (SetPassword.tsx) already re-render on
+ *  every auth state change via `useSession()`, which fires on the very same
+ *  event that sets this flag. */
+export function hasSeenPasswordRecoveryEvent(): boolean {
+  return sawPasswordRecoveryEvent;
+}
+
+// Captured ONCE at module load, same rationale as `initialSetPwParam` above:
+// the `type=` param on a Supabase auth-callback hash (`signup`, `magiclink`,
+// `recovery`, `invite`, …) distinguishes a brand-new self-signup email
+// confirmation from every other callback flavor. Reset/invite links never hit
+// this — they use the app's own `?setpw=...` query marker (a custom
+// `redirectTo`) specifically so they can be routed differently from a plain
+// signup confirmation, which uses Supabase's default redirect and therefore
+// keeps its default `#access_token=...&type=signup` shape.
+const initialAuthCallbackTypeMatch = /(?:^|[#&])type=([^&]+)/.exec(window.location.hash);
+const initialAuthCallbackTypeValue = initialAuthCallbackTypeMatch ? decodeURIComponent(initialAuthCallbackTypeMatch[1]) : null;
+
+/** Which `type=` a brand-new auth callback carried (`'signup'` for a fresh
+ *  self-signup email confirmation), or `null`. UAT round 2 A-01-02: used to
+ *  route a first-time signup confirmation to `/me` (their profile is always
+ *  incomplete — Gate.tsx's sign-up form never collects dob/state/etc.)
+ *  instead of Home. */
+export function initialAuthCallbackType(): string | null {
+  return initialAuthCallbackTypeValue;
 }
