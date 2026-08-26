@@ -50,7 +50,7 @@ import { invoiceTotal, invoiceSubtotal, invoiceDiscount } from './invoice-math';
 const NAVY: [number, number, number] = [30, 43, 56]; // #1E2B38 — headings/rules
 const BODY: [number, number, number] = [26, 26, 26]; // near-black — line-item text
 const MUTED: [number, number, number] = [90, 90, 90]; // secondary/meta text (~4.7:1 on white)
-const SITE_URL = 'unitedgymnastics.org';
+const SITE_URL = 'unitedclubgymnastics.org';
 const FOOTER_NOTE = `Service fees are non-refundable. Questions: ${SITE_URL}`;
 
 /** A negative amount (a discount row, or a refund's item/total line) renders
