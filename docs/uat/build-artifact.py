@@ -104,6 +104,7 @@ SETUP = [
     ("S-06", "Confirm email delivers to addresses you’ll actually read", "Lane E is worthless otherwise"),
     ("S-07", "Have a <b>second physical device</b> ready", "Lanes J, D and Z need it"),
     ("S-08", "✅ Nothing to do — the build stamp (v‹sha› · date) sits at the bottom of the nav, and in-app reports attach it automatically", "Findings pin to builds by themselves"),
+    ("S-09", "✅ Done — five account-less ZZTEST athletes for A-07 (<code>jzsharpe+avery/brooke/casey/devon/emery@gmail.com</code>); use these, never a real athlete. Re-run A-07 from scratch with <code>node scripts/reset-invite-testers.mjs prod</code>", "A-07 is repeatable and can’t reach a real inbox"),
 ]
 setup_html = "".join(
     f'<li><span class="sid">{i}</span><div><p class="do">{t}</p>'

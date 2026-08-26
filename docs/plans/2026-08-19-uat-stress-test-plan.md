@@ -83,6 +83,7 @@ Nate-only items from `docs/whats-next.md` §1.
 | S-06 | Confirm email will actually deliver to the addresses you'll check | Lane **E** is worthless if mail lands somewhere neither of you reads. Check spam folders once up front | ☐ |
 | S-07 | Have a **second physical device** ready (phone or tablet — not a resized window) | Lanes **J**, **D**, **Z** need it | ☐ |
 | S-08 | ✅ **Nothing to do** — the build stamp (`v<sha> · date`, the small line at the bottom of the nav) identifies the build, and every in-app report attaches it automatically. Glance at it only if you're curious | Findings pin to builds by themselves | ✅ |
+| S-09 | ✅ **Done 2026-08-26** — five account-less test athletes exist for lane **A-07**: `ZZTEST-Avery/Brooke/Casey/Devon/Emery Inviteme`, addressed `jzsharpe+<name>@gmail.com` (Avery–Devon on MIT, Emery club-less for the independent-athlete admin path). **Use these, never a real athlete** — editing a real one mailed somebody outside the org on 8/25. To re-run A-07 from scratch: `node scripts/reset-invite-testers.mjs prod` (deletes their auth users + unclaims the rows; the address list is hardcoded) | Lane **A-07** is repeatable and can't reach a real inbox | ✅ |
 
 ### Stripe test cards — use more than 4242
 
