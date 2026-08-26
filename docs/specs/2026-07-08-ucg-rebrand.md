@@ -1,5 +1,11 @@
 # UCG Rebrand — 2026 Brand Toolkit integration
 
+> **Canonical domain: `unitedclubgymnastics.org`** (goes live at the 2026-09-20 rebrand
+> announcement; empty until then). NOT `unitedgymnastics.org` — that wrong variant shipped in
+> the email footer/receipts until UAT A-01-01 caught it (fixed 2026-08-25). Any new
+> user-visible URL or email copy must use the full `unitedclubgymnastics.org`.
+
+
 Source: `C:\Users\nssha\Steinsharpe Dropbox\Nate Sharpe\Documents\Misc\Gymnastics\NAIGC\2026 UCG Brand Toolkit`
 (Design Guide PDF, Cheat Sheet, color swatches, licensed webfonts, logo/icon SVGs).
 Approved by Nate 2026-07-08: real fonts hosted on Supabase Storage; scope = app UI +
