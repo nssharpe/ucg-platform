@@ -14,6 +14,14 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
 
 ## 1. Nate-only action items (👤 — quick, unblock others)
 
+0. 🗓️ **2026-09-20 rebrand cutover (do together, day-of):** (a) Stripe public business
+   name → UCG (test + live; deferred because Stripe needs a live site); (b) reply-to /
+   director email on UCG-hosted events + the EventWizard default: `jzsharpe@gmail.com`
+   (dev-phase value, set 2026-08-25) → `info@unitedclubgymnastics.org` (grep
+   `jzsharpe@gmail.com` in src/ + the seeded events' `director`/`confirmation_email`
+   jsonb); (c) auth SMTP sender identity off naigc.org and kill its org-wide append
+   footer (the "the NAIGC" confidentiality boilerplate + NAIGC avatar on auth emails —
+   Google Admin → Gmail → Compliance → Append footer, or fold into the domain switch).
 1. 🟡 **P3 refund prerequisites:** "UCG - Main" `is_league_host` ✅ verified by Nate
    2026-08-19 (and the flagged club is now hidden from the member-facing Club Directory /
    Profile pickers — it isn't a real club). Still open: grant `refund_manager` to whoever

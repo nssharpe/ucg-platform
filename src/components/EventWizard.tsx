@@ -381,7 +381,7 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
   // the general-questions address when the seed/template didn't set one. An
   // edit of an existing event keeps whatever it already has (incl. blank).
   const [confirmationReplyTo, setConfirmationReplyTo] = useState(
-    seedEvt?.confirmationEmail?.replyTo ?? (isUcgHosted && !isEdit ? 'info@unitedgymnastics.org' : ''),
+    seedEvt?.confirmationEmail?.replyTo ?? (isUcgHosted && !isEdit ? 'jzsharpe@gmail.com' : ''),
   );
   const [confirmationPreview, setConfirmationPreview] = useState(false);
   // Disciplines & sessions
@@ -1119,7 +1119,7 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
       {/* Event director — hidden for UCG-hosted events (PM feedback
           2026-07-22): the Director of Nationals is always UCG itself, baked
           into `flipfestTemplate`/`nationalsTemplate` (director name "UCG",
-          email info@unitedgymnastics.org, no confirmation CC — the PM never
+          email jzsharpe@gmail.com, no confirmation CC — the PM never
           wants those). State still seeds from `seedEvt?.director` above and
           submit below still writes it unconditionally off that state, so the
           template-provided value round-trips even with the section hidden. */}
