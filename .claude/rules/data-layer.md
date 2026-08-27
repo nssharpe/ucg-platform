@@ -127,3 +127,16 @@ the script's upserts are idempotent, so just re-run.
 ⚠ 2026-07-28: staging's scaled tables were found already at 0 rows before seeding, so the
 documented Playwright E2E fixture baseline is not currently present. 👤 Nate should reseed before
 relying on `npm run test:e2e` against staging.
+
+## Permanent write failures must purge what they failed to write
+
+`handlePermanentWriteFailure` (supabase.ts) purges failed `registrations` upsert rows from the
+legacy array AND invalidates the slice tiers. The naive "resync everything" recovery does NOT
+work for slice-tiered tables — `syncFromSupabase` no longer covers them, so a locally-inserted
+row whose server write failed permanently survives as a phantom (UAT RT-01 2026-08-27: made the
+next save classify as a change-fee edit and orphaned cart lines that 409'd checkout). A table
+moved off the boot sync must get the same treatment here.
+
+Client `''` sentinels never reach FK columns: `registrationToRow` maps `clubId || null` — the
+empty-string "independent" sentinel is a CLIENT convention only (same trap class as the
+`paid_via` nullable note in registrations-and-camps.md).

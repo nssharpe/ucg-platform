@@ -67,6 +67,15 @@ Owner grant: full push-live authority; guard ask-tier overridden via `.claude/AL
 | E-01 "no disclaimer like other emails" | — | The confidentiality footer comes from naigc.org's mail infra on AUTH emails only; Resend emails never had it. Consistency arrives at the 9/20 cutover when that appender goes away | 🗓️ folded into whats-next §1.0 cutover item |
 | Sanctioning quorum "of 5" (pre-round-3, same evening) | S2 | Hardcoded `FALLBACK_TEAM_SIZE = 5` + admins allowed to vote | ✅ live team count via RPC; sanctioning-only voting (RLS); deadline editor; requester self-approval hole (reviewer finding) closed |
 
+**RT-01 follow-up (2026-08-27 morning):** independents' self-registration was STILL broken past
+the client gate — the `''` club sentinel violated `registrations_club_id_fkey` on every insert,
+and the write-queue's recovery left a phantom local row (registrations are slice-tiered, outside
+the resync), producing the bogus "change fee" toast and permanently-orphaned cart lines. Fixed
+(`c6b0754`): sentinel→NULL at `registrationToRow`, failure purge + slice invalidation in
+`handlePermanentWriteFailure`, `Register Self`/`Register Team` single-line buttons; stuck test
+cart repaired in prod. Membership page correctly offers no re-purchase for an active membership
+(expected, not a bug).
+
 Retests green 8/25-26: M-03, M-08, M-10 ($45), M-11, M-19, M-20, Z-04 flow, A-06 (Nate). Julia
 confirmed membership-welcome cc scheme correct.
 
