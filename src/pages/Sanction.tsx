@@ -292,14 +292,18 @@ export function SanctionRequestForm() {
     [db.clubs, caps.managedClubIds],
   );
 
-  // "Your sanction requests" (E-01-04) — computed before the manager-access
-  // gate below so it still renders for someone who has since lost manager
-  // access to every club but still has a request to check on, and so hook
-  // order stays stable regardless of which branch returns.
-  const ownRequests = useMemo(
-    () => ownSanctionRequestsOf(db.sanctionRequests ?? [], caps.personId, caps.managedClubIds),
-    [db.sanctionRequests, caps.personId, caps.managedClubIds],
-  );
+  // "Your sanction requests" (E-01-04) — computed directly in the render body,
+  // NOT memoized: `mutate()` (data-layer.md "in-place mutation trap") mutates
+  // `db.sanctionRequests` with `.push()`, which leaves the ARRAY REFERENCE
+  // unchanged, so a `useMemo` keyed on `db.sanctionRequests` would bail out on
+  // every submission after the first and keep showing a stale list even
+  // though `mutate()` does force a re-render. Cheap filter+sort over a
+  // handful of rows — no memo warranted, matching how `tally` below is
+  // computed fresh every render for the same reason. Placed before the
+  // manager-access gate so it still renders for someone who has since lost
+  // manager access to every club but still has a request to check on, and so
+  // hook order stays stable regardless of which branch returns.
+  const ownRequests = ownSanctionRequestsOf(db.sanctionRequests ?? [], caps.personId, caps.managedClubIds);
 
   // Gate: must be a club manager
   if (caps.managedClubIds.length === 0) {

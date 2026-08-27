@@ -3098,3 +3098,14 @@ Files touched: `supabase/functions/notify-sanction/index.ts`,
 `supabase/functions/_shared/notify-recipients.ts` (new), `tests/notify-recipients.test.ts` (new),
 `src/lib/sanction.ts`, `tests/sanction.test.ts`, `src/pages/Sanction.tsx`,
 `src/components/Layout.tsx`.
+
+**Post-review fix (advisor catch, before commit):** the first draft wrapped `ownRequests` in a
+`useMemo` keyed on `[db.sanctionRequests, caps.personId, caps.managedClubIds]`. That's exactly
+`data-layer.md`'s documented "in-place mutation trap" — `mutate()`'s `d.sanctionRequests.push(req)`
+leaves the array REFERENCE unchanged, so the memo bails out and keeps showing the pre-submission
+list even though `mutate()` does force a re-render (only masked in manual testing because a
+first-time requester has `sanctionRequests` absent from the loaded row, so `loadAll` never sets
+the key and the first push assigns a genuinely new array). Fixed by dropping the memo entirely —
+`ownSanctionRequestsOf(...)` is now called directly in the render body, matching how `tally` a
+few lines below it is already computed fresh every render for the same reason. Re-verified after
+the fix: build/eslint/86 files/1381 tests all still clean.
