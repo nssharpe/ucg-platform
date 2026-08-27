@@ -94,6 +94,18 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
 
 ## 3. Quality passes (pre- or just post-launch)
 
+0. 💬 **OPEN DECISION — should a Sanctioning Team member vote on their OWN request?**
+   Raised 2026-08-26 during UAT round 2; **deliberately deferred by Nate — revisit before
+   go-live.** Today nothing prevents it, and it is not flagged in the tally. It matters because
+   the team is 2 people (Nate + Julia, both also admins): one self-vote is half of the
+   unanimity that ⌈2/3 · 2⌉ now requires. Options: (a) leave as-is; (b) exclude the requester
+   from BOTH the tally and the required count — note the sharp edge, since that drops eligible
+   voters to 1 and the request then approves on the other member's single vote; (c) allow the
+   self-vote but render it visibly flagged in the tally. No code was written either way; the
+   quorum/eligibility fix (real team size from `user_roles`, sanctioning-only voting) shipped
+   without touching this.
+
+
 1. ✅ **UI/UX review fixes — COMPLETE 2026-07-26** ([task briefs](plans/2026-07-04-uiux-review-fixes.md),
   from the 2026-07-04 live review). All 14 tasks (O1, S1–S6, H1–H7) shipped to `main` and
   deployed; per-task detail and evidence live in the plan doc, not here. Headlines:
