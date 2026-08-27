@@ -2849,13 +2849,16 @@ async function exportCsv(db: ReturnType<typeof useDB>, event: Event) {
   const rows = [['Athlete', 'Club', 'Discipline', 'Level', 'Session', 'Events', 'Shirt', 'Dietary', 'Email', 'Phone', 'Emergency contact', 'Student', 'Region']];
   for (const r of filteredRegs) {
     const a = exportPeople.find((p) => p.id === r.athleteId)!;
-    const club = db.clubs.find((c) => c.id === r.clubId)!;
+    // Independents have no club row ('' / NULL clubId) — the old non-null
+    // assertion threw here and killed the WHOLE export the moment one
+    // independent was registered (independents-exist rule, sweep 2026-08-27).
+    const club = db.clubs.find((c) => c.id === r.clubId);
     rows.push([
-      `${a.firstName} ${a.lastName}`, club.name, r.discipline,
+      `${a.firstName} ${a.lastName}`, club?.name ?? 'Independent', r.discipline,
       db.levels.find((l) => l.id === r.levelId)?.name ?? '',
       event.sessions.find((s) => s.id === r.sessionId)?.name ?? '',
       r.apparatus.join('|'), a.shirt, a.dietary.join('|'), a.email, a.phone,
-      `${a.emergency.contact} ${a.emergency.phone}`, a.studentStatus, club.region,
+      `${a.emergency.contact} ${a.emergency.phone}`, a.studentStatus, club?.region ?? '',
     ]);
   }
   const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');

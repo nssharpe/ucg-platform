@@ -369,7 +369,7 @@ export function EventResults() {
                 {teamScores.map((t, i) => (
                   <tr key={t.clubId}>
                     <td><span className={`rank-chip r${i + 1}`}>{i + 1}</span></td>
-                    <td><strong>{db.clubs.find((c) => c.id === t.clubId)?.name}</strong></td>
+                    <td><strong>{db.clubs.find((c) => c.id === t.clubId)?.name ?? 'Independent'}</strong></td>
                     {events.map((ev) => <td key={ev.code} className="num score">{fmtScore(t.perApparatus[ev.code])}</td>)}
                     <td className="num score" style={{ fontSize: 15 }}>{fmtScore(t.total)}</td>
                   </tr>
