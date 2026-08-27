@@ -96,6 +96,24 @@ export function Layout({ children }: { children: ReactNode }) {
   const [reportOpen, setReportOpen] = useState(false);
   const currentClub = useCurrentClubId(caps.managedClubIds);
 
+  // Scroll to top on every route (pathname) change (UAT E-01-06): the app is
+  // a HashRouter SPA with no router-level scroll-restoration, so navigating
+  // from a long page to a short one otherwise leaves the viewport scrolled
+  // to whatever pixel offset the old page was at — reading as "every page I
+  // click to lands scrolled to the bottom." `.content`/`.main` have no
+  // `overflow`, so `window` is the real scroll container (verified against
+  // index.css). Keyed on `loc.pathname` only (not search/hash) — an
+  // in-page `?event=`/`?...=` deep link that merely preselects content
+  // (Club.tsx, Judge.tsx, MyRegistrations.tsx, Membership.tsx, Profile.tsx)
+  // never changes the pathname, so this effect leaves those alone. A
+  // same-page anchor-style scroll (e.g. Cart.tsx's receiptsRef, fired from a
+  // button click, not an effect) is similarly untouched. Runs in a plain
+  // `useEffect` (after paint), so a page's OWN post-mount scroll (Cart.tsx/
+  // ClubCart.tsx/ClubPurchaseHistory.tsx already call `window.scrollTo(0,0)`
+  // on mount) executes after this one and simply repeats the same value —
+  // never fights it.
+  useEffect(() => { window.scrollTo(0, 0); }, [loc.pathname]);
+
   // Close the drawer on navigation. Derive the close from a path change using
   // the store-previous-value pattern (setState during render bails out the
   // in-progress render) — this avoids both `set-state-in-effect` and the

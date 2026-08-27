@@ -2955,3 +2955,157 @@ Files touched: `src/lib/capabilities-core.ts`, `src/pages/Events.tsx`, `src/page
 `src/lib/write-queue.ts`, `tests/write-queue.test.ts`, `src/lib/pricing.ts`,
 `tests/pricing.test.ts`, `supabase/functions/_shared/stripe.ts`,
 `supabase/functions/create-checkout-session/index.ts`.
+
+## Sanction email/UX batch (UAT round 3, E-01-01/E-01-02, 2026-08-27)
+
+Owners' findings, all six implemented on `fix/sanction-round3`.
+
+### 1/2/3. `notify-sanction` audience + confirmation rewrite
+
+Full rewrite of `supabase/functions/notify-sanction/index.ts`. Prior header comment (lines 2-5)
+explicitly said the 'submitted' audience "stays admin-inclusive/informational by design" —
+that decision is now REVERSED per the owners' explicit round-3 instruction; rewrote the comment
+rather than leaving it to contradict the code.
+
+- **'submitted'** now emails `role = 'sanctioning'` ONLY (dropped `'admin'` from the
+  `user_roles` filter) — matches `sanction_votes_write`'s existing sanctioning-only voter set.
+  **Also** now emails the requester a submission confirmation (event name, kind, host club name
+  — a new `clubs` lookup, dates from the payload, "votes within 7 days," and a link to `/#/sanction`
+  — NOT `/#/sanctioning/:id`, since that page hard-gates on `isSanctioning` and a club-manager
+  requester isn't on the team and would just see "access required").
+- **'approved'** now ALSO emails the Sanctioning Team a short notice, independent of the
+  requester's own approval email.
+- **The team-send and requester-send are fully independent** in both branches — advisor review
+  caught that the ORIGINAL code's early returns (`if (ids.length === 0) return ...`, `if
+  (!EMAIL_RE.test(email)) return ...`) sat ABOVE the rest of the function, so a naive "add a
+  second recipient" edit would have let an empty/broken team silently swallow the requester's
+  email or vice versa. Restructured so each side resolves its own recipients, builds its own
+  message(s), sends, and catches its own failure — one side failing never blocks the other.
+- Extracted the validate+dedupe-by-email loop (now needed twice per event: submitted-team and
+  approved-team) into `supabase/functions/_shared/notify-recipients.ts`
+  (`dedupeEmailRecipients`), pure/dependency-free like `judge-entry-core.ts`, unit-tested in
+  `tests/notify-recipients.test.ts` (6 cases: valid build, malformed/missing email dropped,
+  case-insensitive dedupe keeping first occurrence, whitespace trim, missing names, empty input).
+- **Deploy note (not done this session — instructed not to run `supabase` CLI):**
+  `notify-sanction` needs `supabase functions deploy notify-sanction --project-ref
+  xogpiksqtkayxwmczlbx` (staging first), then `--project-ref wkyerxlgricfphopocoz` (prod).
+  `verify_jwt` is unaffected (not one of the three `--no-verify-jwt` functions).
+- **Known residual, recorded per advisor's note, not fixed here:** narrowing 'submitted' to
+  `sanctioning`-only means zero users holding that role today receive NO submission notice at
+  all (no admin fallback) — admins were the de facto backstop before. Owners were explicit about
+  the narrowing; this is a deploy/staffing consideration (someone needs the `sanctioning` role
+  assigned), not a code defect.
+
+### 4. "Your sanction requests" (E-01-04)
+
+Added to `src/pages/Sanction.tsx`'s `SanctionRequestForm` page (not a new route) — a
+`YourSanctionRequests` card rendered ABOVE both the manager-access gate and the form, so it's
+visible to anyone signed in with a request they can read even if they've since lost manager
+access to every club. New pure selector `ownSanctionRequestsOf(requests, personId,
+managedClubIds)` in `src/lib/sanction.ts`: filters to requests the person submitted OR that are
+hosted by a club they manage, sorted newest-submitted-first. This filter is necessary even
+though RLS (`sanction_requests_read`, `20260826000000`) already scopes a non-privileged caller's
+`db.sanctionRequests` read to exactly this set — an admin/Sanctioning Team caller's read includes
+EVERY request (that policy's admin/sanctioning branch), so without the client-side filter an
+admin visiting `/sanction` would see the entire league's queue under "Your requests." 8 vitest
+cases in `tests/sanction.test.ts` including one that specifically simulates an admin-shaped read
+returning nothing owned.
+
+Table: event name, submitted date, status badge (reusing the same tone mapping as
+`SanctioningQueue`'s), deadline, and for `approved` rows with a `createdEventId`, a link to
+`/events/:slug/host` (the correct host dashboard route — see #5).
+
+**Post-submit flow (E-01-06's "dead end"):** `submit()` no longer calls `navigate('/')`. It sets
+`justSubmitted` state, which swaps the (still-populated) form out for a success banner + "Submit
+another request" button — closes the dead end AND stops a stray second click on the old Submit
+button from creating a duplicate request (a real risk the plan's original "leave the form
+visible" framing didn't account for; advisor flagged it). `window.scrollTo({top:0,
+behavior:'smooth'})` fires alongside, since the Submit button sits at the bottom of a very long
+form and the banner renders at the top.
+
+### 5. Broken `/manage` link
+
+`grep -rn "/manage" supabase/functions/` found exactly one bad occurrence: the 'approved' email's
+`eventLink` in `notify-sanction/index.ts` (both the template literal and its adjacent comment).
+Fixed to `/events/:slug/host`, confirmed against `App.tsx`'s real routes (both `/manage` and
+`/host` exist — the bug was the wrong one being linked, not a missing route) and against
+`EventHostPage`'s gate (`canManage = isEventHost(event.id) || isSanctioning`, and
+`isEventHost` includes `managedClubIds.includes(event.hostClubId)`) — a sanction requester,
+being the host club's manager, does get a working host dashboard at that link. No other
+transactional email had the same mistake (`request-manager-access` links `/manager-access/:token`,
+unrelated).
+
+### 6. Scroll-to-top on route change
+
+Confirmed by grep (`scrollTo|ScrollRestoration` across `App.tsx`/`Layout.tsx`/`main.tsx`) that no
+route-level scroll-reset existed at all — only three pages (`Cart.tsx`, `ClubCart.tsx`,
+`ClubPurchaseHistory.tsx`) had their own mount-time `window.scrollTo(0,0)`. Fixed globally with
+one `useEffect(() => window.scrollTo(0,0), [loc.pathname])` in `Layout.tsx` (`loc` already
+destructured from `useLocation()` there). Verified `.content`/`.main`/`.shell` carry no
+`overflow` in `index.css`, so `window` is the real scroll container — `window.scrollTo` isn't a
+no-op. Keyed on `pathname` only, not search/hash, so it doesn't fire on `?event=`-style
+preselect deep-links (`Club.tsx`, `Judge.tsx`, `MyRegistrations.tsx`, `Membership.tsx`,
+`Profile.tsx` — none of them `scrollIntoView`, they only preselect state) or on
+`receiptsRef.scrollIntoView` (Cart.tsx, button-click-driven, not an effect) — no opt-out
+mechanism was needed, so none was built. Runs as a plain `useEffect` (after paint), so the three
+pages' own post-mount `scrollTo(0,0)` calls execute after this one and just repeat the same
+value — verified they're not fighting it.
+
+Verified live via dev server (`ucg-dev`, port 5173): scrolled to y=400, opened the mobile nav
+drawer, tapped a nav link — `window.scrollY` was 0 immediately after the route change (plus the
+drawer closed, matching pre-existing behavior).
+
+### Responsive sweep (ui-brand-and-layout.md, required for the new "Your sanction requests" table)
+
+Ran against the live dev server. `scrollWidth`/`clientWidth` at each width, WITH a synthetic
+worst-case injection (a very long event name in the new table, plus the success banner) present
+on the actual `/sanction` page:
+
+- 375×812: 375 / 375
+- 768×1024: 753 / 753
+- 1280×800: 1265 / 1265
+- 1440×900: 1425 / 1425
+
+No horizontal overflow at any width. The new table wraps in its own `overflow-x:auto` div
+(unlike `SanctioningQueue`'s existing tables, which don't) — confirmed structurally: with the
+long-name row injected, the wrapper div stayed at 345px while the table itself measured 493px,
+scrolling internally rather than pushing the page wide.
+
+Mobile nav drawer (375px): hamburger opens (`.sidebar.open` + `.nav-overlay` both present),
+Escape closes, link-tap navigates AND closes. Contrast: reused only pre-vetted tokens — the
+banner's `border-left` uses `--teal-900` (documented "OK as text on white/light-blue," used here
+as a border, an even lower bar) and its body text uses `--ink-soft`, already used throughout this
+same page (`.page-sub`) — no new fg/bg pairing introduced.
+
+**Found, NOT fixed (out of scope, pre-existing, unrelated to any file this task touched):**
+`SanctioningQueue`'s "Decided" table (`src/pages/Sanction.tsx`) overflows badly at 375px —
+measured `scrollWidth: 933` against `clientWidth: 375` with real seed data (two approved MIT
+Gymnastics Club requests) on screen. Its tables aren't wrapped in `overflow-x:auto` the way the
+new "Your sanction requests" table is. Flagging for a separate pass — not touched here since it's
+outside this task's file list and would have grown the diff past a "small, surgical" scroll fix.
+
+### Verification
+
+`npm run build` — clean (`tsc -b && vite build`; PWA precache regenerated; dev-auth firewall
+check passed, no `VITE_DEV_AUTH`/`initDevAuth` in `dist/assets`). `npx eslint` on every touched
+file (`src/components/Layout.tsx`, `src/lib/sanction.ts`, `src/pages/Sanction.tsx`,
+`supabase/functions/notify-sanction/index.ts`, `supabase/functions/_shared/notify-recipients.ts`,
+`tests/sanction.test.ts`, `tests/notify-recipients.test.ts`) — zero errors/warnings. `npx vitest
+run` — 86 files / 1381 tests, all green (12 new: 6 `dedupeEmailRecipients` cases + 6+
+`ownSanctionRequestsOf` cases added to the existing `sanction.test.ts`).
+
+Files touched: `supabase/functions/notify-sanction/index.ts`,
+`supabase/functions/_shared/notify-recipients.ts` (new), `tests/notify-recipients.test.ts` (new),
+`src/lib/sanction.ts`, `tests/sanction.test.ts`, `src/pages/Sanction.tsx`,
+`src/components/Layout.tsx`.
+
+**Post-review fix (advisor catch, before commit):** the first draft wrapped `ownRequests` in a
+`useMemo` keyed on `[db.sanctionRequests, caps.personId, caps.managedClubIds]`. That's exactly
+`data-layer.md`'s documented "in-place mutation trap" — `mutate()`'s `d.sanctionRequests.push(req)`
+leaves the array REFERENCE unchanged, so the memo bails out and keeps showing the pre-submission
+list even though `mutate()` does force a re-render (only masked in manual testing because a
+first-time requester has `sanctionRequests` absent from the loaded row, so `loadAll` never sets
+the key and the first push assigns a genuinely new array). Fixed by dropping the memo entirely —
+`ownSanctionRequestsOf(...)` is now called directly in the render body, matching how `tally` a
+few lines below it is already computed fresh every render for the same reason. Re-verified after
+the fix: build/eslint/86 files/1381 tests all still clean.

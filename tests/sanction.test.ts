@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   tallyVotes, nextSanctionId, stateCode,
   deadlineEditable, deadlineToLocalInputValue, localInputValueToDeadlineISO,
+  ownSanctionRequestsOf,
 } from '../src/lib/sanction';
 
 const v = (n: number, val: 'approve' | 'reject' | 'abstain') =>
@@ -164,5 +165,46 @@ describe('sanction ids', () => {
     expect(nextSanctionId(2026, 'Ohio', ids)).toBe('2026_OH_003');
     expect(nextSanctionId(2026, 'Texas', ids)).toBe('2026_TX_002');
     expect(nextSanctionId(2026, 'California', ids)).toBe('2026_CA_001');
+  });
+});
+
+describe('ownSanctionRequestsOf (UAT E-01-04, "Your sanction requests")', () => {
+  type Req = { id: string; requesterPersonId: string | null; hostClubId: string; submittedAt?: string | null };
+  const reqs: Req[] = [
+    { id: 'r1', requesterPersonId: 'p-me', hostClubId: 'club-a', submittedAt: '2026-08-01T00:00:00Z' },
+    { id: 'r2', requesterPersonId: 'p-other', hostClubId: 'club-b', submittedAt: '2026-08-02T00:00:00Z' },
+    { id: 'r3', requesterPersonId: 'p-other', hostClubId: 'club-c', submittedAt: '2026-08-03T00:00:00Z' },
+  ];
+
+  it('returns nothing for a signed-out (null personId) caller', () => {
+    expect(ownSanctionRequestsOf(reqs, null, [])).toEqual([]);
+  });
+
+  it('includes requests the person submitted', () => {
+    const out = ownSanctionRequestsOf(reqs, 'p-me', []);
+    expect(out.map((r) => r.id)).toEqual(['r1']);
+  });
+
+  it('includes requests for a club the person manages, even if they did not submit it', () => {
+    const out = ownSanctionRequestsOf(reqs, 'p-me', ['club-c']);
+    expect(out.map((r) => r.id).sort()).toEqual(['r1', 'r3']);
+  });
+
+  it('excludes requests neither submitted by nor hosted by a managed club', () => {
+    const out = ownSanctionRequestsOf(reqs, 'p-me', []);
+    expect(out.some((r) => r.id === 'r2')).toBe(false);
+  });
+
+  it('does NOT return every request just because the caller is an admin/sanctioning reader — only their own', () => {
+    // Simulates an admin whose db.sanctionRequests read includes the whole
+    // league (RLS admin/sanctioning branch) but who manages no club and
+    // submitted nothing themselves.
+    const out = ownSanctionRequestsOf(reqs, 'p-admin', []);
+    expect(out).toEqual([]);
+  });
+
+  it('sorts newest-submitted-first', () => {
+    const out = ownSanctionRequestsOf(reqs, 'p-other', []);
+    expect(out.map((r) => r.id)).toEqual(['r3', 'r2']);
   });
 });
