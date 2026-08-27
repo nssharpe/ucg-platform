@@ -98,8 +98,9 @@ Deno.serve(async (req) => {
   let closures = 0;
   const failures: string[] = [];
 
-  // Sanctioning Team + admin recipients (same resolution as notify-sanction's
-  // 'submitted' branch) — fetched once and reused across all requests/stages.
+  // Sanctioning Team recipients ONLY (role = 'sanctioning' — see
+  // resolveSanctioningTeam's doc comment for why this no longer includes
+  // admins) — fetched once and reused across all requests/stages.
   const teamRecipients = await resolveSanctioningTeam(db);
 
   for (const req of requests ?? []) {
@@ -166,7 +167,8 @@ Deno.serve(async (req) => {
         // Auto-finalization is deliberately out of scope for this task: the vote
         // page's tallyVotes() resolves at-deadline outcomes only when the page
         // is opened (Sanction.tsx), so this nudge exists to get a Sanctioning
-        // Team member / admin to open the vote page and finalize the decision.
+        // Team member to open the vote page and finalize the decision (only a
+        // sanctioning voter can trigger this — see resolveSanctioningTeam).
         bodyHtml: `<p>Hello,</p>
 <p>Voting has closed for <strong>${label}</strong>. Open the vote page to finalize the decision.</p>`,
         cta: { text: 'Open vote page', href: reqLink },
@@ -375,14 +377,26 @@ Deno.serve(async (req) => {
   });
 });
 
-/** Sanctioning Team + admin people, deduped by lowercased email (mirrors
- *  notify-sanction's 'submitted' recipient resolution). Includes each
- *  person's auth user id so callers can filter out those who've already
- *  voted on a given request. */
+/** Sanctioning Team members ONLY (role = 'sanctioning'), deduped by
+ *  lowercased email. Includes each person's auth user id so callers can
+ *  filter out those who've already voted on a given request.
+ *
+ *  Was 'sanctioning' + 'admin' (mirroring notify-sanction's 'submitted'
+ *  recipient resolution) until UAT round 2 (2026-08-26): the owners decided
+ *  only the 'sanctioning' role may cast a vote (`sanction_votes_write`,
+ *  20260826000000), so an admin without that role literally cannot act on
+ *  either a "you haven't voted" nag (3d/1d) OR a "voting closed, open the
+ *  page to finalize" nudge (finalization only happens as a side effect of
+ *  (re)casting a vote in Sanction.tsx's castVote — an admin-only viewer has
+ *  no vote control to do that with). Narrowed to sanctioning-only for ALL
+ *  THREE reminder stages this function sends, not just the 3d/1d nag.
+ *  notify-sanction's 'submitted' email (a different, one-time "new request"
+ *  notice, not a repeating vote-chase) is UNCHANGED and still includes
+ *  admins — informational, not an unactionable nag. */
 async function resolveSanctioningTeam(
   db: SupabaseClient,
 ): Promise<Array<Recipient & { userId: string }>> {
-  const { data: roleRows } = await db.from('user_roles').select('user_id').in('role', ['sanctioning', 'admin']);
+  const { data: roleRows } = await db.from('user_roles').select('user_id').eq('role', 'sanctioning');
   const ids = (roleRows ?? []).map((r: { user_id: string }) => r.user_id);
   if (ids.length === 0) return [];
   const { data: people } = await db

@@ -3,16 +3,16 @@
 // SanctionVotePage (/sanctioning/:requestId).
 // See docs/specs/2026-06-18-event-management.md.
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { mutate, useDB } from '../lib/store';
-import { pushSanctionRequest, pushSanctionVote, pushEvent, notifySanction } from '../lib/supabase';
+import { pushSanctionRequest, pushSanctionVote, pushEvent, notifySanction, sanctioningTeamSize } from '../lib/supabase';
 import { useCapabilities } from '../lib/capabilities';
 import { seasonForDate, clubHasActiveMembership } from '../lib/capabilities-core';
 import { useSession } from '../lib/auth';
 import { Badge, Combo, Field } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
-import { tallyVotes, nextSanctionId } from '../lib/sanction';
+import { tallyVotes, nextSanctionId, deadlineEditable, deadlineToLocalInputValue, localInputValueToDeadlineISO } from '../lib/sanction';
 import { RIBBON_OPTIONS, DEFAULT_RIBBON } from '../lib/ribbons';
 import { STATE_REGIONS, DISCIPLINES, SHIRT_SIZES } from '../lib/types';
 import { timezoneForState } from '../lib/timezone';
@@ -769,6 +769,12 @@ export function SanctionVotePage() {
 
   const [voteChoice, setVoteChoice] = useState<'approve' | 'reject' | 'abstain' | ''>('');
   const [comment, setComment] = useState('');
+  // Voting-deadline editor (owners' decision 2026-08-26, scope addition to
+  // the sanction-quorum fix). Draft-on-edit rather than an effect that syncs
+  // off `request?.deadlineAt` — the draft is only ever seeded when "Edit" is
+  // clicked, so there's no synchronous setState-in-effect to avoid.
+  const [editingDeadline, setEditingDeadline] = useState(false);
+  const [deadlineDraft, setDeadlineDraft] = useState('');
   // Phase 4 (data-layer-scale.md): db.people at boot no longer covers the
   // whole league — the requester and every voter can be from any club. Full
   // rows (not just names) since the voter match below needs authUserId.
@@ -783,14 +789,19 @@ export function SanctionVotePage() {
   const voterId = session?.user?.id ?? caps.personId ?? 'unknown';
   const myVote = allVotes.find((v) => v.voterUserId === voterId);
 
-  // Team size: count distinct people with sanctioning role.
-  // We can't easily query user_roles client-side without an async fetch, so
-  // we use a reasonable default and mark for follow-up.
-  // TODO: real team size from user_roles (needs fetchAllRoles or a dedicated count)
-  const FALLBACK_TEAM_SIZE = 5;
-  // If we can see distinct voters across all sanction votes, use that as a floor
-  const distinctVoters = new Set((db.sanctionVotes ?? []).map((v) => v.voterUserId));
-  const teamSize = Math.max(FALLBACK_TEAM_SIZE, distinctVoters.size);
+  // Team size: the LIVE count of user_roles.role = 'sanctioning' (owners'
+  // decision 2026-08-26, UAT round 2) — never a hardcoded fallback. RLS
+  // (roles_self_read) doesn't let a non-admin sanctioning member count every
+  // role row directly, so this goes through the SECURITY DEFINER RPC
+  // `sanctioning_team_size()`. Fetched once per request view; `null` means
+  // "unavailable" (loading, or the RPC errored) — tallyVotes treats `null`
+  // as "disable early approval," never guesses a number.
+  const [teamSize, setTeamSize] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void sanctioningTeamSize().then((n) => { if (!cancelled) setTeamSize(n); });
+    return () => { cancelled = true; };
+  }, [requestId]);
 
   const nowISO = new Date().toISOString();
   const tally = request?.deadlineAt
@@ -820,7 +831,7 @@ export function SanctionVotePage() {
   const requester = request.requesterPersonId ? adminPeopleRows.find((pp) => pp.id === request.requesterPersonId) : null;
 
   const castVote = () => {
-    if (!voteChoice) return;
+    if (!voteChoice || !caps.canVoteSanction) return; // belt-and-suspenders; RLS is authoritative
     const vote: SanctionVote = {
       id: myVote?.id ?? genId('sv'),
       requestId: request.id,
@@ -956,6 +967,33 @@ export function SanctionVotePage() {
 
   const isDecided = request.status === 'approved' || request.status === 'rejected';
 
+  // Voting-deadline editor (owners' decision 2026-08-26). deadlineDraft's
+  // ISO parse is recomputed on every keystroke rather than only on save so
+  // the "this deadline is in the past" warning updates live.
+  const deadlineDraftISO = deadlineDraft ? localInputValueToDeadlineISO(deadlineDraft) : null;
+  // Reuses the already-computed `nowISO` (declared above) rather than a
+  // fresh Date.now() call — react-hooks/purity flags calling an impure
+  // function directly during render.
+  const deadlineDraftIsPast = !!deadlineDraftISO && Date.parse(deadlineDraftISO) < Date.parse(nowISO);
+  const startEditDeadline = () => {
+    setDeadlineDraft(deadlineToLocalInputValue(request.deadlineAt));
+    setEditingDeadline(true);
+  };
+  const saveDeadline = () => {
+    const iso = localInputValueToDeadlineISO(deadlineDraft);
+    if (!iso) { toast('Enter a valid deadline.', { variant: 'error' }); return; }
+    const applied = mutate((d) => {
+      const idx = (d.sanctionRequests ?? []).findIndex((r) => r.id === request.id);
+      if (idx >= 0) d.sanctionRequests![idx] = { ...d.sanctionRequests![idx], deadlineAt: iso };
+    });
+    if (!applied) return; // offline read-only gate — don't push/claim success
+    pushSanctionRequest({ ...request, deadlineAt: iso });
+    setEditingDeadline(false);
+    toast('Voting deadline updated.');
+    // tally recomputes on the next render straight off request.deadlineAt
+    // (mutate()'s listeners force a re-render via useDB) — no extra state.
+  };
+
   // Format a detail row
   const detail = (label: string, value: unknown) => {
     if (value === null || value === undefined || value === '') return null;
@@ -1061,7 +1099,7 @@ export function SanctionVotePage() {
               </div>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 24, fontWeight: 700 }}>{tally.cast}</div>
-                <div style={{ fontSize: 12, color: 'var(--ink-soft)' }}>of {teamSize}</div>
+                <div style={{ fontSize: 12, color: 'var(--ink-soft)' }}>of {teamSize ?? '—'}</div>
               </div>
             </div>
             <div style={{ fontSize: 14 }}>
@@ -1079,10 +1117,56 @@ export function SanctionVotePage() {
                 </span>
               )}
             </div>
+            {teamSize === null && (
+              <p style={{ fontSize: 13, color: 'var(--coral-text)', marginTop: 8 }}>
+                Team size unavailable — early approval disabled. The at/after-deadline majority
+                decision still applies.
+              </p>
+            )}
+          </div>
+
+          {/* Voting deadline (owners' decision 2026-08-26): a Sanctioning
+              Team member (canVoteSanction) may move the deadline while the
+              request is still voting — e.g. to unblock a stuck vote by
+              moving it into the past. Admin-only viewers and decided
+              requests get a read-only value. */}
+          <div className="card card-pad" style={{ marginBottom: 16 }}>
+            <h3 className="card-title">Voting Deadline</h3>
+            {editingDeadline ? (
+              <>
+                <Field label={`Deadline (${Intl.DateTimeFormat().resolvedOptions().timeZone})`}>
+                  <input
+                    className="input"
+                    type="datetime-local"
+                    value={deadlineDraft}
+                    onChange={(e) => setDeadlineDraft(e.target.value)}
+                  />
+                </Field>
+                {deadlineDraftIsPast && (
+                  <p style={{ fontSize: 13, color: 'var(--warn)', marginTop: 4 }}>
+                    This deadline is in the past — the vote will be decided by a simple majority
+                    of votes already cast.
+                  </p>
+                )}
+                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                  <button className="btn primary" onClick={saveDeadline}>Save</button>
+                  <button className="btn ghost" onClick={() => setEditingDeadline(false)}>Cancel</button>
+                </div>
+              </>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ fontSize: 14 }}>
+                  {request.deadlineAt ? new Date(request.deadlineAt).toLocaleString() : 'Not set'}
+                </span>
+                {deadlineEditable(request.status, caps.canVoteSanction) && (
+                  <button className="btn small ghost" onClick={startEditDeadline}>Edit</button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Cast / change vote */}
-          {!isDecided && (
+          {!isDecided && caps.canVoteSanction && (
             <div className="card card-pad" style={{ marginBottom: 16 }}>
               <h3 className="card-title">{myVote ? 'Change Your Vote' : 'Cast Your Vote'}</h3>
               {myVote && (
@@ -1109,6 +1193,13 @@ export function SanctionVotePage() {
               <button className="btn primary" onClick={castVote} disabled={!voteChoice} style={{ marginTop: 8 }}>
                 {myVote ? 'Update Vote' : 'Submit Vote'}
               </button>
+            </div>
+          )}
+          {!isDecided && !caps.canVoteSanction && (
+            <div className="card card-pad" style={{ marginBottom: 16 }}>
+              <p style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
+                Voting is limited to the Sanctioning Team.
+              </p>
             </div>
           )}
 

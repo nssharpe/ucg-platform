@@ -2634,3 +2634,176 @@ this fix, flagging for a future pass if it bothers anyone in practice.
 Verification: `npm run build` (zero TS errors), `npx eslint src/pages/Club.tsx src/lib/pricing.ts
 tests/pricing.test.ts` (zero errors/warnings), `npx vitest run` — 1340/1340 passed across 85 files
 (+6 new `clubPurchasedAddonUnits` cases in `tests/pricing.test.ts`).
+
+### Sanction voting quorum fix (2026-08-26, branch `fix/sanction-quorum`, off `main`)
+
+**The bug (UAT round 2).** `Sanction.tsx` hardcoded `FALLBACK_TEAM_SIZE = 5` (with a live TODO)
+and floored the team size at that constant, so `tallyVotes`'s early-approval threshold
+(`ceil(2/3·teamSize)`) demanded 4 approvals against the real 2-person Sanctioning Team —
+mathematically unreachable, blocking early approval outright. Separately, `capabilities-core.ts`'s
+`isSanctioning = isAdmin || roles.includes('sanctioning')` and `sanction_votes_write`'s
+`role in ('admin','sanctioning')` let ALL 4 admins vote, not just the 2 actual Sanctioning Team
+members.
+
+**Owners' decisions implemented exactly:** team size = the live count of
+`user_roles.role = 'sanctioning'`, never a hardcoded fallback; only the `'sanctioning'` role may
+vote (admins keep full visibility, not vote authority — an admin who also holds `'sanctioning'`
+votes normally); unanimity at small team sizes (`ceil(2/3·2) = 2`) is intentional, no special case.
+
+**`user_roles` RLS check (required by the brief):** `roles_self_read`
+(`20260601000002_rls.sql`) is `user_id = auth.uid() or is_admin()` — a non-admin sanctioning
+member can only read THEIR OWN role row, not count every sanctioning row. So a plain client-side
+count isn't possible; added the SECURITY DEFINER RPC `sanctioning_team_size()` (same fail-closed
+shape as `next_invoice_number`/`list_sanctioning_team`: `is_admin() or auth_has_role('sanctioning')`
+gate, `set search_path = public, pg_temp`, PUBLIC/anon execute revoked, `authenticated` granted).
+
+**Files changed:**
+- `src/lib/sanction.ts` — `tallyVotes(votes, teamSize: number | null, nowISO, deadlineISO)`:
+  `teamSize: null` (RPC unavailable) disables early approval entirely without guessing a number;
+  the at/after-deadline majority path is unaffected. Also adds three pure helpers for the
+  deadline-editor scope addition below: `deadlineEditable(status, canVoteSanction)`,
+  `deadlineToLocalInputValue`/`localInputValueToDeadlineISO` (real UTC-instant to
+  browser-local `datetime-local` conversion).
+- `src/lib/capabilities-core.ts` — new `canVoteSanction: boolean` capability
+  (`roles.includes('sanctioning')`, admin alone does NOT grant it). `isSanctioning` is UNCHANGED
+  (still `isAdmin || roles.includes('sanctioning')` — visibility only: queue/detail/tally).
+- `src/lib/supabase.ts` — `sanctioningTeamSize(): Promise<number | null>`, wraps the new RPC;
+  returns `null` (never a guessed number) on error/unconfigured.
+- `src/pages/Sanction.tsx` — deletes `FALLBACK_TEAM_SIZE` and the `distinctVoters` floor;
+  `SanctionVotePage` fetches team size once per request view via a plain `useState`/`useEffect`
+  (no new store slice, per the brief). Vote controls (radio group + Cast/Update button) gated on
+  `caps.canVoteSanction`; an admin-without-sanctioning sees "Voting is limited to the Sanctioning
+  Team." instead. Tally card shows "team size unavailable — early approval disabled" when
+  `teamSize === null`. New "Voting Deadline" card (scope addition, see below).
+- `supabase/functions/scheduled-dispatch/index.ts` — `resolveSanctioningTeam`'s query narrowed
+  from `role in ('sanctioning','admin')` to `role = 'sanctioning'` only, applied to ALL THREE
+  reminder stages it feeds (3d/1d "you haven't voted" + "voting closed, finalize") — an admin
+  without the sanctioning role can neither cast a vote nor finalize one (finalization is only a
+  side effect of (re)casting a vote in `Sanction.tsx`'s `castVote`), so nagging them was never
+  actionable for either kind of reminder, not just the 3d/1d one.
+- `supabase/functions/notify-sanction/index.ts` — comment-only clarification; the 'submitted'/
+  'approved'/'rejected' recipient audiences are UNCHANGED per the brief (informational, admins may
+  legitimately stay on them).
+- New migration `supabase/migrations/20260826000000_sanction_voting_lockdown.sql` (see below).
+- `supabase/README.md` — migration table row added.
+- Tests: `tests/sanction.test.ts` (teamSize-2/3 cases, `teamSize: null` cases,
+  `deadlineEditable`, the deadline to local-input conversion incl. a timezone-independent
+  round-trip), `tests/lib/capabilities-core.test.ts` (`canVoteSanction` admin-only/
+  sanctioning/admin+sanctioning/neither).
+
+**Deviation worth flagging:** the brief said the notification-recipient fix was scoped to "the
+`scheduled-dispatch` voting-reminder" (singular). That function actually sends THREE stages off
+the same `teamRecipients` list — 3d, 1d, and "voting closed, finalize." I narrowed all three, not
+just 3d/1d, because the "closed" nudge is exactly as unactionable for an admin-only recipient as
+the 3d/1d nag: `Sanction.tsx` has no separate "finalize" control — the only way a decided-at-
+deadline tally gets written is a sanctioning voter (re)casting their own vote, which an admin
+without that role literally cannot do. Sending it to an admin who can't act on it seemed clearly
+wrong given the explicit "an admin who can't vote must not be nagged to vote" principle, but
+flagging the interpretation call in case the controller wants notify-sanction-style admin-
+inclusive behavior there instead.
+
+### Scope addition: Sanctioning Team deadline editor (same session, owners approved 2026-08-26)
+
+Added mid-task by the controller: a Sanctioning Team member can move a request's voting deadline
+from the vote page (unblocks a stuck vote by moving the deadline into the past).
+
+- Gated on `canVoteSanction` (not `isSanctioning`) and `status === 'voting'` via the new pure
+  `deadlineEditable(status, canVoteSanction)` — an admin-only viewer or a decided request gets a
+  read-only value, never the Edit button.
+- **RLS finding (per the brief's "check first"):** `sanction_requests_rw`
+  (`20260618200000_event_management.sql`) is already a single `for all` policy admitting
+  `role in ('admin','sanctioning')` with NO status restriction — a plain sanctioning caller can
+  ALREADY update `deadline_at` (or any other column) on any row. **No RLS change was needed** for
+  this feature; documented this finding in the new migration's header comment and in
+  `supabase/README.md` rather than silently narrowing a pre-existing broad policy that governs
+  more than just this one field (out of scope for this fix).
+- `deadline_at` is a REAL UTC instant (`addDays(nowISO, 7)` via `toISOString()`), NOT the
+  naive-local wall-clock convention `regOpens`/`finalsLineupDeadlineAt` use elsewhere in the app
+  (see `toDatetimeLocalValue`'s doc comment in `events-core.ts`) — so the `datetime-local` input
+  needed a REAL zone conversion (`deadlineToLocalInputValue`/`localInputValueToDeadlineISO`), not
+  a truncation. Labeled with the viewer's actual browser IANA zone
+  (`Intl.DateTimeFormat().resolvedOptions().timeZone`), matching the brief's "viewer's local
+  timezone" instruction — this is deliberately DIFFERENT from the rest of the app's
+  `(event's derived timezone)` labeling convention (`EventWizard.tsx`'s `regOpens`/
+  `finalsLineupDeadlineAt` fields), which is correct there only because those fields are
+  naive-local-to-the-EVENT, not real instants.
+- Setting a past deadline is allowed and not validated away; an inline warning shows when the
+  draft value is in the past ("the vote will be decided by a simple majority of votes already
+  cast").
+- Save writes `deadline_at` via a whole-row `mutate()` + `pushSanctionRequest(...)`, mirroring
+  every other write in this file (`castVote`/`resolveRequest`). No extra state needed for the
+  tally to pick up the new deadline: `tally` is computed directly in the render body off
+  `request.deadlineAt` (never memoized), and `mutate()`'s listener notification (`useDB`'s
+  `useSyncExternalStore`) forces the re-render.
+- Failure surfacing: relies on the existing write-queue's `classifyWriteError` + boot-wired error
+  toast (same as every other `push*` call in this file, none of which manually catch either) —
+  did not add a bespoke try/catch since that would diverge from the established pattern here.
+
+**A purity lint catch worth noting for future sessions:** `react-hooks/purity` flags a bare
+`Date.now()` call directly in a render body ("Cannot call impure function during render") but did
+NOT flag the pre-existing `const nowISO = new Date().toISOString();` a few lines above it — the
+rule appears to specifically pattern-match `Date.now`/`Math.random`-style well-known impure
+globals rather than catching `new Date()` generally. Fixed by reusing the already-computed
+`nowISO` (`Date.parse(nowISO)`) instead of a second `Date.now()` call, rather than hoisting a new
+one to module scope.
+
+**Migration `20260826000000_sanction_voting_lockdown.sql` — NOT YET applied to staging or prod**
+(this session was scoped off all `supabase` CLI use; the controller pushes staging-first then
+prod per `.claude/skills/migration-push`). Contents: `sanctioning_team_size()` RPC (as above) +
+replaces `sanction_votes_write` to require `role = 'sanctioning'` only (keeps
+`voter_user_id = auth.uid()` in both USING/WITH CHECK); `sanction_votes_read` is UNCHANGED.
+
+**Post-push probe SQL for the controller** (adapt the `migration-push` skill's non-admin
+write-path probe convention — run as a seeded non-admin, then as a seeded sanctioning-only
+non-admin; every probe row should be cleaned up after):
+
+```sql
+-- 1. sanctioning_team_size() returns the real count and is admin/sanctioning-gated.
+--    As an anon/no-role authenticated caller: expect a raised exception (42501/P0001-style).
+select sanctioning_team_size();
+--    As a caller holding ONLY 'sanctioning' (not admin): expect a real integer >= 1, no error.
+
+-- 2. sanction_votes_write: a caller holding ONLY 'admin' (not 'sanctioning') must be REFUSED
+--    an insert on an existing voting-status request (expect 42501 / 0 rows affected):
+insert into sanction_votes (id, request_id, voter_user_id, vote, voted_at)
+values ('probe-admin-vote', '<a real voting-status request id>', auth.uid(), 'approve', now());
+-- (run as the admin-only test session; then delete if it somehow succeeded)
+
+-- 3. sanction_votes_write: a caller holding 'sanctioning' (admin or not) must be ALLOWED to
+--    insert/update their OWN vote row on the same request (expect success):
+insert into sanction_votes (id, request_id, voter_user_id, vote, voted_at)
+values ('probe-sanctioning-vote', '<same request id>', auth.uid(), 'approve', now())
+on conflict (id) do update set vote = excluded.vote, voted_at = excluded.voted_at;
+delete from sanction_votes where id = 'probe-sanctioning-vote'; -- cleanup
+
+-- 4. Deadline-editor RLS (confirms the PRE-EXISTING sanction_requests_rw policy already covers
+--    this -- no migration change was made for it, this is a confirmation probe only):
+--    As a caller holding ONLY 'sanctioning' (not admin), on a request they didn't submit and
+--    don't host -- expect SUCCESS (the broad for-all policy predates this fix):
+update sanction_requests set deadline_at = now() + interval '1 day'
+where id = '<a voting-status request id not requested/hosted by this caller>';
+-- (revert deadline_at to its prior value afterward if this was a real request, not a probe row)
+```
+
+**Deploy list:** `scheduled-dispatch` (recipient-resolution change) and `notify-sanction`
+(comment-only, but harmless to redeploy in the same batch if convenient — no behavior change).
+`Sanction.tsx`/`capabilities-core.ts`/`supabase.ts`/`sanction.ts` are client-only, shipped via the
+normal `main`-push deploy, no edge-function redeploy needed for them.
+
+**Verification (final run, all touched + newly-added files):**
+- `npm run build` — exit 0, zero TS errors (confirmed twice: once before, once after the
+  react-hooks/purity fix below).
+- `npx eslint src/lib/sanction.ts src/lib/capabilities-core.ts src/lib/capabilities.ts
+  src/lib/supabase.ts src/pages/Sanction.tsx supabase/functions/notify-sanction/index.ts
+  supabase/functions/scheduled-dispatch/index.ts tests/sanction.test.ts
+  tests/lib/capabilities-core.test.ts` — exit 0, zero errors/warnings.
+- `npx vitest run` — 1361/1361 passed across 85 files (base before this branch was 1334 per the
+  M-01-05 entry above, which had already landed on `main`; net new from this ticket is 27 tests
+  across `tests/sanction.test.ts` and `tests/lib/capabilities-core.test.ts`).
+
+**Could not be verified here (no Browser pane driven for this task):** the actual rendered
+Sanction vote page — the muted "Voting is limited to the Sanctioning Team" copy, the "team size
+unavailable" tally state, and the new Voting Deadline card's Edit/Save/Cancel flow and past-
+deadline warning — against a live signed-in sanctioning-only session and a live admin-only
+session. Flagged for a responsive/visual sweep once deployed to staging with real
+`user_roles` rows for both personas.

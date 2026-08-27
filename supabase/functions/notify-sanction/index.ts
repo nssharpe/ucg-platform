@@ -1,5 +1,8 @@
 // notify-sanction — sanction-request lifecycle emails.
-//   event 'submitted' → notify Sanctioning Team + admins (time to vote).
+//   event 'submitted' → notify Sanctioning Team + admins (a new request is awaiting review —
+//     this stays admin-inclusive/informational by design, UAT round 2 2026-08-26; ONLY the
+//     scheduled-dispatch repeating vote-chase reminders were narrowed to sanctioning-only,
+//     since only that role can actually cast a vote — see sanction_votes_write, 20260826000000).
 //   event 'approved' / 'rejected' → notify the host (requester) of the decision.
 // The request is re-read server-side by id; the caller only sends { requestId, event }.
 

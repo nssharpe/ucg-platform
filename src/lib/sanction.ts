@@ -14,14 +14,19 @@ export interface VoteTally {
 
 /**
  * Resolve a sanction vote.
- *  - Early **approval** as soon as approvals reach ⌈2/3 · teamSize⌉.
+ *  - Early **approval** as soon as approvals reach ⌈2/3 · teamSize⌉ — ONLY when `teamSize` is
+ *    a known number. Unanimity at small team sizes (e.g. ⌈2/3·2⌉ = 2) is intended, not a bug.
+ *  - `teamSize: null` means the count is genuinely unavailable (e.g. the
+ *    `sanctioning_team_size()` RPC failed) — early approval is disabled entirely in that case
+ *    (never guess a number), but the at/after-deadline majority-of-votes-cast path is
+ *    unaffected, since it doesn't need a team size at all.
  *  - At/after the deadline: approve iff a **strict majority of votes cast** approve
  *    (ties and no-votes → rejected).
  *  - Otherwise pending.
  */
 export function tallyVotes(
   votes: { vote: SanctionVoteValue }[],
-  teamSize: number,
+  teamSize: number | null,
   nowISO: string,
   deadlineISO: string,
 ): VoteTally {
@@ -30,9 +35,11 @@ export function tallyVotes(
   const abstains = votes.filter((v) => v.vote === 'abstain').length;
   const cast = approvals + rejections + abstains;
 
-  const twoThirds = Math.ceil((2 / 3) * Math.max(0, teamSize));
-  if (teamSize > 0 && approvals >= twoThirds) {
-    return { decided: true, outcome: 'approved', approvals, rejections, abstains, cast };
+  if (teamSize !== null && teamSize > 0) {
+    const twoThirds = Math.ceil((2 / 3) * teamSize);
+    if (approvals >= twoThirds) {
+      return { decided: true, outcome: 'approved', approvals, rejections, abstains, cast };
+    }
   }
 
   const past = Date.parse(nowISO) >= Date.parse(deadlineISO);
@@ -42,6 +49,50 @@ export function tallyVotes(
   }
 
   return { decided: false, outcome: 'pending', approvals, rejections, abstains, cast };
+}
+
+/**
+ * Whether the voting-deadline editor should be interactive for this viewer
+ * (owners' decision 2026-08-26, sanction-quorum fix scope addition). Only a
+ * `'sanctioning'` voter may edit — matching `canVoteSanction`, NOT the
+ * broader `isSanctioning` visibility capability, so an admin without the
+ * sanctioning role sees the deadline read-only — and only while the request
+ * is still `'voting'`; once decided it's read-only for everyone regardless
+ * of role.
+ */
+export function deadlineEditable(status: string, canVoteSanction: boolean): boolean {
+  return status === 'voting' && canVoteSanction;
+}
+
+/**
+ * `sanction_requests.deadline_at` is a REAL UTC instant (`addDays(nowISO, 7)`,
+ * stamped via `toISOString()` — a genuine `Z`-suffixed timestamp), unlike the
+ * naive-local wall-clock convention `regOpens`/`finalsLineupDeadlineAt` use
+ * elsewhere in the app (see `toDatetimeLocalValue`, `events-core.ts`). A
+ * `datetime-local` input's value is always interpreted/entered in the
+ * BROWSER's local zone with no offset, so editing a real instant needs an
+ * actual zone conversion, not a truncation. Returns '' for an unparsable/
+ * missing value (matches `toDatetimeLocalValue`'s behavior for the input).
+ */
+export function deadlineToLocalInputValue(deadlineISO: string | null | undefined): string {
+  if (!deadlineISO) return '';
+  const d = new Date(deadlineISO);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/**
+ * Inverse of `deadlineToLocalInputValue`: a `datetime-local` input's local
+ * wall-clock value (e.g. `'2026-06-25T14:00'`, no zone) → a real UTC instant
+ * ISO string for writing back to `deadline_at`. Returns null for an empty/
+ * unparsable value — the caller should treat that as "don't save."
+ */
+export function localInputValueToDeadlineISO(value: string): string | null {
+  if (!value) return null;
+  const d = new Date(value); // no trailing 'Z' => parsed as browser-local
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
 }
 
 /** US state name → 2-letter postal code (for Sanction IDs). */
