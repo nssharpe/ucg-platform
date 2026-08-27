@@ -51,7 +51,7 @@ export function summarizeRoster(rows: HostRosterRow[], resolveLevelName: LevelNa
     const clubAthletes = new Map<string, { clubName: string; athletes: Set<string> }>();
     for (const row of levelRows) {
       const clubId = row.clubId ?? '';
-      const entry = clubAthletes.get(clubId) ?? { clubName: row.clubName ?? 'Unknown club', athletes: new Set<string>() };
+      const entry = clubAthletes.get(clubId) ?? { clubName: row.clubName ?? ((row.clubId ?? '') === '' ? 'Independent' : 'Unknown club'), athletes: new Set<string>() };
       entry.athletes.add(row.athleteId);
       clubAthletes.set(clubId, entry);
     }

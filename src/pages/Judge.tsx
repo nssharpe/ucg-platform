@@ -401,7 +401,7 @@ export function Judge() {
             <div>
               <h2 className="display" style={{ fontSize: 26 }}>{activeAthlete!.firstName} {activeAthlete!.lastName}</h2>
               <div style={{ color: 'var(--ink-soft)', fontSize: 14 }}>
-                {db.clubs.find((c) => c.id === active.clubId)?.shortName} · {activeLevel?.name} · {apparatusDefs.find((e) => e.code === apparatus)?.name}
+                {db.clubs.find((c) => c.id === active.clubId)?.shortName ?? 'Independent'} · {activeLevel?.name} · {apparatusDefs.find((e) => e.code === apparatus)?.name}
                 {calcCfg && <> · <strong>{calcCfg.label}</strong></>}
               </div>
             </div>
@@ -562,7 +562,7 @@ export function Judge() {
                       return (
                         <tr key={r.id}>
                           <td><strong>{a?.firstName} {a?.lastName}</strong></td>
-                          <td>{db.clubs.find((c) => c.id === r.clubId)?.shortName}</td>
+                          <td>{db.clubs.find((c) => c.id === r.clubId)?.shortName ?? 'Independent'}</td>
                           <td style={{ fontSize: 13 }}>{db.levels.find((l) => l.id === r.levelId)?.name}</td>
                           <td className="num score">
                             {sc ? <Link to={scoreDetailPath(sc.id)} data-tip="Score details">{fmtScore(sc.final)}</Link> : <Badge tone="info">awaiting</Badge>}

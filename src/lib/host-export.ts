@@ -131,7 +131,7 @@ export function buildCountsSheet(rows: HostRosterRow[], resolveLevelName: (id: s
     const clubId = r.clubId ?? '';
     const key = `${levelId}||${clubId}`;
     if (!groups.has(key)) {
-      groups.set(key, { levelId, clubId, clubName: r.clubName ?? 'Unknown club', athletes: new Set(), apparatusAthletes: new Map() });
+      groups.set(key, { levelId, clubId, clubName: r.clubName ?? ((r.clubId ?? '') === '' ? 'Independent' : 'Unknown club'), athletes: new Set(), apparatusAthletes: new Map() });
     }
     const g = groups.get(key)!;
     g.athletes.add(r.athleteId);
