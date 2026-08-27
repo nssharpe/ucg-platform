@@ -172,45 +172,49 @@ describe('scoringConfigOf (per-event scoring config, 2026-07-19)', () => {
 describe('eventRowActions (UAT M-01-03, Events-list register/edit entry points)', () => {
   const args = (overrides: Partial<Parameters<typeof eventRowActions>[0]> = {}) => ({
     event: { eventType: 'competition' as const },
-    viewer: { canRegister: false },
+    viewer: { signedIn: true, canRegister: false },
     hasReg: false,
     isManager: false,
     isCamp: false,
     ...overrides,
   });
 
-  it('neither eligible nor a manager ⇒ no actions', () => {
-    expect(eventRowActions(args())).toEqual([]);
+  it('signed out, not a manager ⇒ sign-in hint (UAT G-03)', () => {
+    expect(eventRowActions(args({ viewer: { signedIn: false, canRegister: false } }))).toEqual(['sign-in']);
+  });
+
+  it('signed in, not eligible, not a manager ⇒ membership hint (UAT G-01)', () => {
+    expect(eventRowActions(args())).toEqual(['membership']);
   });
 
   it('eligible athlete, no existing reg ⇒ self', () => {
-    expect(eventRowActions(args({ viewer: { canRegister: true } }))).toEqual(['self']);
+    expect(eventRowActions(args({ viewer: { signedIn: true, canRegister: true } }))).toEqual(['self']);
   });
 
   it('eligible athlete who already has a reg ⇒ edit, not self', () => {
-    expect(eventRowActions(args({ viewer: { canRegister: true }, hasReg: true }))).toEqual(['edit']);
+    expect(eventRowActions(args({ viewer: { signedIn: true, canRegister: true }, hasReg: true }))).toEqual(['edit']);
   });
 
-  it('manager of a non-camp event (not personally eligible) ⇒ club only', () => {
+  it('manager of a non-camp event (not personally eligible) ⇒ club only, no membership hint', () => {
     expect(eventRowActions(args({ isManager: true }))).toEqual(['club']);
   });
 
-  it('manager of a CAMP ⇒ no club action (camps are individual self-reg only)', () => {
-    expect(eventRowActions(args({ isManager: true, isCamp: true }))).toEqual([]);
+  it('manager of a CAMP, not personally eligible ⇒ membership hint (camps suppress club, so nothing else applies)', () => {
+    expect(eventRowActions(args({ isManager: true, isCamp: true }))).toEqual(['membership']);
   });
 
   it('eligible athlete who is also a manager, non-camp, no reg ⇒ self then club', () => {
-    expect(eventRowActions(args({ viewer: { canRegister: true }, isManager: true })))
+    expect(eventRowActions(args({ viewer: { signedIn: true, canRegister: true }, isManager: true })))
       .toEqual(['self', 'club']);
   });
 
   it('eligible athlete + manager, already registered, non-camp ⇒ edit then club', () => {
-    expect(eventRowActions(args({ viewer: { canRegister: true }, isManager: true, hasReg: true })))
+    expect(eventRowActions(args({ viewer: { signedIn: true, canRegister: true }, isManager: true, hasReg: true })))
       .toEqual(['edit', 'club']);
   });
 
   it('eligible athlete + manager of a camp, already registered ⇒ edit only (club suppressed)', () => {
-    expect(eventRowActions(args({ viewer: { canRegister: true }, isManager: true, hasReg: true, isCamp: true })))
+    expect(eventRowActions(args({ viewer: { signedIn: true, canRegister: true }, isManager: true, hasReg: true, isCamp: true })))
       .toEqual(['edit']);
   });
 });
