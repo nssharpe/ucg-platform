@@ -61,6 +61,16 @@ regs. `updatedPending` marks a paid reg edited back to pending by a change fee.
   to `club_id` — a cross-club duplicate is the same bug the cross-club lock above already treats
   as a conflict.
 
+## Independent athletes exist — never assume a club
+
+Three separate UAT bugs (2026-08-27, one evening) came from code assuming every athlete has a
+club: the club-membership gate blocked club-less registration (G-02), the `''` sentinel hit the
+`club_id` FK (see data-layer.md), and MyRegistrations' Edit dialog null-guarded `currentClubId`
+into a silent self-close. Invariants: `''` is the CLIENT sentinel for "independent" (NULL in the
+DB, `registrationToRow` converts); pricing/gates accept `''`; UI never dead-ends on a missing
+club — no `if (!clubId) return null` around member-facing flows. New registration surfaces must
+be exercised at least once as a club-less athlete before shipping.
+
 ## Member self-edit divergence — CRITICAL
 
 `MyRegistrations.tsx` embeds the shared `RegistrationEditor`, targets the member's OWN cart,
