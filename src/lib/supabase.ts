@@ -1660,6 +1660,21 @@ export async function listSanctioningTeam(): Promise<SanctioningTeamMember[]> {
   }));
 }
 
+/** The LIVE count of `user_roles.role = 'sanctioning'` rows — the real quorum
+ *  denominator for `tallyVotes` (UAT round 2, 2026-08-26; replaces the old
+ *  hardcoded `FALLBACK_TEAM_SIZE`). `roles_self_read` only lets a caller see
+ *  their OWN role row, so this goes through the SECURITY DEFINER RPC
+ *  `sanctioning_team_size()` rather than a client-side count. Returns `null`
+ *  (never a guessed number) on error or when unconfigured — callers MUST
+ *  treat `null` as "team size unavailable" and disable early approval,
+ *  never substitute a fallback constant. */
+export async function sanctioningTeamSize(): Promise<number | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase.rpc('sanctioning_team_size');
+  if (error) { console.error('[supabase] sanctioning_team_size failed:', error); return null; }
+  return typeof data === 'number' ? data : null;
+}
+
 /** Grant per-event admin access (event-mgmt v2 §C) to the account matching
  *  `email` exactly. Awaited (not queued) because the UI needs the matched
  *  identity — or the RPC's raised exception message ("No account found for

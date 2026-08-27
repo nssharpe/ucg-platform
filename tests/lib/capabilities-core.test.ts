@@ -213,6 +213,26 @@ describe('deriveCapabilities', () => {
     expect(deriveCapabilities(db, true, [], 'p-athlete-active', 's1').isSanctioning).toBe(false);
   });
 
+  describe('1c. canVoteSanction (UAT round 2, 2026-08-26): sanctioning role ONLY, admin does not grant it', () => {
+    it('admin alone → false (visible via isSanctioning, but cannot cast a vote)', () => {
+      const caps = deriveCapabilities(db, true, ['admin'], 'p-admin', 's1');
+      expect(caps.isSanctioning).toBe(true);
+      expect(caps.canVoteSanction).toBe(false);
+    });
+
+    it('sanctioning role → true', () => {
+      expect(deriveCapabilities(db, true, ['sanctioning'], 'p-x', 's1').canVoteSanction).toBe(true);
+    });
+
+    it('admin + sanctioning → true (votes normally)', () => {
+      expect(deriveCapabilities(db, true, ['admin', 'sanctioning'], 'p-admin', 's1').canVoteSanction).toBe(true);
+    });
+
+    it('neither role → false', () => {
+      expect(deriveCapabilities(db, true, [], 'p-athlete-active', 's1').canVoteSanction).toBe(false);
+    });
+  });
+
   it('2. plain signed-in athlete with an active membership can register', () => {
     const caps = deriveCapabilities(db, true, [], 'p-athlete-active', 's1');
 

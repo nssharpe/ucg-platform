@@ -10,9 +10,16 @@ export interface Capabilities {
   /** True when the signed-in user holds the 'admin' role. Gates admin powers
    *  in the UI (admin nav, edit buttons, grant/revoke). */
   isAdmin: boolean;
-  /** True when the user is on the Sanctioning Team (or an admin). Gates the
-   *  Sanctioning queue / vote pages. Admins are implicitly on the team. */
+  /** True when the user is on the Sanctioning Team (or an admin). Gates
+   *  VISIBILITY of the Sanctioning queue / vote pages only — admins are
+   *  implicitly on the team for viewing purposes. Does NOT grant vote
+   *  authority; see `canVoteSanction`. */
   isSanctioning: boolean;
+  /** True ONLY when the user holds the 'sanctioning' role. Gates actually
+   *  CASTING a sanction vote (owners' decision 2026-08-26, UAT round 2) —
+   *  admin alone does not grant this, matching the `sanction_votes_write`
+   *  RLS policy. An admin who also holds 'sanctioning' votes normally. */
+  canVoteSanction: boolean;
   /** True when the user holds the 'finance_admin' role. Gates a later
    *  finance-dashboard phase. Admins are NOT implicitly finance admins. */
   isFinanceAdmin: boolean;
@@ -177,6 +184,7 @@ export function deriveCapabilities(
 ): Capabilities {
   const isAdmin = roles.includes('admin');
   const isSanctioning = isAdmin || roles.includes('sanctioning');
+  const canVoteSanction = roles.includes('sanctioning');
   const isFinanceAdmin = roles.includes('finance_admin');
   const isRegionalRep = roles.includes('regional_rep');
   const isRefundManager = roles.includes('refund_manager');
@@ -195,6 +203,7 @@ export function deriveCapabilities(
     signedIn,
     isAdmin,
     isSanctioning,
+    canVoteSanction,
     isFinanceAdmin,
     isRegionalRep,
     isRefundManager,
