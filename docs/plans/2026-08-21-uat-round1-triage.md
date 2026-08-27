@@ -67,6 +67,17 @@ Owner grant: full push-live authority; guard ask-tier overridden via `.claude/AL
 | E-01 "no disclaimer like other emails" | — | The confidentiality footer comes from naigc.org's mail infra on AUTH emails only; Resend emails never had it. Consistency arrives at the 9/20 cutover when that appender goes away | 🗓️ folded into whats-next §1.0 cutover item |
 | Sanctioning quorum "of 5" (pre-round-3, same evening) | S2 | Hardcoded `FALLBACK_TEAM_SIZE = 5` + admins allowed to vote | ✅ live team count via RPC; sanctioning-only voting (RLS); deadline editor; requester self-approval hole (reviewer finding) closed |
 
+**Independent-athlete species audit (2026-08-27, after the 3rd same-species bug):** full
+codebase sweep across four patterns (dead-end club guards, sentinel-into-FK writes, club-name
+rendering without fallback, NULL-club server semantics). Result: **1 × S1** (host CSV export
+crashed via non-null assertion the moment ONE independent was registered — Export button
+silently dead), 2 × S2 mislabels ("Unknown club" for independents on the host roster page and
+the Excel Counts sheet), 2 cosmetic blanks (judge header/entries, public Results team table).
+All five fixed + shipped (`c53e9f6`); every other site (all row mappers, refund/withdrawal/
+checkout grouping, `paidRegistrationClub`) verified safe, several already carrying explicit
+NULL-trap comments. The species is now believed extinct in shipped code; the
+independents-exist rule guards reintroduction.
+
 **RT-01 follow-up (2026-08-27 morning):** independents' self-registration was STILL broken past
 the client gate — the `''` club sentinel violated `registrations_club_id_fkey` on every insert,
 and the write-queue's recovery left a phantom local row (registrations are slice-tiered, outside
