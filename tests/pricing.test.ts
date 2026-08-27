@@ -3,6 +3,7 @@ import {
   membershipFee,
   priceForAdding,
   priceForTypes,
+  membershipAlreadyActive,
   offeredMembershipTypes,
   couponValid,
   applyCoupon,
@@ -99,6 +100,40 @@ describe('priceForTypes (combined selection)', () => {
 
   it('returns 0 when everything selected is already active', () => {
     expect(priceForTypes(season, ['athlete', 'coach'], [mk('athlete'), mk('coach')])).toBe(0);
+  });
+});
+
+describe('membershipAlreadyActive (UAT G-02 — duplicate-purchase guard)', () => {
+  const rec = (personId: string, type: 'athlete' | 'coach', status: Membership['status'] = 'active', seasonId = 's26') =>
+    ({ personId, seasonId, type, status, waiverSignedAt: null, waiverSignedBy: null, paidVia: 'card' as const });
+
+  it('is true when the person holds an active membership of that type this season', () => {
+    expect(membershipAlreadyActive([rec('p1', 'athlete')], 'p1', 's26', 'athlete')).toBe(true);
+  });
+
+  it('is false when no row matches the person', () => {
+    expect(membershipAlreadyActive([rec('p1', 'athlete')], 'p2', 's26', 'athlete')).toBe(false);
+  });
+
+  it('is false when the matching row is a different, non-active status', () => {
+    expect(membershipAlreadyActive([rec('p1', 'athlete', 'pending-club-payment')], 'p1', 's26', 'athlete')).toBe(false);
+  });
+
+  it('is false for a different season', () => {
+    expect(membershipAlreadyActive([rec('p1', 'athlete', 'active', 's25')], 'p1', 's26', 'athlete')).toBe(false);
+  });
+
+  it('is false for a different type (athlete active does not block a coach purchase)', () => {
+    expect(membershipAlreadyActive([rec('p1', 'athlete')], 'p1', 's26', 'coach')).toBe(false);
+  });
+
+  it('treats a legacy row with no type as athlete (mirrors membershipTypeOf)', () => {
+    // Legacy rows predate the `type` column — runtime-only shape, hence the cast.
+    const legacy = {
+      personId: 'p1', seasonId: 's26', type: undefined, status: 'active' as const,
+      waiverSignedAt: null, waiverSignedBy: null, paidVia: 'card' as const,
+    } as unknown as ReturnType<typeof rec>;
+    expect(membershipAlreadyActive([legacy], 'p1', 's26', 'athlete')).toBe(true);
   });
 });
 

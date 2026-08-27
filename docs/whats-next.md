@@ -94,6 +94,22 @@ Legend: 👤 = only Nate can do it · 🤖 = Claude can build it · 💬 = needs
 
 ## 3. Quality passes (pre- or just post-launch)
 
+0. 🔧 **UAT G-02-01, S2 (2026-08-27) — independent-athlete registration + membership fixes,
+   DRAFTED on branch `fix/independent-registration`, not yet merged/deployed.** An independent
+   athlete (no club) was blocked from registering by the club-membership gate misreading a null
+   `clubId` as "club unpaid" (fixed in `clubHasActiveMembershipForEvent`,
+   `src/lib/capabilities-core.ts`); a client write of `status:'active'` (Membership.tsx's admin
+   comp-override path) was illegally retried 8× by the write queue before failing
+   (`classifyWriteError` now marks a trigger-raised `P0001` refusal permanent instead of
+   transient); and the same membership could be bought twice (two Stripe charges for one row) —
+   `create-checkout-session` now 409s a repeat purchase via a new pure
+   `membershipAlreadyActive` guard (`src/lib/pricing.ts` / mirrored `_shared/stripe.ts`). Full
+   root-cause writeup, an audited call-site list, and a flagged residual TOCTOU gap (the
+   membership analog of Z-02's duplicate-payment race) in
+   `docs/plans/notes/2026-08-21-uat-round1-notes.md`'s "UAT G-02-01, S2" entry. **`npm run
+   build`/`eslint`/`vitest run` all clean; `create-checkout-session` needs redeploying to both
+   projects once merged for the double-sell guard to take effect.**
+
 0. 💬 **OPEN DECISION — should a Sanctioning Team member vote on their OWN request?**
    Raised 2026-08-26 during UAT round 2; **deliberately deferred by Nate — revisit before
    go-live.** Today nothing prevents it, and it is not flagged in the tally. It matters because

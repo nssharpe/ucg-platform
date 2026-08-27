@@ -1555,14 +1555,15 @@ function RosterToolsCard({
     // point must verify the competing club holds an active club membership for
     // the event's season — same idiom as Club.tsx's clubMembershipBlocked().
     // The reg is created under the athlete's main club (find_person_for_host).
+    // An INDEPENDENT athlete (found.clubId null) has no club to gate on —
+    // clubHasActiveMembershipForEvent already returns true for a null clubId
+    // (UAT G-02, 2026-08-27) — this pre-check must NOT re-block them itself.
     const seasonId = seasonForDate(db, event.startDate);
-    if (!found.clubId || !clubHasActiveMembershipForEvent(db, found.clubId, seasonId, event.eventType)) {
+    if (!clubHasActiveMembershipForEvent(db, found.clubId, seasonId, event.eventType)) {
       setAddBusy(false);
       const sName = db.seasons.find((s) => s.id === seasonId)?.name ?? "this event's season";
       toast(
-        found.clubId
-          ? `That athlete's club has no active ${sName} club membership, so they can't be registered for this event.`
-          : "That athlete has no club, so they can't be registered for this event.",
+        `That athlete's club has no active ${sName} club membership, so they can't be registered for this event.`,
         { variant: 'error' },
       );
       return;

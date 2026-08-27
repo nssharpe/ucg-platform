@@ -2807,3 +2807,151 @@ unavailable" tally state, and the new Voting Deadline card's Edit/Save/Cancel fl
 deadline warning — against a live signed-in sanctioning-only session and a live admin-only
 session. Flagged for a responsive/visual sweep once deployed to staging with real
 `user_roles` rows for both personas.
+
+## UAT G-02-01, S2 (2026-08-27): independent registration blocked, illegal client membership write, double-selling
+
+Branch `fix/independent-registration`. Three related fixes for an INDEPENDENT athlete
+(`person.main_club_id = null`) who bought an athlete membership, was then blocked from
+registering, hit an 8x write-queue retry storm in `error_logs`, and was able to buy the same
+membership twice (two Stripe charges for one membership row).
+
+### A. Club gate skips independents
+
+`clubHasActiveMembershipForEvent` (`src/lib/capabilities-core.ts:118`) treated a null/empty
+`clubId` the same as "club with no active membership" — so an independent athlete (no competing
+club to gate on) was blocked by the same "your club needs an active membership" toast meant for
+an unpaid CLUB. Fixed: a null/empty `clubId` now short-circuits to `true` (gate satisfied) before
+delegating to `clubHasActiveMembership`, with a comment explaining why. This does not touch
+`Capabilities.canRegister`, which still enforces the athlete's own individual membership.
+
+Audited every call site (grepped `clubHasActiveMembershipForEvent`/`clubHasActiveMembership`/
+"needs an active" across `src/`):
+- `src/pages/Events.tsx:2374` (self-registration, `SelfRegModal`) — `selectedClubId` defaults to
+  `''` for an independent (no `myClubs`), so this is the actual G-02 entry point; inherits the
+  capabilities-core fix automatically, no local change needed.
+- `src/pages/Events.tsx:1559` (`addAthlete`, HOST adding an athlete by email) — this one
+  pre-checked `!found.clubId` itself and produced a separate "that athlete has no club" toast
+  before even calling the gate helper, so it needed its own fix (removed the pre-check; the reg
+  is already created with `clubId: found.clubId ?? ''` at line ~1572, so an independent's reg now
+  goes through cleanly). Note: this is a behavior change on the HOST ROSTER surface too — a host
+  can now add an independent athlete by email, not just self-registration.
+- `src/pages/Club.tsx:1257` (`clubMembershipBlocked`, club-manager registering roster athletes) —
+  `clubId` here is always the manager's own real club (from route params), never null. Left
+  unchanged.
+- `src/pages/Sanction.tsx:259` — this is a club's HOSTING gate (`clubHasActiveMembership`
+  directly, not the `...ForEvent` wrapper), unrelated to registration. Left unchanged.
+- **Server:** grepped `club_memberships` across `supabase/functions/**` — the only hits are in
+  `create-checkout-session/index.ts` (pricing a `club-membership` purchase line itself, i.e. is
+  the club's OWN membership already active so it prices at $0) and `_shared/fulfill.ts`. There is
+  no server-side mirror of the registration club-gate — by the time a cart line exists the
+  registration row already exists (created client-side, gate enforced there), so nothing
+  server-side needed a matching fix. Stated here explicitly so this is not re-derived later.
+
+### B. Client illegal membership-status write + write-queue misclassification
+
+**The write.** Enumerated every non-service-role `pushMembership` call site: `Membership.tsx`
+`complete()` (member-facing, NOT behind `RequireAdmin`), and `Profile.tsx`'s
+`AdminMembershipControls.activate()`/`confirmRevoke()` plus `AdminMembers.tsx`'s merge-duplicate
+flow (all three gated by `adminView`/`/admin/*` routes, i.e. behind `RequireAdmin`). Only
+`Membership.tsx complete('comp')` (the "Admin Payment Override" button, gated client-side on
+`caps.isAdmin` only — no aal2 check, and reachable outside any `RequireAdmin` route) could ever
+write `status:'active'` from a non-privileged session. Traced the DB's `is_admin()` (migrations
+`20260717140238`/`20260718093940`) and confirmed it correctly exempts passkey-signed-in and
+no-factor admins, and the app-wide `MfaChallenge` interstitial forces aal2 step-up for any
+TOTP-enrolled admin before they can do anything — so a genuinely privileged admin's write should
+normally succeed. Root cause is not fully attributable from static code alone; the most plausible
+mechanism given Nate's own documented policy of temporary admin grants in STAGING `user_roles` for
+testing gated UI is that the test account used for this UAT scenario also held a leftover or
+mis-scoped `admin` role, so `caps.isAdmin` rendered the override button while the underlying write
+was independently and correctly refused by `guard_membership_writes`.
+
+Regardless of exact attribution, fixed the class of bug: `complete()`'s `comp` branch no longer
+applies `status:'active'` to local state optimistically. It still pushes the intended row (a
+genuinely privileged admin's write is legal and the guard trigger already allows it), then polls
+the SERVER's own row (`waitForCompGrant`, bounded 4 tries / 500ms) and only advances to `done`
+plus the success toast once the fetched row actually shows the intended status — `active` for an
+adult, `pending-waiver` for a minor (the guard allows non-privileged writes of that status too, so
+a minor's comp grant is not wrongly flagged "not confirmed"). A rejected write now surfaces an
+honest error toast instead of a false "granted" toast followed by a stale local nag. The `club`
+branch (status `pending-club-payment`) is legal for any caller under the guard and was left
+applying optimistically as before — no correctness issue there.
+
+Files: `src/pages/Membership.tsx` (`complete()`, new `waitForCompGrant` helper, new `granting`
+state disabling the override button mid-confirmation).
+
+**The write-queue retry storm.** `guard_membership_writes` (`RAISE EXCEPTION` with no `USING
+ERRCODE`) surfaces as generic SQLSTATE `P0001`. `classifyWriteError` (`src/lib/write-queue.ts`)
+had no branch for it, `PostgrestError` never carries an HTTP `status`/`statusCode` field (so the
+status-based branch cannot catch it either), and neither the RLS nor constraint message regex
+matches the guard's wording ("non-privileged caller cannot set status=active") — so it defaulted
+to `transient` and burned the full `maxAuto` budget (8 attempts, backoff 500ms doubling to a 30s
+cap, roughly 61.5s of delay plus the 8th round trip, close to the reported "8x over ~70s") before
+giving up. Fixed: `code === 'P0001'` now classifies as `permanent` — this marks every raised-
+exception trigger refusal permanent, not just this one guard; that is correct (a raised exception
+is by definition not retry-fixable), but it is a behavior change beyond this specific bug, noted
+here explicitly. Added a matching `humanizeWriteError` branch (reuses the existing "you don't have
+permission to make this change" wording). The existing `onPermanentFailure` wiring in
+`supabase.ts` (drain-then-`syncFromSupabase()` rollback plus toast) already does the "log once,
+drop, surface a toast" the task asked for — verified it fires correctly for this class rather than
+adding a second rollback path. Added `classifyWriteError`/`humanizeWriteError` unit tests for the
+P0001 case (`tests/write-queue.test.ts`).
+
+### C. No double-selling a membership
+
+Two Stripe charges for one membership row happened because `priceForTypesDollars`/`priceForTypes`
+only credit an EXISTING `status:'active'` row toward price — if a second checkout session is
+created before the first payment's webhook has fulfilled (flipped the row active), the second
+session sees no credit and prices full fare again. This is the membership analog of the
+registration-side "One live slot" duplicate-payment race (money-invariants.md, UAT Z-02) — same
+root shape, not fixed by this task (task C only asked for the "already active" guard, not a
+pending-payment-race guard); flagged as a residual gap, same as Z-02's own documented residual
+TOCTOU (two payments fulfilling at the exact same instant).
+
+Added `membershipAlreadyActive(rows, personId, seasonId, type)` — pure, canonical copy in
+`src/lib/pricing.ts` (unit-tested, `tests/pricing.test.ts`), mirrored in
+`supabase/functions/_shared/stripe.ts` (edge functions bundle only their own dir plus `_shared/`,
+not `src/`, so it is re-implemented rather than imported — same pattern as every other pricing
+mirror in that file). Both treat a legacy row with no `type` as `athlete`, mirroring
+`membershipTypeOf`'s legacy-null rule (`capabilities-core.ts`) — the server's existing
+`priceForTypesDollars` does not do this (a pre-existing, separate, out-of-scope gap noted for
+awareness, not fixed here).
+
+Wired into `create-checkout-session/index.ts`'s membership-group pricing loop, ABOVE the "PREVIEW
+BRANCH POINT" (it is a validation, not a write — same positioning as every other capacity/session/
+survey check) so `mode:'preview'` 409s identically to a real checkout. Returns
+`{ ok:false, error:'You already have an active <season> <type> membership.' }` with HTTP 409.
+Verified this reaches the client verbatim with no new structured-error plumbing needed:
+`parseCheckoutSessionError`/`edgeErrorBody` (`src/lib/supabase.ts`) already fall through to
+`body.error` for any rejection without a special `code`, and `CartCheckout.tsx`'s
+`handleRejection` already forwards a plain `r.error` to `onError` for both `previewCartTotal` and
+`createCheckoutSession` — no capacity/session/survey-style special case needed.
+
+Client-side "mirror" (the purchase UI showing "already active" instead of a buy button):
+`Membership.tsx`'s existing `purchasableTypes` filter already excludes any type with a local
+`status === 'active'` row, and `allOwned`/`step === 'done'` already short-circuits the whole flow
+— this already worked; the reason he could re-buy was the stale local state from bug B (the first
+purchase's real activation should have synced via `MembershipsCheckoutInner.onPaid`'s
+`syncFromSupabase()`, but see the residual TOCTOU above — if the second session was created before
+the first webhook fulfilled, local state legitimately had not caught up yet either). The server
+guard above is the real backstop; no additional client wiring added.
+
+### Deploy
+
+`create-checkout-session` needs redeploying (`supabase functions deploy create-checkout-session
+--project-ref wkyerxlgricfphopocoz`, staging first via `--project-ref xogpiksqtkayxwmczlbx`) for
+part C to take effect — not done as part of this session (instructed not to run the `supabase`
+CLI). Parts A/B are pure client-side and ship on the normal `main` deploy.
+
+### Verification
+
+`npm run build` — clean (`tsc -b && vite build`, PWA precache regenerated, dev-auth firewall check
+passed). `npx eslint` on every touched file including
+`supabase/functions/create-checkout-session/index.ts` and `supabase/functions/_shared/stripe.ts`
+— zero errors/warnings. `npx vitest run` — 85 files / 1369 tests, all green (includes the new
+`membershipAlreadyActive` describe block and the two new `classifyWriteError`/`humanizeWriteError`
+P0001 cases).
+
+Files touched: `src/lib/capabilities-core.ts`, `src/pages/Events.tsx`, `src/pages/Membership.tsx`,
+`src/lib/write-queue.ts`, `tests/write-queue.test.ts`, `src/lib/pricing.ts`,
+`tests/pricing.test.ts`, `supabase/functions/_shared/stripe.ts`,
+`supabase/functions/create-checkout-session/index.ts`.

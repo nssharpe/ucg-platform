@@ -106,6 +106,28 @@ export function priceForTypesDollars(
   return Math.max(0, valueOf(union) - valueOf(owned));
 }
 
+/** True when `personId` already holds an ACTIVE membership of `type` for
+ *  `seasonId` among `rows` — the (person, season, type) duplicate-purchase
+ *  guard (UAT G-02, 2026-08-27): an athlete bought the same membership twice
+ *  because a second checkout session was created before the first had
+ *  fulfilled. `create-checkout-session` calls this to refuse (409) a repeat
+ *  purchase. Mirrors `membershipAlreadyActive` in src/lib/pricing.ts — keep
+ *  in lockstep. A legacy row with no `type` (predating typed memberships) is
+ *  treated as 'athlete', mirroring `membershipTypeOf` in
+ *  src/lib/capabilities-core.ts. */
+export function membershipAlreadyActive(
+  rows: (MembershipRow & { person_id: string })[],
+  personId: string,
+  seasonId: string,
+  type: MembershipType,
+): boolean {
+  return rows.some((m) =>
+    m.person_id === personId
+    && m.season_id === seasonId
+    && (m.type === 'coach' ? 'coach' : 'athlete') === type
+    && m.status === 'active');
+}
+
 // --- Event registration fees (mirror of src/lib/pricing.ts § Registration fees) ---
 // The host club's own athletes pay $0 for ALL registration-side fees (entry,
 // second-discipline, change). All helpers return DOLLARS (use toCents to Stripe).
