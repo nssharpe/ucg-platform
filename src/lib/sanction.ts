@@ -118,6 +118,27 @@ export function stateCode(state: string): string {
 }
 
 /**
+ * The sanction requests a given signed-in person should see under "Your
+ * sanction requests" (UAT E-01-04): the ones they submitted, or that were
+ * submitted for a club they manage. RLS (`sanction_requests_read`,
+ * `20260826000000`) already scopes what a NON-privileged caller's
+ * `db.sanctionRequests` read returns to exactly this set — but an admin or
+ * Sanctioning Team member's read includes EVERY request (that policy's
+ * admin/sanctioning branch), so this filter still has to run client-side or
+ * an admin visiting the request form would see the entire league's queue
+ * under "Your requests". Sorted newest-submitted-first (unsubmitted rows,
+ * if any ever exist, sort last).
+ */
+export function ownSanctionRequestsOf<
+  T extends { requesterPersonId: string | null; hostClubId: string; submittedAt?: string | null },
+>(requests: T[], personId: string | null, managedClubIds: string[]): T[] {
+  if (!personId) return [];
+  return requests
+    .filter((r) => r.requesterPersonId === personId || managedClubIds.includes(r.hostClubId))
+    .sort((a, b) => (b.submittedAt ?? '').localeCompare(a.submittedAt ?? ''));
+}
+
+/**
  * Next Sanction ID `YYYY_ST_###` for an event in `year` (number) hosted in
  * `state`, given all existing sanction ids. Sequence is per state per year,
  * starting at 001.

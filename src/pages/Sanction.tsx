@@ -12,11 +12,11 @@ import { seasonForDate, clubHasActiveMembership } from '../lib/capabilities-core
 import { useSession } from '../lib/auth';
 import { Badge, Combo, Field } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
-import { tallyVotes, nextSanctionId, deadlineEditable, deadlineToLocalInputValue, localInputValueToDeadlineISO } from '../lib/sanction';
+import { tallyVotes, nextSanctionId, deadlineEditable, deadlineToLocalInputValue, localInputValueToDeadlineISO, ownSanctionRequestsOf } from '../lib/sanction';
 import { RIBBON_OPTIONS, DEFAULT_RIBBON } from '../lib/ribbons';
 import { STATE_REGIONS, DISCIPLINES, SHIRT_SIZES } from '../lib/types';
 import { timezoneForState } from '../lib/timezone';
-import type { Discipline, Event, SanctionRequest, SanctionVote } from '../lib/types';
+import type { DB, Discipline, Event, SanctionRequest, SanctionVote } from '../lib/types';
 import type { RibbonOption } from '../lib/ribbons';
 import { useAdminPeople } from '../lib/people-admin-slice';
 
@@ -135,6 +135,57 @@ function DisciplineLevelPicker({ discipline, levels, selected, onChange, minRequ
   );
 }
 
+// ---------------------------------------------------------------------------
+// "Your sanction requests" (UAT E-01-04) — a status view for a non-privileged
+// requester so submitting a sanction request no longer dead-ends into a blank
+// form with no way to check on it. `requests` is expected to already be
+// filtered to the viewer's own (via `ownSanctionRequestsOf`) — this component
+// only renders.
+// ---------------------------------------------------------------------------
+const SANCTION_STATUS_TONES: Record<string, 'ok' | 'warn' | 'err' | 'info' | 'navy'> = {
+  voting: 'info', approved: 'ok', rejected: 'err', submitted: 'warn', draft: 'navy', withdrawn: 'navy',
+};
+
+function YourSanctionRequests({ requests, db }: { requests: SanctionRequest[]; db: DB }) {
+  if (requests.length === 0) return null;
+  return (
+    <div className="card card-pad" style={{ maxWidth: 720, marginBottom: 16 }}>
+      <h3 className="card-title" style={{ marginBottom: 8 }}>Your Sanction Requests</h3>
+      <div style={{ overflowX: 'auto' }}>
+        <table className="tbl" style={{ marginTop: 8 }}>
+          <thead>
+            <tr>
+              <th>Event</th>
+              <th>Submitted</th>
+              <th>Status</th>
+              <th>Deadline</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {requests.map((r) => {
+              const createdEvent = r.createdEventId ? db.events.find((e) => e.id === r.createdEventId) : undefined;
+              return (
+                <tr key={r.id}>
+                  <td>{(r.payload.eventName as string) ?? '—'}</td>
+                  <td>{r.submittedAt ? new Date(r.submittedAt).toLocaleDateString() : '—'}</td>
+                  <td><Badge tone={SANCTION_STATUS_TONES[r.status] ?? 'info'}>{r.status}</Badge></td>
+                  <td>{r.deadlineAt ? new Date(r.deadlineAt).toLocaleDateString() : '—'}</td>
+                  <td>
+                    {r.status === 'approved' && createdEvent ? (
+                      <Link to={`/events/${createdEvent.slug}/host`} className="btn small ghost">Open event</Link>
+                    ) : null}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ============================================================================
 // 1. Sanction Request Form
 // ============================================================================
@@ -227,6 +278,11 @@ export function SanctionRequestForm() {
   const [certTypedName, setCertTypedName] = useState('');
 
   const [error, setError] = useState('');
+  // Post-submit state (UAT E-01-04/E-01-06): submitting no longer navigates
+  // away to a blank Home — it swaps the (still-populated) form out for a
+  // success banner, both to close the "dead end" and to stop a stray second
+  // click on Submit from creating a duplicate request.
+  const [justSubmitted, setJustSubmitted] = useState(false);
 
   // Club options limited to managed clubs
   const clubOptions = useMemo(
@@ -236,14 +292,26 @@ export function SanctionRequestForm() {
     [db.clubs, caps.managedClubIds],
   );
 
+  // "Your sanction requests" (E-01-04) — computed before the manager-access
+  // gate below so it still renders for someone who has since lost manager
+  // access to every club but still has a request to check on, and so hook
+  // order stays stable regardless of which branch returns.
+  const ownRequests = useMemo(
+    () => ownSanctionRequestsOf(db.sanctionRequests ?? [], caps.personId, caps.managedClubIds),
+    [db.sanctionRequests, caps.personId, caps.managedClubIds],
+  );
+
   // Gate: must be a club manager
   if (caps.managedClubIds.length === 0) {
     return (
-      <div style={{ padding: '60px 24px', maxWidth: 480, margin: '0 auto', textAlign: 'center' }}>
-        <h2 style={{ marginBottom: 8 }}>Club manager access required</h2>
-        <p style={{ color: 'var(--ink-soft)' }}>
-          Only club managers can submit sanction requests. Contact your club manager or a UCG administrator.
-        </p>
+      <div>
+        <YourSanctionRequests requests={ownRequests} db={db} />
+        <div style={{ padding: '60px 24px', maxWidth: 480, margin: '0 auto', textAlign: 'center' }}>
+          <h2 style={{ marginBottom: 8 }}>Club manager access required</h2>
+          <p style={{ color: 'var(--ink-soft)' }}>
+            Only club managers can submit sanction requests. Contact your club manager or a UCG administrator.
+          </p>
+        </div>
       </div>
     );
   }
@@ -344,7 +412,12 @@ export function SanctionRequestForm() {
     pushSanctionRequest(req);
     notifySanction({ requestId: req.id, event: 'submitted' });
     toast('Sanction request submitted; the Sanctioning Team will vote within 7 days.');
-    navigate('/');
+    // UAT E-01-04/E-01-06: stay on this page instead of navigating to a blank
+    // Home (the reported "dead end") — swap to the success banner below,
+    // which sits above "Your sanction requests" showing the new row, and
+    // scroll up since the Submit button sits at the bottom of a long form.
+    setJustSubmitted(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const sectionTitle = (t: string) => (
@@ -359,6 +432,21 @@ export function SanctionRequestForm() {
         Approval creates an event on the platform with a unique Sanction ID.
       </p>
 
+      <YourSanctionRequests requests={ownRequests} db={db} />
+
+      {justSubmitted && (
+        <div className="card card-pad" style={{ maxWidth: 720, marginBottom: 16, borderLeft: '4px solid var(--teal-900)' }}>
+          <h3 className="card-title" style={{ marginBottom: 8 }}>Request submitted</h3>
+          <p style={{ color: 'var(--ink-soft)', marginBottom: 12 }}>
+            Your sanction request has been submitted and appears above — the Sanctioning Team
+            will review and vote within 7 days. You'll get a confirmation email now, and another
+            once a decision is made.
+          </p>
+          <button className="btn primary" onClick={() => setJustSubmitted(false)}>Submit another request</button>
+        </div>
+      )}
+
+      {!justSubmitted && (
       <div className="card card-pad" style={{ maxWidth: 720 }}>
         <h3 className="card-title" style={{ marginBottom: 8 }}>Basics</h3>
 
@@ -622,6 +710,7 @@ export function SanctionRequestForm() {
           <button className="btn ghost" onClick={() => navigate('/')}>Cancel</button>
         </div>
       </div>
+      )}
     </div>
   );
 }
