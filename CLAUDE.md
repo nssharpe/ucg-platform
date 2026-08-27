@@ -140,7 +140,9 @@ build can still break the deploy.
   on other destructive ones, including `supabase db push` (reconcile first) and
   `supabase config push` (auto-confirm trap). Pattern-based, so a quoted "rm -rf" in a commit
   message can false-positive as "ask" — rephrase rather than fighting it. `--self-test` runs its
-  case battery.
+  case battery. An untracked `.claude/ALLOW_ASK_OVERRIDE` flag file downgrades the ASK tier only
+  (deny tier never overridable) for explicitly-authorized unattended sessions — create it only on
+  an owner grant, delete it when the session ends.
 - **PostToolUse** `scripts/hooks/post-bash-checks.mjs` — doc-sweep reminder after `git commit`;
   `verify_jwt` confirmation after `functions deploy`; dev-auth firewall grep of `dist/assets`
   after a build. `--self-test` runs its case battery. **If a check reports it could not run,
