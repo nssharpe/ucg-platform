@@ -5,7 +5,7 @@ import { useCapabilities } from '../lib/capabilities';
 import { Badge, Field } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 import { fmtMoney } from '../lib/scoring';
-import { pushCartItem, pushInvoice, pushMembership, fetchPublishedWaiver, recordWaiverSignature, requestGuardianWaiver, notifyClubCart, sendMembershipWelcome, nextInvoiceNumber } from '../lib/supabase';
+import { pushCartItem, pushInvoice, pushMembership, fetchPublishedWaiver, recordWaiverSignature, requestGuardianWaiver, notifyClubCart, sendMembershipWelcome, nextInvoiceNumber, fetchMembershipsForPersonRemote } from '../lib/supabase';
 import type { Athlete, InvoiceItem, Membership, MembershipType, WaiverDocument } from '../lib/types';
 import { GENERAL_WAIVER_TYPE } from '../lib/types';
 import { isMinorAt, expectedWaiverSignerName, waiverNameMatches } from '../lib/waivers-core';
@@ -40,6 +40,27 @@ export function Membership() {
     );
   }
   return <MembershipInner me={caps.person} />;
+}
+
+// UAT G-02 (2026-08-27): confirms an admin comp-override write actually
+// landed server-side before the UI claims success — see `complete()`'s
+// comp branch. Short bounded poll (the write queue's first attempt is
+// normally a single network round trip): up to 4 tries, 500ms apart
+// (~1.5s worst case) before giving up and returning whatever the server
+// currently has on file (possibly still the pre-grant rows).
+async function waitForCompGrant(
+  personId: string,
+  seasonId: string,
+  types: MembershipType[],
+  expectedStatus: Membership['status'],
+): Promise<Membership[]> {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const rows = await fetchMembershipsForPersonRemote(personId);
+    const granted = types.every((t) => rows.some((m) => m.seasonId === seasonId && m.type === t && m.status === expectedStatus));
+    if (granted || attempt === 3) return rows;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return [];
 }
 
 // Returns a human-readable label for each required field that is missing.
@@ -126,6 +147,10 @@ function MembershipInner({ me }: { me: Athlete }) {
   const [step, setStep] = useState<'info' | 'waiver' | 'pay' | 'done'>(allOwned ? 'done' : 'info');
   const [confirmed, setConfirmed] = useState(false);
   const [waiverSig, setWaiverSig] = useState('');
+  // True while `complete('comp')` is confirming the grant against the SERVER's
+  // own row (see `waitForCompGrant`) — disables the override button so a
+  // second click can't fire mid-confirmation.
+  const [granting, setGranting] = useState(false);
 
   // Waiver signing state — a single waiver covers all members regardless of type.
   const [consent, setConsent] = useState(false);
@@ -254,8 +279,22 @@ function MembershipInner({ me }: { me: Athlete }) {
           ...(via === 'club' ? { clubCartPending: true } : {}),
           ...(via === 'comp' ? { activatedByAdmin: true } : {}),
         };
-        p.memberships.push(membership);
+        // UAT G-02 (2026-08-27): the CLIENT must never assert status:'active'
+        // as a fact of local state — only a genuinely privileged admin write
+        // is allowed to activate a membership, and `guard_membership_writes`
+        // independently re-verifies that server-side (a stale/mis-scoped
+        // admin grant on a test account previously made this optimistic local
+        // write lie about a server rejection, leaving a "stale nag" and an 8x
+        // write-queue retry storm — see error_logs forensics). The push below
+        // still sends the intended row (a real admin's own privileged JWT is
+        // legally allowed to write status:'active'; the guard bypasses
+        // privileged callers) — but for the comp path, local state is NOT
+        // updated here; `waitForCompGrant` below confirms the SERVER'S own
+        // row before the UI claims success. The 'club' path's status is
+        // already legal for a non-privileged caller (guard always accepts
+        // it), so it keeps applying optimistically as before.
         pushMembership(p.id, membership);
+        if (via !== 'comp') p.memberships.push(membership);
       }
 
       const invoiceItems: InvoiceItem[] = selectedTypes.map((t, i) => {
@@ -318,13 +357,49 @@ function MembershipInner({ me }: { me: Athlete }) {
     });
     if (!applied) return; // offline read-only gate — no false success step/toast
 
-    setStep('done');
-
-    if (via === 'comp') {
-      toast(`Membership granted by admin override. Activated at $0.`);
-    } else {
+    if (via !== 'comp') {
+      setStep('done');
       toast(`Sent to ${club?.name} club cart — your membership activates once the club pays.`);
+      return;
     }
+
+    // Comp path (UAT G-02, 2026-08-27): don't claim success from the
+    // optimistic push above — poll the SERVER's own row (short bounded
+    // retries; the write queue's first attempt is normally a single network
+    // round trip) and only advance to 'done' once it actually shows the
+    // intended status. A minor's comp grant legitimately lands at
+    // 'pending-waiver' (legal even for a non-privileged caller — only
+    // status:'active' is guard-checked), so confirm against whichever status
+    // was actually requested, not a hardcoded 'active'. A rejected write
+    // (non-privileged caller trying to set status:'active') surfaces
+    // honestly instead of a false "granted" toast + a stale local nag
+    // afterward.
+    const intendedStatus = isMinor ? 'pending-waiver' : 'active';
+    setGranting(true);
+    const fresh = await waitForCompGrant(me.id, seasonId, selectedTypes, intendedStatus);
+    setGranting(false);
+    const granted = selectedTypes.every((t) =>
+      fresh.some((m) => m.seasonId === seasonId && m.type === t && m.status === intendedStatus));
+
+    mutate((d) => {
+      const p = d.people.find((x) => x.id === me.id)!;
+      for (const t of selectedTypes) {
+        p.memberships = p.memberships.filter((m) => !(m.seasonId === seasonId && m.type === t));
+        const row = fresh.find((m) => m.seasonId === seasonId && m.type === t);
+        if (row) p.memberships.push(row);
+      }
+    });
+
+    if (!granted) {
+      toast(
+        'Could not confirm the admin override — the server did not accept it (you may need to complete MFA step-up first). Nothing was granted.',
+        { variant: 'error' },
+      );
+      return;
+    }
+
+    setStep('done');
+    toast(`Membership granted by admin override. Activated at $0.`);
 
     // "Welcome to UCG" email for a no-club member's FIRST membership-only
     // purchase via admin comp (NOT the club-cart push, and NOT a real card
@@ -332,10 +407,8 @@ function MembershipInner({ me }: { me: Athlete }) {
     // not yet trigger this welcome email; see its comment). Best-effort; never
     // blocks the UX. Conditions checked here: no-club + not Outside US + first
     // membership. The server re-validates no-club + Outside-US before sending.
-    if (via === 'comp' && me.mainClubId == null && !me.outsideUs && !hadPriorMembership) {
-      if (!isMinor) {
-        void sendMembershipWelcome(me.id).catch(() => { /* non-fatal */ });
-      }
+    if (me.mainClubId == null && !me.outsideUs && !hadPriorMembership && !isMinor) {
+      void sendMembershipWelcome(me.id).catch(() => { /* non-fatal */ });
     }
   };
 
@@ -703,10 +776,11 @@ function MembershipInner({ me }: { me: Athlete }) {
                   <button
                     className="btn ghost"
                     style={{ borderColor: 'var(--gold)', color: 'var(--warn)' }}
+                    disabled={granting}
                     onClick={() => complete('comp')}
                     title="Admin override: grant membership at $0 (comp). Creates $0 invoice, sets paidVia: comp."
                   >
-                    Admin Payment Override ($0)
+                    {granting ? 'Confirming…' : 'Admin Payment Override ($0)'}
                   </button>
                 )}
 

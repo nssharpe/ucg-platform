@@ -137,6 +137,17 @@ export function classifyWriteError(error: unknown): 'permanent' | 'transient' {
   if (code === '42501' || code === '42P17') return 'permanent';
   if (code && INTEGRITY_CODE_RE.test(code)) return 'permanent';
   if (code && AUTH_CODE_RE.test(code)) return 'permanent';
+  // P0001: a plpgsql `RAISE EXCEPTION` with no explicit USING ERRCODE (the
+  // generic "raise_exception" SQLSTATE) — e.g. `guard_membership_writes`'s
+  // "non-privileged caller cannot set status=active" refusal (UAT G-02,
+  // 2026-08-27). A PostgrestError never carries a `status`/`statusCode`
+  // field, so the HTTP-status branch below can't catch this, and neither
+  // regex below matches the guard's wording — without this line the queue
+  // classified a hard, permanent trigger refusal as transient and burned all
+  // 8 auto-retries (~70s) before giving up. This marks EVERY P0001 refusal
+  // permanent, not just this one guard — that's correct: a raised exception
+  // is by definition not something a retry can fix.
+  if (code === 'P0001') return 'permanent';
 
   if (status !== undefined) {
     if (PERMANENT_HTTP_STATUS.has(status)) return 'permanent';
@@ -157,6 +168,9 @@ export function humanizeWriteError(error: unknown): string {
   const message = typeof e.message === 'string' ? e.message : stringifyError(error);
 
   if (code === '42501' || RLS_MESSAGE_RE.test(message)) {
+    return "you don't have permission to make this change";
+  }
+  if (code === 'P0001') {
     return "you don't have permission to make this change";
   }
   if ((code && INTEGRITY_CODE_RE.test(code)) || CONSTRAINT_MESSAGE_RE.test(message)) {

@@ -266,6 +266,7 @@ describe('classifyWriteError', () => {
     ['HTTP 409', { status: 409, message: 'Conflict' }, 'permanent'],
     ['HTTP 422', { status: 422, message: 'Unprocessable Entity' }, 'permanent'],
     ['statusCode field (not status)', { statusCode: 403, message: 'nope' }, 'permanent'],
+    ['P0001 raised trigger exception (guard_membership_writes)', { code: 'P0001', message: 'guard_membership_writes: non-privileged caller cannot set status=active' }, 'permanent'],
     ['fetch TypeError', new TypeError('Failed to fetch'), 'transient'],
     ['NetworkError message', { message: 'A NetworkError occurred' }, 'transient'],
     ['Safari Load failed', { message: 'Load failed' }, 'transient'],
@@ -289,6 +290,11 @@ describe('humanizeWriteError', () => {
     expect(humanizeWriteError({ code: '42501', message: 'permission denied for table x' }))
       .toBe("you don't have permission to make this change");
     expect(humanizeWriteError({ message: 'new row violates row-level security policy for table x' }))
+      .toBe("you don't have permission to make this change");
+  });
+
+  it('maps a P0001 trigger refusal to a plain-English reason', () => {
+    expect(humanizeWriteError({ code: 'P0001', message: 'guard_membership_writes: non-privileged caller cannot set status=active' }))
       .toBe("you don't have permission to make this change");
   });
 

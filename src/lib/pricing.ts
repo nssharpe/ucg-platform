@@ -57,6 +57,37 @@ export function priceForTypes(
   return Math.max(0, valueOf(union) - valueOf(owned));
 }
 
+/** A membership row carrying its owner's person id — `Membership` itself is
+ *  always nested under one `Athlete.memberships`, so the (person, season,
+ *  type) duplicate-purchase guard below needs this widened shape to check
+ *  across a batch of rows for potentially different people. */
+export type MembershipRecord = Membership & { personId: string };
+
+/**
+ * True when `personId` already holds an ACTIVE membership of `type` for
+ * `seasonId` among `rows` — the (person, season, type) duplicate-purchase
+ * guard (UAT G-02, 2026-08-27): an athlete bought the same membership twice
+ * because two checkout sessions were created before either had fulfilled
+ * (see money-invariants.md's "One live slot" duplicate-payment class for the
+ * analogous registration-side race). `create-checkout-session` calls the
+ * mirrored `membershipAlreadyActive` in `_shared/stripe.ts` to 409 a repeat
+ * purchase; this copy is the canonical, unit-tested one — keep them in
+ * lockstep. A legacy row with no `type` (predating typed memberships) is
+ * treated as 'athlete', mirroring `membershipTypeOf` in capabilities-core.ts.
+ */
+export function membershipAlreadyActive(
+  rows: MembershipRecord[],
+  personId: string,
+  seasonId: string,
+  type: MembershipType,
+): boolean {
+  return rows.some((m) =>
+    m.personId === personId
+    && m.seasonId === seasonId
+    && (m.type === 'coach' ? 'coach' : 'athlete') === type
+    && m.status === 'active');
+}
+
 /** Which membership types a person may purchase, from their profile roles. */
 export function offeredMembershipTypes(roles: {
   athlete: boolean;

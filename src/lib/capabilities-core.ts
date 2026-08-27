@@ -116,6 +116,15 @@ export function clubHasActiveMembershipForEvent(
   eventType: Event['eventType'] | undefined,
 ): boolean {
   if (!clubMembershipGateApplies(eventType)) return true;
+  // UAT G-02 (2026-08-27): an INDEPENDENT athlete (no competing club — null/
+  // empty clubId) has no club to gate on, so the club-membership gate is
+  // trivially satisfied for them. Without this, `clubHasActiveMembership`
+  // treats a null clubId as "club unpaid" and every entry point blocked
+  // independents outright with a misleading "your club needs an active
+  // membership" toast. This does NOT touch the athlete's OWN individual
+  // membership requirement — `Capabilities.canRegister` still gates that —
+  // nor a real club's own gate, which is unaffected.
+  if (!clubId) return true;
   return clubHasActiveMembership(db, clubId, seasonId);
 }
 

@@ -54,6 +54,7 @@ import {
   couponEligibleLine,
   getStripe,
   lateFeeAnchor,
+  membershipAlreadyActive,
   membershipFeeDollars,
   newRegistrationEntryTotalDollars,
   priceForTypesDollars,
@@ -717,6 +718,23 @@ Deno.serve(async (req) => {
     const types = Array.from(new Set(g.items.map((i) => i.ref_type as MembershipType)))
       .filter((t) => t === 'athlete' || t === 'coach');
     const existing = existingByPerson.get(g.targetPerson) ?? [];
+    // UAT G-02 (2026-08-27): refuse a repeat purchase of a membership the
+    // target already holds ACTIVE this season — two checkout sessions
+    // created before the first had fulfilled previously produced two real
+    // Stripe charges for one membership row (`priceForTypesDollars` alone
+    // doesn't catch this: it credits an EXISTING active row toward price,
+    // but the credit only helps once the FIRST payment's webhook has
+    // actually flipped that row active — a second session priced before
+    // then still sees no credit and charges full price again). Runs here,
+    // above the PREVIEW BRANCH POINT, so `mode:'preview'` surfaces the same
+    // 409 the real checkout would — same reasoning as the Z-02 duplicate-
+    // slot check for registrations (money-invariants.md).
+    const existingWithPerson = existing.map((m) => ({ ...m, person_id: g.targetPerson }));
+    for (const t of types) {
+      if (membershipAlreadyActive(existingWithPerson, g.targetPerson, g.seasonId, t)) {
+        return json({ ok: false, error: `You already have an active ${season.name} ${t} membership.` }, 409);
+      }
+    }
     const combinedDollars = priceForTypesDollars(season, types, existing);
     const combinedCents = toCents(combinedDollars);
     subtotalCents += combinedCents;
