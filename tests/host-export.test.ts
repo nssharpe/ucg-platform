@@ -285,3 +285,24 @@ describe('buildRegistrationWorkbookSheets', () => {
     expect(sheets.map((s) => s.name)).toEqual(['Athletes', 'Counts', 'Shirt sizes (profile)']);
   });
 });
+
+// Independents-exist rule (2026-08-27): sheets label a club-less registrant
+// 'Independent' — never an empty cell, never 'Unknown club'.
+import { buildAthletesSheet, buildCountsSheet } from '../src/lib/host-export';
+describe('independent club labels', () => {
+  const indyRow = {
+    athleteId: 'a1', firstName: 'Indy', lastName: 'Solo', clubId: '', clubName: null,
+    discipline: 'MAG', levelId: 'lv1', apparatus: ['FX'], sessionId: null,
+    dietary: [], shirt: null, email: null, phone: null, gender: null, dob: null,
+  } as never;
+  it('athlete detail sheet shows Independent', () => {
+    const sheet = buildAthletesSheet([indyRow]);
+    expect(JSON.stringify(sheet)).toContain('Independent');
+    expect(JSON.stringify(sheet)).not.toContain('Unknown club');
+  });
+  it('counts sheet shows Independent', () => {
+    const sheet = buildCountsSheet([indyRow]);
+    expect(JSON.stringify(sheet)).toContain('Independent');
+    expect(JSON.stringify(sheet)).not.toContain('Unknown club');
+  });
+});

@@ -58,6 +58,14 @@ export interface SheetModel {
   rows: (string | number)[][];
 }
 
+
+/** Club display label for export sheets: real name, 'Independent' for a
+ *  club-less (NULL/'' clubId) registrant, 'Unknown club' only for a real id
+ *  whose club row is missing (independents-exist rule, 2026-08-27). */
+function clubLabel(clubId: string | null | undefined, clubName: string | null | undefined): string {
+  return clubName ?? ((clubId ?? '') === '' ? 'Independent' : 'Unknown club');
+}
+
 const fullName = (r: HostRosterRow) => `${r.firstName} ${r.lastName}`.trim();
 
 /** Renders one registration's apparatus entry for a given apparatus code:
@@ -96,7 +104,7 @@ export function buildAthletesSheet(rows: HostRosterRow[], resolveLevelName: (id:
 
   const dataRows = sorted.map((r) => [
     fullName(r),
-    r.clubName ?? '',
+    clubLabel(r.clubId, r.clubName),
     r.discipline,
     r.levelId ? resolveLevelName(r.levelId) : '',
     ...apparatusCodes.map((code) => apparatusCell(r, code)),
@@ -131,7 +139,7 @@ export function buildCountsSheet(rows: HostRosterRow[], resolveLevelName: (id: s
     const clubId = r.clubId ?? '';
     const key = `${levelId}||${clubId}`;
     if (!groups.has(key)) {
-      groups.set(key, { levelId, clubId, clubName: r.clubName ?? ((r.clubId ?? '') === '' ? 'Independent' : 'Unknown club'), athletes: new Set(), apparatusAthletes: new Map() });
+      groups.set(key, { levelId, clubId, clubName: clubLabel(r.clubId, r.clubName), athletes: new Set(), apparatusAthletes: new Map() });
     }
     const g = groups.get(key)!;
     g.athletes.add(r.athleteId);
@@ -341,7 +349,7 @@ export function buildCampRosterSheet(
     });
     return [
       fullName(r),
-      r.clubName ?? '',
+      clubLabel(r.clubId, r.clubName),
       r.dob ?? '',
       r.gender ?? '',
       r.shirt ?? '',
