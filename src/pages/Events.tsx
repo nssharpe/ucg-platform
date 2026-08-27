@@ -290,7 +290,8 @@ export function Events() {
                                 // Suppressed until rolesLoaded (see the hook comment above) — while
                                 // caps.canRegister/managedClubIds are still resolving, showing NO
                                 // hint (the old behavior) beats showing a wrong one.
-                                if (!rolesLoaded) return null;
+                                // Signed-out needs no roles (they never load for a
+                                // guest) — only the membership hint waits on rolesLoaded.
                                 if (action === 'sign-in') {
                                   return (
                                     <Link key="sign-in" to="/me" style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>
@@ -298,6 +299,7 @@ export function Events() {
                                     </Link>
                                   );
                                 }
+                                if (!rolesLoaded) return null;
                                 return (
                                   <Link key="membership" to="/membership" style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>
                                     Membership required
@@ -563,22 +565,21 @@ export function EventDetail() {
                     <Badge tone="warn">Athlete membership required to register</Badge>
                     <Link className="btn small ghost" to="/membership">Get athlete membership →</Link>
                   </>
-                ) : !rolesLoaded ? (
-                  // caps.canRegister/managedClubIds aren't trustworthy until rolesLoaded
-                  // (see the hook comment above) — fall back to the old harmless message
-                  // rather than assert sign-in/membership is needed and risk it being
-                  // momentarily wrong for an athlete whose membership just hasn't loaded yet.
-                  <Badge tone="warn">Registration open</Badge>
                 ) : !caps.signedIn ? (
-                  // UAT G-03: a signed-out visitor previously saw a bare "Registration
-                  // open" badge with no way forward — say why the register button is
-                  // missing and link straight to the sign-in gate ("/me", which renders
-                  // Gate.tsx's sign-in screen for a signed-out visitor — same idiom as
-                  // Layout.tsx's "Browsing as a guest · sign in to register").
+                  // UAT G-03 (+ 2026-08-27 follow-up): signed-out MUST be checked BEFORE
+                  // the rolesLoaded guard — roles never load without a session, so a
+                  // guest previously never escaped the fallback badge and the sign-in
+                  // prompt below was unreachable. No-session is definitively knowable
+                  // without roles (same signal Layout.tsx's "Browsing as a guest" uses).
                   <>
                     <Badge tone="warn">Sign in to register for this event</Badge>
                     <Link className="btn small ghost" to="/me">Sign in →</Link>
                   </>
+                ) : !rolesLoaded ? (
+                  // Signed in, roles still resolving: fall back to the old harmless
+                  // badge rather than assert membership is needed and risk it being
+                  // momentarily wrong for an athlete whose membership hasn't loaded yet.
+                  <Badge tone="warn">Registration open</Badge>
                 ) : (
                   // UAT G-01: signed in but no active athlete membership at all (not even
                   // a coach one) — same silent-badge problem, same fix shape. The full
