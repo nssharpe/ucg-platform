@@ -186,16 +186,30 @@ export function assignSessionIds(
 /** Registration entry-point action, for one row of a list of events (UAT M-01-03):
  *  'self' → "Register yourself" (opens the self-registration modal for the viewer's
  *  own athlete profile); 'club' → "Register your club" (a manager registering OTHER
- *  athletes); 'edit' → "Edit registration" (the viewer already has one). */
-export type EventRowAction = 'self' | 'club' | 'edit';
+ *  athletes); 'edit' → "Edit registration" (the viewer already has one).
+ *
+ *  UAT G-01/G-03 (2026-08-27): 'sign-in' / 'membership' are muted HINTS, not real
+ *  entry points — shown only when none of 'self'/'club'/'edit' apply, so a viewer
+ *  who can't register at all still sees why instead of an empty cell. 'sign-in' →
+ *  the viewer is signed out entirely; 'membership' → signed in but lacking the
+ *  active athlete membership registration requires. */
+export type EventRowAction = 'self' | 'club' | 'edit' | 'sign-in' | 'membership';
 
 export interface EventRowActionsInput {
   /** Only the field this pure check needs from the event — kept for callers that
    *  already have the full `Event` on hand; `isCamp` below is what's actually read. */
   event: { eventType?: Event['eventType'] };
-  /** Whether the viewer holds an active athlete membership — mirrors
-   *  `Capabilities.canRegister`, never re-derived here. */
-  viewer: { canRegister: boolean };
+  viewer: {
+    /** Whether the viewer is signed in at all. Always false ⇒ `canRegister` false too
+     *  (mirrors `Capabilities.canRegister === signedIn && ...`) — kept as a separate
+     *  field rather than inferred, so this function never has to re-derive the
+     *  signed-in/signed-out distinction itself. Decides 'sign-in' vs 'membership'
+     *  when no other action applies. */
+    signedIn: boolean;
+    /** Whether the viewer holds an active athlete membership — mirrors
+     *  `Capabilities.canRegister`, never re-derived here. */
+    canRegister: boolean;
+  };
   /** Whether the viewer already holds a non-refunded registration of their own for
    *  this event — flips 'self' to 'edit' when true. */
   hasReg: boolean;
@@ -209,14 +223,18 @@ export interface EventRowActionsInput {
   isCamp: boolean;
 }
 
-/** Which registration entry-point button(s) to show for one Events-list row.
- *  Pure — no store/caps re-derivation; callers pass in the already-resolved gates
- *  (`viewer.canRegister`, `isManager`) exactly as computed elsewhere (capabilities.ts /
- *  the detail page), per "reuse the exact gate logic, don't re-derive." Order in the
- *  returned array is the intended display order. */
+/** Which registration entry-point button(s) — or, failing that, which explanatory
+ *  hint — to show for one Events-list row. Pure — no store/caps re-derivation;
+ *  callers pass in the already-resolved gates (`viewer.signedIn`, `viewer.canRegister`,
+ *  `isManager`) exactly as computed elsewhere (capabilities.ts / the detail page), per
+ *  "reuse the exact gate logic, don't re-derive." Order in the returned array is the
+ *  intended display order. Always returns at least one entry: when none of
+ *  'self'/'club'/'edit' apply, falls back to the 'sign-in' or 'membership' hint so a
+ *  row is never silently actionless (UAT G-01/G-03). */
 export function eventRowActions({ viewer, hasReg, isManager, isCamp }: EventRowActionsInput): EventRowAction[] {
   const actions: EventRowAction[] = [];
   if (viewer.canRegister) actions.push(hasReg ? 'edit' : 'self');
   if (isManager && !isCamp) actions.push('club');
+  if (actions.length === 0) actions.push(viewer.signedIn ? 'membership' : 'sign-in');
   return actions;
 }

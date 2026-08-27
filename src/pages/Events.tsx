@@ -89,6 +89,17 @@ const COLUMNS: { key: SortKey; label: string }[] = [
 export function Events() {
   const db = useDB();
   const caps = useCapabilities();
+  // Gates the new sign-in/membership hints below (UAT G-01/G-03) — NOT the
+  // existing self/club/edit buttons, which already tolerate this same
+  // pre-existing loading window unguarded. `rolesLoaded` flips true only
+  // after `onAuthenticated`'s `syncFromSupabase()` resolves (auth.ts), i.e.
+  // after `db.people`/memberships are populated — so it's the right signal
+  // for "is caps.canRegister/managedClubIds trustworthy yet," even though its
+  // name is about roles. Without this, a freshly-signed-in visitor on a
+  // browser with no cached snapshot briefly saw an affirmatively WRONG
+  // "Membership required" hint while their real membership was still
+  // loading — a false claim is worse than the silent gap being fixed.
+  const rolesLoaded = useRolesLoaded();
   const toast = useToast();
   const navigate = useNavigate();
   const fmtDate = useFmtDate();
@@ -182,7 +193,7 @@ export function Events() {
                       {effKey === c.key && <span style={{ marginLeft: 4 }}>{effDir === 'asc' ? '▲' : '▼'}</span>}
                     </th>
                   ))}
-                  <th>Register</th>
+                  <th>Register*</th>
                   <th>Details</th>
                 </tr>
               </thead>
@@ -230,7 +241,7 @@ export function Events() {
                           ? <span className="badge err">{fmtDate(ev.regCloses.slice(0, 10))}</span>
                           : <span style={{ color: 'var(--ink-soft)' }}>{fmtDate(ev.regCloses.slice(0, 10))}</span>}
                       </td>
-                      <td data-label="Register">
+                      <td data-label="Register*">
                         {!ev.listingOnly && eventIsInPhase(ev, 'reg-open') && (() => {
                           const isCamp = ev.eventType === 'camp';
                           const hasReg = !!myAthlete && myRegsAll.some(
@@ -238,12 +249,11 @@ export function Events() {
                           );
                           const actions = eventRowActions({
                             event: ev,
-                            viewer: { canRegister: caps.canRegister },
+                            viewer: { signedIn: caps.signedIn, canRegister: caps.canRegister },
                             hasReg,
                             isManager: caps.managedClubIds.length > 0,
                             isCamp,
                           });
-                          if (actions.length === 0) return null;
                           return (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
                               {actions.map((action) => {
@@ -261,14 +271,36 @@ export function Events() {
                                     </Link>
                                   );
                                 }
+                                if (action === 'club') {
+                                  return (
+                                    <button
+                                      key="club"
+                                      className="btn small ghost"
+                                      onClick={() => navigate(`/club/${currentClubId}/registrations?event=${ev.slug}`)}
+                                    >
+                                      Register your club
+                                    </button>
+                                  );
+                                }
+                                // 'sign-in' / 'membership' (UAT G-01/G-03): no real action available —
+                                // a muted, non-button link explaining why, per the owner's "minimal,
+                                // not a loud button" call. Same --ink-soft-on-surface pair used
+                                // throughout for muted text (AA per ui-brand-and-layout.md).
+                                // Suppressed until rolesLoaded (see the hook comment above) — while
+                                // caps.canRegister/managedClubIds are still resolving, showing NO
+                                // hint (the old behavior) beats showing a wrong one.
+                                if (!rolesLoaded) return null;
+                                if (action === 'sign-in') {
+                                  return (
+                                    <Link key="sign-in" to="/me" style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>
+                                      Sign in
+                                    </Link>
+                                  );
+                                }
                                 return (
-                                  <button
-                                    key="club"
-                                    className="btn small ghost"
-                                    onClick={() => navigate(`/club/${currentClubId}/registrations?event=${ev.slug}`)}
-                                  >
-                                    Register your club
-                                  </button>
+                                  <Link key="membership" to="/membership" style={{ fontSize: 12.5, color: 'var(--ink-soft)' }}>
+                                    Membership required
+                                  </Link>
                                 );
                               })}
                             </div>
@@ -284,6 +316,9 @@ export function Events() {
               </tbody>
             </table>
           </div>
+          <p style={{ fontSize: 11.5, color: 'var(--ink-soft)', margin: 0, padding: '8px 14px' }}>
+            *Registration requires signing in with an active season membership.
+          </p>
         </div>
       )}
 
@@ -312,6 +347,10 @@ export function EventDetail() {
   const { slug } = useParams();
   const db = useDB();
   const caps = useCapabilities();
+  // Gates the new sign-in/membership-required messaging below (UAT G-01/G-03)
+  // — see the matching comment in Events() for why `rolesLoaded` (not its
+  // name) is the right "is caps.canRegister trustworthy yet" signal.
+  const rolesLoaded = useRolesLoaded();
   // Same current-club resolution as the Events list (never managedClubIds[0]).
   const detailClubId = useCurrentClubId(caps.managedClubIds);
   const toast = useToast();
@@ -344,6 +383,9 @@ export function EventDetail() {
   const canEditEvent = caps.isSanctioning;
   const tz = tzAbbrev(event.timezone);
   const isUcg = !!event.ucgHosted;
+  // UAT G-01: the event's own season (not "current"), so the message names the
+  // season this event actually falls in even if it's a future/purchasable one.
+  const eventSeasonName = db.seasons.find((s) => s.id === seasonForDate(db, event.startDate))?.name;
   // UCG-run events (feedback-2 §5): an admin edits via the dedicated
   // full-page admin editor (`/admin/ucg-event/:template/:seasonId`), not the
   // overlay wizard — it's the same editor the Seasons card links to, opened
@@ -520,8 +562,36 @@ export function EventDetail() {
                     <Badge tone="warn">Athlete membership required to register</Badge>
                     <Link className="btn small ghost" to="/membership">Get athlete membership →</Link>
                   </>
-                ) : (
+                ) : !rolesLoaded ? (
+                  // caps.canRegister/managedClubIds aren't trustworthy until rolesLoaded
+                  // (see the hook comment above) — fall back to the old harmless message
+                  // rather than assert sign-in/membership is needed and risk it being
+                  // momentarily wrong for an athlete whose membership just hasn't loaded yet.
                   <Badge tone="warn">Registration open</Badge>
+                ) : !caps.signedIn ? (
+                  // UAT G-03: a signed-out visitor previously saw a bare "Registration
+                  // open" badge with no way forward — say why the register button is
+                  // missing and link straight to the sign-in gate ("/me", which renders
+                  // Gate.tsx's sign-in screen for a signed-out visitor — same idiom as
+                  // Layout.tsx's "Browsing as a guest · sign in to register").
+                  <>
+                    <Badge tone="warn">Sign in to register for this event</Badge>
+                    <Link className="btn small ghost" to="/me">Sign in →</Link>
+                  </>
+                ) : (
+                  // UAT G-01: signed in but no active athlete membership at all (not even
+                  // a coach one) — same silent-badge problem, same fix shape. The full
+                  // sentence lives in a plain <p>, NOT inside the Badge — `.badge` is
+                  // `white-space: nowrap` (index.css), so a full sentence there would
+                  // overflow this narrow card at 375px; the badge itself stays a short
+                  // label, matching the other branches here.
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start', minWidth: 0, flexBasis: '100%' }}>
+                    <Badge tone="warn">Membership required</Badge>
+                    <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-soft)' }}>
+                      An active{eventSeasonName ? ` ${eventSeasonName}` : ''} athlete membership is required to register.
+                    </p>
+                    <Link className="btn small ghost" to="/membership">Get athlete membership →</Link>
+                  </div>
                 )
               )}
             </div>

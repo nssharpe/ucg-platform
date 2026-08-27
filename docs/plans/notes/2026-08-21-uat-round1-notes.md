@@ -3109,3 +3109,134 @@ the key and the first push assigns a genuinely new array). Fixed by dropping the
 `ownSanctionRequestsOf(...)` is now called directly in the render body, matching how `tally` a
 few lines below it is already computed fresh every render for the same reason. Re-verified after
 the fix: build/eslint/86 files/1381 tests all still clean.
+
+## UAT G-01-01 / G-03-01 (2026-08-27): silent "no register button" on the event page + list,
+## branch `fix/register-entry-messaging`
+
+Owner-reported "silent failure": on an event with open registration, a viewer who can't register
+(signed out, or signed in with no active athlete membership) saw NO register control and no
+explanation — the register button just wasn't there. Two related findings, plus a small
+pre-existing overflow flagged in passing.
+
+### G-03: signed-out visitor, event DETAIL page
+
+`EventDetail`'s Registration card (`src/pages/Events.tsx` ~509-567) had a fallback branch that
+fired whenever `!caps.canRegister && caps.managedClubIds.length === 0` and the viewer had no
+active COACH membership either: it rendered a bare `<Badge tone="warn">Registration open</Badge>`
+with no CTA — true for BOTH a signed-out visitor and a signed-in visitor with zero memberships at
+all. Split that branch on `caps.signedIn`:
+
+- Signed out → `Badge tone="warn"` "Sign in to register for this event" + a `<Link to="/me">Sign
+  in →</Link>` button. `/me` is the existing sign-in-gate idiom — `RequireAccount` renders
+  `Gate.tsx`'s sign-in screen directly for a signed-out visitor (no redirect route), same as
+  `Layout.tsx`'s existing "Browsing as a guest · sign in to register" and the topbar's guest "Sign
+  in" link (`Layout.tsx:201,294`) — reused verbatim rather than inventing a new pattern.
+- Signed in, no membership → a SHORT `Badge tone="warn"` "Membership required" + a plain
+  `<p style={{fontSize:13, color:'var(--ink-soft)'}}>` "An active `<season>` athlete membership is
+  required to register." + the same "Get athlete membership →" `/membership` link already used
+  one branch up for the coach-membership case. **The full sentence deliberately does NOT live
+  inside the `Badge`** — `.badge` is `white-space: nowrap` (`index.css`), so a sentence that long
+  would refuse to wrap and overflow the card at 375px; caught by the advisor before commit, not by
+  build/lint/test (none of which see rendered CSS). `<season>` is the EVENT's own season
+  (`seasonForDate(db, event.startDate)` → `db.seasons` name), not "current" — matters for a
+  future/purchasable season's event.
+
+**Loading-flash guard (also an advisor catch, before commit).** Both new branches read
+`caps.canRegister`/`caps.athleteMembership`, which depend on `db.people` having synced from
+Supabase — NOT instant for a signed-in visitor on a browser with no cached snapshot (people IS a
+`PERSISTED_KEYS` entry in `store.ts`, so a REPEAT visit has it instantly from localStorage, but a
+first-ever sign-in on a fresh browser doesn't). Without a guard, that visitor would briefly see an
+affirmatively WRONG "Membership required" even though they do hold one — worse than the silent
+gap being fixed. Gated on `useRolesLoaded()` (`src/lib/auth.ts`, already imported in this file):
+despite its name, it flips true only after `onAuthenticated`'s `await syncFromSupabase()`
+resolves, which is exactly the same data these branches read, and `linkedUserId` resets every page
+load so this covers every boot, not just first-ever sign-ins. Both `Events()` and `EventDetail()`
+now call the hook; while `!rolesLoaded`, the detail-page fallback shows the OLD harmless
+"Registration open" badge instead of the new specific messages, and the list-column hints
+(`'sign-in'`/`'membership'`) render as nothing (see G-01 below) — i.e. falls back to the
+pre-existing behavior rather than asserting something that might be wrong. The pre-existing
+self/edit/club buttons on both surfaces are NOT newly gated — they already tolerated this same
+window unguarded before this task, and un-guarding a wrong "no membership" claim was the actual
+new risk, not the pre-existing "button not there yet" gap.
+
+### G-01: same silent gap on the Events LIST `Register` column
+
+Owner's design latitude, kept intentionally minimal: column header → `Register*`, one small muted
+footnote below the table ("*Registration requires signing in with an active season
+membership."), and per-row a subdued (not a `.btn`) `--ink-soft` link — "Sign in" (signed out) or
+"Membership required" → `/membership` (signed in, no membership) — instead of a loud button.
+
+Wired through `eventRowActions` (`src/lib/events-core.ts`) rather than an ad-hoc conditional in
+the list render, per the file's existing "reuse the exact gate logic, don't re-derive" convention:
+
+- `EventRowAction` union extended: `'self' | 'club' | 'edit' | 'sign-in' | 'membership'`.
+- `EventRowActionsInput.viewer` gained `signedIn: boolean` alongside the existing `canRegister`
+  (mirrors `Capabilities.canRegister === signedIn && athleteMembership?.status === 'active'` —
+  the function never re-derives that itself, just consumes both fields).
+- Logic: after computing `self`/`edit`/`club` exactly as before, if the array is STILL empty push
+  `'sign-in'` (not signed in) or `'membership'` (signed in, nothing else applied) — so a row is
+  never actionless. One consequence worth flagging: a manager of a CAMP who isn't personally
+  eligible now gets a `'membership'` hint where before they got nothing, because camps suppress
+  the `'club'` action entirely (individual self-reg only) and there's nothing else to show —
+  matches the "never silently actionless" intent, covered by a new test case.
+- `Events.tsx`'s list renderer: dropped the old `if (actions.length === 0) return null` (the
+  array is never empty now), added `'sign-in'`/`'membership'` render branches as
+  `fontSize:12.5, color:'var(--ink-soft)'` `<Link>`s (`/me`, `/membership`) — but ONLY when
+  `useRolesLoaded()` is true (same rationale as the detail-page guard above); while loading, these
+  two branches return `null`, i.e. the cell looks exactly like the old pre-fix empty state rather
+  than asserting a hint that might be wrong. The real `self`/`edit`/`club` actions are unaffected
+  by this guard.
+- Footnote paragraph added below `events-table-wrap` but still inside the card, `fontSize:11.5,
+  color:'var(--ink-soft)'`. `data-label` on the Register `<td>` also carries the asterisk
+  (`Register*`) — below 820px the `<thead>` is hidden (existing `@container` responsive-card
+  behavior) so the footnote's `*` would otherwise reference an invisible header.
+
+Contrast: `--ink-soft` (`#5a6a78`) on `--surface` (`--white`) is the rule file's explicitly
+documented standard muted pair — no new fg/bg combination introduced.
+
+Column width at 375px: the `events-table` class already collapses to a stacked
+`data-label`/flex-row card layout below 820px (`@container (max-width: 820px)` in `index.css`,
+pre-existing) — the Register cell's content becomes a flex row (`justify-content:space-between`)
+rather than a fixed-width table column, so the short hint text ("Sign in" / "Membership
+required") doesn't widen anything. The EventDetail signed-in-no-membership `<p>` sits in a
+`flexDirection:'column'` div with `minWidth:0, flexBasis:'100%'` (belt-and-braces so it can't
+establish a wide min-content floor as a flex item of the outer `flexWrap:'wrap'` row).
+
+**Not independently verified in a real browser this session (no Browser pane available) —
+controller: please run the responsive sweep and check specifically:**
+1. Events list `Register*` column at 375/768/1280px in all four viewer states (signed-out,
+   signed-in no-membership, signed-in-eligible, manager) — confirm no horizontal overflow and the
+   hint text sits correctly in the stacked-card layout below 820px.
+2. EventDetail Registration card's two new branches (signed-out, signed-in-no-membership) at the
+   same three widths — **the signed-in-no-membership state at 375px is the one measurement that
+   most needs a real `scrollWidth` reading**, since that's the branch with the sentence moved out
+   of the nowrap `Badge` into a `<p>`.
+3. A FIRST sign-in on a browser with an empty/cleared `localStorage` (or `sessionStorage`'s
+   `ucg-dev-signed-out` cleared then signed back in) landing on `/events` or `/events/:slug`: the
+   sign-in/membership hint should stay ABSENT (or the detail page should show the old
+   "Registration open" badge) until roles/people finish syncing, then flip to the correct message
+   — not flash a wrong "Membership required" first.
+
+### Small overflow fix (flagged 2026-08-27, in scope for this task)
+
+`SanctioningQueue`'s "Decided" table (`src/pages/Sanction.tsx` ~803-852) — the one flagged but
+NOT fixed in the "Sanction email/UX batch" entry above (`scrollWidth: 933` vs `clientWidth: 375`)
+— now wraps in the same `<div style={{ overflowX: 'auto' }}>` idiom already used a few sections
+up in the same file for "Your Sanction Requests." Pure wrap + reindent, no logic change.
+
+### Verification
+
+`npm run build` — clean (`tsc -b && vite build`; PWA precache regenerated; dev-auth firewall
+check passed), re-run after the advisor-driven fixes above, still clean.
+
+`npx eslint src/pages/Events.tsx src/lib/events-core.ts src/pages/Sanction.tsx
+tests/lib/events-core.test.ts` — zero errors/warnings.
+
+`npx vitest run` — 86 files / 1382 tests, all green (2 new `eventRowActions` cases for the
+sign-in/membership hints; 7 existing cases updated for the new required `viewer.signedIn` field).
+Re-run after the `rolesLoaded`/badge-overflow fixes — same 86/1382, still green (those fixes are
+render-time guards over `caps`, not new pure logic, so no new unit cases apply to them; covered by
+the controller's responsive-sweep asks above instead).
+
+Files touched: `src/lib/events-core.ts`, `src/pages/Events.tsx`, `src/pages/Sanction.tsx`,
+`tests/lib/events-core.test.ts`.

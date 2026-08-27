@@ -803,46 +803,51 @@ export function SanctioningQueue() {
       {decided.length > 0 && (
         <div className="card card-pad">
           <h3 className="card-title">Decided ({decided.length})</h3>
-          <table className="tbl" style={{ marginTop: 8 }}>
-            <thead>
-              <tr>
-                <th>Event</th>
-                <th>Host Club</th>
-                <th>Kind</th>
-                <th>Status</th>
-                <th>Sanction ID</th>
-                <th>Owner</th>
-                <th>Decided</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {decided.map((r) => {
-                const createdEvent = r.createdEventId ? db.events.find((e) => e.id === r.createdEventId) : undefined;
-                const needsOwner = r.status === 'approved' && createdEvent && !createdEvent.owner;
-                return (
-                  <tr key={r.id}>
-                    <td>{(r.payload.eventName as string) ?? '—'}</td>
-                    <td>{clubName(r.hostClubId)}</td>
-                    <td>{r.eventKind}</td>
-                    <td>{statusBadge(r.status)}</td>
-                    <td>{r.sanctionId ?? '—'}</td>
-                    <td>
-                      {needsOwner ? (
-                        <Link to={`/events/${createdEvent!.slug}`}>
-                          <Badge tone="err">No owner assigned</Badge>
-                        </Link>
-                      ) : createdEvent?.owner ? (
-                        createdEvent.owner.name
-                      ) : '—'}
-                    </td>
-                    <td>{r.decidedAt ? new Date(r.decidedAt).toLocaleDateString() : '—'}</td>
-                    <td><Link to={`/sanctioning/${r.id}`} className="btn small ghost">View</Link></td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          {/* Wide table (8 columns) overflows at 375px without a scroller — same
+              overflowX:auto idiom already used above for "Your Sanction Requests"
+              (flagged 2026-08-27, pre-existing). */}
+          <div style={{ overflowX: 'auto' }}>
+            <table className="tbl" style={{ marginTop: 8 }}>
+              <thead>
+                <tr>
+                  <th>Event</th>
+                  <th>Host Club</th>
+                  <th>Kind</th>
+                  <th>Status</th>
+                  <th>Sanction ID</th>
+                  <th>Owner</th>
+                  <th>Decided</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {decided.map((r) => {
+                  const createdEvent = r.createdEventId ? db.events.find((e) => e.id === r.createdEventId) : undefined;
+                  const needsOwner = r.status === 'approved' && createdEvent && !createdEvent.owner;
+                  return (
+                    <tr key={r.id}>
+                      <td>{(r.payload.eventName as string) ?? '—'}</td>
+                      <td>{clubName(r.hostClubId)}</td>
+                      <td>{r.eventKind}</td>
+                      <td>{statusBadge(r.status)}</td>
+                      <td>{r.sanctionId ?? '—'}</td>
+                      <td>
+                        {needsOwner ? (
+                          <Link to={`/events/${createdEvent!.slug}`}>
+                            <Badge tone="err">No owner assigned</Badge>
+                          </Link>
+                        ) : createdEvent?.owner ? (
+                          createdEvent.owner.name
+                        ) : '—'}
+                      </td>
+                      <td>{r.decidedAt ? new Date(r.decidedAt).toLocaleDateString() : '—'}</td>
+                      <td><Link to={`/sanctioning/${r.id}`} className="btn small ghost">View</Link></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>
