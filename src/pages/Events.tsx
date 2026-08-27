@@ -435,7 +435,10 @@ export function EventDetail() {
             {event.city}, {event.state} · {fmtDate(event.startDate)}–{fmtDate(event.endDate)} ·
             hosted by {event.ucgHosted ? 'UCG' : host?.name}
           </p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 6 }}>
+          {/* Owner 2026-08-27: equal breathing room above and below the icon
+              row. .page-sub carries 24px bottom margin, so -10 nets 14px above,
+              matched by 14px below — previously 30/0, icons touched the cards. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: -10, marginBottom: 14 }}>
             {(event.disciplines as Discipline[]).map((d) => (
               <span key={d} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 13, fontWeight: 700, color: 'var(--ink-soft)' }}>
                 <DisciplineIcon discipline={d} size={20} />
