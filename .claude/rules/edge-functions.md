@@ -37,8 +37,13 @@ Shared helper `_shared/resend.ts` (`sendOne`/`sendBatch`; optional `cc`, `reply_
 All transactional emails render through `_shared/email-layout.ts`
 (`renderEmail({ heading, bodyHtml, cta?, footnoteHtml? })`) — the branded navy-header /
 white-card / orange-CTA wrapper. **New email-sending functions should use it** rather than
-composing bare `<p>` HTML. Exception: `send-email` (admin free-text broadcast — the caller
-controls the full body).
+composing bare `<p>` HTML. `send-email` (admin free-text broadcast — the caller controls the full
+body) defaults to sending `html` as-is, but (E-01, `2026-08-27`) accepts an optional `wrap:
+{ title, cta? }` payload field that routes `html` through `renderEmail` as `bodyHtml` instead
+(`title` → `heading`; there's no `preheader` param on either side — `renderEmail` has no slot for
+one). `src/lib/supabase.ts`'s `sendEmail(subject, html, recipients, wrap?)` mirrors this. Callers
+that want the branded wrapper without leaving `send-email`'s free-form default behind (e.g.
+`Profile.tsx`'s waiver-link emails) pass `wrap`; the admin Communicate broadcast still doesn't.
 
 Supabase Auth's own templates (confirmation/invite/magic-link/recovery/…) are repo-managed and
 render from the SAME layout: `scripts/render-auth-email-templates.mts` →
