@@ -24,6 +24,7 @@
  */
 
 import { useState, useMemo } from 'react';
+import { useAllCompetitors } from '../lib/people-slice';
 import { Combo, Field } from './ui';
 import { useToast } from './ui-hooks';
 import { DisciplineIcon } from './DisciplineIcon';
@@ -108,16 +109,29 @@ function DiscSection({ disc, event, athlete, levels, draft, onChange, allAthlete
   // SY (Synchro) is an event within TNT, not its own discipline
   const synchroSelected = isTNT && draft.apparatus.includes('SY');
 
-  // Athletes with an active ATHLETE-type membership for the partner combo —
-  // a coach-only membership doesn't make someone eligible to compete
-  // (typed-membership residuals T1).
+  // Partner picker source (UAT G-07, 2026-08-27): league-wide via the
+  // public_competitors-backed slice — `allAthletes`/db.people no longer covers
+  // the league for a plain member (data-layer Phase 4), which silently emptied
+  // this combo into what looked like a free-text box. Membership filtering
+  // stays BEST-EFFORT: when a person IS locally known (manager/admin callers
+  // pass full rows), someone without an active athlete membership for this
+  // season is excluded (typed-membership residuals T1); an unknown person is
+  // kept — their own membership is enforced when they register, and a synchro
+  // event can't go live unpartnered.
+  const { rows: leagueCompetitors } = useAllCompetitors();
   const partnerOptions = useMemo(() => {
-    return allAthletes
-      .filter((a) => a.id !== athlete.id && a.memberships.some(
-        (m) => m.seasonId === season.id && m.status === 'active' && membershipTypeOf(m) === 'athlete',
-      ))
-      .map((a) => ({ value: a.id, label: `${a.firstName} ${a.lastName}`, sub: a.email }));
-  }, [allAthletes, athlete.id, season.id]);
+    const knownIneligible = new Set(
+      allAthletes
+        .filter((a) => !a.memberships.some(
+          (m) => m.seasonId === season.id && m.status === 'active' && membershipTypeOf(m) === 'athlete',
+        ))
+        .map((a) => a.id),
+    );
+    const emailOf = new Map(allAthletes.map((a) => [a.id, a.email]));
+    return leagueCompetitors
+      .filter((c) => c.id !== athlete.id && !knownIneligible.has(c.id))
+      .map((c) => ({ value: c.id, label: `${c.firstName} ${c.lastName}`, sub: emailOf.get(c.id) ?? '' }));
+  }, [leagueCompetitors, allAthletes, athlete.id, season.id]);
 
   const toggleEvent = (code: string): DraftReg => {
     const next = draft.apparatus.includes(code)
