@@ -1183,6 +1183,41 @@ export function cartSectionCount(groups: { membership: unknown[]; events: unknow
   return (groups.membership.length > 0 ? 1 : 0) + groups.events.length + (groups.other.length > 0 ? 1 : 0);
 }
 
+/** UAT M-12-03: which event ids a set of just-checked-out cart items could
+ *  reference, derived WITHOUT touching any registration slice — the same
+ *  `label.includes(event.name)` join `Cart.tsx`'s `groupCartItems` already
+ *  uses to build the per-event cart cards, so it names exactly the events
+ *  those cards represent. `CartScope.onPaid` unions this with its existing
+ *  `regs`-derived lookup (walk each item's `refRegIds`, resolve to a
+ *  registration, take its `eventId`) before calling
+ *  `invalidateEventRegistrations` for every id found, rather than relying on
+ *  the regs-derived lookup alone.
+ *
+ *  Why the union matters: the regs-derived lookup silently drops any
+ *  `refRegId` not present in `regs` — and `regs` there is the by-club (or
+ *  "mine") registration slice, which can be incomplete right at
+ *  checkout-completion (not yet 'ready', or a row not yet locally upserted
+ *  into that scope). For a PERSONAL checkout this is harmless: `onPaid` also
+ *  unconditionally calls `invalidateMyRegistrations()`, and
+ *  `MyRegistrations.tsx` reads that exact same "mine" tier — so even a
+ *  missed by-event invalidation doesn't show stale data. For a CLUB
+ *  checkout, `Club.tsx`'s `EventRegGrid` reads ONLY the by-event slice
+ *  (`useEventRegistrations`), which has no such fallback — a missed id here
+ *  is a genuinely stale "Pending Purchase" badge until a hard reload resets
+ *  every module-level slice cache. This function gives that path an
+ *  independent, always-available second source for the same ids. */
+export function eventIdsForCartItems(
+  items: { label: string }[],
+  events: { id: string; name: string }[],
+): string[] {
+  const ids = new Set<string>();
+  for (const item of items) {
+    const event = events.find((e) => item.label.includes(e.name));
+    if (event) ids.add(event.id);
+  }
+  return [...ids];
+}
+
 /** Generate a random uppercase promo code (default 8 chars, no ambiguous chars). */
 export function randomPromoCode(len = 8): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I,O,0,1

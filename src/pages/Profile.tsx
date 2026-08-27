@@ -1414,19 +1414,24 @@ function WaiverLinkPopup({ person, seasonId, seasonName, onClose }: {
     const subject = isMinor
       ? `Action needed: sign the ${seasonName} waiver for ${athleteName}`
       : `Action needed: sign your ${seasonName} United Club Gymnastics waiver`;
+    // E-01 (UAT round 3): branded via send-email's `wrap` — the link now lives
+    // in the CTA button instead of an inline anchor (renderEmail renders one
+    // button under the body paragraphs below).
     const html = isMinor
       ? `<p>Hi ${escapeHtml(guardianName.trim())},</p>
 <p><strong>${escapeHtml(athleteName)}</strong>'s <strong>${escapeHtml(seasonName)}</strong> United Club Gymnastics
 membership has been activated, but it stays pending until a parent/guardian signs the waiver. No login is required.</p>
-<p><a href="${link}">Review &amp; sign the waiver &rarr;</a></p>
 <p>Once signed, the membership becomes active automatically.</p>`
       : `<p>Hi ${escapeHtml(person.firstName)},</p>
 <p>Your <strong>${escapeHtml(seasonName)}</strong> membership has been activated, but it stays pending until your
 waiver is signed. No login is required.</p>
-<p><a href="${link}">Review &amp; sign your waiver &rarr;</a></p>
 <p>Once signed, your membership becomes active automatically.</p>`;
+    const wrap = {
+      title: isMinor ? `Waiver signature needed for ${athleteName}` : 'Sign your waiver',
+      cta: { text: isMinor ? 'Review & sign the waiver' : 'Review & sign your waiver', href: link },
+    };
     const recipientName = isMinor ? guardianName.trim() : athleteName;
-    const res = await sendEmail(subject, html, [{ email: recipientEmail, name: recipientName }]);
+    const res = await sendEmail(subject, html, [{ email: recipientEmail, name: recipientName }], wrap);
     setEmailing(false);
     if (res.ok && res.sentCount > 0) { toast(`Waiver link emailed to ${recipientEmail}.`); onClose(); }
     else toast(`Email failed: ${res.error ?? 'unknown error'}.`, { variant: 'error' });

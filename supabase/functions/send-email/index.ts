@@ -12,13 +12,27 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendBatch, type EmailMessage } from '../_shared/resend.ts';
 import { requireAalForEnrolledCaller } from '../_shared/aal-guard.ts';
+import { renderEmail } from '../_shared/email-layout.ts';
 
 interface Recipient { email: string; name?: string }
+/** Optional branding wrap (E-01, UAT round 3): when present, `html` is
+ *  treated as inner body content and rendered through the shared
+ *  navy-header/white-card/orange-CTA layout (`_shared/email-layout.ts`)
+ *  instead of being sent as-is. `title` maps to `renderEmail`'s `heading` —
+ *  see that file for the exact signature (it has no `preheader` slot, so
+ *  this deliberately doesn't accept one; a caller wanting inbox preview text
+ *  would need that added to the layout first). Existing callers that omit
+ *  `wrap` are byte-for-byte unaffected. */
+interface WrapOptions {
+  title: string;
+  cta?: { text: string; href: string };
+}
 interface Payload {
   subject?: string;
   html?: string;
   text?: string;
   recipients?: Recipient[];
+  wrap?: WrapOptions;
 }
 
 // Hard cap — raise once on a paid Resend plan with a higher daily limit.
@@ -74,13 +88,13 @@ Deno.serve(async (req) => {
   }
 
   const subject = (payload.subject ?? '').trim();
-  const html = payload.html ?? '';
+  const rawHtml = payload.html ?? '';
   const text = payload.text ?? '';
   const recipients = (payload.recipients ?? [])
     .filter((r) => r && typeof r.email === 'string' && EMAIL_RE.test(r.email.trim()));
 
   if (!subject) return json({ error: 'Subject is required.' }, 400);
-  if (!html && !text) return json({ error: 'Email body is required.' }, 400);
+  if (!rawHtml && !text) return json({ error: 'Email body is required.' }, 400);
   if (recipients.length === 0) return json({ error: 'No valid recipients.' }, 400);
   if (recipients.length > MAX_RECIPIENTS) {
     return json({
@@ -88,6 +102,14 @@ Deno.serve(async (req) => {
         `Raise MAX_RECIPIENTS once on a paid Resend plan with a higher daily limit.`,
     }, 400);
   }
+
+  // E-01: `wrap` renders `rawHtml` as the layout's body content instead of
+  // sending it as-is — validated above BEFORE wrapping, so the "body
+  // required" check still reflects what the caller actually supplied, not
+  // the always-non-empty wrapped shell.
+  const html = payload.wrap
+    ? renderEmail({ heading: payload.wrap.title, bodyHtml: rawHtml, cta: payload.wrap.cta })
+    : rawHtml;
 
   // --- Send via Resend batch (one distinct message per recipient) ---
   const messages: EmailMessage[] = recipients.map((r) => ({
