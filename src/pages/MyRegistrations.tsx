@@ -978,8 +978,12 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
           return <Modal title={`Edit registration — ${event.name}`} onClose={() => setEditingEventId(null)}><p>Loading…</p></Modal>;
         }
         const existing = existingForEvent(event);
-        const currentClubId = existing[0]?.clubId ?? me.mainClubId ?? affiliatedClubs[0]?.id ?? null;
-        if (!currentClubId) return null;
+        // '' = independent / no club (the same sentinel SelfRegModal uses —
+        // registrationToRow maps it to NULL at write time). The old
+        // `if (!currentClubId) return null` guard made Edit a silent
+        // flash-then-vanish for every club-less athlete (UAT 2026-08-27,
+        // same species as G-02: code assuming a club exists).
+        const currentClubId = existing[0]?.clubId ?? me.mainClubId ?? affiliatedClubs[0]?.id ?? '';
         return (
           <EditRegistrationModal
             event={event}
