@@ -239,6 +239,28 @@ function handlePermanentWriteFailure(entry: WriteQueueEntry, error: unknown): vo
     `Couldn't save ${entry.label}: ${reason}. Your change was not saved and the page has been refreshed from the server.`,
     { variant: 'error' },
   );
+  // Registrations no longer ride the boot sync (data-layer Phase 3), so
+  // `scheduleRollbackSync`'s full resync does NOT purge a locally-inserted row
+  // whose server write just failed permanently. Leaving the phantom made the
+  // NEXT save classify as an edit ("change fee added" on a fresh registration)
+  // and left cart lines referencing a row the server never had (UAT RT-01,
+  // 2026-08-27). Purge the failed rows from the legacy array and invalidate
+  // the slice tiers so every reader refetches server truth.
+  if (entry.op.kind === 'upsert' && entry.op.table === 'registrations') {
+    const failedIds = entry.op.rows
+      .map((r) => (typeof r.id === 'string' ? r.id : null))
+      .filter((id): id is string => !!id);
+    const eventIds = new Set(entry.op.rows
+      .map((r) => (typeof r.event_id === 'string' ? r.event_id : null))
+      .filter((id): id is string => !!id));
+    void Promise.all([import('./store'), import('./registrations-slice')]).then(([store, slice]) => {
+      store.mutate((d) => {
+        d.registrations = d.registrations.filter((r) => !failedIds.includes(r.id));
+      });
+      slice.invalidateMyRegistrations();
+      for (const eid of eventIds) slice.invalidateEventRegistrations(eid);
+    });
+  }
   scheduleRollbackSync();
 }
 
@@ -507,7 +529,12 @@ const squadToRow = (sessionId: string, q: Event['sessions'][number]['squads'][nu
 // which compiles to a plain `UPDATE ... SET camp_survey = $1` with no
 // EXCLUDED reference and no revoked-column read.
 const registrationToRow = (r: Registration, squadId: string | null = null) => ({
-  id: r.id, event_id: r.eventId, athlete_id: r.athleteId, club_id: r.clubId, discipline: r.discipline,
+  id: r.id, event_id: r.eventId, athlete_id: r.athleteId,
+  // '' is the client-side "independent / no club" sentinel (pricing and the
+  // self-reg picker use it) — the DB column is a real FK, so it MUST become
+  // NULL here. Writing '' violates registrations_club_id_fkey (UAT RT-01,
+  // 2026-08-27: every independent self-registration failed server-side).
+  club_id: r.clubId || null, discipline: r.discipline,
   // '' (the camp-registration "no level" sentinel, CLAUDE.md "Camps are
   // session-less/level-less") must become null, not the literal empty
   // string -- level_id is a nullable FK into levels(id) with no row whose id

@@ -255,12 +255,12 @@ export function Events() {
                             isCamp,
                           });
                           return (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start', whiteSpace: 'nowrap' }}>
                               {actions.map((action) => {
                                 if (action === 'self') {
                                   return (
-                                    <button key="self" className="btn small primary" onClick={() => setSelfRegEventId(ev.id)}>
-                                      Register yourself
+                                    <button key="self" className="btn small primary" style={{ whiteSpace: 'nowrap' }} onClick={() => setSelfRegEventId(ev.id)}>
+                                      Register Self
                                     </button>
                                   );
                                 }
@@ -276,9 +276,10 @@ export function Events() {
                                     <button
                                       key="club"
                                       className="btn small ghost"
+                                      style={{ whiteSpace: 'nowrap' }}
                                       onClick={() => navigate(`/club/${currentClubId}/registrations?event=${ev.slug}`)}
                                     >
-                                      Register your club
+                                      Register Team
                                     </button>
                                   );
                                 }
