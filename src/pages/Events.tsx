@@ -279,7 +279,7 @@ export function Events() {
                                       style={{ whiteSpace: 'nowrap' }}
                                       onClick={() => navigate(`/club/${currentClubId}/registrations?event=${ev.slug}`)}
                                     >
-                                      Register Team
+                                      Register Club
                                     </button>
                                   );
                                 }
