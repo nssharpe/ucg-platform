@@ -43,6 +43,22 @@ bypassing the "mine" tier's same-person no-op guard / wrapping the by-club/by-ev
 state without going through `writeRegistration`'s own optimistic
 `applyLocalRegistrationUpsert`.
 
+**M-12-02's fix had its own gap (UAT M-12-03, `2026-08-27`): don't derive WHICH scope key to
+invalidate by looking a row up in a slice that might itself be incomplete.** `Cart.tsx`'s
+`onPaid` computed which event ids to `invalidateEventRegistrations()` by walking each
+just-paid item's `refRegIds` through `regs.find(...)` (the by-club/"mine" slice) and silently
+dropping any id not found — harmless for a personal checkout (`invalidateMyRegistrations()` is
+also called unconditionally, and `MyRegistrations.tsx` reads that same "mine" tier directly), but
+`Club.tsx`'s `EventRegGrid` reads ONLY the by-event slice with no such fallback, so a `regs` set
+that's momentarily incomplete right at checkout completion left the by-event invalidation
+silently skipped — permanently stale until a hard reload. Fixed by unioning in
+`eventIdsForCartItems` (`pricing.ts`), which derives the same ids from the cart items' labels
+alone, with no registration-slice dependency at all. **The general lesson:** when a write's
+invalidation target is derived by looking a row up in ANOTHER cache (rather than being known
+directly, e.g. from the write's own payload), prefer a derivation with no cache dependency, or at
+least union one in — a lookup-based derivation can silently under-invalidate exactly when the
+looked-up cache is least trustworthy.
+
 All built on the shared generic `src/lib/slice-cache.ts`. Slices are **memory-only** (never
 localStorage).
 

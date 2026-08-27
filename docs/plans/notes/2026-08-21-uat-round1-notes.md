@@ -3240,3 +3240,128 @@ the controller's responsive-sweep asks above instead).
 
 Files touched: `src/lib/events-core.ts`, `src/pages/Events.tsx`, `src/pages/Sanction.tsx`,
 `tests/lib/events-core.test.ts`.
+
+## UAT round 3 tail: M-12-03 (club-cart registration-grid staleness) + E-01 (branded waiver-link emails) — 2026-08-27
+
+Branch `fix/uat-round3-tail`. Two small, unrelated fixes bundled per the controller's brief.
+
+### M-12-03: club registrations page still shows "Pending Purchase" after a $0-coupon CLUB checkout
+
+Investigated the three candidates in the brief and disproved two of them with direct evidence
+before landing on the real gap:
+
+- **NOT (1) "ClubCart.tsx's onPaid never got the M-12-02 wiring."** `git log` shows `7f72804`
+  (the M-12-02 invalidation fix, adding `invalidateMyRegistrations`/`invalidateClubRegistrations`/
+  `invalidateEventRegistrations` calls to `CartScope`'s ONE shared `onPaid`) landed BEFORE
+  `a77f4e9` (the personal/club cart page split that created `ClubCart.tsx`). `ClubCart.tsx`'s
+  `ClubCartPage` renders `<CartScope isClub ownerKey={club.id} .../>` from `Cart.tsx` — it
+  doesn't define its own `onPaid` at all, so it inherited the fix from day one.
+  `src/components/StripeCheckout.tsx` was also checked (a possible Stripe-return completion path)
+  and ruled out: Stripe Embedded Checkout uses `redirect_on_completion: 'never'`
+  (`supabase/functions/create-checkout-session/index.ts:1317`) with an in-page `onComplete`
+  callback, not a `return_url` — there is no separate return-route completion path that could
+  have missed invalidation wiring.
+- **NOT (2)/(3) "wrong scope/club id" or "grid reads a tier `invalidateClubRegistrations`
+  doesn't clear" as originally framed** — `Club.tsx`'s `EventRegGrid` (the "Pending
+  purchase"/"Registered" badge, `src/pages/Club.tsx:2100-2136`, sourced from `allRegs =
+  eventRegs.filter(...)` at line 1289, itself `useEventRegistrations(event?.id)` at line 1122)
+  reads the **by-event** slice (`regsByEventSlice` in `registrations-slice.ts`), not the by-club
+  one. `onPaid` (`Cart.tsx`) DOES call `invalidateEventRegistrations(eventId)` for every event it
+  can derive, with the right `ownerKey`/clubId throughout.
+- **The actual gap:** that event-id derivation (`Cart.tsx`'s old `onPaid`) walked
+  `checkout.items[].refRegIds`, resolved each to a registration via `regs.find(...)`, and
+  silently DROPPED any id not found (`if (reg) paidEventIds.add(...)`) — with no fallback. For a
+  personal checkout this is harmless even when it misses: `onPaid` also unconditionally calls
+  `invalidateMyRegistrations()`, and `MyRegistrations.tsx` reads that exact SAME "mine" tier
+  directly, so a missed by-event id there never surfaces as staleness. For a CLUB checkout there
+  is no equivalent safety net — `EventRegGrid` reads ONLY the by-event slice, so its freshness
+  depended entirely on that one `regs`-based lookup succeeding, where `regs` there is the by-club
+  slice (`useClubRegistrations(ownerKey).rows`) — note `removeItem` (`Cart.tsx:428`) guards on
+  `regsReady` before trusting `regs`, but `onPaid` never did. A `regs` set that's momentarily
+  incomplete at the exact instant checkout completes (not yet 'ready', or a row not yet locally
+  upserted into that scope) makes the lookup miss and the event never gets invalidated —
+  permanently stale until a hard reload resets every module-level slice cache, exactly Julia's
+  repro and exactly the M-12-02 bug's original symptom recurring through a narrower door.
+- **Not independently reproduced in a live browser this session** (no browser pane opened for
+  this task; verification is build/eslint/vitest only, per the brief's protocol) — the fix below
+  is the defensible root fix that closes this failure class regardless of the precise timing that
+  trips it, rather than a narrow patch aimed at one hypothesized race.
+
+**Fix:** `eventIdsForCartItems(items, events)` (new pure export, `src/lib/pricing.ts`) derives
+event ids from cart items WITHOUT touching any registration slice — the same
+`item.label.includes(event.name)` join `Cart.tsx`'s `groupCartItems` already uses to build the
+per-event cart cards. `CartScope.onPaid` (`src/pages/Cart.tsx`) now unions this with the existing
+`regs`-derived ids before calling `invalidateEventRegistrations` for each, so a club checkout's
+by-event invalidation no longer depends solely on the by-club slice being complete at that exact
+moment. The existing `regs`-based lookup is KEPT (not replaced) since it can, in principle, cover
+an item whose label doesn't literally contain the event name — this is strictly additive/safer,
+never fewer invalidations than before.
+
+Money-invariants-scoped diff (`Cart.tsx`, `pricing.ts` are both in that rule's `paths`) — this
+change touches ONLY which read-caches get invalidated after payment; it does not touch pricing,
+coupon, or charge logic in any way, and is additive (can only cause extra, harmless re-fetches of
+read-only data, never fewer than the pre-existing behavior). Flagging per CLAUDE.md's
+model-routing rule that a reviewer-tier adversarial read is still owed before merge — not
+performed as part of this task (single-agent execution, no separate reviewer available this
+session).
+
+New vitest: `tests/lib/event-ids-for-cart-items.test.ts` (5 cases, including the specific
+"independent of an empty/incomplete regs set" case that is the whole point of the fix).
+
+### E-01: waiver-request emails were unbranded
+
+`Profile.tsx`'s adult/guardian waiver-link email composition (`~1406-1438`, the "Email waiver"
+flow's `email()` handler) built bare `<p>` HTML and called the generic `send-email` function
+directly, bypassing `_shared/email-layout.ts` entirely (Julia's E-01-01/_02/_03 screenshots).
+
+Per `.claude/rules/edge-functions.md`, `renderEmail`'s real signature is `{ heading, bodyHtml,
+cta?, footnoteHtml? }` — **no `title`, no `preheader`** (the brief's suggested shape named both;
+verified against `supabase/functions/_shared/email-layout.ts` directly rather than trusting the
+brief). Implemented accordingly:
+
+- `supabase/functions/send-email/index.ts`: new optional `wrap?: { title: string; cta?: { text,
+  href } }` payload field (`preheader` deliberately NOT added — the layout has no slot for it;
+  adding the field without functionality would be inventing an API that lies about what it does).
+  When present, `payload.html` is treated as inner body content and rendered via
+  `renderEmail({ heading: wrap.title, bodyHtml: rawHtml, cta: wrap.cta })` before being sent; the
+  "body required" validation runs against the RAW (pre-wrap) html/text so it still reflects what
+  the caller actually supplied, not the always-non-empty wrapped shell. Every existing caller
+  that omits `wrap` gets byte-for-byte the same `html` as before.
+- `src/lib/supabase.ts`'s `sendEmail(subject, html, recipients, wrap?)` gained the same optional
+  4th parameter (new `SendEmailWrap` type mirroring the edge function's `WrapOptions`), forwarded
+  into the invoke body only when passed (`...(wrap ? { wrap } : {})`).
+- `src/pages/Profile.tsx` (`~1406-1438`): both waiver-link email compositions now pass `wrap` —
+  title `'Sign your waiver'` (adult/self) or `` `Waiver signature needed for ${athleteName}` ``
+  (guardian/minor), `cta: { text: 'Review & sign your waiver' | 'Review & sign the waiver', href:
+  link }`. The inline `<a href="{link}">Review & sign...</a>` paragraph was dropped from each
+  `html` body since the CTA button now carries that link; the surrounding body paragraphs are
+  otherwise unchanged.
+
+**Other `sendEmail(` call sites — grepped, left unchanged as scoped:**
+- `src/pages/Profile.tsx:895` (`EmailWaiverModal`'s admin-triggered "Action needed: sign your
+  waiver" reminder email, a DIFFERENT waiver email than the one this task branded) — still bare
+  `<p>` HTML, still unbranded. Same class of issue as E-01 but out of this task's named scope
+  (brief said "the two waiver compositions" at ~1410-1435 specifically); worth a follow-up.
+- `src/pages/admin/Communicate.tsx:145` — admin bulk/broadcast email. Intentionally free-form per
+  `edge-functions.md`'s own documented exception for `send-email` ("the caller controls the full
+  body") — correctly left alone.
+
+**Needs deploying:** `send-email` (no CLI run this session — task scope excluded it; the
+`supabase functions deploy send-email --project-ref wkyerxlgricfphopocoz` step is outstanding).
+Not one of the three `--no-verify-jwt`-sensitive functions, so a plain deploy is safe.
+
+### Verification
+
+`npm run build` — clean (`tsc -b && vite build`; PWA precache regenerated; dev-auth firewall
+check passed).
+
+`npx eslint src/pages/Cart.tsx src/lib/pricing.ts src/lib/supabase.ts src/pages/Profile.tsx
+supabase/functions/send-email/index.ts tests/lib/event-ids-for-cart-items.test.ts` — zero
+errors/warnings.
+
+`npx vitest run` — 87 files / 1387 tests, all green (5 new `eventIdsForCartItems` cases; no
+regressions).
+
+Files touched: `src/lib/pricing.ts`, `src/pages/Cart.tsx`, `src/lib/supabase.ts`,
+`src/pages/Profile.tsx`, `supabase/functions/send-email/index.ts`,
+`tests/lib/event-ids-for-cart-items.test.ts`.

@@ -45,6 +45,31 @@ merge to main) is correctly parked behind them.
 
 ---
 
+## ROUND 3 (overnight 2026-08-26→27) — G-01..G-04 (Nate), E-01 + M retests (Julia)
+
+Owner grant: full push-live authority; guard ask-tier overridden via `.claude/ALLOW_ASK_OVERRIDE`
+(deny tier untouched; flag deleted at session end).
+
+| Finding | Sev | Root cause | Status |
+|---|---|---|---|
+| E-01 footer domain wrong in ~8 emails | S3 | The 8/26 domain fix edited `_shared/email-layout.ts` but the layout is BUNDLED per function — only 2 of 16 functions were redeployed | ✅ all 16 email-bundling functions redeployed (staging+prod); verify_jwt trio read back safe |
+| G-02-01 independent athlete can't register | S2 | `clubHasActiveMembershipForEvent(null club)` returned false → club gate misapplied; club-less athletes were unregistrable | ✅ null club ⇒ gate satisfied (`canRegister` still enforces individual membership) |
+| G-02-01 double-sold membership (2 × $56.95, UCG-2026-0062/0063) | S2 | No guard against buying an already-active membership | ✅ `create-checkout-session` 409s (`membershipAlreadyActive`, preview included). Test-mode charges left as-is per D-4 wipe |
+| G-02-01 stale "buy membership" nag + 8× retried write error | S2 | Admin comp path optimistically wrote `status='active'` (trigger rightly refuses); write queue classified Postgres `P0001` as transient and retried 8× | ✅ client never writes activating status (server-confirm poll); `P0001` now terminal, one clean toast |
+| E-01 sanction: no requester confirmation; submitted→all admins; no team notice on approval; `/manage` 404 link | S2/S3 | never built / wrong audience / wrong path | ✅ `notify-sanction` rewritten: requester confirmation (+status deep link), submitted→`sanctioning` only, approved also notices the team, `/events/:slug/host` |
+| E-01 requester has nowhere to see their request status; submit dead-ends on empty form | S3 | No requester view existed | ✅ "Your sanction requests" section (status badges, deadline, event link); submit lands there with a banner |
+| E-01 scroll stuck at bottom after submitting | S3 | The SPA never scrolled to top on route change (app-wide, latent) | ✅ global scroll-to-top on pathname change (deep-link anchors unaffected) |
+| G-01-01 / G-03-01 silent Register absence (D) | D | Gated controls hidden with no explanation | ✅ event page: "Sign in to register" / "membership required" + CTAs; events list: `Register*` header + footnote + muted hint links; roles-loaded gate prevents a false "membership required" flash. Swept 375/1280 |
+| M-12-03 club regs stale after $0 club checkout | S3 | 🔧 T4 in flight (root cause: club-cart checkout path missed the 8/22 invalidation wiring) | 🔧 |
+| E-01 waiver-request emails unbranded | S3 | Profile dialog composes bare HTML via generic `send-email`, bypassing the layout | 🔧 T4 (`send-email` gains a `wrap` option) |
+| E-01 password-CHANGED confirmation is plain text | S4 | GoTrue built-in security notice — NOT in the templatable set (confirmation/recovery/magic_link/email_change/invite/reauth) | ⛔ platform-limited; documented |
+| E-01 sign-in link email says "confirm account" | Q | `magic_link.html` copy is correct; Supabase sends the CONFIRMATION template when the account is unconfirmed — likely what happened | 👀 re-test with a confirmed account; template already right |
+| E-01 "no disclaimer like other emails" | — | The confidentiality footer comes from naigc.org's mail infra on AUTH emails only; Resend emails never had it. Consistency arrives at the 9/20 cutover when that appender goes away | 🗓️ folded into whats-next §1.0 cutover item |
+| Sanctioning quorum "of 5" (pre-round-3, same evening) | S2 | Hardcoded `FALLBACK_TEAM_SIZE = 5` + admins allowed to vote | ✅ live team count via RPC; sanctioning-only voting (RLS); deadline editor; requester self-approval hole (reviewer finding) closed |
+
+Retests green 8/25-26: M-03, M-08, M-10 ($45), M-11, M-19, M-20, Z-04 flow, A-06 (Nate). Julia
+confirmed membership-welcome cc scheme correct.
+
 ## Batch 1 — Money correctness (S1, first)
 
 Money path per CLAUDE.md routing: sonnet drafts, reviewer-tier (Fable) reviews every diff.

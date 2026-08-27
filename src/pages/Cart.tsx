@@ -12,7 +12,7 @@ import { CartCheckout } from '../components/CartCheckout';
 import { CapacityConflictDialog } from '../components/CapacityConflictDialog';
 import { InvoiceLineTable } from '../components/InvoiceLineTable';
 import { hasCapacityConfig } from '../lib/capacity';
-import { missingNationalsSurveyEvents, diffCartLinePrices, cartSectionCount, processingFee, type SessionRequestGateReg } from '../lib/pricing';
+import { missingNationalsSurveyEvents, diffCartLinePrices, cartSectionCount, processingFee, eventIdsForCartItems, type SessionRequestGateReg } from '../lib/pricing';
 import { previewCartTotal, type CheckoutCapacityError, type CartPreviewLine } from '../lib/supabase';
 import { payerLabel } from '../lib/purchases';
 import {
@@ -471,6 +471,15 @@ export function CartScope({
         if (reg) paidEventIds.add(reg.eventId);
       }
     }
+    // UAT M-12-03: the regs-derived lookup above silently drops any refRegId
+    // not present in `regs` (the by-club/"mine" slice, which can be
+    // incomplete right at checkout completion) — union in the same
+    // label-matched event ids `groupCartItems` already derives independent
+    // of any registration slice, so a club checkout's by-event invalidation
+    // doesn't depend solely on that lookup succeeding. See
+    // `eventIdsForCartItems`'s doc comment (pricing.ts) for the full "why
+    // club and not personal" reasoning.
+    eventIdsForCartItems(checkout?.items ?? [], db.events).forEach((id) => paidEventIds.add(id));
     paidEventIds.forEach((eventId) => invalidateEventRegistrations(eventId));
     void syncFromSupabase().finally(() => {
       setCheckout(null);

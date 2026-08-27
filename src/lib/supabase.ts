@@ -1925,6 +1925,17 @@ export interface SendEmailResult {
   error?: string;
 }
 
+/** E-01 (UAT round 3): optional branding wrap — when passed, `send-email`
+ *  renders `html` as inner body content through the shared branded layout
+ *  (`_shared/email-layout.ts`'s `renderEmail`) instead of sending it as-is.
+ *  `title` maps to that function's `heading` param. The layout has no
+ *  preheader (inbox-preview-text) slot today, so there's no field for one
+ *  here — see send-email/index.ts's `WrapOptions` doc comment. */
+export interface SendEmailWrap {
+  title: string;
+  cta?: { text: string; href: string };
+}
+
 /** Send an HTML email to the given recipients via the send-email Edge Function.
  *  Caller must be a signed-in admin (the function re-checks the `admin` role).
  *  Returns `{ ok: false, error }` when unconfigured or on any failure. */
@@ -1932,10 +1943,11 @@ export async function sendEmail(
   subject: string,
   html: string,
   recipients: { email: string; name?: string }[],
+  wrap?: SendEmailWrap,
 ): Promise<SendEmailResult> {
   if (!supabase) return { ok: false, sentCount: 0, failedCount: recipients.length, error: 'Supabase is not configured.' };
   const { data, error } = await supabase.functions.invoke('send-email', {
-    body: { subject, html, recipients },
+    body: { subject, html, recipients, ...(wrap ? { wrap } : {}) },
   });
   if (error) {
     // Edge errors carry the JSON body on the context response.
