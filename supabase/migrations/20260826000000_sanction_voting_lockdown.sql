@@ -97,3 +97,55 @@ create policy sanction_votes_write on sanction_votes for all
   with check (voter_user_id = auth.uid()
          and exists (select 1 from user_roles ur where ur.user_id = auth.uid()
                      and ur.role = 'sanctioning'));
+
+-- ── sanction_requests: the DECISION is a row write, so lock it down too ─────
+-- Reviewer finding (2026-08-26, alongside the vote lockdown above): narrowing
+-- `sanction_votes_write` to the Sanctioning Team is meaningless on its own,
+-- because the decision itself (`status`, `decided_at`, `sanction_id`,
+-- `created_event_id`) is written CLIENT-SIDE to `sanction_requests` — and the
+-- old `sanction_requests_rw` policy was `for all` with a USING/WITH CHECK that
+-- also matched the REQUESTER and the HOST CLUB MANAGER. A requester could
+-- therefore PATCH their own row to `status='approved'` with a `sanction_id`
+-- straight through PostgREST and self-approve, never casting a vote at all.
+-- Also lets them move `deadline_at`, which the new deadline editor writes.
+--
+-- Split by command instead of one `for all`:
+--   SELECT — unchanged breadth (admin/sanctioning, requester, host club manager)
+--            so a club still sees its own request and its outcome.
+--   INSERT — requester/club manager may submit, but ONLY as 'voting' (the app's
+--            initial state), so a pre-approved row cannot be inserted either.
+--   UPDATE — Sanctioning Team + admins ONLY. No app flow has a requester edit
+--            their request after submit (verified: `pushSanctionRequest` is
+--            called requester-side exactly once, at submit).
+--   DELETE — nobody (no policy). No app path deletes sanction requests.
+drop policy if exists sanction_requests_rw on sanction_requests;
+
+drop policy if exists sanction_requests_read on sanction_requests;
+create policy sanction_requests_read on sanction_requests for select
+  using (
+    exists (select 1 from user_roles ur where ur.user_id = auth.uid()
+            and ur.role in ('admin','sanctioning'))
+    or exists (select 1 from people p where p.id = sanction_requests.requester_person_id
+               and p.auth_user_id = auth.uid())
+    or manages_club(sanction_requests.host_club_id)
+  );
+
+drop policy if exists sanction_requests_insert on sanction_requests;
+create policy sanction_requests_insert on sanction_requests for insert
+  with check (
+    status = 'voting'
+    and (
+      exists (select 1 from user_roles ur where ur.user_id = auth.uid()
+              and ur.role in ('admin','sanctioning'))
+      or exists (select 1 from people p where p.id = sanction_requests.requester_person_id
+                 and p.auth_user_id = auth.uid())
+      or manages_club(sanction_requests.host_club_id)
+    )
+  );
+
+drop policy if exists sanction_requests_update on sanction_requests;
+create policy sanction_requests_update on sanction_requests for update
+  using (exists (select 1 from user_roles ur where ur.user_id = auth.uid()
+                 and ur.role in ('admin','sanctioning')))
+  with check (exists (select 1 from user_roles ur where ur.user_id = auth.uid()
+                      and ur.role in ('admin','sanctioning')));
