@@ -354,7 +354,7 @@ phone**, not just desktop.
 | G-03 | Register while **signed out** | You're asked to sign in and **returned to the event page** afterwards, not dumped on Home (spec §D) |
 | G-04 | Registration popup: choose disciplines, level, apparatus, all-around | Matches what you'd expect from the paper form. Only apparatus valid for the discipline are offered |
 | G-05 | **T&T**: register for multiple disciplines with per-apparatus levels | Per-discipline default level works; per-apparatus overrides work |
-| G-06 | **T&T**: try to remove your *last* remaining discipline | Blocked with an explanatory message; removing a non-last one works |
+| G-06 | **T&T**: try to remove your *last* remaining discipline | Blocked (last discipline re-checks with a warning toast — wording says "apparatus"). Removing a non-last discipline works and is **never chargeable** (owners' decision 2026-08-27); a paid discipline you remove stays listed as **"Attending — not competing"** (deletion is refund/withdraw only). Saving a discipline with zero apparatus is allowed and warns that the host will list you as attending-not-competing |
 | G-07 | **Synchro**: pick a partner from the member list | Picker searches all active members; the pairing is recorded |
 | G-08 | Have your partner pick **someone else** | ⚠️ The spec §D automation (revert your field to "unknown" + email you an edit link) is **not built** — verified in code, Appendix A. Observe what actually happens to your registration and log it; the mutual partner auto-link/level-sync is the only partner automation that exists |
 | G-09 | Add-ons in the popup (banquet / t-shirt / leo / banner) | Sizes required where applicable; quantities work; the banner has an exact-text box |
