@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { RegistrationEditor } from '../../src/components/RegistrationEditor';
+import { ToastCtx } from '../../src/components/ui-hooks';
 import type { Athlete, Event, Level, Registration, Season } from '../../src/lib/types';
 
 function athlete(overrides: Partial<Athlete> = {}): Athlete {
@@ -134,6 +135,84 @@ describe('RegistrationEditor change-fee derivation (3h)', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: /MAG/ }));
     fireEvent.click(screen.getByRole('checkbox', { name: /FX — Floor/i }));
     expect(saveButton()).toHaveTextContent('Register');
+  });
+});
+
+// UAT G-06 (2026-08-27, owner decision): a checked discipline with ZERO
+// apparatus is a legitimate "attending, not competing" state — Save must
+// stay enabled, the row must actually be saved (apparatus: []) rather than
+// silently dropped, and a warning toast must fire once from the save path.
+describe('RegistrationEditor zero-apparatus "attending, not competing" (UAT G-06)', () => {
+  it('a brand-new registration with a discipline checked but NO apparatus keeps Save enabled', () => {
+    render(
+      <RegistrationEditor
+        event={event()} athlete={athlete()} clubId="club-a"
+        existing={[]} allAthletes={[athlete()]} levels={levels} season={season}
+        onSave={() => {}} onCancel={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole('checkbox', { name: /MAG/ }));
+    expect(saveButton()).not.toBeDisabled();
+    expect(saveButton()).toHaveTextContent('Register');
+  });
+
+  it('saving a checked, zero-apparatus discipline produces a real row (apparatus: []) and warns once', () => {
+    let saved: Registration[] = [];
+    const toastSpy = vi.fn();
+    render(
+      <ToastCtx.Provider value={toastSpy}>
+        <RegistrationEditor
+          event={event()} athlete={athlete()} clubId="club-a"
+          existing={[]} allAthletes={[athlete()]} levels={levels} season={season}
+          onSave={(regs) => { saved = regs; }} onCancel={() => {}}
+        />
+      </ToastCtx.Provider>,
+    );
+    fireEvent.click(screen.getByRole('checkbox', { name: /MAG/ }));
+    fireEvent.click(saveButton());
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({ discipline: 'MAG', apparatus: [] });
+    expect(toastSpy).toHaveBeenCalledTimes(1);
+    expect(toastSpy.mock.calls[0][0]).toMatch(/attending, not competing/i);
+  });
+
+  it('clearing all apparatus on an existing PAID reg (still checked) is a free save, not a chargeable change', () => {
+    let saved: Registration[] = [];
+    render(
+      <RegistrationEditor
+        event={event()} athlete={athlete()} clubId="club-a"
+        existing={[reg({ apparatus: ['FX', 'PH'] })]} allAthletes={[athlete()]} levels={levels} season={season}
+        onSave={(regs) => { saved = regs; }} onCancel={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole('checkbox', { name: /FX — Floor/i }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /PH — Pommel Horse/i }));
+    expect(saveButton()).not.toBeDisabled();
+    expect(saveButton()).toHaveTextContent('Save'); // not "Add change to cart" — not eligible
+    fireEvent.click(saveButton());
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({ id: 'r1', discipline: 'MAG', apparatus: [] });
+  });
+});
+
+describe('RegistrationEditor "stay registered for at least 1 discipline" toast wording (UAT G-06)', () => {
+  it('unchecking the only discipline re-checks it and warns using "apparatus", not the old "events" typo', () => {
+    const toastSpy = vi.fn();
+    render(
+      <ToastCtx.Provider value={toastSpy}>
+        <RegistrationEditor
+          event={event()} athlete={athlete()} clubId="club-a"
+          existing={[reg()]} allAthletes={[athlete()]} levels={levels} season={season}
+          onSave={() => {}} onCancel={() => {}}
+        />
+      </ToastCtx.Provider>,
+    );
+    fireEvent.click(screen.getByRole('checkbox', { name: /MAG/ }));
+    expect(toastSpy).toHaveBeenCalledTimes(1);
+    expect(toastSpy.mock.calls[0][0]).toContain('If you remove all selected apparatus');
+    expect(toastSpy.mock.calls[0][0]).not.toContain('If you remove all selected events');
+    // The discipline stays checked (the uncheck was refused).
+    expect(screen.getByRole('checkbox', { name: /MAG/ })).toBeChecked();
   });
 });
 

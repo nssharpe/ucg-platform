@@ -105,7 +105,14 @@ export function StripeCheckout({
   }
 
   return (
-    <div className="card card-pad">
+    // UAT G-05 (owner screenshot, 2026-08-27): the embedded Stripe iframe
+    // used to sit flush against the card's bottom edge — `.card-pad`'s 20px
+    // reads fine above/beside the form but Stripe's own iframe content
+    // renders all the way to ITS edge, so the visual gap below the form
+    // needs an explicit bottom padding to actually match the 20px top/side
+    // `.card-pad` token; a bare `.card-pad` alone wasn't giving the inlay
+    // breathing room in practice.
+    <div className="card card-pad" style={{ paddingBottom: 20 }}>
       <EmbeddedCheckoutProvider
         stripe={stripePromise}
         options={{ clientSecret, onComplete: () => setPhase('confirming') }}

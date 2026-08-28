@@ -38,11 +38,12 @@ import { downloadWorkbook } from '../lib/xlsx-download';
 import { stateCode } from '../lib/sanction';
 import { fmtMoney } from '../lib/scoring';
 import {
-  newRegistrationEntryTotal, registrationChangeFee, syncSynchroPartnerLevel, findIncomingSynchroPartner,
+  newRegistrationEntryTotal, registrationChangeFee, changeIsEligible, regsForChangeLine, syncSynchroPartnerLevel, findIncomingSynchroPartner,
   lateFeeApplies, lateFeeAnchor, addonPurchaseOpen, initialAddonDraft, anyAddonWindowOpen, addonDraftValid,
   buildAddonCartItems, type AddonDraft,
   campSurveyQuestionsOf, campSurveyAnswersValid, campSurveyToStored, campSurveySummary, campSurveyAnswerLabel,
 } from '../lib/pricing';
+import type { RegChangeState } from '../lib/pricing';
 import { hasCapacityConfig, holdStamp } from '../lib/capacity';
 import { OWNER_TASKS, ownerTaskDueDate } from '../../supabase/functions/_shared/owner-checklist';
 import type { OwnerChecklist, OwnerChecklistEntry, OwnerTaskId } from '../../supabase/functions/_shared/owner-checklist';
@@ -2472,6 +2473,8 @@ export function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalPro
       for (const r of regs) r.campSurvey = storedSurvey;
     }
     let hostFree = false;
+    let chargedChangeFee = 0;
+    let chargedEntryTotal = 0;
     // Phase 3: read from the pre-write "mine" snapshot (first read of
     // registration state in this call, so no staleness relative to
     // d.registrations, which is perpetually empty in Supabase-configured mode
@@ -2505,20 +2508,49 @@ export function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalPro
         newDisciplineCount: addedRegs.length,
         late: lateAnchor ? { earliestCreatedAtISO: lateAnchor } : undefined,
       });
-      const changeFee = changeFeeApplies && alreadyHadRegs
+      // Chargeable edit (UAT G-05, 2026-08-27): a change fee only applies
+      // when the edit is actually ELIGIBLE per `changeIsEligible` — add a
+      // discipline, change a level, change club, or swap athlete — mirroring
+      // MyRegistrations.tsx/Club.tsx's saveRegs. This modal previously
+      // charged a change fee for ANY edit while the change-fee window was
+      // open, including a pure apparatus tweak or a discipline-removal-only
+      // save — this is the actual root cause of the owner's $15 charge for a
+      // pure removal: "Register yourself" above has no already-registered
+      // gate, so this modal is reachable to edit an existing registration.
+      const priorById = new Map(existingForAthlete.map((r) => [r.id, r]));
+      const before: RegChangeState = { clubId: existingForAthlete[0]?.clubId ?? competingClubId, athleteId: athlete.id, disciplines: existingForAthlete };
+      const after: RegChangeState = { clubId: competingClubId, athleteId: athlete.id, disciplines: regs };
+      const eligible = alreadyHadRegs && changeIsEligible(before, after);
+      const changeFee = changeFeeApplies && eligible
         ? registrationChangeFee(event, { competingClubId })
         : 0;
+      chargedChangeFee = changeFee;
+      // UAT M-10 x Z-04 pattern (money-invariants.md): the change line's
+      // refRegIds must stay PURE — only regs that were already paid/
+      // updated_pending — never a brand-new unpaid reg, which would
+      // reconstruct a MIXED line server-side (a discipline added alongside
+      // this edit is already covered by its own separate entry line below).
+      const changedRegs = regsForChangeLine(regs, priorById);
       hostFree = !alreadyHadRegs && entryTotal === 0;
+      chargedEntryTotal = entryTotal;
 
       // Which regs get a cart-add capacity hold stamped (event-mgmt v2 P4):
       // exactly the regs referenced by a cart line pushed further below —
       // mirrors those conditions exactly so a free edit never stamps.
+      // Deliberately NOT gated on `!alreadyHadRegs` (fixed alongside the
+      // `changedRegs` narrowing above, mirroring Club.tsx's "H7" comment): a
+      // discipline added ALONGSIDE an edit to an existing registration still
+      // owes its own entry fee and must still get its own line — the old
+      // unconditional change-fee line used to (mis-)cover it by accident via
+      // `refRegIds: regs.map(...)`; narrowing that line to `changedRegs` only
+      // (money-invariants.md's MIXED-line rule) would otherwise leave a
+      // newly-added mid-edit discipline referenced by NO cart line at all.
       const cartLinkedIds = new Set<string>();
-      if (!alreadyHadRegs && entryTotal > 0) {
+      if (entryTotal > 0) {
         for (const r of addedRegs) cartLinkedIds.add(r.id);
       }
-      if (changeFee > 0) {
-        for (const r of regs) cartLinkedIds.add(r.id);
+      if (changeFee > 0 && changedRegs.length > 0) {
+        for (const r of changedRegs) cartLinkedIds.add(r.id);
       }
 
       // Remove dropped disciplines
@@ -2589,7 +2621,7 @@ export function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalPro
       // Cart: entry / change fee for new or re-pending registrations.
       const cart = d.carts[athlete.id] ?? (d.carts[athlete.id] = []);
 
-      if (!alreadyHadRegs && entryTotal > 0) {
+      if (entryTotal > 0) {
         const lateSuffix = lateAnchor !== null && lateFeeApplies(event, lateAnchor) ? ' (incl. late fee)' : '';
         // Add-on + survey answers summarized on the athlete's line item (§G).
         const ADDON_TYPE_LABELS: Record<string, string> = { tshirt: 'shirt', leo: 'leotard', banquet: 'banquet', banner: 'banner' };
@@ -2613,14 +2645,14 @@ export function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalPro
           refLineType: 'entry',
         });
       }
-      if (changeFee > 0) {
+      if (changeFee > 0 && changedRegs.length > 0) {
         cart.push({
           id: `ci-change-${Date.now()}-${athlete.id}`,
           label: `${event.name} change fee — ${athlete.firstName} ${athlete.lastName}`,
           amount: changeFee,
           kind: 'meet-entry',
           refUserId: athlete.id,
-          refRegIds: regs.map((r) => r.id),
+          refRegIds: changedRegs.map((r) => r.id),
           refEventId: event.id,
           refLineType: 'change',
         });
@@ -2642,9 +2674,17 @@ export function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalPro
     toast(
       hostFree
         ? 'Registration complete — no entry fee for your host club.'
-        : changeFeeApplies
-          ? 'Registration updated. Change fee added to your cart.'
-          : 'Registration saved! Check your cart to complete payment.',
+        // UAT G-05: report what was ACTUALLY charged, not whether the
+        // change-fee window happens to be open — a removal-only or pure
+        // apparatus-tweak edit charges nothing (`chargedChangeFee` stays 0)
+        // even while the window is open, and must not claim otherwise.
+        : chargedChangeFee > 0 && chargedEntryTotal > 0
+          ? `Registration updated. ${fmtMoney(chargedChangeFee + chargedEntryTotal)} added to your cart (change fee + entry fee) — pay it to finalize.`
+          : chargedChangeFee > 0
+            ? 'Registration updated. Change fee added to your cart.'
+            : chargedEntryTotal > 0
+              ? 'Registration saved! Check your cart to complete payment.'
+              : 'Registration updated.',
       // UAT M-01-02: this is a self-registration (personal cart, pushed under
       // `athlete.id` above) — the very next line already navigates to /cart,
       // but the action still gives the toast an honest, clickable target.

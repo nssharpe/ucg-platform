@@ -786,11 +786,24 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
                           const refundableDollars = registrationLines(allInvoiceItems, r.id).reduce((s, l) => s + l.amount, 0);
                           const canRequestRefund = refundEligible && r.paid === true && !r.refunded && !r.refundRequested && refundableDollars > 0;
                           const canWithdraw = !r.refunded && !r.refundRequested && !r.waitlisted && !r.withdrawnAt && !canRequestRefund;
+                          // UAT G-06 (2026-08-27): a saved discipline with NO
+                          // apparatus is a legitimate "attending, not
+                          // competing" state (owner decision) — render an
+                          // honest muted note instead of a blank cell that
+                          // looks broken. Excludes a refunded-but-kept row,
+                          // which already gets its own "Refunded" badge in
+                          // the status column and legitimately shows blank
+                          // apparatus for a different reason.
+                          const attendingNotCompeting = r.apparatus.length === 0 && !r.refunded;
                           return (
                             <tr key={r.id}>
                               <td>{r.discipline === 'TNT' ? 'T&T' : r.discipline}</td>
                               <td>{lvlName(r.levelId)}</td>
-                              <td>{evts}</td>
+                              <td>
+                                {attendingNotCompeting
+                                  ? <span style={{ color: 'var(--ink-soft)', fontStyle: 'italic' }}>Attending — not competing</span>
+                                  : evts}
+                              </td>
                               <td style={{ textAlign: 'right' }}>
                                 {r.refunded ? (
                                   <Badge tone="info">Refunded</Badge>

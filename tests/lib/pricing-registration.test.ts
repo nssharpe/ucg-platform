@@ -457,6 +457,29 @@ describe('changeIsEligible (3h)', () => {
     expect(changeIsEligible(before, after)).toBe(false);
   });
 
+  // --- UAT G-05 removal-only matrix (2026-08-27): "removing a discipline is
+  // NEVER chargeable" alone (the case above), but a removal combined with
+  // ANOTHER eligible change on the KEPT discipline(s) stays chargeable for
+  // that other change — the removal itself just never adds a fee on top.
+
+  it('combo: discipline removed + level change on a KEPT discipline → eligible (the level change)', () => {
+    const before = state({
+      disciplines: [disc(), disc({ discipline: 'WAG', levelId: 'L4' })],
+    });
+    // WAG removed; MAG (kept) gets a level change.
+    const after = state({ disciplines: [disc({ levelId: 'L6' })] });
+    expect(changeIsEligible(before, after)).toBe(true);
+  });
+
+  it('combo: discipline removed + a DIFFERENT discipline added → eligible (the add)', () => {
+    const before = state({
+      disciplines: [disc(), disc({ discipline: 'WAG', levelId: 'L4' })],
+    });
+    // WAG removed; TNT added; MAG kept unchanged.
+    const after = state({ disciplines: [disc(), disc({ discipline: 'TNT', levelId: 'L3', apparatus: ['TR'] })] });
+    expect(changeIsEligible(before, after)).toBe(true);
+  });
+
   it('reordering events (same set/level) → NOT eligible', () => {
     const after = state({ disciplines: [disc({ apparatus: ['PH', 'FX'] })] });
     expect(changeIsEligible(state(), after)).toBe(false);
