@@ -786,7 +786,10 @@ export function RegistrationEditor({
     )).length;
   // Already-held disciplines, so an added one prices at the SECOND-discipline
   // rate (matches Club.tsx's `priorDisciplineCount`).
-  const priorDisciplineCount = existing.filter((r) => !r.refunded && r.apparatus.length > 0).length;
+  // Blanked (attending-not-competing) regs still COUNT as prior — they paid
+  // the base entry; the server counts rows without an apparatus filter
+  // (owners' decision 2026-08-27).
+  const priorDisciplineCount = existing.filter((r) => !r.refunded).length;
   // Late-registration surcharge: the save path feeds `lateFeeAnchor` into
   // `newRegistrationEntryTotal`, so the estimate must too or it quotes low
   // inside a late window. Newly-added rows have no `createdAt` yet (they don't

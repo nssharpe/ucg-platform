@@ -1582,7 +1582,7 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
       // `changeFee > 0`; that rare edge case is left uncharged rather than
       // pushing a line with no regs to ever flip to paid.
       const changedRegs = regsForChangeLine(newRegs, priorById);
-      const priorDisciplineCount = existingForAthlete.filter((r) => r.apparatus.length > 0).length;
+      const priorDisciplineCount = existingForAthlete.length; // blanked regs count as prior (2026-08-27)
       const editLateAnchor = lateAnchorFor(newOnlyRegs, existingForAthlete);
       const entryTotal = !opts?.skipEntryFeeLine && newOnlyRegs.length > 0
         ? newRegistrationEntryTotal(event, {

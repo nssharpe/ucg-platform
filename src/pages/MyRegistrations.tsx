@@ -406,7 +406,7 @@ function MyRegistrationsInner({ personId }: { personId: string }) {
       chargedFee = changeFee;
 
       // Brand-new entry total for disciplines with no prior reg (host = $0).
-      const priorDisciplineCount = existingForAthlete.filter((r) => r.apparatus.length > 0).length;
+      const priorDisciplineCount = existingForAthlete.length; // blanked regs count as prior (2026-08-27)
       // Late-registration fee attachment (emv2 P0 Task 3, corrected): the
       // surcharge attaches ONLY to the line containing the athlete's
       // earliest-created reg for this event — `lateFeeAnchor` returns that
