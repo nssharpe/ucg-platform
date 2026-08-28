@@ -902,10 +902,15 @@ export function changeIsEligible(before: RegChangeState, after: RegChangeState):
     if (a.levelId !== b.levelId) return true;
     if (apparatusLevelsDiffer(a.apparatusLevels, b.apparatusLevels)) return true;
     if ((a.sessionId ?? null) !== (b.sessionId ?? null)) return true;
+    // Leaving "attending — not competing" (owners' decision 2026-08-27):
+    // re-adding ANY apparatus to a blanked (zero-apparatus) discipline is a
+    // chargeable change — the free apparatus-tweak rule below applies only
+    // BETWEEN non-empty apparatus sets.
+    if (b.apparatus.length === 0 && a.apparatus.length > 0) return true;
   }
 
-  // Note: a REMOVED discipline, or apparatus add/remove within an existing
-  // discipline (events array only), is NOT eligible on its own.
+  // Note: a REMOVED discipline, apparatus tweaks between NON-EMPTY sets, or
+  // blanking a discipline to zero apparatus, is NOT eligible on its own.
   return false;
 }
 

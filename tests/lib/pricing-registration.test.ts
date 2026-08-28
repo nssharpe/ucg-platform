@@ -592,3 +592,24 @@ describe('regChangeHasDiff (B8)', () => {
     }
   });
 });
+
+// Owners' decision 2026-08-27: leaving "attending — not competing" costs the
+// change fee; blanking (>0 -> 0) and tweaks between non-empty sets stay free.
+describe('changeIsEligible: attending-not-competing transitions', () => {
+  const state = (apparatus: string[]) => ({
+    clubId: '', athleteId: 'a1',
+    disciplines: [{ discipline: 'MAG' as const, levelId: 'lv1', apparatus }],
+  });
+  it('re-adding apparatus to a blanked discipline is chargeable', () => {
+    expect(changeIsEligible(state([]), state(['FX']))).toBe(true);
+  });
+  it('blanking a discipline stays free', () => {
+    expect(changeIsEligible(state(['FX', 'PH']), state([]))).toBe(false);
+  });
+  it('tweaks between non-empty sets stay free', () => {
+    expect(changeIsEligible(state(['FX']), state(['FX', 'PH']))).toBe(false);
+  });
+  it('blanked-to-blanked is free', () => {
+    expect(changeIsEligible(state([]), state([]))).toBe(false);
+  });
+});
