@@ -1319,11 +1319,19 @@ function EventRegGrid({ clubId, canManage }: { clubId: string; canManage: boolea
     if (regs.length === 0) return null;
     // Camp regs carry no level/apparatus (they're on/off per discipline) —
     // drop those blank segments instead of rendering trailing " – " dashes.
+    // A non-camp reg (has a levelId) with ZERO apparatus is a real
+    // "attending, not competing" state (UAT G-06) — label it instead of
+    // silently omitting the segment, which would otherwise read identically
+    // to a camp reg's intentionally blank one.
     return regs.map((r) => {
       const parts = [r.discipline === 'TNT' ? 'T&T' : r.discipline];
       if (r.levelId) parts.push(lvlName(r.levelId));
       const events = eventsText(r, nameOf);
-      if (events) parts.push(events);
+      if (events) {
+        parts.push(events);
+      } else if (r.levelId && !r.refunded) {
+        parts.push('attending, not competing');
+      }
       return parts.join(' – ');
     }).join(' / ');
   };

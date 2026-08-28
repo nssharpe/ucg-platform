@@ -3365,3 +3365,179 @@ regressions).
 Files touched: `src/lib/pricing.ts`, `src/pages/Cart.tsx`, `src/lib/supabase.ts`,
 `src/pages/Profile.tsx`, `supabase/functions/send-email/index.ts`,
 `tests/lib/event-ids-for-cart-items.test.ts`.
+
+## UAT G-05/G-06 (2026-08-27): removal never chargeable; zero-apparatus = attending-not-competing; Stripe inlay padding — branch `fix/removal-and-blanked-state`
+
+Four owner findings from the same round. `changeIsEligible` (`pricing.ts`) ALREADY excluded a
+pure discipline removal from being chargeable (its own doc comment + a passing test,
+`'remove a discipline → NOT eligible on its own'`, predate this task) — so decision 1's fix isn't
+in pricing.ts at all. The real bug is that one of the three client callers never wired that
+predicate up in the first place.
+
+### 1. Removal never chargeable — root cause was `Events.tsx`'s `SelfRegModal`, not pricing.ts
+
+`persistRegs` (`src/pages/Events.tsx`, was `~2508`) computed
+`changeFee = changeFeeApplies && alreadyHadRegs ? registrationChangeFee(...) : 0` — no
+`changeIsEligible` gate at all, unlike `MyRegistrations.tsx`/`Club.tsx`'s `saveRegs`. Any edit —
+pure apparatus tweak, pure removal, anything — charged a change fee whenever the change-fee window
+was open and the athlete already had a reg. **Confirmed reachable, not just theoretical:** the
+"Register yourself →" button (`Events.tsx:559-561`, `caps.canRegister` gate) has no
+already-registered exclusion, so re-opening it for an event the athlete is already registered for
+opens this exact code path with `alreadyHadRegs === true`. This is the likely mechanism behind the
+owner's $15 charge for a pure removal (test money, wiped pre-launch per D-4 — no refund action
+needed).
+
+Fix: added the same `before`/`after` `RegChangeState` + `changeIsEligible` gate MyRegistrations/Club
+already use (`beforeClubId = existingForAthlete[0]?.clubId ?? competingClubId`, mirroring
+MyRegistrations' pattern). `updatedPending` is set on a prior-paid reg only inside the
+`changeFee > 0` branch, so a removal-only or apparatus-only save no longer re-pends a paid reg
+here either.
+
+**Finishing the fix (advisor-flagged, not in the original brief but required for correctness):**
+narrowing `changeFee` to fire only when eligible means the change-fee window no longer covers a
+brand-new discipline added mid-edit via its `refRegIds` (the OLD code accidentally referenced
+`regs.map(r=>r.id)` — every reg, including newly-added ones — on the change line; that was itself
+the client producing a MIXED line, `money-invariants.md`'s "the client never produces a MIXED line
+as of the M-10 rework"). So this pass also:
+- Filters the change line's `refRegIds` through `regsForChangeLine(regs, priorById)` (same helper
+  Club.tsx/MyRegistrations.tsx use) — PURE change line, only already-paid/updated-pending regs.
+- Removed the `!alreadyHadRegs` gate on the entry-fee cart-line push (was
+  `if (!alreadyHadRegs && entryTotal > 0)`, now `if (entryTotal > 0)`) and on the matching
+  `cartLinkedIds` hold-stamp loop — otherwise a discipline added ALONGSIDE an edit to an existing
+  registration would be priced (via `entryTotal`) and stamped `paid:false` but referenced by
+  NO cart line at all (permanently unpayable), since it's deliberately excluded from the now-pure
+  change line. This mirrors Club.tsx's own "H7" comment/fix, which Events.tsx never got.
+- Fixed the success toast, which used to say "Change fee added to your cart" off the raw
+  `changeFeeApplies` window flag rather than what was actually charged — a removal-only edit inside
+  an open window used to falsely claim a change fee was added. Now keyed off `chargedChangeFee`/
+  `chargedEntryTotal` (hoisted `let`s, set inside the `mutate()` closure), with a combined-total
+  message when both a change fee and an entry fee apply (mirrors MyRegistrations' toast).
+
+`MyRegistrations.tsx`'s `saveRegs` and `Club.tsx`'s `saveRegs` were re-verified, not changed: both
+already build `before`/`after` from `changeIsEligible` correctly, already use `regsForChangeLine`
+for the change line's `refRegIds`, and already only set `updatedPending:true` inside their
+`changeFee > 0` branches — a removal-only save on either path pushes no cart line and never
+re-pends a paid reg. Confirmed via the existing (and now extended) `changeIsEligible` vitest table
+rather than by re-deriving the logic.
+
+**New vitest (`tests/lib/pricing-registration.test.ts`, `changeIsEligible (3h)`):** two matrix
+cases the existing table didn't cover — `'combo: discipline removed + level change on a KEPT
+discipline → eligible (the level change)'` and `'combo: discipline removed + a DIFFERENT
+discipline added → eligible (the add)'`. Both pass against the UNCHANGED `changeIsEligible` — they
+document that a removal never adds a fee on top, but another change on the same edit still does.
+
+### 2. Zero-apparatus discipline = "attending, not competing" (savable everywhere)
+
+`RegistrationEditor.tsx`'s `handleSave` (non-camp branch) used to skip building a reg row entirely
+when `!d.enabled || d.apparatus.length === 0` — a checked-but-empty discipline silently vanished
+from the saved set, indistinguishable from unchecking it. And `anyEnabled` (gates the Save button)
+required `apparatus.length > 0` on top of `enabled`, so a checked-but-empty discipline **disabled
+Save outright** — there was no way to save this state at all before today.
+
+Fixed, all in `RegistrationEditor.tsx`:
+- `handleSave`'s loop now only skips on `!d.enabled` — a checked discipline is always saved, apparatus
+  empty or not (`existing_?.id` reuse logic unchanged, so re-checking a previously-unchecked
+  discipline still mints a fresh id and checking-with-zero-apparatus-then-adding-apparatus-later
+  reuses the same row — no duplicate against `registrations_live_slot_uniq`).
+- `anyEnabled` no longer requires `apparatus.length > 0` — Save is enabled the moment ANY discipline
+  is checked.
+- `draftToEntries`'s "after" branch no longer excludes zero-apparatus disciplines — they're now a
+  real present entry for the `changeIsEligible`/`regChangeHasDiff` diff (matters for a discipline
+  that's ALSO getting a level change while at zero apparatus — excluding it would have wrongly hidden
+  that level change from `changeIsEligible`, since apparatus-count doesn't gate any of that
+  predicate's own branches).
+- `newDisciplineCount` (feeds the live price ESTIMATE only, not an actual charge — the three
+  `saveRegs`/`persistRegs` paths compute their own new-discipline counts independently, none of
+  which filtered on apparatus) no longer requires apparatus>0, so a brand-new zero-apparatus
+  discipline's entry fee estimate isn't silently omitted.
+- **Deliberately left unchanged** (per review, not required by this task and entangled with the
+  late-fee anchor computed from the SAME filtered set): `priorDisciplineCount`
+  (`RegistrationEditor.tsx` / `MyRegistrations.tsx` / `Club.tsx`, all `r.apparatus.length > 0`) —
+  whether an existing zero-apparatus discipline should count toward "second discipline" pricing for
+  a LATER addition is a real question but out of this task's four decisions; flagging as a
+  follow-up rather than guessing.
+- Added a single warning toast fired from `handleSave` (once, listing every affected discipline by
+  name) when any saved row has empty apparatus: "`<disciplines>` saved with no apparatus selected —
+  the host will list `<athlete>` as attending, not competing." — not per-checkbox-click.
+
+Fixed the toast wording (decision 3, exact spec typo): "If you remove all selected events" →
+"apparatus" in the existing "stay registered for at least 1 discipline" toast
+(`RegistrationEditor.tsx`, `updateDisc`). Grepped the exact string
+`"the meet host will know that you do not plan to compete"` first — one call site, no duplicates
+to fix elsewhere.
+
+**New vitest (component, `tests/components/registration-editor.test.tsx`):** new describe blocks —
+Save stays enabled for a checked/zero-apparatus new registration; saving one produces a real
+`apparatus: []` row and fires the warning toast exactly once with the right wording; clearing all
+apparatus on an existing PAID reg (still checked) saves as a FREE edit (label stays "Save", not
+"Add change to cart") and persists `apparatus: []` on the same row id (no delete/re-create); the
+at-least-1-discipline toast now says "apparatus" and not the old "events" typo.
+
+### 4. Honest presentation of a blanked/zero-apparatus row
+
+`MyRegistrations.tsx`'s registration table (`regs.map` around line 774) rendered `r.apparatus.join
+(', ')` straight into a `<td>` — a zero-apparatus row (this new legitimate state, OR the pre-existing
+refunded-but-kept-listed state) just showed an empty cell (owner screenshot: "looks broken"). Now
+renders a muted, italic "Attending — not competing" (`var(--ink-soft)`, the token this file already
+uses throughout for secondary text on this same card background) whenever `apparatus.length === 0
+&& !r.refunded` — explicitly excludes the refunded-but-kept case, which already has its own
+"Refunded" badge in the status column and legitimately shows blank apparatus for an unrelated
+reason (spec §H, not this decision).
+
+Checked `Club.tsx`'s registered-athletes summary (`regSummary`, uses module-level `eventsText`):
+it already degrades gracefully for a blank apparatus list — `if (events) parts.push(events)` simply
+omits the segment rather than rendering a stray `" – "`, so it never looked visually "broken" the
+way MyRegistrations' fixed-column table did. Still a one-liner to make it equally honest (a
+zero-apparatus non-camp reg used to read identically to a camp reg's intentionally-blank segment):
+added an `else if (r.levelId && !r.refunded)` branch that pushes `'attending, not competing'` when
+there's a level (i.e. NOT a camp reg, which stores `levelId:''`) but no apparatus segment.
+
+### 5. CartCheckout / StripeCheckout: Stripe inlay padding
+
+`StripeCheckout.tsx`'s `'form'` phase (owner screenshot) wraps the live `EmbeddedCheckoutProvider`/
+`EmbeddedCheckout` in `<div className="card card-pad">` — `.card-pad` is a uniform `padding: 20px`
+(`index.css:366`), so the class alone should already give 20px on every side; added an explicit
+`style={{ paddingBottom: 20 }}` on that same div as a defensive, unambiguous match to the top/side
+token value, in case the embedded iframe's own dynamic-height JS was consuming the class-based
+padding in a way that doesn't show up in static CSS inspection. **Flagging for the controller's own
+visual check** (task brief explicitly excluded Browser-pane verification for this item, and I
+couldn't reach a live Stripe test-mode session inside this run to confirm the before/after
+pixel diff) — if the card still reads flush after this change, the actual fix likely needs to live
+inside Stripe's `EmbeddedCheckoutProvider` `options`/appearance config rather than the wrapping
+`div`'s CSS, since the iframe is cross-origin and its OWN internal bottom padding isn't something
+our CSS can reach.
+
+### Verification
+
+`npm run build` — clean (`tsc -b && vite build`; PWA precache regenerated; dev-auth firewall check
+passed).
+
+`npx eslint src/pages/Events.tsx src/components/RegistrationEditor.tsx src/pages/MyRegistrations.tsx
+src/pages/Club.tsx src/components/StripeCheckout.tsx tests/lib/pricing-registration.test.ts
+tests/components/registration-editor.test.tsx` — zero errors/warnings.
+
+`npx vitest run` — 87 files / 1395 tests, all green. Chargeability matrix cases live in
+`tests/lib/pricing-registration.test.ts` → `describe('changeIsEligible (3h)')`: `'remove a
+discipline → NOT eligible on its own'` (pre-existing), `'combo: discipline removed + level change on
+a KEPT discipline → eligible (the level change)'` (new), `'combo: discipline removed + a DIFFERENT
+discipline added → eligible (the add)'` (new). Zero-apparatus/toast-wording coverage in
+`tests/components/registration-editor.test.tsx`'s two new `describe` blocks (4 new tests).
+
+**Money-invariants-scoped diff** (`Events.tsx` touches `changeIsEligible`/`regsForChangeLine`
+classification and cart-line shape, matching the pattern `money-invariants.md` documents for
+Club.tsx/MyRegistrations.tsx) — per CLAUDE.md's model-routing rule, a reviewer-tier adversarial read
+of `src/pages/Events.tsx`'s `persistRegs` is owed before merge/push, same as any money-adjacent
+diff; not performed as part of this single-agent implementation pass.
+
+Files touched: `src/pages/Events.tsx`, `src/components/RegistrationEditor.tsx`,
+`src/pages/MyRegistrations.tsx`, `src/pages/Club.tsx`, `src/components/StripeCheckout.tsx`,
+`tests/lib/pricing-registration.test.ts`, `tests/components/registration-editor.test.tsx`.
+
+**Controller should verify live:** (1) an athlete already registered for an event, change-fee
+window open, uses "Register yourself" to remove a discipline only — cart stays empty, no
+`updated_pending` flip. (2) same athlete checks a discipline with zero apparatus and saves — Save
+button stays enabled, row persists with an empty apparatus list, warning toast appears once. (3)
+My Registrations list shows "Attending — not competing" (muted) for that row instead of a blank
+cell. (4) Stripe Embedded Checkout inlay in Cart — confirm the bottom padding is now visibly
+present against the card border; escalate to Stripe `appearance`/layout options if the CSS change
+alone didn't fix it.

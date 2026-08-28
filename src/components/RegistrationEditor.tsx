@@ -577,7 +577,7 @@ export function RegistrationEditor({
     if (wasEnabled && !d.enabled && existing.length > 0) {
       const othersEnabled = (event.disciplines as Discipline[]).some((x) => x !== disc && drafts[x]?.enabled);
       if (!othersEnabled) {
-        toast('You must stay registered for at least 1 discipline. If you remove all selected events, the meet host will know that you do not plan to compete.');
+        toast('You must stay registered for at least 1 discipline. If you remove all selected apparatus, the meet host will know that you do not plan to compete.');
         return;
       }
     }
@@ -611,7 +611,13 @@ export function RegistrationEditor({
     const regs: Registration[] = [];
     for (const disc of event.disciplines as Discipline[]) {
       const d = drafts[disc];
-      if (!d.enabled || d.apparatus.length === 0) continue;
+      // A checked discipline with NO apparatus selected is a legitimate,
+      // savable state (UAT G-06, 2026-08-27): "attending, not competing" —
+      // the host lists the athlete for the discipline with an empty
+      // apparatus list rather than the row silently disappearing. Only an
+      // UNCHECKED discipline is dropped here (a full discipline removal —
+      // never chargeable, see `changeIsEligible`/`draftToEntries` below).
+      if (!d.enabled) continue;
       const activeExisting = existing.find((r) => r.discipline === disc && !r.refunded);
       // An admin-confirmed re-enable of a refunded discipline reuses (and
       // un-refunds) the ORIGINAL row instead of creating a parallel one, so
@@ -654,14 +660,27 @@ export function RegistrationEditor({
       };
       regs.push(reg);
     }
+    // Warn once, listing every affected discipline, when any saved row has
+    // no apparatus selected (UAT G-06) — fired from the save path, not per
+    // checkbox click, so toggling apparatus around while deciding doesn't
+    // spam the toast.
+    const zeroApparatusDiscs = regs.filter((r) => r.apparatus.length === 0);
+    if (zeroApparatusDiscs.length > 0) {
+      const names = zeroApparatusDiscs.map((r) => (r.discipline === 'TNT' ? 'T&T' : r.discipline)).join(', ');
+      toast(`${names} saved with no apparatus selected — the host will list ${athlete.firstName} as attending, not competing.`, { variant: 'error' });
+    }
     onSave(regs);
   };
 
   // Camps have no discipline/apparatus concept to enable — a camp
   // registration is implicitly "on" (new: about to register; existing: must
   // stay registered, see the guard above) the moment this editor is open.
+  // UAT G-06 (2026-08-27): a checked discipline with zero apparatus is a
+  // legitimate "attending, not competing" state — Save must NOT grey out
+  // just because no apparatus is picked yet, so this no longer requires
+  // `apparatus.length > 0`.
   const anyEnabled = isCamp
-    || (event.disciplines as Discipline[]).some((d) => drafts[d]?.enabled && drafts[d].apparatus.length > 0);
+    || (event.disciplines as Discipline[]).some((d) => drafts[d]?.enabled);
 
   // Are we editing an EXISTING registration (vs creating a brand-new one)? An
   // existing-reg edit must make an ELIGIBLE (chargeable) change before it can be
@@ -697,7 +716,12 @@ export function RegistrationEditor({
         });
       } else {
         const d = drafts[disc];
-        if (!d?.enabled || d.apparatus.length === 0) continue;
+        // A zero-apparatus checked discipline is a real "after" entry now
+        // (UAT G-06) — excluding it here would make it indistinguishable
+        // from a fully-unchecked (removed) discipline for the eligibility
+        // diff below, which would wrongly hide a level change made on a
+        // discipline that also happens to have zero apparatus right now.
+        if (!d?.enabled) continue;
         out.push({
           discipline: disc,
           levelId: d.levelId,
@@ -747,15 +771,17 @@ export function RegistrationEditor({
   // having opened; see saveRegs in MyRegistrations.tsx/Club.tsx). Folding
   // that gate in here (routing only, no fee math) keeps the estimate
   // truthful: before the window opens, an eligible edit is still free.
-  // Disciplines being ADDED right now: enabled, apparatus chosen, and with no
-  // existing non-refunded row — the editor-side analogue of `newOnlyRegs` in
-  // Club.tsx's saveRegs. Counting every enabled discipline instead would
-  // re-charge disciplines the athlete already holds.
+  // Disciplines being ADDED right now: enabled (apparatus optional — UAT
+  // G-06: a zero-apparatus discipline is still a real, entry-fee-owing
+  // registration, "attending, not competing" — the estimate must not quote
+  // low by skipping it) and with no existing non-refunded row — the
+  // editor-side analogue of `newOnlyRegs` in Club.tsx's saveRegs. Counting
+  // every enabled discipline regardless of apparatus is intentional here;
+  // it would only be wrong to count one the athlete already holds.
   const newDisciplineCount = isCamp
     ? (existing.some((r) => !r.refunded) ? 0 : 1)
     : (event.disciplines as Discipline[]).filter((d) => (
       drafts[d]?.enabled
-      && drafts[d].apparatus.length > 0
       && !existing.some((r) => r.discipline === d && !r.refunded)
     )).length;
   // Already-held disciplines, so an added one prices at the SECOND-discipline
