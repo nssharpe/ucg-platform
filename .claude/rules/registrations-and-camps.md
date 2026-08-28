@@ -51,10 +51,25 @@ regs. `updatedPending` marks a paid reg edited back to pending by a change fee.
   paid-registered under another club for the same event. Pending regs don't lock.
 - **Change eligibility:** `changeIsEligible(before, after)` (`pricing.ts`) gates "Add change to
   cart" — add discipline / change level / change club / swap athlete, NOT apparatus tweaks
-  within a discipline.
+  within a discipline, and NOT removing a discipline (UAT G-05, 2026-08-27 — confirmed by a
+  passing test long before that ticket; the actual bug was `Events.tsx`'s `SelfRegModal.
+  persistRegs`, which priced a change fee off `changeFeeApplies && alreadyHadRegs` alone with no
+  `changeIsEligible` gate at all — reachable because "Register yourself" has no
+  already-registered exclusion. Fixed to mirror MyRegistrations.tsx/Club.tsx's gate + their
+  `regsForChangeLine`-narrowed `refRegIds`; see `docs/plans/notes/2026-08-21-uat-round1-notes.md`
+  for the full writeup, including why narrowing that line required also un-gating the
+  added-discipline entry line from `!alreadyHadRegs`).
+- **A checked discipline with ZERO apparatus is a legitimate, savable "attending, not competing"
+  state (UAT G-06, 2026-08-27)** — distinct from fully UNCHECKING a discipline, which still goes
+  through the member-side retain-and-blank / manager-side delete split above. `RegistrationEditor`
+  saves it as a real row (`apparatus: []`), Save is never disabled for it, and the entry fee still
+  applies for a brand-new one. A one-time toast warns on save (not per checkbox click).
+  `MyRegistrations.tsx`'s reg table and `Club.tsx`'s `regSummary` both render an honest
+  "attending, not competing" label instead of a blank cell/segment for this state (excludes a
+  refunded-but-kept row, which has its own "Refunded" badge and a different reason to be blank).
 - **One live (non-refunded) row per (event, athlete, discipline) — UAT Z-02,
   `20260822010000`.** Client-minted reg ids (`reg-<ms>-<athlete>-<disc>`,
-  `RegistrationEditor.tsx:585/618`) never collide, so two sessions registering the same
+  `RegistrationEditor.tsx:599/638`) never collide, so two sessions registering the same
   athlete+event+discipline at once used to both succeed silently — enforced now by the DB
   partial unique index `registrations_live_slot_uniq`, with `create-checkout-session`/
   `_shared/fulfill.ts` catching a pre-existing duplicate (see money-invariants.md). Not scoped
