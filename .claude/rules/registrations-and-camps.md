@@ -50,8 +50,10 @@ regs. `updatedPending` marks a paid reg edited back to pending by a change fee.
 - **Cross-club lock:** `paidRegistrationClub` blocks registering an athlete already
   paid-registered under another club for the same event. Pending regs don't lock.
 - **Change eligibility:** `changeIsEligible(before, after)` (`pricing.ts`) gates "Add change to
-  cart" — add discipline / change level / change club / swap athlete, NOT apparatus tweaks
-  within a discipline, and NOT removing a discipline (UAT G-05, 2026-08-27 — confirmed by a
+  cart" — add discipline / change level / change club / swap athlete / **leave
+  attending-not-competing (0 → >0 apparatus; Julia 2026-08-27)**. NOT chargeable: apparatus
+  tweaks between NON-EMPTY sets, blanking to zero apparatus, and NOT removing a discipline
+  (UAT G-05, 2026-08-27 — confirmed by a
   passing test long before that ticket; the actual bug was `Events.tsx`'s `SelfRegModal.
   persistRegs`, which priced a change fee off `changeFeeApplies && alreadyHadRegs` alone with no
   `changeIsEligible` gate at all — reachable because "Register yourself" has no
