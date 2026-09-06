@@ -90,6 +90,18 @@ cart repaired in prod. Membership page correctly offers no re-purchase for an ac
 Retests green 8/25-26: M-03, M-08, M-10 ($45), M-11, M-19, M-20, Z-04 flow, A-06 (Nate). Julia
 confirmed membership-welcome cc scheme correct.
 
+## 2026-09-06 — admin member page: Activate crash + "unsaved" saves (Nate, prod)
+
+**Repro:** admin Profile for ZZTEST-Casey / ZZTest-Iggy (both club-less). Activate did nothing;
+profile saves looked ignored. Prod `error_logs` (window.onerror ×13, Julia's account):
+`Cannot set properties of undefined (setting 'memberships')` at Profile.tsx's `activate()`.
+**Cause:** `d.people.find(...)!` on the boot-scoped `db.people` — club-less members aren't in
+it (Devon, on a club, was). Save indexed `d.people[-1]`: the write DID persist (Casey's DOB is
+the adult value from his last save) but the page renders the `usePersonAdmin` slice, which
+`mutate()` never touches. **Fix:** optional boot-row patch + slice patches
+(`applyLocalPersonAdminUpsert` / `applyLocalPersonMembershipUpsert`), pure `upsertMembership`
+(tested). No DB repair needed.
+
 ## Decisions logged 2026-08-27 (afternoon) — E-02/E-03 SHIPPED `0017fab` (functions deployed staging+prod)
 
 - **Sanction approval publishes the event LIVE** (was draft). Draft is now a manual take-offline

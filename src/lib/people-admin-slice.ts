@@ -98,6 +98,17 @@ export function usePersonAdmin(personId: string | undefined | null) {
   return personAdminSlice.useScope(personId);
 }
 
+/** Optimistically replace the cached row for `p.id` after a local edit
+ *  (Profile.tsx adminView's Save). Needed because the administered person is
+ *  very often OUTSIDE `db.people`'s boot scope — an independent/club-less
+ *  member always is — so a `mutate()` that patches `db.people` never reaches
+ *  what this page actually renders (UAT 2026-09-06: a saved date-of-birth
+ *  landed in the DB but the page kept showing the old value until a hard
+ *  reload). No-op if the scope was never loaded. */
+export function applyLocalPersonAdminUpsert(p: Athlete): void {
+  personAdminSlice.applyLocalUpsert(p.id, p);
+}
+
 // ---------------------------------------------------------------------------
 // By ids, FULL rows (shape #2 for consumers needing more than
 // people-slice.ts's thin name+club projection — nationals categorization,

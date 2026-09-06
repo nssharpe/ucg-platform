@@ -88,6 +88,15 @@ DB, `registrationToRow` converts); pricing/gates accept `''`; UI never dead-ends
 club — no `if (!clubId) return null` around member-facing flows. New registration surfaces must
 be exercised at least once as a club-less athlete before shipping.
 
+A fourth one (2026-09-06, admin member page): `Profile.tsx` adminView's Activate/Revoke did
+`d.people.find(...)!` on the BOOT-scoped `db.people` (self + managed-club rosters only) and
+crashed for any member outside it — every independent member, and any club's member the admin
+doesn't manage. Save "worked" by indexing `d.people[-1]` and the page (which renders the
+`usePersonAdmin` slice) never showed the saved value. Rule: **adminView never assumes the target
+is in `db.people`** — patch the boot row only if present, write via `push*` regardless, and
+patch the per-person slice (`applyLocalPersonAdminUpsert` / `applyLocalPersonMembershipUpsert`)
+so the page reflects it.
+
 ## Member self-edit divergence — CRITICAL
 
 `MyRegistrations.tsx` embeds the shared `RegistrationEditor`, targets the member's OWN cart,

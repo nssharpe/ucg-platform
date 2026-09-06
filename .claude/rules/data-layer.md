@@ -62,6 +62,16 @@ looked-up cache is least trustworthy.
 All built on the shared generic `src/lib/slice-cache.ts`. Slices are **memory-only** (never
 localStorage).
 
+**`mutate()` never reaches a slice.** A page that renders a slice (Profile.tsx adminView renders
+`usePersonAdmin` + `useMembershipsForPerson`) shows nothing from a `mutate()` that patches
+`db.people` — and the administered person is usually not in `db.people` at all (UAT 2026-09-06:
+Activate crashed on `d.people.find(...)!`, Save looked unsaved). After a local write whose
+result a slice displays, patch that slice: `applyLocalPersonAdminUpsert(p)`
+(`people-admin-slice.ts`), `applyLocalPersonMembershipUpsert(personId, m)`
+(`memberships-admin-slice.ts`), or the registrations equivalents. Prefer these optimistic
+patches over `invalidate*()` right after a `push*` — the push is a fire-and-forget queue enqueue,
+so an immediate refetch can read the pre-write row.
+
 **Hooks return `{ rows, status }` and `status` is non-optional on purpose.** Never render an
 empty state without checking `status === 'loading'` first, or you turn "not loaded" into a
 confident "none exist". `Club.tsx`'s roster `hasActiveReg` classification is the sharpest
