@@ -3655,3 +3655,41 @@ not just that the invoke call didn't throw. (4) a club manager registering the s
 Club Registrations sends NO such email. (5) confirm no live event still has `fromAlias`/`replyTo`
 set that anyone expects to still take effect (EventWizard no longer surfaces or writes them, but a
 pre-existing value on an old row is now silently inert rather than erroring).
+
+## E-01-03 (2026-09-06, Julia's Mac) — sanction decisions never persisted; requester summary/Details
+
+**Symptom (Julia's sheet + screenshots):** ZZTEST_ApproveThis was approved (team + requester
+emails arrived) but `#/sanction` kept showing VOTING with no Open-event button even after a hard
+reload, and the requester's approval CTA went to `#/sanction` instead of the host dashboard.
+
+**Root cause:** `resolveRequest` (approve AND reject) and `saveDeadline` all persisted through
+`pushSanctionRequest` = `remoteUpsert('sanction_requests', …)`. The 8/26 lockdown split the old
+`for all` policy and made `sanction_requests_insert` require `status = 'voting'`. For
+`INSERT … ON CONFLICT DO UPDATE`, Postgres runs the INSERT policy's WITH CHECK on the proposed
+row in `ExecInsert` before the arbiter-index conflict check ever reaches `ExecOnConflictUpdate`,
+so a row carrying `status='approved'` is rejected 42501 regardless of the UPDATE policy. The
+write queue treated that as permanent, toasted, and rolled the local state back to the server
+copy (`voting`). `pushEvent` is a separate insert with a permissive policy, so the live event
+was created — the two writes diverged. The deadline editor kept working only because it always
+carries `status='voting'`. The migration's reviewer note ("`pushSanctionRequest` is called
+requester-side exactly once") checked the requester path and missed the team's decision path.
+
+**Fix:** `patchSanctionRequest(id, {status, decidedAt, createdEventId, sanctionId, deadlineAt})`
+→ `remoteUpdate` (PATCH by id). `pushSanctionRequest` is now submit-only. No migration: the
+split policies are correct as written; the client was using the wrong verb.
+
+**Notifier ordering:** `notifySanction` now `await waitForWriteQueueDrain()` before invoking
+(the `sendRegistrationConfirmation` pattern). Server side, `notify-sanction` re-reads `status`
+and returns 409 when it doesn't equal the requested event — so a failed decision write can no
+longer produce an "approved" email. `resolveRequest` surfaces a failed notify as an error toast.
+
+**Requester surfaces:** new shared pure module `supabase/functions/_shared/sanction-summary.ts`
+(`sanctionSummaryRows`/`groupSanctionSummary`, tests in `tests/sanction-summary.test.ts`) — same
+labelled rows rendered by the new "Details" modal on Your Sanction Requests (`Sanction.tsx`) and
+by the submitted email's summary table (level ids resolved from `levels`). Payout email/address
+are deliberately not rendered. "Open event" relabelled "Host dashboard". Approval email/ toast
+no longer say "draft"; CTA is "Open your host dashboard".
+
+**Not done here:** `notify-sanction` deploy (no CLI token on Julia's Mac) and the one-row repair
+of `sr-1788724866012` — both listed under Nate actions in the triage doc. The vote page's own
+hand-rolled detail list was left as-is; it could be swapped to the shared rows later.

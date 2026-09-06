@@ -272,7 +272,21 @@ screenshots, open/resolved; search/sort/filter; Resolve toggle).
 | P-2 | $0 / non-UCG registrations need a self-serve exit? | **Yes — a Withdraw flow**: before `lastDateToEdit` = removed from the event (athlete confirmation + host notification); after = remains registered with all apparatus scratched (late-withdrawal email incl. freebies note). Non-UCG events: withdraw always offered, refund sentence points at the host club's email — omitted when the athlete competes for the host club. UCG-hosted paid regs keep the refund flow; UCG-hosted $0 regs get Withdraw instead | ✅ **SHIPPED 2026-08-24** — `withdraw-registration` deployed (staging+prod), migration `20260824100000` applied, frontend live. Test steps **R-15..R-18** added to the plan/page/Sheet |
 | P-3 | Change fee on never-paid edits? | **No fee** — editing something never purchased is editing a cart; the new paid-state-filtered behavior stands | ✅ nothing to do |
 
+## E-01-03 (Julia, 2026-09-06 16:19 ET) — sanction decisions silently failed RLS; requester Details + summary
+
+Branch `fix/sanction-e01-03`, merged 2026-09-06 (Julia's Mac). Frontend live on push; **`notify-sanction` still needs a redeploy** (see Nate actions).
+
+| Finding | Sev | Root cause (verified in code) | Fix | Status |
+|---|---|---|---|---|
+| Approved request stays **VOTING** on `#/sanction` (hard reload didn't help); no "Open event" button | S1 | `resolveRequest`/`saveDeadline` wrote the decision with `pushSanctionRequest` = whole-row **upsert**. `sanction_requests_insert` (`20260826000000`) only admits `status='voting'`, and Postgres evaluates the INSERT policy's WITH CHECK on the proposed row of an `INSERT … ON CONFLICT DO UPDATE` before the conflict is found — so every approve/reject upsert failed 42501 and the write queue rolled it back. The event insert is a separate write and succeeded, which is why the event existed while the request didn't know about it. Predates today: the lockdown shipped 8/27; this was the first approval since | New `patchSanctionRequest` (targeted UPDATE by id) for approve/reject/deadline; `pushSanctionRequest` is now submit-only | ✅ frontend |
+| Approval email CTA went to `#/sanction` instead of the host dashboard | S2 | Same failure (no `created_event_id` on the row) **plus** the notifier was invoked before the write queue landed the row | `notifySanction` drains the write queue first (same as `sendRegistrationConfirmation`); the function refuses with 409 if the row's status doesn't match the event, and the client toasts that | ✅ frontend · 🔧 function deploy pending |
+| "A draft event has been created" wording | S3 | Stale since approval publishes LIVE (2026-08-27) | "Your event has been created and is live…; registration opens <date>", CTA **Open your host dashboard**; approval toast no longer says "draft" | 🔧 function deploy pending |
+| Submission email should show all answers, or link to a page that does; `#/sanction` needs a **Details** button | S3 | Requester-facing surfaces only ever showed the event name; the full payload renders only on the team-gated vote page | Shared pure `_shared/sanction-summary.ts` (`sanctionSummaryRows`, vitest-covered) renders the same labelled rows in a **Details** modal on Your Sanction Requests and as a table in the submitted email. "Open event" → **Host dashboard** | ✅ frontend · 🔧 function deploy pending |
+
 ## 👤 Nate actions
+
+- **Deploy `notify-sanction`** (staging + prod) — Julia's Mac has no Supabase CLI login: `npx -y supabase@latest functions deploy notify-sanction --project-ref wkyerxlgricfphopocoz` (and `--project-ref xogpiksqtkayxwmczlbx`). Not in the no-verify-jwt trio.
+- **Repair the stuck ZZTEST row** (prod): request `sr-1788724866012` (ZZTEST_ApproveThis) is still `voting` while its event exists. SQL: `update sanction_requests set status='approved', decided_at=now(), created_event_id=e.id, sanction_id=e.sanction_id from events e where e.slug='zztest-approvethis' and sanction_requests.id='sr-1788724866012';`
 
 - Stripe Dashboard public business name → UCG (M-07-01), test and live. **Deliberately deferred to 2026-09-20** (rebrand announcement day — Stripe requires a live site and unitedclubgymnastics.org is empty until then). Not a bug; don't re-file.
 - Send the screenshot folders.

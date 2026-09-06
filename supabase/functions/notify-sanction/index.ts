@@ -16,6 +16,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendBatch, sendOne, type EmailMessage } from '../_shared/resend.ts';
 import { renderEmail } from '../_shared/email-layout.ts';
 import { dedupeEmailRecipients } from '../_shared/notify-recipients.ts';
+import { sanctionSummaryRows, groupSanctionSummary } from '../_shared/sanction-summary.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -52,9 +53,30 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: 'event must be submitted | approved | rejected.' }, 400);
   }
 
+  /** Levels referenced by the request, id → name, for the summary rows. */
+  async function levelNameLookup(payload: Record<string, unknown>): Promise<(id: string) => string | undefined> {
+    const ids = [...new Set(['wagLevels', 'magLevels', 'tntLevels']
+      .flatMap((k) => (Array.isArray(payload[k]) ? (payload[k] as unknown[]).map(String) : [])))];
+    if (ids.length === 0) return () => undefined;
+    const { data } = await db.from('levels').select('id, name').in('id', ids);
+    const map = new Map((data ?? []).map((l: { id: string; name: string }) => [l.id, l.name]));
+    return (id) => map.get(id);
+  }
+
+  /** The requester's own answers as a labelled table (UAT E-01-03: the
+   *  submission email named only the event + dates, and the requester has no
+   *  other way to see what they asked for — the vote page is team-gated).
+   *  Same rows the "Details" dialog on Your Sanction Requests renders. */
+  function summaryTableHtml(payload: Record<string, unknown>, hostClubName: string | undefined, levelName: (id: string) => string | undefined): string {
+    const groups = groupSanctionSummary(sanctionSummaryRows(payload, { hostClubName: hostClubName ?? null, levelName }));
+    return groups.map((g) => `<p style="margin:14px 0 4px;font-weight:700;color:#1E2B38;">${esc(g.section)}</p>
+<table role="presentation" style="border-collapse:collapse;width:100%;font-size:14px;">${g.rows.map((r) =>
+      `<tr><td style="padding:4px 12px 4px 0;color:#5b6b7a;vertical-align:top;white-space:nowrap;">${esc(r.label)}</td><td style="padding:4px 0;color:#1E2B38;">${esc(r.value)}</td></tr>`).join('')}</table>`).join('');
+  }
+
   const { data: sreq } = await db
     .from('sanction_requests')
-    .select('id, host_club_id, requester_person_id, payload, sanction_id, created_event_id')
+    .select('id, host_club_id, requester_person_id, payload, sanction_id, created_event_id, status')
     .eq('id', requestId)
     .maybeSingle();
   if (!sreq) return json({ ok: false, error: 'Sanction request not found.' }, 404);
@@ -81,12 +103,13 @@ Deno.serve(async (req) => {
   }
 
   if (event === 'submitted') {
-    const [teamRecipients, requesterRow, hostClubRow] = await Promise.all([
+    const [teamRecipients, requesterRow, hostClubRow, levelName] = await Promise.all([
       sanctioningTeamRecipients(),
       sreq.requester_person_id
         ? db.from('people').select('first_name, last_name, email').eq('id', sreq.requester_person_id).maybeSingle()
         : Promise.resolve({ data: null }),
       db.from('clubs').select('name').eq('id', sreq.host_club_id).maybeSingle(),
+      levelNameLookup(payload),
     ]);
     const requester = requesterRow.data;
     const hostClubName = hostClubRow.data?.name as string | undefined;
@@ -115,17 +138,14 @@ Deno.serve(async (req) => {
     let requesterError: string | undefined;
     const requesterEmail = (requester?.email ?? '').trim();
     if (EMAIL_RE.test(requesterEmail)) {
-      const kindLabel = payload.eventKind === 'camp' ? 'Camp' : 'Competition';
-      const datesLine = payload.startDate && payload.endDate
-        ? `<br><strong>Proposed dates:</strong> ${esc(String(payload.startDate))} to ${esc(String(payload.endDate))}`
-        : '';
       const subject = `Sanction request submitted: ${eventName ?? 'your event'}`;
       const html = renderEmail({
         heading: 'Sanction request submitted',
         bodyHtml: `<p>Hi ${esc(requester?.first_name ?? '')},</p>
 <p>We've received your sanction request for <strong>${label}</strong>${hostClubName ? ` hosted by <strong>${esc(hostClubName)}</strong>` : ''}.</p>
-<p><strong>Kind:</strong> ${esc(kindLabel)}${datesLine}</p>
-<p>The Sanctioning Team will review and vote within 7 days. We'll email you again once a decision is made.</p>`,
+<p>The Sanctioning Team will review and vote within 7 days. We'll email you again once a decision is made.</p>
+<p>Here's a summary of what you submitted. You can also open <strong>Details</strong> on Your Sanction Requests any time; contact a UCG administrator if something needs to change.</p>
+${summaryTableHtml(payload, hostClubName, levelName)}`,
         cta: { text: 'Track your request', href: requesterLink },
       });
       try {
@@ -147,6 +167,14 @@ Deno.serve(async (req) => {
 
   // approved / rejected → requester email (unchanged decision), PLUS a
   // Sanctioning Team notice on approval only (E-01-03). Independent sends.
+  //
+  // Guard: only email a decision the database actually holds. The client
+  // drains its write queue before calling, so a mismatch here means the
+  // decision write failed (e.g. RLS) — refuse rather than send an "approved"
+  // email for a request that is still 'voting' (UAT E-01-03, 2026-09-06).
+  if (sreq.status !== event) {
+    return json({ ok: false, error: `Request is '${sreq.status}', not '${event}' — the decision hasn't been saved yet.` }, 409);
+  }
   const { data: requester } = sreq.requester_person_id
     ? await db.from('people').select('first_name, last_name, email').eq('id', sreq.requester_person_id).maybeSingle()
     : { data: null };
@@ -160,13 +188,16 @@ Deno.serve(async (req) => {
       ? await db.from('events').select('slug').eq('id', sreq.created_event_id).maybeSingle()
       : { data: null };
     const eventLink = eventRow?.slug ? `${appUrl}/#/events/${eventRow.slug}/host` : requesterLink;
+    // Approval publishes the event LIVE (owners 2026-08-27) — say so, and
+    // send the host to their dashboard, not the request summary (E-01-03).
+    const regOpens = typeof payload.regOpens === 'string' && payload.regOpens ? payload.regOpens.replace('T', ' ') : '';
     subject = `Approved: ${eventName ?? 'your event'} sanction`;
     html = renderEmail({
       heading: 'Sanction approved',
       bodyHtml: `<p>Hi ${esc(requester?.first_name ?? '')},</p>
 <p>Your sanction request for <strong>${label}</strong> has been <strong>approved</strong>${sreq.sanction_id ? ` (Sanction ID: ${esc(String(sreq.sanction_id))})` : ''}.</p>
-<p>A draft event has been created.</p>`,
-      cta: { text: 'Open your event', href: eventLink },
+<p>Your event has been created and is live on the platform${regOpens ? `; registration opens ${esc(regOpens)}` : ''}. Use your host dashboard to set up sessions, scoring, and the rest of the event details.</p>`,
+      cta: { text: eventRow?.slug ? 'Open your host dashboard' : 'View your requests', href: eventLink },
     });
   } else {
     subject = `Update on your ${eventName ?? 'event'} sanction request`;
