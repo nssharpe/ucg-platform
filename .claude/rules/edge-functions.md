@@ -31,7 +31,7 @@ of the three shows `verify_jwt: true`. **If that hook reports it could not run, 
 
 Shared helper `_shared/resend.ts` (`sendOne`/`sendBatch`; optional `cc`, `reply_to`, and
 `fromName` — the last swaps ONLY the sender display name, the address always stays
-`RESEND_FROM`'s verified one; per-event "from" = alias + reply-to by design). Secrets:
+`RESEND_FROM`'s verified one; since E-03's retirement 2026-08-27 NO registration-confirmation path passes `fromName`/`reply_to` — the sender is always United Club Gymnastics). Secrets:
 `RESEND_API_KEY`, `RESEND_FROM` (naigc.org is verified), `APP_PUBLIC_URL`.
 
 All transactional emails render through `_shared/email-layout.ts`
