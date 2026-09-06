@@ -60,23 +60,21 @@ export function adminMfaGate({ isAdmin, hasTotp, hasPasskey }: AdminMfaGateInput
   return hasTotp || hasPasskey ? 'allow' : 'block';
 }
 
-/** Passkey satisfaction for the admin-pages gate (UAT round 2 A-11-02): true
- *  if the account has ANY enrolled passkey CREDENTIAL (persists across
- *  sign-in method — `supabase.auth.passkey.list()`, the same list
- *  ProfilePasskeys.tsx renders) OR the CURRENT session was established via
- *  passkey sign-in (the AMR exemption `needsMfaStepUp` also uses).
+/** Passkey satisfaction for the admin-pages gate.
  *
- *  Split out as its own pure function because `useAdminMfaSatisfied`
- *  (mfa.ts) used to derive `hasPasskey` from the session's AMR ONLY —
- *  enrolling a passkey via ProfilePasskeys.tsx does not change how the
- *  CURRENT session signed in, so an admin who enrolled a passkey mid-session
- *  stayed gated until they signed out and back in with it. Credential
- *  enrollment is the durable signal; AMR is kept as a fallback for the (rare)
- *  case a passkey credential was later removed but the still-live session
- *  that signed in with it should stay exempt. */
+ *  UAT A-11-03 (S1, 2026-08-27, Nate chose Option A): satisfaction requires
+ *  that THIS SESSION actually authenticated with a passkey (its amr contains
+ *  'passkey') — a server-signed claim obtainable only by completing a real
+ *  passkey ceremony. Merely having a passkey CREDENTIAL enrolled is NOT
+ *  enough: an admin who enrolled a passkey but then signed in with a
+ *  password holds only a single factor, and must not reach admin pages. This
+ *  deliberately REVISES A-11-02's "enrolling a passkey unlocks admin
+ *  instantly" — the enrolled-but-password-session case is exactly the hole
+ *  Julia found. To satisfy the gate a passkey admin either signs in with the
+ *  passkey (amr → 'passkey') or additionally enrolls TOTP. Kept in agreement
+ *  with `needsMfaStepUp` above, which already decides off amr, not level. */
 export function hasPasskeySatisfaction(
-  hasPasskeyCredential: boolean,
   authMethods: readonly string[] | null | undefined,
 ): boolean {
-  return hasPasskeyCredential || !!authMethods?.includes(PASSKEY_AMR_METHOD);
+  return !!authMethods?.includes(PASSKEY_AMR_METHOD);
 }

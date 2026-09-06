@@ -50,13 +50,12 @@ export function useAdminMfaSatisfied(): boolean | null {
   // the app, even though this component never unmounts/remounts for it.
   const enrollmentVersionSnapshot = useSyncExternalStore(subscribeEnrollment, () => enrollmentVersion, () => 0);
   const [hasTotp, setHasTotp] = useState<boolean | null>(null);
-  const [hasPasskeyCredential, setHasPasskeyCredential] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (!caps.isAdmin || !supabase) return;
     let cancelled = false;
     const client = supabase;
-    Promise.all([client.auth.mfa.listFactors(), client.auth.passkey.list()]).then(([factorsRes, passkeysRes]) => {
+    client.auth.mfa.listFactors().then((factorsRes) => {
       if (cancelled) return;
       // data.totp already excludes unverified factors — auth-js's
       // _listFactors only buckets a factor into data[factor_type] when
@@ -66,7 +65,6 @@ export function useAdminMfaSatisfied(): boolean | null {
       // hanging on a loader forever — the block panel is escapable (links to
       // /me and Home); an indefinite spinner on every admin page is not.
       setHasTotp(factorsRes.error ? false : factorsRes.data.totp.length > 0);
-      setHasPasskeyCredential(passkeysRes.error ? false : (passkeysRes.data ?? []).length > 0);
     }).catch(() => {
       // Either call REJECTING (not resolving `{error}}`) must not leave both
       // states `null` forever — that would make this hook return `null`
@@ -75,14 +73,15 @@ export function useAdminMfaSatisfied(): boolean | null {
       // the { error } branches above.
       if (cancelled) return;
       setHasTotp(false);
-      setHasPasskeyCredential(false);
     });
     return () => { cancelled = true; };
   }, [caps.isAdmin, enrollmentVersionSnapshot]);
 
   if (!caps.isAdmin) return true;
-  if (hasTotp === null || hasPasskeyCredential === null) return null;
-  const hasPasskey = hasPasskeySatisfaction(hasPasskeyCredential, aal.methods);
+  if (hasTotp === null) return null;
+  // A-11-03: satisfied by a passkey ONLY when THIS session signed in with one
+  // (aal.methods = the session's amr), never by a merely-enrolled credential.
+  const hasPasskey = hasPasskeySatisfaction(aal.methods);
   return adminMfaGate({ isAdmin: true, hasTotp, hasPasskey }) === 'allow';
 }
 

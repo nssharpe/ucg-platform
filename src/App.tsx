@@ -190,8 +190,9 @@ function RequireAdmin({ children }: { children: ReactNode }) {
         <div style={{ fontSize: 32, marginBottom: 16 }}>🔒</div>
         <h2 style={{ marginBottom: 8 }}>Set up two-factor authentication to continue</h2>
         <p style={{ color: 'var(--ink-soft)' }}>
-          League admin accounts require two-factor authentication (or signing in with a passkey)
-          before reaching admin pages.
+          League admin accounts require two-factor authentication before reaching admin pages.
+          Set up an authenticator app, or — if you have a passkey — sign out and sign back in with
+          it to unlock admin access.
         </p>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center', marginTop: 20, flexWrap: 'wrap' }}>
           <Link className="btn primary" to="/me">Set up two-factor authentication →</Link>

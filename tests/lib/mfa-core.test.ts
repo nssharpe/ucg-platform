@@ -19,28 +19,23 @@ describe('adminMfaGate (UAT A-11-01 admin-pages MFA hard gate)', () => {
   });
 });
 
-describe('hasPasskeySatisfaction (UAT round 2 A-11-02)', () => {
-  it('false when neither an enrolled credential nor the session AMR is passkey', () => {
-    expect(hasPasskeySatisfaction(false, ['password'])).toBe(false);
-    expect(hasPasskeySatisfaction(false, [])).toBe(false);
-    expect(hasPasskeySatisfaction(false, null)).toBe(false);
-    expect(hasPasskeySatisfaction(false, undefined)).toBe(false);
+describe('hasPasskeySatisfaction (UAT A-11-03: session AMR only)', () => {
+  it('false when the session did not authenticate with a passkey', () => {
+    expect(hasPasskeySatisfaction(['password'])).toBe(false);
+    expect(hasPasskeySatisfaction([])).toBe(false);
+    expect(hasPasskeySatisfaction(null)).toBe(false);
+    expect(hasPasskeySatisfaction(undefined)).toBe(false);
   });
 
-  it('true when a passkey credential is enrolled, regardless of session AMR', () => {
-    // The core bug this fixes: enrolling a passkey mid-session (still signed
-    // in via password) must satisfy the gate immediately, without waiting for
-    // a sign-out/sign-in that would put 'passkey' in the session's AMR.
-    expect(hasPasskeySatisfaction(true, ['password'])).toBe(true);
-    expect(hasPasskeySatisfaction(true, [])).toBe(true);
-    expect(hasPasskeySatisfaction(true, null)).toBe(true);
+  it('A-11-03 hole closed: a merely-enrolled passkey credential does NOT satisfy a password session', () => {
+    // The S1 Julia found: enrolled passkey + password login = single factor.
+    // Satisfaction is decided off the session amr, so an enrolled-but-unused
+    // passkey on a password session is now correctly NOT satisfied.
+    expect(hasPasskeySatisfaction(['password'])).toBe(false);
   });
 
-  it('true when the session AMR is passkey, even with no enrolled credential known yet', () => {
-    expect(hasPasskeySatisfaction(false, ['passkey'])).toBe(true);
-  });
-
-  it('true when both signals agree', () => {
-    expect(hasPasskeySatisfaction(true, ['passkey'])).toBe(true);
+  it('true when the session AMR is passkey', () => {
+    expect(hasPasskeySatisfaction(['passkey'])).toBe(true);
+    expect(hasPasskeySatisfaction(['password', 'passkey'])).toBe(true);
   });
 });
