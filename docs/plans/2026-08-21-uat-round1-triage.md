@@ -90,6 +90,18 @@ cart repaired in prod. Membership page correctly offers no re-purchase for an ac
 Retests green 8/25-26: M-03, M-08, M-10 ($45), M-11, M-19, M-20, Z-04 flow, A-06 (Nate). Julia
 confirmed membership-welcome cc scheme correct.
 
+## Decisions logged 2026-08-27 (afternoon)
+
+- **Sanction approval publishes the event LIVE** (was draft). Draft is now a manual take-offline
+  state only — "we don't want setting it live to be manually controlled because we will forget."
+  Shipped `f88e036`.
+- **Registration confirmation email standardized** (E-02-01, Julia's screenshots): always from
+  United Club Gymnastics, reply-to UCG; subject `<event> Registration Confirmation`; host custom
+  message ("A message from your host") ABOVE the "Here's your receipt" line. Per-event
+  from-alias / reply-to fields REMOVED from the wizard → **E-03 obsolete**. cc-director stays.
+- **E-02-02 (S1):** host-club **self**-registration ($0, no checkout) must still send the
+  confirmation; club-manager registrations for the host club send none.
+
 ## Batch 1 — Money correctness (S1, first)
 
 Money path per CLAUDE.md routing: sonnet drafts, reviewer-tier (Fable) reviews every diff.
