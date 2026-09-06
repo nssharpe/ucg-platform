@@ -6,11 +6,11 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { mutate, useDB } from '../lib/store';
-import { pushSanctionRequest, pushSanctionVote, pushEvent, notifySanction, sanctioningTeamSize } from '../lib/supabase';
+import { pushSanctionRequest, patchSanctionRequest, pushSanctionVote, pushEvent, notifySanction, sanctioningTeamSize } from '../lib/supabase';
 import { useCapabilities } from '../lib/capabilities';
 import { seasonForDate, clubHasActiveMembership } from '../lib/capabilities-core';
 import { useSession } from '../lib/auth';
-import { Badge, Combo, Field } from '../components/ui';
+import { Badge, Combo, Field, Modal } from '../components/ui';
 import { useToast } from '../components/ui-hooks';
 import { tallyVotes, nextSanctionId, deadlineEditable, deadlineToLocalInputValue, localInputValueToDeadlineISO, ownSanctionRequestsOf } from '../lib/sanction';
 import { RIBBON_OPTIONS, DEFAULT_RIBBON } from '../lib/ribbons';
@@ -19,6 +19,7 @@ import { timezoneForState } from '../lib/timezone';
 import type { DB, Discipline, Event, SanctionRequest, SanctionVote } from '../lib/types';
 import type { RibbonOption } from '../lib/ribbons';
 import { useAdminPeople } from '../lib/people-admin-slice';
+import { sanctionSummaryRows, groupSanctionSummary } from '../../supabase/functions/_shared/sanction-summary';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -146,7 +147,38 @@ const SANCTION_STATUS_TONES: Record<string, 'ok' | 'warn' | 'err' | 'info' | 'na
   voting: 'info', approved: 'ok', rejected: 'err', submitted: 'warn', draft: 'navy', withdrawn: 'navy',
 };
 
+function SanctionRequestDetails({ request, db, onClose }: { request: SanctionRequest; db: DB; onClose: () => void }) {
+  const club = db.clubs.find((c) => c.id === request.hostClubId);
+  const groups = groupSanctionSummary(sanctionSummaryRows(request.payload, {
+    hostClubName: club?.name ?? null,
+    levelName: (id) => db.levels.find((l) => l.id === id)?.name,
+  }));
+  return (
+    <Modal title={`Request details — ${String(request.payload.eventName ?? 'Sanction request')}`} onClose={onClose}>
+      <p style={{ fontSize: 13, color: 'var(--ink-soft)', marginTop: 0 }}>
+        What you submitted. A submitted request can't be edited here — contact a UCG administrator if
+        something needs to change.
+        {request.sanctionId ? <> Sanction ID: <strong>{request.sanctionId}</strong>.</> : null}
+      </p>
+      {groups.map((g) => (
+        <div key={g.section} style={{ marginBottom: 12 }}>
+          <h4 style={{ margin: '12px 0 4px', fontSize: 14, fontWeight: 600 }}>{g.section}</h4>
+          {g.rows.map((r) => (
+            <div key={r.label} style={{ display: 'flex', gap: 8, fontSize: 14, padding: '4px 0', borderBottom: '1px solid var(--line)' }}>
+              <span style={{ fontWeight: 600, minWidth: 180, color: 'var(--ink-soft)' }}>{r.label}</span>
+              <span style={{ whiteSpace: 'pre-wrap' }}>{r.value}</span>
+            </div>
+          ))}
+        </div>
+      ))}
+    </Modal>
+  );
+}
+
 function YourSanctionRequests({ requests, db }: { requests: SanctionRequest[]; db: DB }) {
+  // "Details" (UAT E-01-03): the requester can't reach the Sanctioning Team's
+  // vote page, so this is their only read-only view of what they submitted.
+  const [detailsFor, setDetailsFor] = useState<SanctionRequest | null>(null);
   if (requests.length === 0) return null;
   return (
     <div className="card card-pad" style={{ maxWidth: 720, marginBottom: 16 }}>
@@ -171,10 +203,13 @@ function YourSanctionRequests({ requests, db }: { requests: SanctionRequest[]; d
                   <td>{r.submittedAt ? new Date(r.submittedAt).toLocaleDateString() : '—'}</td>
                   <td><Badge tone={SANCTION_STATUS_TONES[r.status] ?? 'info'}>{r.status}</Badge></td>
                   <td>{r.deadlineAt ? new Date(r.deadlineAt).toLocaleDateString() : '—'}</td>
-                  <td>
-                    {r.status === 'approved' && createdEvent ? (
-                      <Link to={`/events/${createdEvent.slug}/host`} className="btn small ghost">Open event</Link>
-                    ) : null}
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                      {r.status === 'approved' && createdEvent ? (
+                        <Link to={`/events/${createdEvent.slug}/host`} className="btn small ghost">Host dashboard</Link>
+                      ) : null}
+                      <button type="button" className="btn small ghost" onClick={() => setDetailsFor(r)}>Details</button>
+                    </div>
                   </td>
                 </tr>
               );
@@ -182,6 +217,7 @@ function YourSanctionRequests({ requests, db }: { requests: SanctionRequest[]; d
           </tbody>
         </table>
       </div>
+      {detailsFor && <SanctionRequestDetails request={detailsFor} db={db} onClose={() => setDetailsFor(null)} />}
     </div>
   );
 }
@@ -1045,10 +1081,14 @@ export function SanctionVotePage() {
       });
       if (!applied) return; // offline read-only gate — don't push/notify/claim success
       pushEvent(event);
-      pushSanctionRequest({ ...req, status: 'approved', decidedAt: decidedNow, createdEventId: eventId, sanctionId: sid });
-      notifySanction({ requestId: req.id, event: 'approved' });
+      // Targeted UPDATE, not an upsert — see patchSanctionRequest's doc
+      // comment for why the upsert silently failed RLS here (UAT E-01-03).
+      patchSanctionRequest(req.id, { status: 'approved', decidedAt: decidedNow, createdEventId: eventId, sanctionId: sid });
+      void notifySanction({ requestId: req.id, event: 'approved' }).then((res) => {
+        if (!res.ok) toast(`Approved, but the notification email could not be sent: ${res.error ?? 'unknown error'}`, { variant: 'error' });
+      });
       // TODO: reminder emails 3d/1d before deadline (needs scheduler)
-      toast(`Approved! Sanction ID: ${sid}. Event created as draft.`);
+      toast(`Approved! Sanction ID: ${sid}. The event is live; the host can set it up from their host dashboard.`);
     } else {
       // Rejected
       const applied = mutate((d) => {
@@ -1062,8 +1102,10 @@ export function SanctionVotePage() {
         }
       });
       if (!applied) return; // offline read-only gate — don't push/notify/claim success
-      pushSanctionRequest({ ...req, status: 'rejected', decidedAt: decidedNow });
-      notifySanction({ requestId: req.id, event: 'rejected' });
+      patchSanctionRequest(req.id, { status: 'rejected', decidedAt: decidedNow });
+      void notifySanction({ requestId: req.id, event: 'rejected' }).then((res) => {
+        if (!res.ok) toast(`Rejected, but the notification email could not be sent: ${res.error ?? 'unknown error'}`, { variant: 'error' });
+      });
       toast('Request rejected.');
     }
     navigate('/sanctioning');
@@ -1091,7 +1133,7 @@ export function SanctionVotePage() {
       if (idx >= 0) d.sanctionRequests![idx] = { ...d.sanctionRequests![idx], deadlineAt: iso };
     });
     if (!applied) return; // offline read-only gate — don't push/claim success
-    pushSanctionRequest({ ...request, deadlineAt: iso });
+    patchSanctionRequest(request.id, { deadlineAt: iso });
     setEditingDeadline(false);
     toast('Voting deadline updated.');
     // tally recomputes on the next render straight off request.deadlineAt

@@ -1597,6 +1597,31 @@ export function pushSanctionRequest(r: SanctionRequest) {
   }]);
 }
 
+/** Patch an EXISTING sanction request by id — a targeted UPDATE, never an
+ *  upsert. The decision (status / decided_at / created_event_id /
+ *  sanction_id) and the deadline editor MUST go through here:
+ *  `sanction_requests_insert` (20260826000000) only admits rows with
+ *  status='voting', and Postgres evaluates the INSERT policy's WITH CHECK on
+ *  the proposed row of an INSERT … ON CONFLICT DO UPDATE *before* the conflict
+ *  is detected — so an upsert carrying status='approved'/'rejected' failed
+ *  42501 and was rolled back, leaving the row 'voting' with no
+ *  created_event_id while the event itself (a separate insert) went through.
+ *  Symptoms: requester's "Your sanction requests" stuck on VOTING, and the
+ *  approval email's CTA falling back to /#/sanction (UAT E-01-03, 2026-09-06). */
+export function patchSanctionRequest(
+  id: string,
+  patch: Partial<Pick<SanctionRequest, 'status' | 'decidedAt' | 'createdEventId' | 'sanctionId' | 'deadlineAt'>>,
+) {
+  const row: Record<string, unknown> = {};
+  if (patch.status !== undefined) row.status = patch.status;
+  if (patch.decidedAt !== undefined) row.decided_at = patch.decidedAt;
+  if (patch.createdEventId !== undefined) row.created_event_id = patch.createdEventId;
+  if (patch.sanctionId !== undefined) row.sanction_id = patch.sanctionId;
+  if (patch.deadlineAt !== undefined) row.deadline_at = patch.deadlineAt;
+  if (Object.keys(row).length === 0) return;
+  remoteUpdate('sanction_requests', id, row);
+}
+
 /** Persist a sanction vote (0008 sanction_votes). */
 export function pushSanctionVote(v: SanctionVote) {
   remoteUpsert('sanction_votes', [{
@@ -2682,6 +2707,13 @@ export async function notifySanction(args: {
   event: 'submitted' | 'approved' | 'rejected';
 }): Promise<{ ok: boolean; sentCount?: number; error?: string }> {
   if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  // The function re-reads the request row server-side (status, created
+  // event) — callers have only just enqueued that write, so wait for the
+  // queue to land it first (same reason `sendRegistrationConfirmation`
+  // drains). If the write failed permanently the row keeps its old status
+  // and the function refuses with a 409 rather than emailing a decision the
+  // database doesn't hold (UAT E-01-03).
+  await waitForWriteQueueDrain();
   const { data, error } = await supabase.functions.invoke('notify-sanction', { body: args });
   if (error) return { ok: false, error: await edgeErrorMessage(error) };
   return data as { ok: boolean; sentCount?: number; error?: string };
