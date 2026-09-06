@@ -329,7 +329,7 @@ phone**, not just desktop.
 |---|---|---|
 | E-01 | Trigger each of these and check all four points: signup confirmation, password reset, account invite, club invite, membership welcome, payment/registration confirmation, waiver request, guardian waiver request, sanction submitted, sanction approved, refund requested, refund approved, refund rejected | All arrive. **Log the ones that don't — that list is the deliverable here** |
 | E-02 | Per-event confirmation email: set a custom body on an event, then register for it (spec §A/§I) | Sender is always **United Club Gymnastics** (reply-to UCG); subject is **"<event> Registration Confirmation"**; body order: greeting → **"A message from your host"** (your custom text) → "Here's your receipt…" → receipt table. A **host-club self-registration** ($0) sends the same confirmation minus the receipt (E-02-02); a club manager registering via Club Registrations sends none (decided 2026-08-27) |
-| E-03 | ⛔ **OBSOLETE 2026-08-27** — the per-event from-alias and reply-to fields were removed; confirmations always come from United Club Gymnastics (see E-02). Mark N/A, nothing to test |
+| E-03 | ⛔ **OBSOLETE 2026-08-27** — the per-event from-alias and reply-to fields were removed; confirmations always come from United Club Gymnastics (see E-02) | Mark **N/A** — nothing to test |
 | E-04 | Turn on **cc the director** and register | The director address is copied |
 | E-05 | Admin Communicate: send an email to a filtered group | The recipient-list preview matches who actually receives it |
 | E-06 | Admin Communicate: use the **test send** | Goes to your own account address only |
