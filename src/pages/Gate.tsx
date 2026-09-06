@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { checkPassword } from '../lib/store';
+import { Modal } from '../components/ui';
 import { isSupabaseConfigured, supabase, emailHasAccount } from '../lib/supabase';
 import { passkeySignInErrorMessage } from '../lib/passkey-core';
 import primaryLogoWhite from '../assets/brand/primary-logo-white.svg';
@@ -60,6 +61,10 @@ function AuthGate() {
   const [kind, setKind] = useState<'athlete' | 'coach'>('athlete');
   const [err, setErr] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  // UAT A-01 (Julia): a prominent 'check your email' overlay after signup,
+  // replacing the easy-to-miss inline note. Holds the address we sent to.
+  const [confirmEmail, setConfirmEmail] = useState<string | null>(null);
+  const [closeTried, setCloseTried] = useState(false);
   const [busy, setBusy] = useState(false);
   const [passkeyBusy, setPasskeyBusy] = useState(false);
 
@@ -152,7 +157,7 @@ function AuthGate() {
       setBusy(false);
       if (error) { setErr(error.message); return; }
       if (!data.session) {
-        setInfo('Check your email to confirm your account — the link returns you here to sign in.');
+        setConfirmEmail(email.trim());
       }
     }
   };
@@ -164,6 +169,37 @@ function AuthGate() {
 
   return (
     <div className="gate">
+      {confirmEmail && (
+        <Modal title="Check your email" onClose={() => setConfirmEmail(null)}>
+          <p style={{ marginTop: 0 }}>
+            We sent a confirmation link to <strong>{confirmEmail}</strong>. Open it to finish
+            setting up your account — the link brings you back here to sign in.
+          </p>
+          <p style={{ color: 'var(--ink-soft)' }}>
+            You can close this tab now and continue from the email.
+          </p>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
+            <button
+              type="button"
+              className="btn primary"
+              onClick={() => {
+                setCloseTried(true);
+                try { window.close(); } catch { /* ignore */ }
+              }}
+            >
+              Close this tab
+            </button>
+            <button type="button" className="btn ghost" onClick={() => setConfirmEmail(null)}>
+              Back to sign in
+            </button>
+          </div>
+          {closeTried && (
+            <p style={{ color: 'var(--ink-soft)', fontSize: 13, marginTop: 10, marginBottom: 0 }}>
+              If this tab is still open, your browser blocked closing it — you can close it manually.
+            </p>
+          )}
+        </Modal>
+      )}
       <form className="gate-card" onSubmit={submit}>
         <img src={primaryLogoWhite} alt="United Club Gymnastics" className="gate-logo" />
         <div className="gate-tag">For the love<br />of the sport.</div>
