@@ -159,7 +159,7 @@ Deno.serve(async (req) => {
   const html = renderEmail({
     heading: 'Set up your account',
     bodyHtml: `<p>Hi ${esc(firstName)},</p>
-<p>${club ? `<strong>${esc(club.name)}</strong> has created a` : 'A'} United Club Gymnastics account for you. Set your
+<p>${club ? `<strong>${esc(club.name)}</strong> has created a` : 'We have created a'} United Club Gymnastics account for you. Set your
 password to get started — you'll land on the membership page where you can purchase your
 membership${club?.short_name ? ` or send it to ${esc(club.short_name)}'s club cart` : ''}.</p>`,
     cta: { text: 'Set your password', href: esc(actionLink) },
