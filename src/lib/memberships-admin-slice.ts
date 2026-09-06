@@ -86,6 +86,15 @@ export function useMembershipsForPerson(personId: string | undefined | null) {
   return personMembershipsSlice.useScope(personId);
 }
 
+/** Optimistically insert/replace one membership in `personId`'s cached rows
+ *  after a local write (Profile.tsx adminView's Activate/Revoke). This slice —
+ *  not `db.people[..].memberships` — is what the admin membership card renders,
+ *  and the administered person is often outside `db.people`'s boot scope
+ *  entirely (UAT 2026-09-06). No-op if the scope was never loaded. */
+export function applyLocalPersonMembershipUpsert(personId: string, m: Membership): void {
+  personMembershipsSlice.applyLocalUpsert(personId, m);
+}
+
 // ---------------------------------------------------------------------------
 // One club's roster memberships (Club.tsx's Roster — an admin can open ANY
 // club's page, not just ones they manage, so Tier 2's boot scope (which only

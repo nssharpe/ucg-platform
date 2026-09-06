@@ -22,8 +22,9 @@ import { eventIsInPhase } from '../lib/events-core';
 import { collectPersonData } from '../lib/person-data';
 import { fetchScoresForRegIds } from '../lib/scores-slice';
 import { fetchRegistrationsForPerson, applyLocalRegistrationRemove } from '../lib/registrations-slice';
-import { useMembershipsForPerson } from '../lib/memberships-admin-slice';
-import { usePersonAdmin } from '../lib/people-admin-slice';
+import { applyLocalPersonMembershipUpsert, useMembershipsForPerson } from '../lib/memberships-admin-slice';
+import { applyLocalPersonAdminUpsert, usePersonAdmin } from '../lib/people-admin-slice';
+import { upsertMembership } from '../lib/membership-upsert';
 import { downloadPersonDataJson, downloadPersonDataPdf } from '../lib/person-export';
 import type { AdminDeletePersonManifest } from '../lib/supabase';
 
@@ -331,12 +332,19 @@ export function Profile({ adminView = false }: { adminView?: boolean }) {
     // `people` insert RLS policy (`auth_user_id = auth.uid()`). adminView edits
     // of OTHER people must NOT pass it (they pass is_admin() instead).
     const selfAuthUserId = adminView ? undefined : getSession()?.user.id;
+    const next: Athlete = { ...p };
     const applied = mutate((d) => {
+      // Phase 4: an adminView target is often OUTSIDE db.people's boot scope
+      // (an independent/club-less member always is). Patch the boot row only
+      // when it's there — indexing `d.people[-1]` used to "succeed" silently
+      // (UAT 2026-09-06) while the page, which renders the usePersonAdmin
+      // slice, never showed the saved value.
       const i = d.people.findIndex((x) => x.id === pid);
-      d.people[i] = { ...p };
-      pushPerson(d.people[i], selfAuthUserId ? { selfAuthUserId } : undefined);
+      if (i >= 0) d.people[i] = next;
+      pushPerson(next, selfAuthUserId ? { selfAuthUserId } : undefined);
     });
     if (!applied) return; // offline read-only gate — no false success toast
+    if (adminView) applyLocalPersonAdminUpsert(next);
     setDraft(null);
     setEditSnapshot(null);
     setEditMode(false);
@@ -1182,17 +1190,21 @@ function AdminMembershipControls({
       : { seasonId, type, status, waiverSignedAt: null, waiverSignedBy: null, paidVia: 'comp', activatedByAdmin: true };
     const emResolved = em;
     const applied = mutate((d) => {
-      const pid = d.people.find((x) => x.id === personId)!;
+      // Phase 4: the administered person is often OUTSIDE db.people's boot
+      // scope — an independent/club-less member always is — so the boot row
+      // is patched only when present. The `!` that used to be here crashed
+      // Activate outright for exactly those members (UAT 2026-09-06, "Cannot
+      // set properties of undefined (setting 'memberships')"). The write and
+      // the on-screen state (the slice, patched below) never depended on it.
+      const pid = d.people.find((x) => x.id === personId);
       // Reset from the freshly-fetched `memberships` (not the possibly Tier
       // 2-incomplete pid.memberships already in local state) before
       // upserting this one, so local state matches the DB immediately.
-      const idx = memberships.findIndex((x) => x.seasonId === seasonId && membershipTypeOf(x) === type);
-      pid.memberships = idx >= 0
-        ? memberships.map((x, i) => (i === idx ? emResolved : x))
-        : [...memberships, emResolved];
-      pushMembership(pid.id, emResolved);
+      if (pid) pid.memberships = upsertMembership(memberships, emResolved);
+      pushMembership(personId, emResolved);
     });
     if (!applied) return; // offline read-only gate — no false success toast
+    applyLocalPersonMembershipUpsert(personId, emResolved);
     if (waiverOk) toast(`${membershipTypeLabel(type)} membership activated for ${seasonName}.`);
     else {
       toast(`${seasonName} ${membershipTypeLabel(type).toLowerCase()} membership is pending a signed waiver.`);
@@ -1214,13 +1226,14 @@ function AdminMembershipControls({
     const emResolved = em ? { ...em, status: 'none' as const } : null;
     let removedCount = 0;
     const applied = mutate((d) => {
-      const personInDraft = d.people.find((x) => x.id === personId)!;
+      // Same boot-scope caveat as activate() above: the person may not be in
+      // db.people at all, so never `!` this lookup.
+      const personInDraft = d.people.find((x) => x.id === personId);
       // Same reset-then-upsert reasoning as activate() above.
       if (emResolved) {
-        const idx = memberships.findIndex((x) => x.seasonId === seasonId && membershipTypeOf(x) === type);
-        personInDraft.memberships = idx >= 0 ? memberships.map((x, i) => (i === idx ? emResolved : x)) : memberships;
-        pushMembership(personInDraft.id, emResolved);
-      } else {
+        if (personInDraft) personInDraft.memberships = upsertMembership(memberships, emResolved);
+        pushMembership(personId, emResolved);
+      } else if (personInDraft) {
         personInDraft.memberships = memberships;
       }
       // Removing from upcoming competitions only makes sense when revoking the
