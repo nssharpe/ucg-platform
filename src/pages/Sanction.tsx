@@ -994,7 +994,13 @@ export function SanctionVotePage() {
         timezone: p.timezone ? String(p.timezone) : timezoneForState(p.state ? String(p.state) : undefined, p.country ? String(p.country) : undefined),
         startDate: String(p.startDate ?? ''),
         endDate: String(p.endDate ?? ''),
-        status: 'draft',
+        // Sanction approval publishes the event LIVE immediately (owners'
+        // decision 2026-08-27): draft is a MANUAL take-offline state only, so
+        // an approved event never sits invisible because someone forgot to
+        // publish it. Registration still opens on `regOpens`, giving the host
+        // the window between approval and that date to configure sessions/
+        // scoring on the live event.
+        status: 'live',
         regOpens: String(p.regOpens ?? ''),
         regCloses: String(p.regCloses ?? ''),
         entryFee: Number(p.perParticipantFee) || 0,
