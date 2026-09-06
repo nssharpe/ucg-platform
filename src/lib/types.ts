@@ -406,7 +406,12 @@ export interface Event {
    *  routine caps and athletes register into a specific session). Absent ⇒
    *  'by-discipline'. */
   registrationMode?: 'by-discipline' | 'by-session';
-  /** Registration-confirmation email override. */
+  /** Registration-confirmation email override. `fromAlias`/`replyTo` are
+   *  RETIRED (UAT E-02-01/E-03, 2026-08-27 — the sender is always United Club
+   *  Gymnastics now): kept optional here only so an old event row that still
+   *  has them doesn't fail to parse; nothing writes them anymore
+   *  (EventWizard) and fulfill.ts/send-registration-confirmation no longer
+   *  read them. */
   confirmationEmail?: { bodyHtml: string; fromAlias?: string; replyTo?: string };
   /** When the event row was created — needed for owner-checklist due dates
    *  (event-mgmt v2 §B4). Server-set (`default now()`); never written by the

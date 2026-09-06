@@ -26,6 +26,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { sendOne } from './resend.ts';
 import { renderEmail } from './email-layout.ts';
 import { buildCampConfirmationHtml, campSurveyQuestionsOfConfig, type CampAthleteSurvey, type CampConfigLike } from './camp-confirmation.ts';
+import { confirmationSubject, hostMessageCardHtml } from './registration-confirmation.ts';
 import { getStripe } from './stripe.ts';
 import { findPaidSibling, type SlotRegLike } from './registration-status.ts';
 
@@ -620,19 +621,16 @@ async function emailReceipt(
   // above is computed from.
   const discountCents = items.reduce((s, i) => s + (i.amount_cents - (i.paid_cents ?? i.amount_cents)), 0);
 
-  // Per-event confirmation config (emv2 P0 Task 4): events referenced by the
-  // purchased lines can carry a host-configured confirmation message
-  // (rendered above the receipt), a director to cc, a reply-to, and a from
-  // display name (alias + reply-to stand in for a custom from address, which
-  // Resend's verified-domain rule forbids — emv2 spec §N7-6). Alias/reply-to
-  // are applied only when UNAMBIGUOUS (exactly one distinct value across the
-  // cart's events). Failures here must never block the receipt.
+  // Per-event confirmation config (emv2 P0 Task 4; UAT E-02-01/E-03,
+  // 2026-08-27: the sender is now ALWAYS United Club Gymnastics — the
+  // per-event from-alias/reply-to override is retired outright, so this
+  // block only ever reads `confirmation_email.bodyHtml` and the director cc).
+  // Failures here must never block the receipt.
   let eventSectionsHtml = '';
   const ccSet = new Set<string>();
-  const replyTos = new Set<string>();
-  const fromAliases = new Set<string>();
   // Hoisted so the camp-confirmation block (built in its own try/catch below)
-  // can reuse the same event rows without a second round trip.
+  // can reuse the same event rows without a second round trip, and so the
+  // subject line (below) can name the one distinct event, when there is one.
   let evs: { id: string; name: string | null; event_type: string | null; camp_config: CampConfigLike | null }[] = [];
   try {
     const eventIds = [...new Set(items.map((i) => i.ref_event_id).filter((id): id is string => !!id))];
@@ -645,20 +643,13 @@ async function emailReceipt(
       for (const evRow of evRows ?? []) {
         const ev = evRow as unknown as {
           id: string; name: string | null;
-          confirmation_email: { bodyHtml?: string; fromAlias?: string; replyTo?: string } | null;
+          confirmation_email: { bodyHtml?: string } | null;
           director: { name?: string; email?: string; ccOnConfirmation?: boolean } | null;
         };
-        const conf = ev.confirmation_email;
-        if (conf?.bodyHtml?.trim()) {
-          // Host-authored HTML: editable only by sanctioning team / league
-          // admins today (EventWizard) — rendered as-is inside the card.
-          eventSectionsHtml += `<div style="margin:16px 0;padding:12px 14px;border-left:3px solid #F4694A;background:#f7f9fb;">` +
-            `<p style="margin:0 0 6px;font-weight:700;color:#1E2B38;">A message from ${esc(ev.name ?? 'the event')}</p>` +
-            `<div style="color:#1E2B38;">${conf.bodyHtml}</div></div>`;
-        }
-        const replyTo = (conf?.replyTo ?? '').trim().toLowerCase();
-        if (EMAIL_RE.test(replyTo)) replyTos.add(replyTo);
-        if (conf?.fromAlias?.trim()) fromAliases.add(conf.fromAlias.trim());
+        // Host-authored HTML: editable only by sanctioning team / league
+        // admins today (EventWizard) — rendered as-is inside the card (see
+        // hostMessageCardHtml's doc comment for why it isn't esc()'d).
+        eventSectionsHtml += hostMessageCardHtml(ev.confirmation_email?.bodyHtml);
         const dirEmail = (ev.director?.email ?? '').trim().toLowerCase();
         if (ev.director?.ccOnConfirmation && EMAIL_RE.test(dirEmail) && dirEmail !== toEmail.toLowerCase()) {
           ccSet.add(dirEmail);
@@ -667,7 +658,7 @@ async function emailReceipt(
     }
   } catch (e) {
     console.error('emailReceipt: per-event confirmation config failed (sending plain receipt)', e);
-    eventSectionsHtml = ''; ccSet.clear(); replyTos.clear(); fromAliases.clear();
+    eventSectionsHtml = ''; ccSet.clear();
   }
 
   // Camp confirmation block (emv2 P2 §G): for any purchased CAMP event, append
@@ -751,12 +742,18 @@ async function emailReceipt(
       `<td style="padding:6px 0;text-align:right;white-space:nowrap;color:#5b6b7a;">${fmtMoney(fee)}</td></tr>`
     : '';
 
-  const subject = 'Your United Club Gymnastics receipt';
+  // UAT E-02-01 rule 2: name the one event this purchase was for, when there's
+  // exactly one distinct event referenced — `evs` already covers every event
+  // referenced by `items` (populated above, regardless of camp/non-camp).
+  const subject = confirmationSubject(items.map((i) => i.ref_event_id ? evs.find((ev) => ev.id === i.ref_event_id)?.name : null));
+  // UAT E-02-01 rule 3: "Here's your receipt for the items below." moves to
+  // AFTER the host custom-message card (eventSectionsHtml) — when there's no
+  // host message, the two intro lines still read naturally in sequence.
   const html = renderEmail({
     heading: 'Your receipt',
     bodyHtml: `<p>Hi ${esc(forName)},</p>
-<p>Thanks for your purchase. Here's your receipt for the items below.</p>
-${eventSectionsHtml}${campSectionHtml}<p style="color:#5b6b7a;font-size:13px;margin:0 0 12px;">Receipt ${esc(invoiceNumber)}</p>
+<p>Thanks for your purchase.</p>
+${eventSectionsHtml}<p>Here's your receipt for the items below.</p>${campSectionHtml}<p style="color:#5b6b7a;font-size:13px;margin:0 0 12px;">Receipt ${esc(invoiceNumber)}</p>
 <table style="border-collapse:collapse;margin:8px 0;font-size:14px;width:100%;">
 ${rows}${discountRow}${feeRow}
 <tr><td style="padding:10px 16px 0 0;border-top:2px solid #1E2B38;font-weight:700;color:#1E2B38;">Total paid</td>
@@ -765,12 +762,12 @@ ${rows}${discountRow}${feeRow}
     footnoteHtml: `Billed to ${esc(forName)} (${esc(toEmail)}). You can re-download a PDF receipt any time from your Purchase History on the platform.`,
   });
 
+  // UAT E-02-01 rule 1 / E-03 retirement: sender is ALWAYS United Club
+  // Gymnastics — no more per-event from-alias/reply-to override.
   await sendOne({
     to: `${forName} <${toEmail}>`,
     subject,
     html,
     ...(ccSet.size ? { cc: [...ccSet] } : {}),
-    ...(replyTos.size === 1 ? { reply_to: [...replyTos][0] } : {}),
-    ...(fromAliases.size === 1 ? { fromName: [...fromAliases][0] } : {}),
   });
 }

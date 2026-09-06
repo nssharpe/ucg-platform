@@ -31,7 +31,7 @@ of the three shows `verify_jwt: true`. **If that hook reports it could not run, 
 
 Shared helper `_shared/resend.ts` (`sendOne`/`sendBatch`; optional `cc`, `reply_to`, and
 `fromName` — the last swaps ONLY the sender display name, the address always stays
-`RESEND_FROM`'s verified one; per-event "from" = alias + reply-to by design). Secrets:
+`RESEND_FROM`'s verified one; since E-03's retirement 2026-08-27 NO registration-confirmation path passes `fromName`/`reply_to` — the sender is always United Club Gymnastics). Secrets:
 `RESEND_API_KEY`, `RESEND_FROM` (naigc.org is verified), `APP_PUBLIC_URL`.
 
 All transactional emails render through `_shared/email-layout.ts`
@@ -102,8 +102,21 @@ Invokers unwrap errors via `edgeErrorMessage(error)` (the real JSON message), **
 Notify-style functions allow any signed-in caller and resolve recipients server-side; only
 `send-email`/`send-sms` are admin-gated. (`send-receipt` was removed 2026-07-04 as dead code —
 `stripe-webhook`'s own `emailReceipt()` is the live receipt path. It also renders each purchased
-event's `confirmation_email.bodyHtml` above the receipt, cc's the event director when
-`ccOnConfirmation`, and applies reply-to/from-alias when unambiguous.)
+event's `confirmation_email.bodyHtml` above the receipt via the shared "A message from your host"
+card and cc's the event director when `ccOnConfirmation`. **UAT E-02-01/E-03 (2026-08-27):** the
+per-event reply-to/from-alias override is RETIRED — every confirmation email now sends from the
+default UCG sender, no exceptions; `confirmation_email.fromAlias`/`.replyTo` are dead fields kept
+only for back-compat parsing of old rows. The subject also now names the one event referenced
+when there's exactly one — `confirmationSubject`/`hostMessageCardHtml`
+(`_shared/registration-confirmation.ts`) are shared between `emailReceipt` and the new
+`send-registration-confirmation` function below, so both paths render an identical-looking host
+card.)
+- **`send-registration-confirmation`** (verify_jwt true; UAT E-02-02, 2026-08-27): the $0
+  host-club SELF-registration confirmation — a host-club registration is created `paid:true` with
+  NO cart line, so it never goes through checkout and `emailReceipt` never fires for it. Self-only,
+  no club-manager branch (mirrors `withdraw-registration`'s shape): 403s unless the caller IS the
+  athlete of every `regId` passed. Wired into `Events.tsx`'s `SelfRegModal.persistRegs` `hostFree`
+  branch only — `Club.tsx`'s manager-side `saveRegs` never calls it.
 
 ## Lockstep mirrors — change both or neither
 
