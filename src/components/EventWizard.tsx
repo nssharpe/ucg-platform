@@ -373,16 +373,12 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
       [d]: { ...(prev[d] ?? { mode: 'none', cap: '', perLevel: {} }), ...patch },
     }));
   };
-  // Confirmation email override (event-mgmt v2 §A)
+  // Confirmation email override (event-mgmt v2 §A). UAT E-02-01/E-03
+  // (2026-08-27): the sender is always United Club Gymnastics now — the old
+  // "From alias"/"Reply-to email" fields (and their state) are retired; only
+  // the host-authored body survives.
   const [hasConfirmationEmail, setHasConfirmationEmail] = useState(!!seedEvt?.confirmationEmail || isNationalsCreate);
   const [confirmationBodyHtml, setConfirmationBodyHtml] = useState(seedEvt?.confirmationEmail?.bodyHtml ?? '');
-  const [confirmationFromAlias, setConfirmationFromAlias] = useState(seedEvt?.confirmationEmail?.fromAlias ?? '');
-  // UCG-hosted CREATE only (PM feedback 2026-07-22): prefill the reply-to with
-  // the general-questions address when the seed/template didn't set one. An
-  // edit of an existing event keeps whatever it already has (incl. blank).
-  const [confirmationReplyTo, setConfirmationReplyTo] = useState(
-    seedEvt?.confirmationEmail?.replyTo ?? (isUcgHosted && !isEdit ? 'jzsharpe@gmail.com' : ''),
-  );
   const [confirmationPreview, setConfirmationPreview] = useState(false);
   // Disciplines & sessions
   const [disciplines, setDisciplines] = useState<Discipline[]>(seedEvt?.disciplines ?? []);
@@ -848,13 +844,7 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
           ? {}
           : { capacity: capacityConfigFromDraft(capacityDraft) }),
       ...(hasConfirmationEmail
-        ? {
-            confirmationEmail: {
-              bodyHtml: confirmationBodyHtml,
-              ...(confirmationFromAlias.trim() ? { fromAlias: confirmationFromAlias.trim() } : {}),
-              ...(confirmationReplyTo.trim() ? { replyTo: confirmationReplyTo.trim() } : {}),
-            },
-          }
+        ? { confirmationEmail: { bodyHtml: confirmationBodyHtml } }
         : { confirmationEmail: undefined }),
       ...(nationals
         ? {
@@ -1573,14 +1563,9 @@ export function EventWizard({ onClose, editEvent, template, variant = 'modal' }:
       </label>
       {hasConfirmationEmail && (
         <div className="card card-pad" style={{ marginBottom: 8 }}>
-          <div className="grid cols-3" style={{ marginBottom: 10 }}>
-            <Field label="From alias" hint="Display name shown to recipients.">
-              <input className="input" value={confirmationFromAlias} onChange={(e) => setConfirmationFromAlias(e.target.value)} placeholder="e.g. Southeast Open 2027" />
-            </Field>
-            <Field label="Reply-to email"><input className="input" type="email" value={confirmationReplyTo} onChange={(e) => setConfirmationReplyTo(e.target.value)} /></Field>
-          </div>
           <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: '0 0 8px' }}>
-            Sent from the UCG address; the alias is the display name and replies go to the reply-to address.
+            This email always sends from United Club Gymnastics. If the host wants to include
+            contact info, put it in the custom message below.
           </p>
 
           <div style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'center' }}>

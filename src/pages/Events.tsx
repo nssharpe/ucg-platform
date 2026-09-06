@@ -25,7 +25,7 @@ import {
   hostDeleteRegistration, hostUpsertRegistration, insuranceCertificateUrl,
   listSanctioningTeam, manageWaitlist, markMedalsReceived, pushCampSurvey, pushCart, pushEvent, pushEventSessions, pushJudgeAccessCode, pushRegistration,
   revokeEventAdmin, revokeJudgeAccessCode, syncSynchroPartnerLevelRemote, uploadInsuranceCertificate,
-  fetchPublicPeopleForIdsRemote,
+  fetchPublicPeopleForIdsRemote, sendRegistrationConfirmation,
 } from '../lib/supabase';
 import type { HostAddonRow, HostRosterRow, SanctioningTeamMember, WaitlistQueueRow } from '../lib/supabase';
 import { fetchEventScoresOnce } from '../lib/scores-slice';
@@ -2670,6 +2670,21 @@ export function SelfRegModal({ event, athlete, onClose, toast }: SelfRegModalPro
       // registrations — `invoice_items_pkey` duplicate-key error.)
     });
     if (!applied) return; // offline read-only gate — no false success toast
+
+    // UAT E-02-02: a host-club $0 registration is created `paid:true` with no
+    // cart line, so it never goes through checkout — `emailReceipt` (fired
+    // from stripe-webhook/create-checkout-session fulfillment) never runs for
+    // it, and without this call the member gets no confirmation at all. Fires
+    // for a self-registration ONLY (this modal has no club-manager path) —
+    // `hostFree` is "brand-new + $0", not literally "athlete is in the host
+    // club", but that's the right discriminator here: any brand-new $0 entry
+    // hit the same "no email" gap. Best-effort: never let a send failure
+    // surface as a registration failure — the write above already succeeded.
+    if (hostFree) {
+      sendRegistrationConfirmation(regs.map((r) => r.id)).catch((e) => {
+        console.error('[SelfRegModal] registration confirmation email failed:', e);
+      });
+    }
 
     toast(
       hostFree

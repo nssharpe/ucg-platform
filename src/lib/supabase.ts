@@ -2117,6 +2117,49 @@ export async function sendMembershipWelcome(
   return data as { ok: boolean; sent?: boolean; error?: string };
 }
 
+/** Wait for the write queue to fully drain — resolves once every entry has
+ *  either succeeded, been dropped as a permanent failure, or settled to
+ *  'failed'. Same drain loop as `scheduleRollbackSync`'s private
+ *  `waitForDrain` (duplicated rather than shared — that one sits on the
+ *  sensitive permanent-failure rollback path and this repo's convention is
+ *  not to add new callers to code in that path without its own review).
+ *  Used before an action that needs a just-`push*`'d optimistic write to
+ *  have actually landed server-side. */
+export async function waitForWriteQueueDrain(): Promise<void> {
+  for (;;) {
+    await writeQueue.run();
+    if (writeQueue.getState().pending === 0) return;
+    await new Promise<void>((resolve) => {
+      const unsub = writeQueue.subscribe(() => { unsub(); resolve(); });
+    });
+  }
+}
+
+/** Send the $0 host-club self-registration confirmation (UAT E-02-02,
+ *  2026-08-27) — the same-looking confirmation `emailReceipt` sends for a
+ *  PAID purchase, minus the receipt table, for the case a host-club
+ *  registration never goes through checkout at all (created `paid:true` with
+ *  no cart line, so `emailReceipt` never runs for it). Caller-only: the edge
+ *  function authorizes that the caller IS the athlete of every `regId`
+ *  passed. Best-effort — awaits the write queue draining first (the caller
+ *  just `pushRegistration`'d these rows, which is a fire-and-forget enqueue,
+ *  not an awaited write — invoking immediately would race the server-side
+ *  lookup and find nothing), but a failure here must never surface as a
+ *  registration failure to the member; callers should not let this reject
+ *  block anything user-facing. */
+export async function sendRegistrationConfirmation(
+  regIds: string[],
+): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured.' };
+  if (!regIds.length) return { ok: false, error: 'No registrations to confirm.' };
+  await waitForWriteQueueDrain();
+  const { data, error } = await supabase.functions.invoke('send-registration-confirmation', {
+    body: { regIds },
+  });
+  if (error) return { ok: false, error: await edgeErrorMessage(error) };
+  return data as { ok: boolean; error?: string };
+}
+
 /** Start a Stripe Embedded Checkout for the given MEMBERSHIP cart items (Phase
  *  S2). The server recomputes every amount from pricing.ts (the cart's display
  *  amounts are never trusted), adds the service fee, creates the session, and

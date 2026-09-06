@@ -3541,3 +3541,117 @@ My Registrations list shows "Attending — not competing" (muted) for that row i
 cell. (4) Stripe Embedded Checkout inlay in Cart — confirm the bottom padding is now visibly
 present against the card border; escalate to Stripe `appearance`/layout options if the CSS change
 alone didn't fix it.
+
+## E-02-01 / E-02-02 / E-03 (2026-08-27 owner screenshots): standardized confirmation email + $0 self-reg send
+
+**Branch:** `fix/e02-confirmation-email` (cut from `main`, not merged by this pass).
+
+**What changed.**
+- `supabase/functions/_shared/registration-confirmation.ts` (new, pure, no Deno/Supabase
+  imports — unit-tested under node like `camp-confirmation.ts`): `confirmationSubject(names)`
+  (one distinct event → `"<name> Registration Confirmation"`; zero or multiple → the generic
+  `"Your United Club Gymnastics receipt"`), `hostMessageCardHtml(bodyHtml)` (the "A message from
+  your host" card — previously "A message from `${event.name}`"; owner's annotation was that the
+  message is from the HOST, not the event), `registeredForLineHtml(names)` (the $0 path's "You're
+  registered for `<event>`." lines). Shared by both confirmation paths so they render an
+  identical-looking host card and use the identical subject rule.
+- `supabase/functions/_shared/fulfill.ts` `emailReceipt` (~L594-770): (1) dropped the per-event
+  `fromAlias`/`replyTo` override entirely — `conf.fromAlias`/`conf.replyTo` are no longer read at
+  all, and the `sendOne` call no longer spreads `reply_to`/`fromName`; sender is now always the
+  `RESEND_FROM` default (United Club Gymnastics) via `_shared/resend.ts`'s existing fallback. (2)
+  Subject now `confirmationSubject(...)` over the distinct event names referenced by `items`
+  (resolved via the already-loaded `evs` rows) instead of a hardcoded string. (3) Body reordered:
+  "Thanks for your purchase." and "Here's your receipt for the items below." are now two separate
+  `<p>`s with the host-message card (`eventSectionsHtml`, now built via `hostMessageCardHtml`)
+  spliced BETWEEN them, so a host message reads before the receipt instead of after a single
+  combined sentence. (4) The per-event confirmation-config try/catch no longer touches
+  `replyTos`/`fromAliases` sets (removed) — only `ccSet` (director cc — unchanged) and
+  `eventSectionsHtml` remain.
+- `src/lib/types.ts` `Event.confirmationEmail`: `fromAlias`/`replyTo` kept OPTIONAL on the type
+  (back-compat parsing of an old event row that still has them) but documented as retired —
+  nothing writes or reads them anymore.
+- `src/components/EventWizard.tsx`: removed the "From alias"/"Reply-to email" `<Field>`s (and
+  their wrapping `grid cols-3` div — an empty grid would've left stray margin), the
+  `confirmationFromAlias`/`confirmationReplyTo` state (including the `jzsharpe@gmail.com`
+  UCG-hosted-create default), and their spread into the saved `confirmationEmail` object (now
+  just `{ bodyHtml: confirmationBodyHtml }`). Helper text now reads "This email always sends from
+  United Club Gymnastics. If the host wants to include contact info, put it in the custom message
+  below." `isUcgHosted`/`isEdit` stay in heavy use elsewhere in the file (verified via grep before
+  removing their only other use here), so no new unused-var lint errors.
+- **New edge function `supabase/functions/send-registration-confirmation/index.ts`** (verify_jwt
+  stays TRUE — not one of the three `--no-verify-jwt` functions): closes E-02-02 — a host-club $0
+  registration is created `paid:true` with NO cart line (`registrationEntryFee` prices it $0 for
+  the event's own host club), so it never goes through checkout and `emailReceipt` never fires for
+  it. Takes `{ regIds }` or `{ eventId }` (the latter scoped server-side to the caller's OWN live
+  regs for that event — never a league-wide lookup). Anti-abuse guard mirrors
+  `withdraw-registration`'s shape exactly: resolves the caller's own `people` row from the JWT,
+  loads the target registration(s), and 403s outright if ANY row's `athlete_id` isn't the
+  caller's — **no club-manager branch at all**, matching the owner's rule verbatim ("a club
+  manager registering via Club Registrations sends NONE"). Sends via the shared
+  `registration-confirmation.ts` helpers: subject, host-message card(s), "You're registered for
+  `<event>`." line(s), and a "View Registration Details" CTA to `/#/me/registrations` — no receipt
+  table, no invoice number (nothing was purchased). Scope decision: does NOT cc the event
+  director, unlike the paid path — the owner's enumerated content list for this email didn't
+  include it; flagging in case that was an oversight rather than a deliberate omission.
+- **Wired into `Events.tsx`'s `SelfRegModal.persistRegs`, `hostFree` branch only** (~L2468-2697,
+  call added right after the `if (!applied) return;` gate, before the success toast) — this is the
+  single self-registration modal (used from both the Events list "Register yourself" and My
+  Registrations "Register for another event"), so both entry points are covered by one call site.
+  `Club.tsx`'s manager-side `saveRegs` was NOT touched (owner's rule: managers get no email).
+  Fire-and-forget with a `.catch()` — a send failure is logged to console but never surfaces as a
+  registration failure, since the registration write already succeeded before this fires.
+  **Semantic note for future readers:** `hostFree = !alreadyHadRegs && entryTotal === 0` is not
+  literally "the athlete is in the host club" — it's "brand-new + $0", which is the correct
+  discriminator for the actual bug (any $0 brand-new entry has no cart line, hence no receipt
+  email), but don't "correct" this gate into a literal host-club-membership comparison later.
+
+**The write-queue race this almost missed (caught by advisor review before implementation).**
+`persistRegs`'s `pushRegistration(reg)` calls go through `remoteUpsert` → `writeQueue.enqueue`,
+which is fire-and-forget (kicks the processor, doesn't await it) — NOT an awaited write. Invoking
+`send-registration-confirmation` immediately after `mutate()` returns would race the queue:
+the edge function (service role) could look up `regIds` before the row actually lands in Postgres,
+404, and silently send no email — a bug that would reproduce rarely/never locally (queue drains
+near-instantly against a local/fast connection) and intermittently in the field. **Fixed
+client-side**, not with a server-side retry: `src/lib/supabase.ts` adds
+`waitForWriteQueueDrain()` (same drain loop as `scheduleRollbackSync`'s private `waitForDrain` —
+deliberately duplicated rather than shared, since that one sits on the sensitive permanent-failure
+rollback path) and the new `sendRegistrationConfirmation(regIds)` invoker awaits it before calling
+`supabase.functions.invoke`. The `Events.tsx` call site itself stays fire-and-forget (doesn't
+await `sendRegistrationConfirmation`), so this wait never blocks the UI or the success toast/nav.
+
+**Deploy list (NOT run by this pass — no `supabase` CLI invocations per the task's constraints):**
+- `stripe-webhook` — **redeploy with `--no-verify-jwt`** (bundles `_shared/fulfill.ts`; a bare
+  redeploy silently resets `verify_jwt=true` and the webhook goes dark with no logs — this is the
+  exact trap that left a real charge unfulfilled 2026-07-02, see `edge-functions.md`).
+- `create-checkout-session` — bundles `_shared/fulfill.ts` (the $0-total free-order path calls
+  `fulfillPayment` directly).
+- `reconcile-payments` — also bundles `_shared/fulfill.ts` (admin `refulfill`/free-order-refulfill
+  ops call `fulfillPayment`); not one of the three `--no-verify-jwt` functions.
+- `send-registration-confirmation` — new function, default `verify_jwt=true` (no
+  `[functions]` block in `supabase/config.toml` to add).
+
+**Verification.** `npm run build` — clean. `npx eslint src/components/EventWizard.tsx
+src/pages/Events.tsx src/lib/supabase.ts src/lib/types.ts supabase/functions/_shared/fulfill.ts
+supabase/functions/_shared/registration-confirmation.ts
+supabase/functions/send-registration-confirmation/index.ts tests/registration-confirmation.test.ts`
+— zero errors/warnings. `npx vitest run` — 88 files / 1408 tests, all green (10 new in
+`tests/registration-confirmation.test.ts`: `confirmationSubject` zero/one/duplicate/blank/multiple
+cases, `hostMessageCardHtml` blank-input and host-HTML-not-escaped cases, `registeredForLineHtml`
+dedup + escaping).
+
+**Money-invariants-scoped diff.** `_shared/fulfill.ts` is in `money-invariants.md`'s path list —
+per CLAUDE.md's model-routing rule, a reviewer-tier adversarial review of this diff (particularly
+the `emailReceipt` changes and the new edge function's auth guard) is owed before merge/push/apply.
+**Not performed as part of this single-agent implementation pass** — this branch is committed but
+NOT merged to `main`.
+
+**Controller should verify live (or arrange for the reviewer-tier pass to check):** (1) a
+single-event paid purchase's subject line names the event; a membership-only or multi-event cart
+keeps the generic subject. (2) a host's confirmation body renders BELOW "Thanks for your
+purchase." and above "Here's your receipt for the items below." (3) a host-club athlete using
+"Register yourself" for a $0 entry receives an email with the host's custom message (if any) and a
+working "View Registration Details" link — confirm it actually arrives (Resend dashboard/logs),
+not just that the invoke call didn't throw. (4) a club manager registering the same athlete via
+Club Registrations sends NO such email. (5) confirm no live event still has `fromAlias`/`replyTo`
+set that anyone expects to still take effect (EventWizard no longer surfaces or writes them, but a
+pre-existing value on an old row is now silently inert rather than erroring).
