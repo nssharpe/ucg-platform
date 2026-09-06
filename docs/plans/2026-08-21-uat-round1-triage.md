@@ -90,7 +90,7 @@ cart repaired in prod. Membership page correctly offers no re-purchase for an ac
 Retests green 8/25-26: M-03, M-08, M-10 ($45), M-11, M-19, M-20, Z-04 flow, A-06 (Nate). Julia
 confirmed membership-welcome cc scheme correct.
 
-## Decisions logged 2026-08-27 (afternoon)
+## Decisions logged 2026-08-27 (afternoon) — E-02/E-03 SHIPPED `0017fab` (functions deployed staging+prod)
 
 - **Sanction approval publishes the event LIVE** (was draft). Draft is now a manual take-offline
   state only — "we don't want setting it live to be manually controlled because we will forget."
